@@ -102,6 +102,28 @@ the background or independent stage layers. The same operation is available
 to runtime scripts as `Engine.ClearCharacters(false)` or through the typed
 runtime SDK as `ctx.stage.clearCharacters(false)`.
 
+Character actions move a visible character relative to where it stands and
+always return it to rest, so they never change its slot or saved placement:
+
+```pxstory
+[act guide nod]
+[act guide jump size=30 time=250ms loop=2]
+[act guide float loop=-1]
+@guide[act=hop] わっ！
+[act guide stop]
+```
+
+Presets are `hop`, `jump`, `startle`, `yawn`, `bow`, `nod`, `nods`,
+`tremble`, `shake-head`, `sway`, `float`, `wiggle`, `dip`, `lift`,
+`nudge-right`, `nudge-left`, `bob` and `waver`. `size` is pixels (percent
+for `startle`/`wiggle`, degrees for `sway`), `time` is one segment,
+`loop=-1` repeats until `[act alias stop]`, and `ease` is `linear`, `in`,
+`out` or `inout`. A looping action is saved and resumes after loading.
+
+`[se.stop fade=500ms]` stops every playing sound effect and `[voice.stop]`
+stops the current voice. `[shake 300ms 5 target=window]` shakes only the
+message window layer instead of the Stage.
+
 To add an expression, add a source image and an expression with `assetPath` in `Characters/guide.pxcharacter`, then select its alias with `expression=...`. The Authoring project compiler generates canonical character, expression, and asset UUIDs when omitted; no catalog entry is needed for that image. For example, `{"name":"Happy","aliases":["happy"],"assetPath":"Assets/guide-happy.png"}` is enough inside `expressions`. TypeScript generators can use the exported `CharacterSourceDocument` type; the stricter `CharacterDocument` type describes the published canonical file. Validate this shorthand with `compileProject` or `prismatix validate`, not the low-level `validateDocument("character")` canonical checker. The generated IDs derive from the project, character source path, expression's first alias, and image path. Keep those stable across save-compatible releases, or pin `id`/`assetId` explicitly before renaming; a file move is not automatically a save migration. Positions are `left`, `center`, `right` (also 1/2/3). The move duration is milliseconds in the native session implementation.
 
 For a dynamically selected family of UI/media files, put the containing

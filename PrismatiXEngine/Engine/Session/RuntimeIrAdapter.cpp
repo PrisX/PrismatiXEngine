@@ -588,6 +588,20 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = "shake";
             Add(command, "ms", DurationMilliseconds(Argument(operation, "duration")));
             Add(command, "amp", Argument(operation, "amplitude"));
+            Add(command, "target", Argument(operation, "target"));
+        } else if (operation.kind == "actorAction") {
+            command.type = "actor_action";
+            Add(command, "id", Argument(operation, "character"));
+            Add(command, "preset", Argument(operation, "preset"));
+            Add(command, "size", Argument(operation, "size"));
+            Add(command, "time", DurationMilliseconds(Argument(operation, "time")));
+            Add(command, "loop", Argument(operation, "loop"));
+            Add(command, "ease", Argument(operation, "ease"));
+        } else if (operation.kind == "stopSoundEffect") {
+            command.type = "stopse";
+            Add(command, "fade", DurationMilliseconds(Argument(operation, "fade")));
+        } else if (operation.kind == "stopVoice") {
+            command.type = "stopvoice";
         } else if (operation.kind == "ui") {
             command.type = "route";
             Add(command, "route", Argument(operation, "route"));

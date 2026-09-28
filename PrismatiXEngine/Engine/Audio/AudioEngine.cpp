@@ -609,6 +609,16 @@ void AudioEngine::PlaySE(const std::string& path) {
     (void)Play({.bus=Bus::SoundEffect, .path=path});
 }
 
+void AudioEngine::StopSE(const int fadeMs) {
+    if (!m_initialized) return;
+    const auto frames = fadeMs > 0 ? MIX_MSToFrames(m_sampleRate, fadeMs) : 0;
+    for (MIX_Track* track : m_seTracks) {
+        if (!track) continue;
+        MIX_StopTrack(track, frames);
+        FinishTrackPlayback(track, PlaybackStatus::Stopped);
+    }
+}
+
 void AudioEngine::PlayVoice(const std::string& path) {
     (void)Play({.bus=Bus::Voice, .path=path});
 }

@@ -1539,6 +1539,13 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             m_storyHudVisible = cmd.Get("visible") == "true";
             return true;
         }
+        if (t == "shake" && cmd.Get("target") == "window") {
+            // Mirrors the Stage shake curve on the HUD layer only.
+            m_windowShakeDuration = std::max(0, std::atoi(cmd.Get("ms", "400").c_str())) / 1000.0f;
+            m_windowShakeAmplitude = static_cast<float>(std::atof(cmd.Get("amp", "12").c_str()));
+            m_windowShakeStart = std::chrono::steady_clock::now();
+            return true;
+        }
         if (t == "nvl") {
             m_nvlMode = true;
             if (cmd.Has("clear")) m_nvlLines.clear();
@@ -3455,7 +3462,27 @@ void PlayerApp::RenderStageWithScripts() {
 void PlayerApp::RenderUIWithScripts() {
     if (m_scriptHost)
         m_scriptHost->RenderRetained(script::RenderPhase::BeforeUI);
+    float shakeX = 0.0f;
+    float shakeY = 0.0f;
+    if (m_windowShakeDuration > 0.0f &&
+        (m_ui.CurrentRoute() == "hud" || m_ui.CurrentRoute() == "game")) {
+        const float elapsed = std::chrono::duration<float>(
+            std::chrono::steady_clock::now() - m_windowShakeStart).count();
+        if (elapsed >= m_windowShakeDuration) {
+            m_windowShakeDuration = 0.0f;
+        } else {
+            const float amplitude = m_windowShakeAmplitude *
+                (1.0f - elapsed / m_windowShakeDuration);
+            const float phase = elapsed * 55.0f;
+            shakeX = std::sin(phase) * amplitude;
+            shakeY = std::cos(phase * 1.3f) * amplitude * 0.6f;
+        }
+    }
+    const bool shaking = shakeX != 0.0f || shakeY != 0.0f;
+    if (shaking)
+        m_runtime.Renderer().PushAffineTransform({1.0f, 0.0f, 0.0f, 1.0f, shakeX, shakeY});
     m_ui.Render(m_runtime.Renderer());
+    if (shaking) m_runtime.Renderer().PopTransform();
     if (m_scriptHost)
         m_scriptHost->RenderRetained(script::RenderPhase::AfterUI);
 }

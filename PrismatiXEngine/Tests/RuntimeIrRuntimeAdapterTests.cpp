@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <set>
@@ -412,6 +413,7 @@ int main() {
         "else",           "endCondition",   "label",        "jump",
         "wait",           "timeline",       "effect",       "shake",        "ui",
         "hudVisibility",  "unlock",         "customNode",   "camera",
+        "actorAction",    "stopSoundEffect", "stopVoice",
     };
     assert(schemaKinds == exercisedKinds);
 
@@ -460,6 +462,10 @@ int main() {
         Operation("all-shake", "shake", {{"duration", "250ms"}, {"amplitude", "15"}}),
         Operation("all-ui", "ui", {{"route", "title"}, {"operation", "replace"}}),
         Operation("all-hud", "hudVisibility", {{"visible", "false"}}),
+        Operation("all-act", "actorAction", {{"character", "hero"}, {"preset", "nod"},
+            {"size", "8"}, {"time", "150ms"}, {"loop", "2"}, {"ease", "out"}}),
+        Operation("all-stop-se", "stopSoundEffect", {{"fade", "200ms"}}),
+        Operation("all-stop-voice", "stopVoice"),
         Operation("all-unlock", "unlock", {{"kind", "cg"}, {"id", "ev101a"}}),
         Operation("all-custom", "customNode", {{"type", "nvl"}, {"value", "{}"}}),
         Operation("all-camera", "camera", {{"value", "pan"}}),
@@ -498,6 +504,17 @@ int main() {
     }));
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "hud_visibility" && command.Get("visible") == "false";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "actor_action" && command.Get("id") == "hero" &&
+               command.Get("preset") == "nod" && command.Get("time") == "150" &&
+               command.Get("loop") == "2";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "stopse" && command.Get("fade") == "200";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "stopvoice";
     }));
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "char" && command.Get("transitionMode") == "auto" &&
@@ -561,6 +578,38 @@ int main() {
     const auto moved = clearStage.FindCharacterPlacement("hero");
     assert(moved && moved->slot == 3 && moved->scale == 0.8f);
     clearStage.ClearCharacters(false);
+
+    // Relative actions return to rest, loop until stopped, and survive saves.
+    {
+        bool finished = false;
+        const auto nod = px::vn::ExpandActorAction({"nod", 0.0f, 100, 1, ""});
+        assert(nod && nod->keys.size() == 3);
+        const auto peak = px::vn::SampleActorAction(*nod, 0.1, finished);
+        assert(!finished && peak.y == 10.0f && peak.x == 0.0f);
+        const auto rest = px::vn::SampleActorAction(*nod, 10.0, finished);
+        assert(finished && rest.y == 0.0f);
+        const auto floating = px::vn::ExpandActorAction({"float", 5.0f, 100, -1, "linear"});
+        assert(floating && floating->loopFrom == 1);
+        const auto later = px::vn::SampleActorAction(*floating, 100.05, finished);
+        assert(!finished && std::abs(later.y) <= 5.0f);
+        assert(!px::vn::ExpandActorAction({"moonwalk", 0.0f, 0, 1, ""}));
+        assert(!px::vn::ExpandActorAction({"nod", 0.0f, 0, 0, ""}));
+
+        clearStage.SetCharacter("hero", "Assets/hero.webp", 2, false);
+        assert(!clearStage.PlayActorAction("nobody", {"nod", 0.0f, 0, 1, ""}));
+        assert(clearStage.PlayActorAction("hero", {"float", 0.0f, 0, -1, ""}));
+        clearStage.Update(0.25f);
+        auto saved = clearStage.Snapshot();
+        assert(saved.size() == 1 && saved.front().action &&
+               saved.front().action->preset == "float" &&
+               saved.front().actionElapsed > 0.2);
+        clearStage.Restore(saved);
+        assert(clearStage.Snapshot().front().action);
+        assert(clearStage.PlayActorAction("hero", {"stop", 0.0f, 0, 1, ""}));
+        clearStage.Update(1.0f);
+        assert(!clearStage.Snapshot().front().action);
+        clearStage.ClearCharacters(false);
+    }
 
     px::vn::GameCatalog localizedCatalog;
     bool charactersDeclared = false;

@@ -808,6 +808,11 @@ vn::DialogueSnapshot DialogueFromJson(const Json& json) {
 Json ActorsToJson(const std::vector<vn::Stage::SavedActor>& actors) {
     Json arr = Json::array();
     for (const auto& a : actors) {
+        Json action = nullptr;
+        if (a.action)
+            action = { { "preset", a.action->preset }, { "size", a.action->size },
+                       { "time", a.action->timeMs }, { "loop", a.action->loop },
+                       { "ease", a.action->ease }, { "elapsed", a.actionElapsed } };
         arr.push_back({ { "name", a.name },
                         { "image", a.imagePath },
                         { "slot", a.slot },
@@ -824,7 +829,8 @@ Json ActorsToJson(const std::vector<vn::Stage::SavedActor>& actors) {
                         { "effectOffsetX", a.effectOffsetX },
                         { "effectOffsetY", a.effectOffsetY },
                         { "effectScale", a.effectScale },
-                        { "effectAlpha", a.effectAlpha } });
+                        { "effectAlpha", a.effectAlpha },
+                        { "action", std::move(action) } });
     }
     return arr;
 }
@@ -835,6 +841,18 @@ std::vector<vn::Stage::SavedActor> ActorsFromJson(const Json& arr) {
         throw std::invalid_argument("stage actors must be a bounded array");
     for (const auto& j : arr) {
         if (!j.is_object()) throw std::invalid_argument("stage actor must be an object");
+        std::optional<vn::ActorActionRequest> action;
+        double actionElapsed = 0.0;
+        if (const auto saved = j.find("action"); saved != j.end() && !saved->is_null()) {
+            if (!saved->is_object())
+                throw std::invalid_argument("stage actor action must be an object");
+            action = vn::ActorActionRequest{saved->value("preset", std::string{}),
+                                            saved->value("size", 0.0f),
+                                            saved->value("time", 0),
+                                            saved->value("loop", 1),
+                                            saved->value("ease", std::string{})};
+            actionElapsed = saved->value("elapsed", 0.0);
+        }
         out.push_back(vn::Stage::SavedActor{ j.value("name", std::string{}),
                                              j.value("image", std::string{}), j.value("slot", 2),
                                              j.value("ox", 0.0f), j.value("oy", 0.0f),
@@ -848,7 +866,8 @@ std::vector<vn::Stage::SavedActor> ActorsFromJson(const Json& arr) {
                                              j.value("effectOffsetX", 0.0f),
                                              j.value("effectOffsetY", 0.0f),
                                              j.value("effectScale", 1.0f),
-                                             j.value("effectAlpha", 1.0f) });
+                                             j.value("effectAlpha", 1.0f),
+                                             std::move(action), actionElapsed });
     }
     return out;
 }

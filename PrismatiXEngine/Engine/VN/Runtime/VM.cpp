@@ -729,6 +729,14 @@ void VM::ExecuteSimple(const Command& cmd) {
         m_audio.PlaySE(Resolve(m_config.seDir, cmd.Get("file", cmd.Get("value"))));
         return;
     }
+    if (t == "stopse") {
+        m_audio.StopSE(ParseInt(cmd.Get("fade"), 0));
+        return;
+    }
+    if (t == "stopvoice") {
+        m_audio.StopVoice();
+        return;
+    }
     if (t == "voice") {
         m_audio.PlayVoice(Resolve(m_config.voiceDir, cmd.Get("file", cmd.Get("value"))));
         return;
@@ -778,9 +786,33 @@ void VM::ExecuteSimple(const Command& cmd) {
         return;
     }
     if (t == "shake" || t == "quake") {
+        // The message window belongs to the host UI; hosts without one
+        // ignore a window shake instead of shaking the Stage.
+        if (cmd.Get("target") == "window") {
+            if (m_commandHook) (void)m_commandHook(cmd);
+            return;
+        }
         const int ms = ParseInt(cmd.Get("ms", cmd.Get("time")), 400);
         const int amp = ParseInt(cmd.Get("amp", cmd.Get("power")), 12);
         m_stage.Shake(ms, static_cast<float>(amp));
+        return;
+    }
+    if (t == "actor_action") {
+        ActorActionRequest request;
+        request.preset = cmd.Get("preset");
+        request.size = ParseFloat(cmd.Get("size"), 0.0f);
+        request.timeMs = ParseInt(cmd.Get("time"), 0);
+        request.loop = ParseInt(cmd.Get("loop"), 1);
+        request.ease = cmd.Get("ease");
+        const std::string name = cmd.Get("id", cmd.Get("name"));
+        if (!m_stage.PlayActorAction(name, request)) {
+            diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,
+                .code="PXVN6110",.category="VN.Character",
+                .message="Character action needs a visible character and a known preset",
+                .details=name+" / "+request.preset};
+            ApplyDiagnosticSource(diagnostic, cmd);
+            diag::Emit(std::move(diagnostic));
+        }
         return;
     }
 

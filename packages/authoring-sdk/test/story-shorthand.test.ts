@@ -154,3 +154,29 @@ test("project compile resolves storyAssets against included resources", () => {
   const operation = result.artifact!.runtimeIr.operations.find(({kind}) => kind === "background");
   assert.equal(operation?.arguments.asset, "Assets/bg/school.png");
 });
+
+test("act, se.stop, voice.stop, and window shake lower to typed operations", () => {
+  const ops = operations(
+    "[show yuki smile]\n[act yuki nod]\n[act yuki float time=2s loop=-1 size=6 ease=inout]\n" +
+    "@yuki[act=hop] わっ\n[act yuki stop]\n[se.stop fade=500ms]\n[voice.stop]\n" +
+    "[shake 300ms 5 target=window]\n", {characters: [yuki]});
+  assert.deepEqual(ops.map(({kind, arguments: args}) => [kind, args.preset ?? args.fade ?? args.target ?? ""]), [
+    ["showCharacter", ""], ["actorAction", "nod"], ["actorAction", "float"],
+    ["actorAction", "hop"], ["dialogue", ""], ["actorAction", "stop"],
+    ["stopSoundEffect", "500ms"], ["stopVoice", ""], ["shake", "window"],
+  ]);
+  assert.equal(ops[1]!.arguments.character, yuki.id);
+  assert.deepEqual(ops[2]!.arguments, {character: yuki.id, preset: "float",
+    size: "6", time: "2s", loop: "-1", ease: "inout"});
+  assert.equal(ops[3]!.sourceId, ops[4]!.sourceId);
+});
+
+test("act rejects unknown presets and out-of-range parameters", () => {
+  const context = {characters: [yuki]};
+  assert.ok(codes("[act yuki moonwalk]\n", context).includes("PXSTORY1170"));
+  assert.ok(codes("[act yuki nod time=90s]\n", context).includes("PXSTORY1172"));
+  assert.ok(codes("[act yuki nod loop=0]\n", context).includes("PXSTORY1173"));
+  assert.ok(codes("[act kei nod]\n", context).includes("PXSTORY1113"));
+  assert.ok(codes("@直哉[act=nod] hi\n").includes("PXSTORY1162"));
+  assert.ok(codes("[shake 300ms target=hud]\n").includes("PXSTORY1139"));
+});

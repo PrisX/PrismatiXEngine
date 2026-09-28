@@ -44,24 +44,29 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   bgm: ["asset", "fade", "loop", "intro"],
   ambience: ["asset", "fade", "loop", "intro"],
   se: ["asset", "fade", "loop", "intro"],
-  "bgm.stop": ["fade"], "ambience.stop": ["fade"],
+  "bgm.stop": ["fade"], "ambience.stop": ["fade"], "se.stop": ["fade"], "voice.stop": [],
+  act: ["character", "preset", "size", "time", "loop", "ease"],
   video: ["asset", "skippable"],
   timeline: ["timeline", "await", "speed"],
   motion: ["asset", "await", "speed"], "motion.stop": [],
   ui: ["route", "operation"],
   hud: ["visible"],
   unlock: ["kind", "id"],
-  effect: ["value"], shake: ["duration", "amplitude"],
+  effect: ["value"], shake: ["duration", "amplitude", "target"],
   camera: ["value", "x", "y", "zoom", "duration", "ease", "wait"],
   else: [], endif: [],
 };
 
-function validAudioDuration(value: string): boolean {
-  if (!audioDurationPattern.test(value)) return false;
+function durationMilliseconds(value: string): number | undefined {
+  if (!audioDurationPattern.test(value)) return undefined;
   const seconds = value.endsWith("s") && !value.endsWith("ms");
-  const number = Number(value.replace(/(?:ms|s)$/u, ""));
-  const milliseconds = number * (seconds ? 1000 : 1);
-  return Number.isFinite(milliseconds) && milliseconds >= 0 && milliseconds <= 2_147_483_647;
+  const milliseconds = Number(value.replace(/(?:ms|s)$/u, "")) * (seconds ? 1000 : 1);
+  return Number.isFinite(milliseconds) && milliseconds >= 0 && milliseconds <= 2_147_483_647
+    ? milliseconds : undefined;
+}
+
+function validAudioDuration(value: string): boolean {
+  return durationMilliseconds(value) !== undefined;
 }
 
 interface SourceLine {
@@ -428,6 +433,13 @@ function stringValue(argument: StoryArgument | undefined): string | undefined {
   return String(argument.value);
 }
 
+/** Relative character actions implemented by the native Stage. */
+export const storyActorActions = [
+  "hop", "jump", "startle", "yawn", "bow", "nod", "nods", "tremble",
+  "shake-head", "sway", "float", "wiggle", "dip", "lift", "nudge-right",
+  "nudge-left", "bob", "waver", "stop",
+] as const;
+
 function characterPosition(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const positions: Readonly<Record<string, string>> = {
@@ -619,6 +631,42 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     mappings.push({operationId, sourceId, sourceUri: document.path, startLine: node.span.start.line, startColumn: node.span.start.column, endLine: node.span.end.line, endColumn: node.span.end.column});
   };
 
+  // Shared by [act] and inline `@alias[act=nod]` dialogue.
+  const actionArguments = (node: StoryNode, alias: string, preset: string | undefined,
+    options: {readonly size?: string; readonly time?: string; readonly loop?: string;
+      readonly ease?: string}): Record<string, string> | undefined => {
+    const character = characters.get(alias);
+    if ((context.characters?.length ?? 0) > 0 && character === undefined) {
+      diagnostics.push(error("PXSTORY1113", `Unknown character alias: ${alias}`, node.span));
+      return undefined;
+    }
+    if (preset === undefined || !(storyActorActions as readonly string[]).includes(preset)) {
+      diagnostics.push(error("PXSTORY1170",
+        `act requires a preset: ${storyActorActions.join(", ")}`, node.span));
+      return undefined;
+    }
+    if (options.size !== undefined && (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/u.test(options.size) ||
+        Math.abs(Number(options.size)) > 4096)) {
+      diagnostics.push(error("PXSTORY1171", "act size must be a number of at most 4096", node.span));
+      return undefined;
+    }
+    if (options.time !== undefined && (durationMilliseconds(options.time) ?? Infinity) > 60_000) {
+      diagnostics.push(error("PXSTORY1172", "act time must be a duration of at most 60s", node.span));
+      return undefined;
+    }
+    if (options.loop !== undefined && (!/^(?:-1|[1-9]\d{0,2}|1000)$/u.test(options.loop))) {
+      diagnostics.push(error("PXSTORY1173", "act loop must be 1-1000, or -1 to repeat until [act ... stop]", node.span));
+      return undefined;
+    }
+    return {
+      character: character?.id ?? alias, preset,
+      ...(options.size === undefined ? {} : {size: options.size}),
+      ...(options.time === undefined ? {} : {time: options.time}),
+      ...(options.loop === undefined ? {} : {loop: options.loop}),
+      ...(options.ease === undefined ? {} : {ease: options.ease}),
+    };
+  };
+
   // Shared by [show] and inline `@alias[expression position]` dialogue.
   const showArguments = (node: StoryNode, alias: string,
     authored: {readonly expression?: string; readonly position?: string;
@@ -674,36 +722,47 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       let expression: string | undefined;
       let position: string | undefined;
       let voice: string | undefined;
+      let act: string | undefined;
       let optionsValid = true;
       for (const option of node.options ?? []) {
         const value = stringValue(option);
         const slot = option.name ?? (characterPosition(value) === undefined ? "expression" : "position");
-        if (value === undefined || !["expression", "position", "voice"].includes(slot)) {
+        if (value === undefined || !["expression", "position", "voice", "act"].includes(slot)) {
           diagnostics.push(error("PXSTORY1017", `Unknown speaker option: ${option.name ?? option.raw}`, option.span));
           optionsValid = false;
         } else if ((slot === "expression" && expression !== undefined) ||
                    (slot === "position" && position !== undefined) ||
-                   (slot === "voice" && voice !== undefined)) {
+                   (slot === "voice" && voice !== undefined) ||
+                   (slot === "act" && act !== undefined)) {
           diagnostics.push(error("PXSTORY1016", `Duplicate speaker option: ${slot}`, option.span));
           optionsValid = false;
         } else if (slot === "expression") expression = value;
         else if (slot === "position") position = value;
+        else if (slot === "act") act = value;
         else voice = value;
       }
       if (!optionsValid) continue;
       const sourceId = claimSourceId(node);
-      if (expression !== undefined || position !== undefined) {
+      if (expression !== undefined || position !== undefined || act !== undefined) {
         if (node.literalSpeaker || node.name === undefined) {
           diagnostics.push(error("PXSTORY1162",
-            "Speaker expression and position options require a character alias", node.span));
+            "Speaker expression, position, and act options require a character alias", node.span));
           continue;
         }
+      }
+      if (expression !== undefined || position !== undefined) {
+        if (node.name === undefined) continue;
         const shown = showArguments(node, node.name, {
           ...(expression === undefined ? {} : {expression}),
           ...(position === undefined ? {} : {position}),
         });
         if (shown === undefined) continue;
         emit(node, "showCharacter", shown, node.raw.trim(), sourceId);
+      }
+      if (act !== undefined && node.name !== undefined) {
+        const action = actionArguments(node, node.name, act, {});
+        if (action === undefined) continue;
+        emit(node, "actorAction", action, node.raw.trim(), sourceId);
       }
       const resolvedVoice = voice === undefined ? undefined : resolveResource(node, voice, "voice");
       if (voice !== undefined && resolvedVoice === undefined) continue;
@@ -989,6 +1048,30 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         }
         break;
       }
+      case "act": {
+        const alias = named("character") ?? positional(0);
+        const preset = named("preset") ?? positional(named("character") === undefined ? 1 : 0);
+        if (alias === undefined) {
+          diagnostics.push(error("PXSTORY1112", "act requires a character alias", node.span));
+          break;
+        }
+        const action = actionArguments(node, alias, preset, {
+          ...(named("size") === undefined ? {} : {size: named("size")!}),
+          ...(named("time") === undefined ? {} : {time: named("time")!}),
+          ...(named("loop") === undefined ? {} : {loop: named("loop")!}),
+          ...(named("ease") === undefined ? {} : {ease: named("ease")!}),
+        });
+        if (action !== undefined) emit(node, "actorAction", action);
+        break;
+      }
+      case "se.stop": {
+        const fade = named("fade") ?? positional(0);
+        if (fade !== undefined && !validAudioDuration(fade))
+          diagnostics.push(error("PXSTORY1146", "se.stop fade must be a nonnegative duration of at most 2147483647ms", node.span));
+        else emit(node, "stopSoundEffect", fade === undefined ? {} : {fade});
+        break;
+      }
+      case "voice.stop": emit(node, "stopVoice", {}); break;
       case "bgm.stop":
       case "ambience.stop": {
         const fade = named("fade") ?? positional(0);
@@ -1096,10 +1179,14 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       case "shake": {
         const duration = named("duration") ?? positional(0);
         const amplitude = named("amplitude") ?? positional(1);
+        const target = named("target");
         if (duration === undefined) diagnostics.push(error("PXSTORY1138", "shake requires a duration", node.span));
+        else if (target !== undefined && target !== "stage" && target !== "window")
+          diagnostics.push(error("PXSTORY1139", "shake target must be stage or window", node.span));
         else emit(node, "shake", {
           duration,
           ...(amplitude === undefined ? {} : {amplitude}),
+          ...(target === undefined || target === "stage" ? {} : {target}),
         });
         break;
       }
@@ -1181,7 +1268,7 @@ export interface StoryCommandCompletion {
 }
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
-  const builtins = ["id", "chapter", "say", "narrate", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "shake", "camera"];
+  const builtins = ["id", "chapter", "say", "narrate", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "shake", "camera", "act", "se.stop", "voice.stop"];
   const builtinParameters: Readonly<Record<string, StoryCommandCompletion["parameters"]>> = {
     id: [{name:"value", required:true}],
     chapter: [{name:"title", required:true}],
@@ -1224,7 +1311,14 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
       {name:"await", required:false, values:[true, false]}, {name:"speed", required:false}],
     motion: [{name:"asset", required:true},
       {name:"await", required:false, values:[true, false]}, {name:"speed", required:false}],
-    shake: [{name:"duration", required:true}, {name:"amplitude", required:false}],
+    shake: [{name:"duration", required:true}, {name:"amplitude", required:false},
+      {name:"target", required:false, values:["stage", "window"]}],
+    act: [{name:"character", required:true},
+      {name:"preset", required:true, values:[...storyActorActions]},
+      {name:"size", required:false}, {name:"time", required:false},
+      {name:"loop", required:false}, {name:"ease", required:false,
+        values:["linear", "in", "out", "inout"]}],
+    "se.stop": [{name:"fade", required:false}],
     unlock: [{name:"kind", required:true}, {name:"id", required:true}],
     effect: [{name:"value", required:true}],
     camera: [{name:"value", required:false}, {name:"x", required:false},

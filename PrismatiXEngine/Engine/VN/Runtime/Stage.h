@@ -6,6 +6,7 @@
 #include "Engine/Graphics/Texture.h"
 #include "Engine/SDK/Motion.h"
 #include "Engine/SDK/Portrait.h"
+#include "Engine/VN/Runtime/ActorAction.h"
 #include "Engine/VN/Runtime/ParticleSystem.h"
 
 #include <cstdint>
@@ -139,6 +140,10 @@ public:
     // Prefetches a plain sprite or the image layers referenced by a portrait
     // descriptor. Descriptors themselves are not image textures.
     void PreloadCharacter(const std::string& imagePath);
+    // Plays a relative action preset (hop, nod, bow, ...) on a visible actor;
+    // "stop" eases an active action back to rest. False for an unknown
+    // actor, preset, or out-of-range parameters.
+    bool PlayActorAction(const std::string& name, const ActorActionRequest& request);
     void ClearCharacter(const std::string& name, bool transition = true);
     // Clears character actors without resetting the rest of the stage.
     void ClearCharacters(bool transition = true);
@@ -187,6 +192,9 @@ public:
         float effectOffsetY = 0.0f;
         float effectScale = 1.0f;
         float effectAlpha = 1.0f;
+        // Active action, restored by replaying the request to this time.
+        std::optional<ActorActionRequest> action;
+        double actionElapsed = 0.0;
     };
     [[nodiscard]] std::vector<SavedActor> Snapshot() const;
     void Restore(const std::vector<SavedActor>& actors);
@@ -287,6 +295,10 @@ private:
         float effectScale = 1.0f;
         float effectAlpha = 1.0f;
         bool exiting = false;
+        std::optional<ActorActionRequest> actionRequest;
+        ActorActionTrack actionTrack;
+        double actionElapsed = 0.0;
+        ActorPose actionPose;
     };
 
     struct Layer {

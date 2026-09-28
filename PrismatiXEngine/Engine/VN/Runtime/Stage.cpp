@@ -1063,6 +1063,27 @@ void Stage::SetCharacterAuto(const std::string& name, const std::string& imagePa
     SetCharacter(name,imagePath,slot,transition,offsetX,offsetY,scale);
 }
 
+bool Stage::PlayActorAction(const std::string& name, const ActorActionRequest& request) {
+    const auto found = m_actors.find(name);
+    if (found == m_actors.end() || found->second.exiting) return false;
+    Actor& actor = found->second;
+    if (request.preset == "stop") {
+        if (actor.actionTrack.keys.empty()) return true;
+        actor.actionTrack = ActorActionReturn(actor.actionPose, 0.15f);
+        actor.actionRequest.reset();
+        actor.actionElapsed = 0.0;
+        return true;
+    }
+    auto track = ExpandActorAction(request);
+    if (!track) return false;
+    // Start from the current pose so replacing an action never jumps.
+    track->start = actor.actionPose;
+    actor.actionTrack = std::move(*track);
+    actor.actionRequest = request;
+    actor.actionElapsed = 0.0;
+    return true;
+}
+
 void Stage::ClearCharacter(const std::string& name, bool transition) {
     auto it = m_actors.find(name);
     if (it == m_actors.end()) {
@@ -1252,6 +1273,17 @@ void Stage::Update(float dt) {
     std::vector<std::string> expiredActors;
     for (auto it = m_actors.begin(); it != m_actors.end();) {
         Actor& a = it->second;
+        if (!a.actionTrack.keys.empty()) {
+            a.actionElapsed += dt;
+            bool finished = false;
+            a.actionPose = SampleActorAction(a.actionTrack, a.actionElapsed, finished);
+            if (finished) {
+                a.actionTrack = {};
+                a.actionRequest.reset();
+                a.actionElapsed = 0.0;
+                a.actionPose = {};
+            }
+        }
         a.alpha = Approach(a.alpha, a.targetAlpha, kAlphaSpeed, dt);
         a.x = Approach(a.x, a.targetX, kSlideSpeed, dt);
         if (!a.prevImagePath.empty()) {
@@ -1444,13 +1476,13 @@ void Stage::Render() {
             sourceWidth=static_cast<float>(textureWidth);
             sourceHeight=static_cast<float>(textureHeight);
         }
-        const float effectScale = std::max(0.01f, actor.effectScale);
+        const float effectScale = std::max(0.01f, actor.effectScale * actor.actionPose.scale);
         const float width = sourceWidth * actor.scale * effectScale;
         const float height = sourceHeight * actor.scale * effectScale;
         const Rect local{
-            actor.x - width * 0.5f + actor.offsetX + actor.effectOffsetX,
+            actor.x - width * 0.5f + actor.offsetX + actor.effectOffsetX + actor.actionPose.x,
             static_cast<float>(logicalH) - height + actor.offsetY +
-                actor.effectOffsetY,
+                actor.effectOffsetY + actor.actionPose.y,
             width, height};
         const auto world = ResolveNodeTransform(
             name, {local.x + local.w * 0.5f,
@@ -1579,14 +1611,14 @@ void Stage::Render() {
             sourceWidth=static_cast<float>(textureWidth);
             sourceHeight=static_cast<float>(textureHeight);
         }
-        const float effectScale = std::max(0.01f, actor.effectScale);
+        const float effectScale = std::max(0.01f, actor.effectScale * actor.actionPose.scale);
         const float spriteScale=actor.scale*effectScale;
         const float width=sourceWidth*spriteScale;
         const float height=sourceHeight*spriteScale;
         const Rect local{
-            actor.x - width * 0.5f + actor.offsetX + actor.effectOffsetX,
+            actor.x - width * 0.5f + actor.offsetX + actor.effectOffsetX + actor.actionPose.x,
             static_cast<float>(logicalH) - height + actor.offsetY +
-                actor.effectOffsetY,
+                actor.effectOffsetY + actor.actionPose.y,
             width, height};
         const auto world = ResolveNodeTransform(
             name, {local.x + local.w * 0.5f,
@@ -1594,6 +1626,9 @@ void Stage::Render() {
         if (!world.visible || world.opacity <= 0.0f) return;
         m_renderer.PushAffineTransform(
             {world.a, world.b, world.c, world.d, world.tx, world.ty});
+        // Action rotation pivots at the sprite's feet, like a swaying body.
+        m_renderer.PushTransform({local.x + local.w * 0.5f, local.y + local.h},
+                                 {1.0f, 1.0f}, actor.actionPose.rotation);
         const float combinedAlpha=std::clamp(
             alpha*actor.effectAlpha*world.opacity,0.0f,255.0f);
         if(portrait){
@@ -1614,6 +1649,7 @@ void Stage::Render() {
             m_renderer.DrawImage(path,local,
                 static_cast<std::uint8_t>(combinedAlpha));
         }
+        m_renderer.PopTransform();
         m_renderer.PopTransform();
     };
 
@@ -1761,7 +1797,8 @@ std::vector<Stage::SavedActor> Stage::Snapshot() const {
                                       actor.alpha, actor.targetAlpha, actor.prevAlpha,
                                       actor.x, actor.targetX, actor.exiting,
                                       actor.effectOffsetX, actor.effectOffsetY,
-                                      actor.effectScale, actor.effectAlpha });
+                                      actor.effectScale, actor.effectAlpha,
+                                      actor.actionRequest, actor.actionElapsed });
         }
     }
     return out;
@@ -1787,6 +1824,12 @@ void Stage::Restore(const std::vector<SavedActor>& actors) {
         restored->second.effectOffsetY = s.effectOffsetY;
         restored->second.effectScale = s.effectScale;
         restored->second.effectAlpha = s.effectAlpha;
+        if (s.action && PlayActorAction(s.name, *s.action)) {
+            Actor& actor = restored->second;
+            actor.actionElapsed = std::max(0.0, s.actionElapsed);
+            bool finished = false;
+            actor.actionPose = SampleActorAction(actor.actionTrack, actor.actionElapsed, finished);
+        }
     }
 }
 

@@ -21,6 +21,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <chrono>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -162,6 +163,10 @@ private:
     std::string m_defaultUiHoverSound;
     std::string m_defaultUiActivateSound;
     std::string m_defaultUiCancelSound;
+    // Story `[shake target=window]` offsets only the HUD layer.
+    std::chrono::steady_clock::time_point m_windowShakeStart{};
+    float m_windowShakeDuration = 0.0f;
+    float m_windowShakeAmplitude = 0.0f;
     PresentationTransition m_routeTransition;
     PresentationTransition m_splashTransition;
     bool m_splashTransitionConfigured = false;

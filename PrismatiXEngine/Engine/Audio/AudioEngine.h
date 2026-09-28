@@ -165,6 +165,8 @@ public:
     void Update();
 
     void PlaySE(const std::string& path);
+    // Stops every playing sound effect, optionally fading it out.
+    void StopSE(int fadeMs = 0);
     void PlayVoice(const std::string& path);
     void StopVoice();
     void PlayAmbience(const std::string& path,bool loop=true,int fadeMs=0);

@@ -171,7 +171,8 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("anim","Animation",{Param("target",VariantType::String,true),Param("x",VariantType::Number),Param("y",VariantType::Number),Param("scale",VariantType::Number),Param("alpha",VariantType::Number),Param("duration",VariantType::Integer),Param("ease",VariantType::String),Param("wait",VariantType::Bool)},CommandWaitPolicy::Async));
     add(Descriptor("tween","Animation",registry.Find("anim")->parameters,CommandWaitPolicy::Async));
     add(Descriptor("camera","Animation",{Param("x",VariantType::Number),Param("y",VariantType::Number),Param("zoom",VariantType::Number),Param("duration",VariantType::Integer),Param("ease",VariantType::String),Param("wait",VariantType::Bool)},CommandWaitPolicy::Async));
-    add(Descriptor("shake","Animation",{Param("ms",VariantType::Integer),Param("amp",VariantType::Number)}));
+    add(Descriptor("shake","Animation",{Param("ms",VariantType::Integer),Param("amp",VariantType::Number),Param("target",VariantType::String,false,Variant("stage"),CommandEditorWidget::Default,{"stage","window"})}));
+    add(Descriptor("actor_action","Stage",{Param("id",VariantType::String,true),Param("preset",VariantType::String,true),Param("size",VariantType::Number),Param("time",VariantType::Integer),Param("loop",VariantType::Integer),Param("ease",VariantType::String)}));
     add(Descriptor("quake","Animation",{Param("time",VariantType::Integer),Param("power",VariantType::Number)}));
     add(Descriptor("wait","Flow",{Param("ms",VariantType::Integer,true)},CommandWaitPolicy::Timer));
     add(Descriptor("bgm","Audio",{
@@ -185,6 +186,8 @@ CommandRegistry MakeBuiltins() {
         Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource)}));
     add(Descriptor("stopbgm","Audio",{Param("fade",VariantType::Integer)}));
     add(Descriptor("stopambience","Audio",{Param("fade",VariantType::Integer)}));
+    add(Descriptor("stopse","Audio",{Param("fade",VariantType::Integer)}));
+    add(Descriptor("stopvoice","Audio"));
     add(Descriptor("video","Video",{Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),Param("skippable",VariantType::Bool)},CommandWaitPolicy::Async,RollbackPolicy::Boundary));
     add(Descriptor("movie","Video",registry.Find("video")->parameters,CommandWaitPolicy::Async,RollbackPolicy::Boundary));
     add(Descriptor("route","UI",{Param("route",VariantType::String,true),Param("operation",VariantType::String,false,Variant("replace"),CommandEditorWidget::Default, {"push","replace","modal","back"})},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,false));
