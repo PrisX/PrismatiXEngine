@@ -38,6 +38,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   jump: ["goto", "target", "scene"],
   call: ["goto", "target", "scene"],
   return: [], end: [], wait: ["duration"],
+  add: ["name", "amount"],
   voice: ["asset", "fade", "loop", "intro"],
   bgm: ["asset", "fade", "loop", "intro"],
   ambience: ["asset", "fade", "loop", "intro"],
@@ -722,6 +723,24 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         }
         break;
       }
+      case "add": {
+        const variableName = named("name") ?? positional(0);
+        const amount = named("amount") ?? positional(1);
+        const descriptor = variableName === undefined ? undefined : variables.get(variableName);
+        if (variableName === undefined || amount === undefined ||
+            !/^-?\d+$/u.test(amount) || !Number.isSafeInteger(Number(amount)))
+          diagnostics.push(error("PXSTORY1150", "add requires a variable and a safe integer amount", node.span));
+        else if (context.game !== undefined && descriptor === undefined)
+          diagnostics.push(error("PXSTORY1122", `Unknown game variable: ${variableName}`, node.span));
+        else if (descriptor !== undefined && descriptor.type !== "integer")
+          diagnostics.push(error("PXSTORY1151", `add requires an integer variable: ${variableName}`, node.span));
+        else emit(node, "setVariable", {
+          name: variableName,
+          add: amount,
+          ...(descriptor === undefined ? {} : {scope: descriptor.scope}),
+        });
+        break;
+      }
       case "if": {
         const source = (node.arguments ?? []).map((value) => value.raw).join(" ");
         const expression = parseStoryExpression(source, context.game?.variables);
@@ -929,13 +948,14 @@ export interface StoryCommandCompletion {
 }
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
-  const builtins = ["id", "chapter", "say", "narrate", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "shake", "camera"];
+  const builtins = ["id", "chapter", "say", "narrate", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "shake", "camera"];
   const builtinParameters: Readonly<Record<string, StoryCommandCompletion["parameters"]>> = {
     id: [{name:"value", required:true}],
     chapter: [{name:"title", required:true}],
     say: [{name:"speaker", required:true}, {name:"text", required:true},
       {name:"character", required:false}],
     narrate: [{name:"text", required:true}],
+    add: [{name:"name", required:true}, {name:"amount", required:true}],
     bg: [
       {name:"asset", required:true}, {name:"rule", required:false},
       {name:"duration", required:false}, {name:"vague", required:false},

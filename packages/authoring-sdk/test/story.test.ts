@@ -60,6 +60,22 @@ test("say and narrate preserve source line breaks inside one dialogue operation"
   assert.ok(invalid.diagnostics.some(({code}) => code === "PXSTORY1149"));
 });
 
+test("add authors a checked integer increment with catalog scope", () => {
+  const game: GameDocument = {format:"PrismatiXGame", schemaRevision:2,
+    variables:[{name:"score", type:"integer", default:0, scope:"session"},
+      {name:"name", type:"string", default:"", scope:"profile"}]};
+  const result = compileStory(parseStory("[add name=score amount=2]\n"),
+    {documentId:"increment", game});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.runtimeIr?.operations[0]?.arguments,
+    {name:"score", add:"2", scope:"session"});
+  for (const line of ["[add name=score amount=1.5]", "[add name=name amount=1]",
+    "[add name=missing amount=1]"]) {
+    const invalid = compileStory(parseStory(line), {documentId:"bad-increment", game});
+    assert.equal(invalid.valid, false, line);
+  }
+});
+
 test("hide all clears actors with one readable operation and optional instant transition", () => {
   const result = compileStory(parseStory(
     "[hide all]\n[hide all transition=false]\n[hide yuki transition=false]\n",

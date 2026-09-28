@@ -94,6 +94,10 @@ in the Runtime operation. `say` may also include `character=alias` when the
 speaker should carry a registered actor identity. This is useful when
 importing scripts whose line breaks belong to a single advance step.
 
+`[add name=score amount=1]` increments a declared integer variable in its
+catalog scope. Negative integer amounts are supported. The Runtime stores the
+updated value in the same session or profile scope used by `[set]`.
+
 An ordinary `.pxstory` needs no manually authored id. New projects from
 `prismatix create` start with an external identity map already prepared.
 When save/seen identity
