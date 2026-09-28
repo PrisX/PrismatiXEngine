@@ -1125,7 +1125,8 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       }
     }
   }
-  for (const key of ["player.titleBgm", "player.uiHoverSound", "player.uiActivateSound"]) {
+  for (const key of ["player.titleBgm", "player.uiHoverSound", "player.uiActivateSound",
+    "player.uiCancelSound"]) {
     const value = settings[key];
     if (typeof value === "string") addResourceRef(value, `settings.${key}`,
       projectPath, `/settings/${pointerSegment(key)}`);

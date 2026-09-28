@@ -161,6 +161,7 @@ private:
     std::vector<std::string> m_titleVoices;
     std::string m_defaultUiHoverSound;
     std::string m_defaultUiActivateSound;
+    std::string m_defaultUiCancelSound;
     PresentationTransition m_routeTransition;
     PresentationTransition m_splashTransition;
     bool m_splashTransitionConfigured = false;

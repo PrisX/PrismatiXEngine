@@ -787,6 +787,7 @@ std::unique_ptr<Control> CreateControl(
                  node.id});
         } else {
             ++result.actionBindingCount;
+            button->SetActivationActionId(node.onClick->id);
             button->SetOnActivated(
                 [actionSink, action = *node.onClick, nodeId = node.id] {
                     if (!actionSink) return;

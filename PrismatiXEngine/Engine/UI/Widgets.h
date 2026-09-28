@@ -90,6 +90,10 @@ public:
     [[nodiscard]] Color GetTextColor() const { return m_textColor; }
     [[nodiscard]] bool HasTextColor() const { return m_hasTextColor; }
     void SetOnActivated(Activated value) { m_activated = std::move(value); }
+    // Authored onClick action id, kept so hosts can choose default feedback
+    // (for example a cancel sound) without parsing the UI document again.
+    void SetActivationActionId(std::string value) { m_activationActionId = std::move(value); }
+    [[nodiscard]] const std::string& ActivationActionId() const { return m_activationActionId; }
     void SetBindingAction(std::string action);
     [[nodiscard]] const std::string& BindingAction() const { return m_bindingAction; }
     void SetBindingDevice(BindingDevice device);
@@ -193,6 +197,7 @@ private:
     bool m_hasTextColor = false;
     ActionInvocation m_action;
     Activated m_activated;
+    std::string m_activationActionId;
     HorizontalTextAlignment m_horizontalAlignment = HorizontalTextAlignment::Center;
     VerticalTextAlignment m_verticalAlignment = VerticalTextAlignment::Center;
 };

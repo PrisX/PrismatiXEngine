@@ -897,8 +897,15 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         if(dynamic_cast<ui::Button*>(&control)){
             const std::string hover=control.HoverSoundPath().empty()
                 ? m_defaultUiHoverSound : control.HoverSoundPath();
-            const std::string activate=control.ActivateSoundPath().empty()
-                ? m_defaultUiActivateSound : control.ActivateSoundPath();
+            // Back/"no" controls default to the cancel sound when the
+            // project provides one; an authored activateSoundPath wins.
+            const std::string& actionId=static_cast<ui::Button&>(control).ActivationActionId();
+            const bool cancels=actionId=="overlay.close"||actionId=="route.back"||
+                actionId.ends_with(".cancel");
+            const std::string activate=!control.ActivateSoundPath().empty()
+                ? control.ActivateSoundPath()
+                : cancels&&!m_defaultUiCancelSound.empty()
+                    ? m_defaultUiCancelSound : m_defaultUiActivateSound;
             if(!hover.empty()) (void)control.ConnectSignal("pointerEntered",[this,hover](const ui::Control::SignalArguments&){m_runtime.Audio().PlaySE(hover);});
             if(!activate.empty()) (void)control.ConnectSignal("activated",[this,activate](const ui::Control::SignalArguments&){m_runtime.Audio().PlaySE(activate);});
         }
@@ -1044,6 +1051,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 };
                 readUiSound("player.uiHoverSound",m_defaultUiHoverSound);
                 readUiSound("player.uiActivateSound",m_defaultUiActivateSound);
+                readUiSound("player.uiCancelSound",m_defaultUiCancelSound);
                 if (const auto uiFont = settings->find("player.uiFont");
                     uiFont != settings->end() && uiFont->is_string()) {
                     const auto safe = SafeVfsRelativePath(uiFont->get<std::string>());
