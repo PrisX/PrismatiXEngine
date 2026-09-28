@@ -464,6 +464,7 @@ function rewriteScene(
   scene: ParsedScene,
   document: StoryDocument,
   scenesById: ReadonlyMap<string, ParsedScene>,
+  duplicateLabels: ReadonlySet<string>,
   extraDiagnostics: readonly AuthoringDiagnostic[],
 ): RewrittenScene {
   const diagnostics: AuthoringDiagnostic[] = [...document.diagnostics, ...extraDiagnostics];
@@ -476,7 +477,12 @@ function rewriteScene(
 
   for (const node of document.nodes) {
     if (node.kind === "label" && node.name !== undefined) {
-      nodes.push({...node, name: sceneLabelTarget(scene.descriptor.id, node.name)});
+      // RuntimeIrAdapter exposes label operation text as a second VM lookup
+      // alias. Only repeated author labels need a scene prefix, preserving
+      // existing external lookups for project-wide unique labels.
+      nodes.push({...node, name: sceneLabelTarget(scene.descriptor.id, node.name),
+        raw: duplicateLabels.has(node.name)
+          ? `*${scene.descriptor.id}:${node.name}` : node.raw});
       continue;
     }
     if (node.kind !== "command" || node.name === undefined || !["choice", "jump", "call"].includes(node.name)) {
@@ -631,6 +637,12 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
   const resourceDependencies = new Set<string>();
   const resourceLocations = new Map<string, SourceSpan>();
   const operationOwners = new Map<string, {sceneId: string; path: string; line: number}>();
+  const firstLabelOwner = new Set<string>();
+  const duplicateLabels = new Set<string>();
+  for (const scene of scenesById.values())
+    for (const label of scene.labels)
+      if (firstLabelOwner.has(label)) duplicateLabels.add(label);
+      else firstLabelOwner.add(label);
   const sharedSnapshot = sceneCache === undefined ? undefined : {
     compileInputs: JSON.stringify([
       documentId, context.locale, context.characters, context.game,
@@ -707,7 +719,8 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
         // An uncached direct compile has already parsed every scene.
         const document = scene.document;
         if (document === undefined) throw new Error(`Story scene was not parsed: ${descriptor.id}`);
-        const rewritten = rewriteScene(scene, document, scenesById, sceneDiagnostics);
+        const rewritten = rewriteScene(scene, document, scenesById,
+          duplicateLabels, sceneDiagnostics);
         compiled = compileStory(rewritten.document, {
           documentId: descriptor.identityNamespace ?? `${documentId}:${descriptor.id}`,
           locale: context.locale,

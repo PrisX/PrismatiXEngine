@@ -169,6 +169,15 @@ test("Story project compiler resolves cross-scene jump/call targets into one Run
   assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
   assert.ok(compiled.runtimeIr);
   assert.ok(compiled.sourceMap);
+  const labelAliases = compiled.runtimeIr!.operations
+    .filter((operation) => operation.kind === "label")
+    .map((operation) => operation.text);
+  assert.ok(labelAliases.includes("*scene01:start"));
+  assert.ok(labelAliases.includes("*scene02:start"));
+  assert.ok(labelAliases.includes("*aside"),
+    "unique author labels keep their existing public alias");
+  assert.equal(new Set(labelAliases).size, labelAliases.length,
+    "native Program label aliases must be unique across scenes");
   assert.equal(validateDocument("runtimeIr", compiled.runtimeIr).valid, true);
   assert.equal(validateDocument("sourceMap", compiled.sourceMap).valid, true);
   assert.equal(compiled.runtimeIr!.documentId, "main-story");
