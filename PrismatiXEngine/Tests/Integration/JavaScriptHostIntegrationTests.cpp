@@ -12,6 +12,7 @@
 #include "Engine/UI/UIRouter.h"
 #include "Engine/VN/Commands/CommandRegistry.h"
 #include "Engine/VN/Runtime/Stage.h"
+#include "Engine/VN/Runtime/Dialogue.h"
 #include "Engine/VN/Runtime/VariableStore.h"
 #include "Tests/TestSupport/TestHarness.h"
 
@@ -68,6 +69,10 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         Engine.RegisterCommand("js.demo.awaitAnimation", async (args) => {
             await Engine.WaitAnimation(args.handle);
             Engine.log("async-animation:done");
+        });
+        Engine.RegisterCommand("js.demo.say", async (args) => {
+            await Engine.Say(args.text, args.speaker);
+            Engine.log("script-say:done");
         });
         Engine.RegisterCommand("js.demo.debug", async (args) => {
             const state = { score: args.score, nested: { value: "watch-ready" } };
@@ -160,6 +165,18 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                 "rollback": "boundary",
                 "parameters": [
                     {"name":"handle","type":"integer","required":true}
+                ]
+            },
+            {
+                "id": "js.demo.say",
+                "displayName": "Say",
+                "description": "Checkpointed dialogue",
+                "category": "Tests",
+                "await": true,
+                "rollback": "boundary",
+                "parameters": [
+                    {"name":"text","type":"string","required":true},
+                    {"name":"speaker","type":"string","required":false}
                 ]
             },
             {
@@ -408,6 +425,16 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                  px::Variant("zh-TW"), px::Variant("ja-JP")})}});
     };
     services.advanceDialogue = [&] { ++advanceRequests; return true; };
+    px::vn::Dialogue authoredDialogue;
+    int authoredPresentations = 0;
+    px::vn::Command authoredAnchor;
+    services.presentScriptSay = [&](const px::vn::Command& say) {
+        ++authoredPresentations;
+        authoredAnchor = say;
+        authoredDialogue.SetText(say.Get("speaker"), say.Get("text"), 30,
+                                 {245, 248, 255, 255}, {0, 0, 0, 255});
+        return px::Status::Ok();
+    };
     services.selectChoice = [&](const int index) {
         selectedChoice = index;
         return index == 0;
@@ -778,6 +805,43 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     host.Update(0.03f);
     suite.Expect(!host.HasPendingCommand() && console.back().text == "async-command:done",
                  "async command should complete after all waits expire");
+
+    px::vn::Command sayCommand;
+    sayCommand.type = "js.demo.say";
+    sayCommand.sourceId = "story-command";
+    sayCommand.operationId = "story-operation";
+    sayCommand.typedArgs["text"] = px::Variant("Checkpointed line");
+    sayCommand.typedArgs["speaker"] = px::Variant("Yuki");
+    suite.Require(host.InvokeCommand(sayCommand) && host.HasPendingCommand() &&
+                      authoredPresentations == 1 &&
+                      authoredAnchor.sourceId == sayCommand.sourceId &&
+                      authoredAnchor.operationId == sayCommand.operationId &&
+                      authoredDialogue.State().fullText == "Checkpointed line",
+                  "script say should use the containing Story command anchor");
+    const auto sayCheckpoint = host.CapturePending();
+    suite.Require(sayCheckpoint.size() == 1 &&
+                      sayCheckpoint.front().waitKind == "dialogue" &&
+                      sayCheckpoint.front().remainingSeconds == 0.0f,
+                  "script say should persist a dialogue wait");
+    host.CancelPending();
+    suite.Require(static_cast<bool>(host.RestorePending(sayCheckpoint)) &&
+                      authoredPresentations == 1,
+                  "dialogue checkpoint replay must not present or play the line twice");
+    suite.Require(host.AdvanceDialogueWait(authoredDialogue) &&
+                      authoredDialogue.Finished() && host.HasPendingCommand(),
+                  "first advance should reveal the rest of the authored line");
+    suite.Require(host.AdvanceDialogueWait(authoredDialogue) &&
+                      host.CapturePending().front().remainingSeconds == 1.0f,
+                  "second advance should mark the dialogue wait ready");
+    const auto advancedSayCheckpoint = host.CapturePending();
+    host.CancelPending();
+    suite.Require(static_cast<bool>(host.RestorePending(advancedSayCheckpoint)) &&
+                      authoredPresentations == 1,
+                  "restoring after Advance must preserve the ready wait without replaying the line");
+    host.Update(0.0f);
+    suite.Expect(!host.HasPendingCommand() &&
+                     console.back().text == "script-say:done",
+                 "authored command should resume after player advance");
 
     auto invalidCommandCheckpoint = commandCheckpoint;
     invalidCommandCheckpoint.front().waitKind = "animation";

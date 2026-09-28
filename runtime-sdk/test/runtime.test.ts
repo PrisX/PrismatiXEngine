@@ -50,6 +50,9 @@ const engine = {
   }),
   GetChoices: () => [{index: 0, text: "Go", target: "route-a", sourceId: "story", operationId: "choice-1"}],
   AdvanceDialogue: () => { calls.push("advance"); return true; },
+  Say: async (text: string, speaker?: string, character?: string, voice?: string, textId?: string) => {
+    calls.push(`say:${text}:${speaker ?? ""}:${character ?? ""}:${voice ?? ""}:${textId ?? ""}`);
+  },
   SelectChoice: (index: number) => { calls.push(`choice:${index}`); return index === 0; },
   GetBacklog: () => [{sequence: 17, speaker: "Yuki", text: "Hello", voice: "Assets/Voice/001.ogg", isChoice: false, sourceId: "story", operationId: "line-1"}],
   ReplayBacklogVoice: (sequence: number) => { calls.push(`replay:${sequence}`); return sequence === 17; },
@@ -209,6 +212,9 @@ ctx.ui.setTransition("title", "hud", {preset: "tile", durationSeconds: 0.8});
 if (ctx.session.dialogue().speaker !== "Yuki" || ctx.session.choices()[0]?.target !== "route-a" ||
     !ctx.session.advance() || !ctx.session.selectChoice(0))
   throw new Error("session model facade is not wired");
+await ctx.session.say("Hello", {speaker: "Yuki", voice: "Assets/Voice/001.ogg"});
+if (!calls.includes("say:Hello:Yuki::Assets/Voice/001.ogg:"))
+  throw new Error("script say facade is not wired");
 if (ctx.backlog.entries()[0]?.sequence !== 17 || !ctx.backlog.replayVoice(17) ||
     !ctx.backlog.rollback(17))
   throw new Error("backlog model facade is not wired");
@@ -313,6 +319,7 @@ const expected = [
   "route-effect:title:hud",
   "advance",
   "choice:0",
+  "say:Hello:Yuki::Assets/Voice/001.ogg:",
   "replay:17",
   "rollback:17",
   "setting:textScale:1.25",

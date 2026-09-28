@@ -824,6 +824,25 @@ void VM::HandleSay(const Command& cmd, const bool recordPlayback) {
     }
 }
 
+Status VM::PresentScriptSay(const Command& command) {
+    if (command.type != "say" || command.sourceId.empty() ||
+        command.operationId.empty() || m_program.documentId.empty() ||
+        (!command.Has("text") && !command.Has("value")) || m_seeking ||
+        (m_state != VMState::Running && m_state != VMState::WaitingExternal &&
+         m_state != VMState::WaitingClick)) {
+        diag::Diagnostic diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXVM7602",
+            .category = "VN.Runtime",
+            .message = "Script say requires a loaded Story, stable identities and text"};
+        ApplyDiagnosticSource(diagnostic, command);
+        diag::Emit(diagnostic);
+        return Status::Fail(std::move(diagnostic));
+    }
+    HandleSay(command);
+    return Status::Ok();
+}
+
 void VM::CollectChoices() {
     m_choices.clear();
     const auto& code = m_program.code;
@@ -1018,7 +1037,8 @@ void VM::Update(std::uint64_t nowMs, float dt) {
     m_stage.Update(dt);
     if (m_state == VMState::Running) {
         Run();
-    } else if (m_state == VMState::WaitingClick) {
+    } else if (m_state == VMState::WaitingClick ||
+               m_state == VMState::WaitingExternal) {
         m_dialogue.Update(nowMs);
     } else if (m_state == VMState::WaitingTimer) {
         if (nowMs - m_timerStart >= m_timerMs) {

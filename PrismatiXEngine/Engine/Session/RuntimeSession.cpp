@@ -617,6 +617,7 @@ void RuntimeSession::Update(const std::uint64_t nowMs, const float deltaSeconds)
 }
 
 void RuntimeSession::Advance() {
+    if (m_dialogueAdvanceHandler && m_dialogueAdvanceHandler(m_dialogue)) return;
     m_vm.OnAdvance();
 }
 

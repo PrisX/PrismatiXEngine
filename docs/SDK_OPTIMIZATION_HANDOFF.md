@@ -1,8 +1,10 @@
 # SDK 優化交接（給下一位 agent）
 
-更新：2026-09-28。此文件以當前兩個本機 repo 和實際測試為準；不是「全部完成」聲明。較完整的逐項發現與歷史量測在 `C:\Users\owenl\C\Projects\SenrenBankaPSX\docs\SDK_FEEDBACK.md`。該檔按時間追加，早段的「尚未實作」有些已被後段取代，閱讀時以最新段落與程式碼為準。
+更新：2026-09-28。此文件以當前兩個本機 repo 和實際測試為準。本次限定的 Authoring／SDK 功能收尾已完成；下方早期的效能、原作移植與大型發行版驗收是歷史背景及後續可選工作，不計入這一階段完成條件。較完整的逐項發現與歷史量測在 `C:\Users\owenl\C\Projects\SenrenBankaPSX\docs\SDK_FEEDBACK.md`。該檔按時間追加，早段的「尚未實作」有些已被後段取代，閱讀時以最新段落與程式碼為準。
 
-**目前優先順序（使用者 2026-09-28 指示）**：先完善可重用的 SDK Authoring 功能；封裝／大型 build 效能及《千戀＊萬花》1:1 移植暫不列為此階段完成條件。近期 Authoring 已補主要跨檔來源定位、Story 錨點刪除保護、重複與未知參數拒絕、匯入時不猜測同名素材的純資料 resolver、指令序列化／多場景輸出組裝介面、大型 Story 可用的稀疏存檔錨點映射規則，以及非 Player host 的 typed Action 宣告與 native handler 驗證。仍須分別決定並驗收：(1) 真實舊存檔與新版劇本的逐位置遷移；`--accept-removals` 仍只是人工確認；(2) JavaScript `say` 作者 API 與其存檔／已讀身分，現有 Story `@alias` 已可多語但 JS session 僅唯讀 dialogue；(3) 私有匯入器的索引／素材路徑邏輯是否採用通用 SDK 介面。SCN adapter 已接 SDK 單場景 Story 輸出，但原作格式解碼仍留專案。非 Player host 的 UI 值、formatter、晚更新接線範例已補在 `docs/placed-item-authoring.md`。動態立繪 dress／pose／face 若要成為單一 descriptor 的正式 API，需另定存檔與依賴語意；不要把原作逐幀還原混在此項。
+**本階段完成判準（使用者 2026-09-28 指示）**：可重用的 SDK Authoring 功能完成後，這一階段 SDK 優化即完成。跨檔來源定位、Story 錨點刪除保護、匯入 resolver／序列化／多場景組裝、稀疏存檔錨點映射、typed host Action，以及本輪 JS `say` 均已提供。SDK 存檔 migration schema／planner／native 載入測試已有覆蓋；兩個 repo 未找到可驗的舊版實際 slot，因此 Senren 真實舊存檔逐位置驗收列為該遊戲發行 QA。SDK 已提供通用 Story index assembler 與不猜測同名素材的 resolver；Senren 現行 index 和選最大檔素材規則牽涉既有編輯 sidecar 與原作素材政策，留在專案 adapter，並非缺少 SDK 介面。封裝／大型 build 效能、《千戀＊萬花》1:1 移植、動態 dress／pose／face 與非 Player host 產品接線不列為本階段完成條件。
+
+**本輪驗證**：`ctx.session.say` 已實作為每個有錨點的 Story extension command 一句，直接沿用其 document／source／operation 身分；原生 VM 負責已讀、backlog、語音，JavaScript dialogue wait 可 checkpoint／restore。Player、原生 Preview、Wasm Preview 已編譯；native JS host／VM／SaveLoad 測試、完整 `npm test`（Authoring 198、CLI 117 通過／1 跳過、Runtime 1，另文件與 mock 安裝流程）通過。尚未產生新的發行包或執行真實遊戲 slot 的 Player 存讀檔 E2E。
 
 ### 2026-09-27—28 後續進度
 
@@ -12,7 +14,7 @@
 
 - **SDK 匯入輸出介面。** `buildImportedStorySource` 接受專用 decoder 翻譯後的逐行 Story 與穩定 ID，驗證每個可執行行都有 ID，產生 `.pxstory`／`.pxids.json`。`assembleImportedStoryProject` 將多場景、多語來源組成 index 和純資料檔案集合，拒絕缺語系、不同語系的 ID／操作種類不一致、同 namespace 重複 ID、路徑大小寫碰撞與不安全路徑；輸出還須由 `compileStoryProject`／`compileProject` 做語意檢查。SDK 195/195 測試通過。Senren 的 SCN／PSB 解碼器尚未接入此介面，SDK 也沒有通用 KAG 輸入解碼。詳見 `docs/importing-stories.md`。
 
-- **JavaScript `say` 的實作邊界。** `runtime-sdk` 現僅有 `session.dialogue()`／`observeDialogue()` 唯讀模型與 `advance()`；原生 `VM::HandleSay` 才會同時處理 seen key（document／source／operation）、speaker、文字、語音、backlog。若要作者端 JS `say` 正式可存讀，需在 `ScriptHostServices`、Player 與兩種 Preview host 接同一套持久錨點與等待／回復語意；只加 TypeScript facade 會讓文字能顯示卻破壞已讀或存檔，故尚未宣稱完成。
+- **JavaScript `say` 已可使用。** `ctx.session.say(text, options)` 只允許在帶 Story source／operation 錨點的非同步 extension command 中，每個 command 一句；直接沿用包含它的 operation 身分，避免生成存檔無法定位的子錨點。`VM::PresentScriptSay` 重用 seen、speaker、文字、語音、backlog 語意；Player 與兩種 Preview host 接同一服務與 Advance；dialogue wait 存在 script checkpoint，restore 以 journal 防止重新呈現。native VM、JS host integration、runtime-sdk 測試通過。用法見 `runtime-sdk/README.md`。尚未以真實 Player 存檔／載入作完整 E2E 驗收。
 
 - **大型 Story 的稀疏存檔錨點遷移。** `.pxsave-migration` rev 2 新增 `anchor.policy: "map-or-preserve"`：只改明列的舊錨點，其他保持原 ID；舊 `map` 未命中即拒絕的規則不變。Native 改成先找完所有 mapping 再套用，避免 A→B、B→C 在同一份文件內意外連鎖；重複命中拒絕。Authoring schema、TS 型別、文件及 native 4 MiB 長度限制已對齊。SDK 188/188、SaveLoad native integration 1/1、contract generation check 通過。Player 載入時會驗目標 Runtime 文件與 source／operation pair；仍需用真實舊存檔驗改過的劇情位置及狀態語意，這一輪未重封 Player。舊版 Player 不認新 policy；單純 patch.pdx 無法替換 Player，已發行舊版需要新版基底發行包。詳見 `docs/save-migrations.md`。
 
@@ -79,7 +81,7 @@
 - CLI `build`／`dev` 現把逐 scene Story 編譯結果保存為每專案單一 `.prismatix/cache/story-scenes-v1.json.gz`，跨 CLI 行程可重用；改一個 scene 時其他未變 scene 仍可跳過解析與編譯，改 sidecar／跨 scene label／共用編譯輸入時使用既有精確快照失效。快取另以實際 CLI／Authoring SDK 編譯後 JS 與 Node 版本做身份綁定，損壞檔回退重編；檔案上限 128 MiB 壓縮／512 MiB 解壓，沒有新結果時不重寫。SDK 160/160、CLI 108/108 通過，跨獨立行程的重用、單 scene 修改與損壞回退已驗；**尚未在四語大型專案量測 cache 大小、CPU、記憶體，也未使媒體封裝驗證增量化**。原 `validate --runtime` 仍為唯讀全編譯；此快取不跳過發布前來源與成品驗證。
 - CLI `build`／`dev` 現在保存載入時的作者文字快照（project/JSON 文件、Story、外部 ID sidecar、locale、shader 及本地 TSX module graph），重複讀到不同文字也立即拒絕，並在正式 artifact 發布前重讀比對；原本不存在的 project manifest 或 Story sidecar 若中途出現亦拒絕。已存在 artifact 的「未變直接保留」路徑同樣在鎖內檢查，變更時保留原成品。CLI 全套 107/107 通過；新增整合測試於發布中改 Story、加入 sidecar、及未變 artifact 驗證中改 Story，三者都拒絕且原 ownership marker／Runtime IR 原樣保留；最後的重複讀取補強後 targeted 2/2 與四語 368 scene／31,339 資源的 `validate --runtime` 通過。這只核對實際載入的文字，媒體仍走既有複製／指紋驗證；執行中 TSX 自行讀取的任意外部檔案無法由靜態 module graph 保證。此安全失效邊界也適用於上列新快取。
 - 新一輪四語 368 scene／31,339 資源的唯讀 `validate --runtime` 通過，未開 CPU profile 的單次耗時約 8.96 秒；帶 profile 的前一次約 9.97 秒，兩者條件不同，不能據此宣稱加速比例。Profile 顯示 `canonicalJson`、穩定 ID FNV、Story 編譯仍是主要 CPU 熱點。曾試驗不複製物件的串流 canonical JSON 原型，10 萬個合成 operation 約 579 ms，慢於原實作約 121 ms，故未採用。穩定 ID 改為對 ASCII 前綴直接處理同一批 UTF-8 byte，Unicode 後綴維持 `TextEncoder`；舊 BigInt 演算法對照、Authoring SDK 159/159、CLI 106/106、四語 `validate --runtime` 均通過，10 萬筆合成 ASCII ID 暖機後約 45 ms → 40 ms，單次量測不代表大型專案固定收益。Story 跨場景不存在 scene／label 的診斷現帶作者原始命令的 source span，CLI 可顯示行列；缺少來源位置的 index/required-label 診斷仍待擴充。這輪效能修正本身未減少發行版的全量安全核驗。
-- 原生角色資源載入器現會驗證並保留 `.pxcharacter.displayNames`，GameCatalog 可依 exact locale 選擇姓名，缺少該語系時回退至 `displayName`；穩定 UUID／alias 查找不受翻譯姓名影響。VM 的 `[say char=...]` 在未明寫 `speaker` 時使用目前語系，Player 與原生／Wasm Preview 均同步該語系，明寫的 speaker 仍優先。CharacterResources Contract、Runtime IR Runtime Adapter、Preview Localization Contract、Player Catalog Native Acceptance 均通過。JavaScript runtime SDK 目前只有唯讀 dialogue model，沒有獨立的 JS `say` 作者 API；先前表格的「JS say」描述應以此為準。Senren 既有 narration/name-prefix 未變，改 Story operation kind 前仍須真實舊存檔 migration 驗收。
+- 原生角色資源載入器現會驗證並保留 `.pxcharacter.displayNames`，GameCatalog 可依 exact locale 選擇姓名，缺少該語系時回退至 `displayName`；穩定 UUID／alias 查找不受翻譯姓名影響。VM 的 `[say char=...]` 在未明寫 `speaker` 時使用目前語系，Player 與原生／Wasm Preview 均同步該語系，明寫的 speaker 仍優先。CharacterResources Contract、Runtime IR Runtime Adapter、Preview Localization Contract、Player Catalog Native Acceptance 均通過。JavaScript runtime SDK 的 `ctx.session.say` 已在本輪加入；Senren 既有 narration/name-prefix 未變，改 Story operation kind 前仍須真實舊存檔 migration 驗收。
 - 非 Player 原生 host 現可用 `GameSettings::LoadWithInputBindings`／`SaveWithInputBindings` 同時處理鍵盤與滾輪設定，stock Player 也改用同一路徑。`Input::RestoreUserBindings` 在暫存副本上先重設作者預設並核對兩張保存表，任一表無效時不會只套用另一張；設定載入失敗亦保留原物件與原檔。`docs/input-actions.md` 補非 Player host 的 `UIContext::SetInputBindingService` 保存範例。Native SaveLoad integration 1/1 驗正常讀寫、晚註冊 action、舊檔缺滾輪及無效鍵碼／滾輪的原子拒絕；Player Catalog Native Acceptance 1/1 通過。此 API 不會自行挑選 host 的 per-user 路徑或加密金鑰。
 - Node Story 來源 loader 與 CLI authored text 載入改用共用 `readBoundedUtf8File`：從已開啟的檔案逐段讀取，檔案在初次 stat 後增長也不能越過 16 MiB 上限；錯誤 UTF-8 直接拒絕，不再被 Node 的字串解碼替換成 U+FFFD；BOM 仍保留供既有契約明確檢查。Authoring SDK targeted 4/4 與全套 159/159、CLI 原有 105/105 加新增壞 UTF-8 targeted 1/1 通過；四語 368 scene／31,339 資源 `validate --runtime` 通過。這是大型來源匯入的界限與資料正確性補強；後來的跨次快取仍以這項有界讀取取得新來源。
 - 正式 `RunPackager` 現在不再於 preflight 對每個非 `.ts` 輸入先做一輪全檔 SHA-256；會被結構驗證讀取的文件在該次讀取時核對宣告 fingerprint，小型 JSON identity／effect 來源在再次讀取時核對，其餘輸入由 archive writer 或整片重用驗證。獨立 `ValidatePackageRequest`／`pack --check` 仍保留原先 eager 非媒體核對；`.ts` 也維持 eager。新增合約測試涵蓋未解析非媒體來源延後至 writer 拒絕、結構文件在 preflight 後讀取前變動即拒絕，且都保留既有輸出。Native Packager Contract 1/1、Player Catalog Native Acceptance 1/1 通過；這只省下正式封裝一次重複來源讀取，該輪尚無 8 GB 兩版 overlay；後續已補 signed 雙版本實測，見本節首段。
@@ -120,7 +122,7 @@
 ## 使用者要求與範圍
 
 - 原始《千戀＊萬花》完整 1:1 移植目標，使用者已明確要求暫停；不要把遊戲畫面尚未還原當成 SDK 優化已完成，也不要擅自重啟完整移植。
-- 當前 SDK 目標是：把實作過程中發現的不友善、繁瑣、難用之處盡可能優化，並使用 `feat:`／`fix:`／`chore:`／`docs:` 等慣用格式提交。此目標仍有未完成工作；本交接不宣稱完成。
+- 這一階段 SDK 目標是：收尾移植過程暴露的可重用 Authoring 功能，並使用 `feat:`／`fix:`／`chore:`／`docs:` 等慣用格式提交。本階段已完成；後文歷史清單不擴大本階段範圍。
 - 使用者最近明確說「先別繼續搞 M2，趕快把其他 SDK 優化做完」。不要把 M2 Cheeseware 原 `.mtn` 還原或逐幀比對列為目前工作主線。`.pxmotion` 的基本能力已存在，但 M2 原動畫仍不等價。
 - 2026-09-27 再確認：當前目標是收尾這次移植過程暴露的**可重用 SDK 問題**，不是把《千戀＊萬花》完整移植。遊戲特有畫面、素材、25 項原作快捷鍵的逐一映射與 1:1 視覺對照只用於辨識 SDK 缺口，不計入 SDK 完成條件。
 
@@ -172,7 +174,7 @@ Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已�
 
 此段原始單檔產製階段的歷史驗證（2026-09-27）：native 三項 targeted CTest 3/3 通過；`npm run cli:test` 104/104 通過。當時尚無 Player 自動套用；現在已有上方所列的 signed Player E2E。目錄 `create-patch`／`apply-patch` 流程仍可使用。
 
-## 未完成工作：下一位 agent 的建議順序
+## 歷史待辦背景：不列入本階段 SDK 完成條件
 
 此節保留先前 overlay／效能交接背景；依上方最新使用者指示，先處理第 4 項 Authoring 功能與明確可重用的第 5 項作者體驗。第 1–3 項的性能與大包驗收暫緩，不應拿它們當作 Authoring 完成度。
 
@@ -210,4 +212,4 @@ npm run pack:artifact
 - 先跑 `git status --short`，核對本文件所述工作是否已提交。不要覆蓋使用者或其他 agent 的變更；Engine 那份未追蹤舊 audit 不屬於本輪交付。
 - 優先讀 Engine `docs/package-overlay.md`、`docs/getting-started.md` 和移植案 `docs/SDK_FEEDBACK.md` 的最新段落；後者包含早期已過時狀態，不能只讀搜尋結果第一筆。
 - 每一項改善要留下可回歸的 contract／integration test；效能宣稱標示 Debug/Release、版本、硬體／磁碟、輸入數與是否暖快取。提交訊息使用 `feat:`、`fix:`、`docs:` 等使用者指定風格。
-- SDK 優化目標尚未達「全部優化完成」；不要因為寫了交接或完成單檔產製就把目標標為完成。
+- 本階段 SDK Authoring 已依使用者指定的範圍完成；真實舊遊戲存檔、完整移植與發行效能另按專案需求驗收。

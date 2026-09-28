@@ -32,6 +32,8 @@ namespace px::ui {
 class UIRouter;
 }
 namespace px::vn {
+struct Command;
+class Dialogue;
 class Stage;
 class VariableStore;
 }
@@ -86,6 +88,9 @@ struct ScriptServices {
     std::function<Variant()> queryChoices;
     std::function<Variant()> queryBacklog;
     std::function<Variant()> querySettings;
+    // A script-authored line uses the containing Story command's stable
+    // source/operation identity and the VM's ordinary say semantics.
+    std::function<Status(const vn::Command&)> presentScriptSay;
     std::function<bool()> advanceDialogue;
     std::function<bool(int index)> selectChoice;
     std::function<bool(std::uint64_t sequence)> replayBacklogVoice;
@@ -137,6 +142,8 @@ public:
     virtual bool InvokeCommand(const vn::Command& command) = 0;
     [[nodiscard]] virtual std::shared_ptr<ui::IActionProvider> CreateActionProvider() = 0;
     virtual void Update(float deltaSeconds) = 0;
+    // Consumes Advance while an authored JavaScript line awaits a click.
+    virtual bool AdvanceDialogueWait(vn::Dialogue& dialogue) = 0;
     // Executes retained backend-neutral draw plans at a host-defined frame
     // boundary. Every application host calls the same four phases.
     virtual void RenderRetained(RenderPhase phase) = 0;

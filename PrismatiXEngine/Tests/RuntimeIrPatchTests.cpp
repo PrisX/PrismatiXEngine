@@ -141,6 +141,33 @@ int main() {
     assert(choiceSeen[0] ==
            "document-a:shared-source:shared-operation");
 
+    auto scriptProgram = DialogueProgram("Story line");
+    scriptProgram.documentId = "script-document";
+    assert(vm.LoadCompiledProgram(std::move(scriptProgram), path));
+    const int scriptSavePoint = vm.SavePoint();
+    const auto scriptState = vm.State();
+    backlog.Clear();
+    std::vector<std::string> scriptSeen;
+    vm.SetSeenHook([&scriptSeen](const std::string& key) {
+        scriptSeen.push_back(key);
+        return false;
+    });
+    auto scriptedSay = Say("script-line", "Script text");
+    scriptedSay.operationId = "script-operation";
+    assert(vm.PresentScriptSay(scriptedSay).IsOk());
+    assert(scriptSeen == std::vector<std::string>{
+        "script-document:script-line:script-operation"});
+    assert(!vm.CurrentLineSeen());
+    assert(dialogue.State().speaker == "雪" &&
+           dialogue.State().fullText == "Script text");
+    assert(backlog.Entries().size() == 1 &&
+           backlog.Entries().back().sourceId == "script-line" &&
+           backlog.Entries().back().operationId == "script-operation");
+    assert(vm.SavePoint() == scriptSavePoint && vm.State() == scriptState);
+    scriptedSay.operationId.clear();
+    assert(!vm.PresentScriptSay(scriptedSay));
+    assert(backlog.Entries().size() == 1);
+
     px::vn::VMConfig limits;
     limits.maxInstructionsPerTick = 4;
     limits.maxInstructionsWithoutYield = 12;

@@ -61,5 +61,9 @@ explicit IDs to labels too.
 The Senren port's SCN/PSB decoder and original-command translation remain
 project-specific. Its SCN adapter now uses `buildImportedStorySource` per
 scene and keeps the existing sidecar reconciliation. Its project index and
-media resolution still use port-specific code. This does not make the SDK a
-general KAG or PSB input decoder.
+media resolution still use port-specific code. The SDK already provides the
+general index assembler and an ambiguity-reporting media resolver; replacing
+the port's older code is project migration work because its existing edited
+sidecars must remain stable and its media fallback chooses among original
+assets using game-specific rules. The SDK does not need those rules to support
+other importers. This does not make the SDK a general KAG or PSB input decoder.

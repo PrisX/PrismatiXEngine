@@ -30,6 +30,7 @@ public:
     bool InvokeCommand(const vn::Command& command) override;
     [[nodiscard]] std::shared_ptr<ui::IActionProvider> CreateActionProvider() override;
     void Update(float deltaSeconds) override;
+    bool AdvanceDialogueWait(vn::Dialogue& dialogue) override;
     void RenderRetained(RenderPhase phase) override;
     [[nodiscard]] bool HasPendingCommand() const override;
     [[nodiscard]] bool HasPendingAction() const override;

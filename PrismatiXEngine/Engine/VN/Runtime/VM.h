@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Core/Types.h"
+#include "Engine/Core/Result.h"
 #include "Engine/VN/GameCatalog.h"
 #include "Engine/VN/Runtime/Program.h"
 
@@ -202,6 +203,11 @@ public:
     void Update(std::uint64_t nowMs, float dt);
     [[nodiscard]] VMRunResult RunSlice(std::size_t maxInstructions);
     void OnAdvance();
+    // Present a script-authored line through the same seen/backlog/dialogue
+    // path as Story say, without changing the hosting Story program counter.
+    // The caller supplies stable source and operation identities and owns the
+    // external await/advance checkpoint.
+    [[nodiscard]] Status PresentScriptSay(const Command& command);
     void SelectChoice(int index);
     void Resume();
 

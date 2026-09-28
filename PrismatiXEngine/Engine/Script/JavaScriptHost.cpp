@@ -12,6 +12,7 @@
 #include "Engine/UI/Actions/ActionCatalog.h"
 #include "Engine/UI/UIRouter.h"
 #include "Engine/VN/Commands/CommandRegistry.h"
+#include "Engine/VN/Runtime/Dialogue.h"
 #include "Engine/VN/Runtime/Stage.h"
 #include "Engine/VN/Runtime/VariableStore.h"
 
@@ -629,6 +630,18 @@ public:
         const EngineOperationJournal* previousReplay = nullptr;
         std::size_t previousCursor = 0;
         bool previousPersistent = false;
+    };
+
+    class CommandScope {
+    public:
+        CommandScope(Impl& owner, const vn::Command* command)
+            : owner(owner), previous(owner.activeCommand) {
+            owner.activeCommand = command;
+        }
+        ~CommandScope() { owner.activeCommand = previous; }
+    private:
+        Impl& owner;
+        const vn::Command* previous;
     };
 
     class StateCallbackScope {
@@ -1382,6 +1395,12 @@ public:
                 {.kind = "timer",
                  .remainingSeconds = static_cast<float>(seconds)});
         }
+        if (operation == "wait.dialogue") {
+            if (!activeCommand)
+                return JS_ThrowTypeError(context,
+                                          "Say is only valid inside a Story command callback");
+            return CreatePromiseWait({.kind = "dialogue"});
+        }
         if (operation == "wait.animation") {
             if (!IntegerArgument(count, values, 0, integer) || integer < 0)
                 return JS_ThrowRangeError(context,
@@ -1579,6 +1598,44 @@ public:
                 return JS_ThrowInternalError(
                     context, "session advance service is unavailable");
             return JS_NewBool(context, services.advanceDialogue());
+        }
+        if (operation == "session.presentSay") {
+            if (!activeCommand || !recordingJournal ||
+                !acceptingPromiseWait || createdPromiseWait ||
+                activeCommand->sourceId.empty() ||
+                activeCommand->operationId.empty())
+                return JS_ThrowTypeError(
+                    context, "Say requires an anchored Story command callback");
+            if (std::ranges::any_of(*recordingJournal, [](const auto& entry) {
+                    return entry.operation == "session.presentSay";
+                }))
+                return JS_ThrowTypeError(
+                    context, "a Story command may author only one dialogue line");
+            if (!services.presentScriptSay)
+                return JS_ThrowInternalError(
+                    context, "script say service is unavailable");
+            if (!StringArgument(count, values, 0, first))
+                return JS_ThrowTypeError(context, "Say requires text");
+            vn::Command say = *activeCommand;
+            say.type = "say";
+            say.args.clear();
+            say.typedArgs.clear();
+            say.args.push_back({"text", std::move(first)});
+            for (int index = 1; index < count; ++index) {
+                constexpr const char* fields[] = {"speaker", "character", "voice", "textId"};
+                if (index > 4)
+                    return JS_ThrowTypeError(context, "Say received an invalid option");
+                if (JS_IsUndefined(values[index])) continue;
+                std::string value;
+                if (!StringArgument(count, values, index, value))
+                    return JS_ThrowTypeError(context, "Say options must be strings");
+                say.args.push_back({fields[index - 1], std::move(value)});
+            }
+            const Status status = services.presentScriptSay(say);
+            if (!status)
+                return JS_ThrowInternalError(context,
+                                              "script say presentation failed");
+            return JS_UNDEFINED;
         }
         if (operation == "session.selectChoice") {
             if (!IntegerArgument(count, values, 0, integer) || integer < 0 ||
@@ -3212,6 +3269,10 @@ public:
                 GetDialogue: { value: bindRuntime("model.dialogue") },
                 GetChoices: { value: bindRuntime("model.choices") },
                 AdvanceDialogue: { value: bindRuntime("session.advance") },
+                Say: { value: (text, speaker, character, voice, textId) => {
+                    runtimeCall("session.presentSay", text, speaker, character, voice, textId);
+                    return runtimeCall("wait.dialogue");
+                } },
                 SelectChoice: { value: bindRuntime("session.selectChoice") },
                 GetBacklog: { value: bindRuntime("model.backlog") },
                 ReplayBacklogVoice: { value: bindRuntime("backlog.replayVoice") },
@@ -3894,6 +3955,7 @@ public:
         actionTerminalStates;
     std::optional<PromiseWaitCapability> createdPromiseWait;
     EngineOperationJournal* recordingJournal = nullptr;
+    const vn::Command* activeCommand = nullptr;
     const EngineOperationJournal* replayJournal = nullptr;
     std::size_t replayJournalCursor = 0;
     bool insidePersistentCallback = false;
@@ -4535,6 +4597,7 @@ bool JavaScriptHost::InvokeCommand(const vn::Command& command) {
     JSValue arguments = m_impl->CommandArguments(command);
     EngineOperationJournal journal;
     Impl::JournalScope journalScope(*m_impl, journal);
+    Impl::CommandScope commandScope(*m_impl, &command);
     m_impl->BeginPromiseCapture();
     m_impl->BeginExecution();
     JSValue result = JS_Call(m_impl->context, found->second, JS_UNDEFINED, 1, &arguments);
@@ -4749,6 +4812,7 @@ void JavaScriptHost::Update(const float deltaSeconds) {
         realm->Update(deltaSeconds);
 
     const auto ready = [this, deltaSeconds](Impl::WaitToken& wait) {
+        if (wait.kind == "dialogue") return wait.remainingSeconds > 0.0f;
         if (wait.kind == "debug") return false;
         if (wait.kind == "debug-resume") return true;
         if (wait.kind == "animation")
@@ -4797,6 +4861,7 @@ void JavaScriptHost::Update(const float deltaSeconds) {
         }
         const auto source = "command:" + iterator->command.type;
         Impl::JournalScope journalScope(*m_impl, iterator->journal);
+        Impl::CommandScope commandScope(*m_impl, &iterator->command);
         const auto result = !iterator->wait.failure.empty()
                                 ? (m_impl->Error(source, iterator->wait.failure),
                                    Impl::StepResult::Failed)
@@ -4858,6 +4923,18 @@ void JavaScriptHost::Update(const float deltaSeconds) {
             break;
         }
     }
+}
+
+bool JavaScriptHost::AdvanceDialogueWait(vn::Dialogue& dialogue) {
+    for (const auto& realm : m_impl->extensionRealms)
+        if (realm->AdvanceDialogueWait(dialogue)) return true;
+    for (auto& pending : m_impl->pendingCommands) {
+        if (pending.wait.kind != "dialogue") continue;
+        if (!dialogue.Finished()) dialogue.ShowAll();
+        else pending.wait.remainingSeconds = 1.0f;
+        return true;
+    }
+    return false;
 }
 
 void JavaScriptHost::RenderRetained(const RenderPhase phase) {
@@ -4977,10 +5054,13 @@ Status JavaScriptHost::RestorePendingInCurrentRealm(
         const bool validTimer = saved.waitKind != "timer" ||
                                 (std::isfinite(saved.remainingSeconds) &&
                                  saved.remainingSeconds >= 0.0f);
-        if (saved.yieldIndex == 0 || !validTimer ||
+        const bool validDialogue = saved.waitKind != "dialogue" ||
+                                   saved.remainingSeconds == 0.0f ||
+                                   saved.remainingSeconds == 1.0f;
+        if (saved.yieldIndex == 0 || !validTimer || !validDialogue ||
             (saved.waitKind != "timer" && saved.waitKind != "animation" &&
              saved.waitKind != "screen-effect" && saved.waitKind != "video" &&
-             saved.waitKind != "audio")) {
+            saved.waitKind != "audio" && saved.waitKind != "dialogue")) {
             return fail("PXJS7501", "Saved JavaScript await checkpoint is invalid",
                         saved.command.type);
         }
@@ -4991,6 +5071,7 @@ Status JavaScriptHost::RestorePendingInCurrentRealm(
         }
 
         JSValue arguments = m_impl->CommandArguments(saved.command);
+        Impl::CommandScope commandScope(*m_impl, &saved.command);
         auto replayed = m_impl->ReplayToBoundary(
             callback->second, 1, &arguments, saved.yieldIndex,
             "restore-command:" + saved.command.type, saved.journal);

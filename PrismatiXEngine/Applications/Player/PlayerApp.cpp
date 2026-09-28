@@ -1184,6 +1184,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_scriptServices.queryDialogue = [this] {
         return script::BuildDialogueModel(m_session->Dialogue());
     };
+    m_scriptServices.presentScriptSay = [this](const vn::Command& command) {
+        return m_session->VM().PresentScriptSay(command);
+    };
     m_scriptServices.queryChoices = [this] {
         return script::BuildChoiceModels(m_session->VM());
     };
@@ -1392,6 +1395,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     };
     PX_LOG_DEBUG("Player boot: constructing script host");
     m_scriptHost = script::CreateScriptHost(m_scriptServices);
+    m_session->SetDialogueAdvanceHandler([this](vn::Dialogue& dialogue) {
+        return m_scriptHost && m_scriptHost->AdvanceDialogueWait(dialogue);
+    });
     script::BindTimelineMarkerEvents(
         m_session->Timeline(), [this] { return m_scriptHost.get(); });
     PX_LOG_DEBUG("Player boot: script host constructed backend={}", m_scriptHost->BackendId());

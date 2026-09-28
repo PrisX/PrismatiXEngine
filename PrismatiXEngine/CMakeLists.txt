@@ -100,9 +100,7 @@ target_link_libraries(PrismatiXSDK PUBLIC
     zstd::libzstd
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
-)
-target_include_directories(PrismatiXSDK PRIVATE
-    $<TARGET_PROPERTY:SDL3_shadercross::SDL3_shadercross,INTERFACE_INCLUDE_DIRECTORIES>
+    SDL3_shadercross::SDL3_shadercross
 )
 if(TARGET MbedTLS::mbedcrypto)
     target_link_libraries(PrismatiXSDK PUBLIC MbedTLS::mbedcrypto)

@@ -79,6 +79,24 @@ stop();
 Backlog actions use stable `sequence` identities rather than physical array
 indices, so bounded-log eviction does not retarget replay or rollback actions.
 
+An asynchronous Story command can author one dialogue line with
+`ctx.session.say()`. The line uses that Story operation's `documentId`,
+`sourceId`, and `operationId` for seen state, backlog, rollback, and save
+migration. Give each line its own Story command and stable sidecar ID. The
+promise resolves after Advance reveals the full line and Advance is pressed
+again. A saved wait resumes from the same line without replaying its voice or
+adding a second backlog entry.
+
+```ts
+defineCommand<{text: string; speaker: string}>("game.narrate", async ({text, speaker}) => {
+  await ctx.session.say(text, {speaker});
+});
+```
+
+The command manifest must declare `await: true` and a rollback boundary.
+Call `say` from an anchored Story command callback; Action handlers and
+unanchored scripts cannot author dialogue.
+
 Native playback keeps FFmpeg demux/decode on its worker and feeds bounded audio
 and video frame queues. Production PDX5 packages store video as independently
 authenticated 256 KiB records, so AVIO seek/read decrypts only the requested

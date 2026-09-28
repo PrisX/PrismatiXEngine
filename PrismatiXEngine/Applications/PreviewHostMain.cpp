@@ -2256,6 +2256,9 @@ private:
         m_scriptServices.queryDialogue = [this] {
             return px::script::BuildDialogueModel(m_session->Dialogue());
         };
+        m_scriptServices.presentScriptSay = [this](const px::vn::Command& command) {
+            return m_session->VM().PresentScriptSay(command);
+        };
         m_scriptServices.queryChoices = [this] {
             return px::script::BuildChoiceModels(m_session->VM());
         };
@@ -2329,6 +2332,9 @@ private:
             events->Push("output", Json{ { "scope", "script" }, { "stream", stream }, { "level", level }, { "message", message.text }, { "source", message.source }, { "line", message.line } });
         };
         m_scriptHost = px::script::CreateScriptHost(m_scriptServices);
+        m_session->SetDialogueAdvanceHandler([this](px::vn::Dialogue& dialogue) {
+            return m_scriptHost && m_scriptHost->AdvanceDialogueWait(dialogue);
+        });
         px::script::BindTimelineMarkerEvents(
             m_session->Timeline(), [this] { return m_scriptHost.get(); });
         if (const auto status = m_uiPreview.Actions().RegisterProvider(m_scriptHost->CreateActionProvider()); !status) {

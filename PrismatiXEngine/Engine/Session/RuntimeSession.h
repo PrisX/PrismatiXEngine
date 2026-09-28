@@ -108,6 +108,9 @@ public:
     }
     void Update(std::uint64_t nowMs, float deltaSeconds);
     void Advance();
+    void SetDialogueAdvanceHandler(std::function<bool(vn::Dialogue&)> handler) {
+        m_dialogueAdvanceHandler = std::move(handler);
+    }
     void SelectChoice(int index);
 
     [[nodiscard]] GameState CaptureState(std::uint64_t playtimeMs = 0) const;
@@ -187,6 +190,7 @@ private:
     std::unordered_map<animation::TargetKind,animation::TimelinePlayer::Apply> m_animationHandlers;
     std::unordered_map<animation::TargetKind,AnimationTargetValidator> m_animationValidators;
     std::function<bool(const vn::Command&)> m_extensionCommandHandler;
+    std::function<bool(vn::Dialogue&)> m_dialogueAdvanceHandler;
     std::function<ui::UIRuntimeState()> m_captureUIState;
     std::function<Status(const ui::UIRuntimeState&)> m_restoreUIState;
     std::function<Status(const ui::UIRuntimeState&)> m_validateUIState;

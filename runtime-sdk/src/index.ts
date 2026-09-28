@@ -298,6 +298,13 @@ export interface DialogueModel {
   readonly effectProgress: number;
 }
 
+export interface SayOptions {
+  readonly speaker?: string;
+  readonly character?: string;
+  readonly voice?: string;
+  readonly textId?: string;
+}
+
 export interface ChoiceModel {
   readonly index: number;
   readonly text: string;
@@ -492,6 +499,7 @@ export interface PrismatiXEngine {
   GetDialogue(): DialogueModel;
   GetChoices(): readonly ChoiceModel[];
   AdvanceDialogue(): boolean;
+  Say(text: string, speaker?: string, character?: string, voice?: string, textId?: string): Promise<void>;
   SelectChoice(index: number): boolean;
   GetBacklog(): readonly BacklogEntryModel[];
   ReplayBacklogVoice(sequence: number): boolean;
@@ -663,6 +671,7 @@ export const ENGINE_HOST_BINDINGS = [
   "GetDialogue",
   "GetChoices",
   "AdvanceDialogue",
+  "Say",
   "SelectChoice",
   "GetBacklog",
   "ReplayBacklogVoice",
@@ -842,6 +851,8 @@ export interface PrismatiXContext {
     /** Delivers the current snapshot immediately, then only changed snapshots. */
     observeChoices(subscriber: ModelSubscriber<readonly ChoiceModel[]>): Unsubscribe;
     advance(): boolean;
+    /** One line per anchored Story command; resolves after the player advances. */
+    say(text: string, options?: SayOptions): Promise<void>;
     selectChoice(index: number): boolean;
   };
   readonly backlog: {
@@ -1126,6 +1137,8 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
         engine, () => engine.GetChoices(), subscriber,
       ),
       advance: () => engine.AdvanceDialogue(),
+      say: (text, options) => engine.Say(text, options?.speaker, options?.character,
+        options?.voice, options?.textId),
       selectChoice: (index) => engine.SelectChoice(index),
     },
     backlog: {
