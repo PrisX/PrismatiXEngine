@@ -272,7 +272,7 @@ function validBuiltinUiAction(value: unknown, inItemTemplate = false): boolean {
     const key = action.id === "choice.select" ? "index" : "slot";
     return Object.keys(args).length === 1 &&
       (typeof args[key] === "number" && Number.isSafeInteger(args[key]) ||
-        inItemTemplate && args[key] === "$index");
+        inItemTemplate && (args[key] === "$index" || args[key] === "$key"));
   }
   if (action.id === "cg.view")
     return Object.keys(args).length === 1 && typeof args.resource === "string";

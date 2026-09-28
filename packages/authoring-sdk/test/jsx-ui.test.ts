@@ -273,6 +273,17 @@ test("one authored item template lowers to a keyed Runtime grid with item bindin
   assert.deepEqual(button.bindings, {text: {path: "item.title"}});
   assert.deepEqual(button.onClick, {id: "save.slot", arguments: {slot: "$index"}});
 
+  const keyed = compileJsxUi(jsx(Scene, {name: "Paged slots", width: 800, height: 600,
+    children: jsx(Control, {name: "Root", children: jsx(ItemsGrid, {
+      name: "Slots", items: {path: "saveLoad.slots", key: "key"},
+      columns: 2, itemExtent: [300, 100],
+      children: jsx(Control, {name: "Slot", children: jsx(Button, {
+        name: "Load", action: {id: "load.slot", arguments: {slot: "$key"}},
+      })}),
+    })}),
+  }), {kind: "scene"});
+  assert.equal(keyed.valid, true, JSON.stringify(keyed.diagnostics));
+
   const unscoped = compileJsxUi(jsx(Scene, {name: "Unscoped", width: 800, height: 600,
     children: jsx(Control, {name: "Root", children: jsx(Button, {
       name: "Invalid", action: {id: "save.slot", arguments: {slot: "$index"}},
