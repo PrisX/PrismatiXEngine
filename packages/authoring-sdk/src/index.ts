@@ -18,6 +18,7 @@ export * from "./project-normalization.js";
 export * from "./project.js";
 export * from "./portrait.js";
 export * from "./resources.js";
+export * from "./save-migration-authoring.js";
 export * from "./semantic.js";
 export * from "./story.js";
 export * from "./story-identity.js";

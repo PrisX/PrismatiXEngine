@@ -8,6 +8,8 @@
 
 - **大型 Story 的稀疏存檔錨點遷移。** `.pxsave-migration` rev 2 新增 `anchor.policy: "map-or-preserve"`：只改明列的舊錨點，其他保持原 ID；舊 `map` 未命中即拒絕的規則不變。Native 改成先找完所有 mapping 再套用，避免 A→B、B→C 在同一份文件內意外連鎖；重複命中拒絕。Authoring schema、TS 型別、文件及 native 4 MiB 長度限制已對齊。SDK 188/188、SaveLoad native integration 1/1、contract generation check 通過。Player 載入時會驗目標 Runtime 文件與 source／operation pair；仍需用真實舊存檔驗改過的劇情位置及狀態語意，這一輪未重封 Player。詳見 `docs/save-migrations.md`。
 
+- **舊／新 Runtime IR 錨點差異可在 Authoring 階段審核。** `planSaveAnchorPolicy(previousRuntimeIr, nextRuntimeIr, replacements)` 用完整 document／source／operation 身分比對，缺掉的舊錨點必須由作者指定 replacement；會拒絕不存在的目標、重複替換與過大 mapping，成功後輸出可直接放進 migration 文件的 `preserve` 或 `map-or-preserve` anchor policy。這是純資料 API，不會猜劇情對應；每個支援語系和真實舊存檔仍須逐一驗收。SDK 190/190 通過。
+
 - **非 Player host 的 UI contract 接線範例。** `docs/placed-item-authoring.md` 依既有 native contract 測試提供 `DefineUiData` → `RegisterUiFormatter` → `ValidateUiContract` → `UpdateUiData` 的 C++ 呼叫順序；晚到的 item 欄位驗證仍由原生 API 保護。自訂 Action handler 仍由 host 註冊，尚無通用的 Authoring Action 宣告合約。
 
 - **通用匯入器可安全產生 Story 指令。** `serializeStoryCommand(name, arguments)` 將命名 JSON 參數編成可由 `.pxstory` 解析器讀回的單行指令，拒絕不合法名稱、非 JSON 數值及須用表達式語法的 `if`；只保證語法，語意和存檔身分仍交給 project 編譯與 sidecar 流程。此路徑發現 canonical JSON 對名為 `__proto__` 的作者資料鍵會遺失，現保留為一般 JSON 鍵。SDK 187/187、千戀四語 368 scene／31,339 資源唯讀 validate 通過；千戀私有匯入器尚未改用此 helper。

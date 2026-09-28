@@ -113,6 +113,14 @@ paths and reports ambiguous basenames instead of silently picking one; see
 line from JSON values for these importers. The Story project compiler remains
 the authority for command semantics and save identity.
 
+For a versioned release, `planSaveAnchorPolicy(previousRuntimeIr,
+nextRuntimeIr, replacements)` compares compiled execution identities. It
+returns `preserve` when all old anchors survive, or a sparse
+`map-or-preserve` policy after each missing anchor receives an explicit
+replacement. The result can be used as a `.pxsave-migration` document's
+`anchor` field; see [save migration anchors](../../docs/save-migrations.md).
+Test real old saves because identical IDs do not prove identical story meaning.
+
 The map preserves both authored ids and the exact pre-migration fallback
 `sourceId` of operations that had no `[id]`. In-place prose edits, comments,
 and blank lines retain those identities. For added or removed executable
