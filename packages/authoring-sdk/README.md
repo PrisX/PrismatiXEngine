@@ -109,6 +109,9 @@ Importers matching external asset names to media can use
 `createImportedResourceResolver(paths)`. It accepts enumerated project-relative
 paths and reports ambiguous basenames instead of silently picking one; see
 [imported resource resolution](../../docs/imported-resource-resolution.md).
+`serializeStoryCommand(name, arguments)` safely encodes a named-argument Story
+line from JSON values for these importers. The Story project compiler remains
+the authority for command semantics and save identity.
 
 The map preserves both authored ids and the exact pre-migration fallback
 `sourceId` of operations that had no `[id]`. In-place prose edits, comments,

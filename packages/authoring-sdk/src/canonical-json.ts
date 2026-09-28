@@ -19,7 +19,13 @@ export function sortJson(value: unknown): JsonValue {
         break;
       }
     }
-    for (const key of keys) result[key] = sortJson(source[key]);
+    for (const key of keys) {
+      const item = sortJson(source[key]);
+      // Assignment would change the prototype instead of preserving this JSON key.
+      if (key === "__proto__") Object.defineProperty(result, key,
+        {value: item, enumerable: true, writable: true, configurable: true});
+      else result[key] = item;
+    }
     return result;
   }
   if (typeof value === "number" && !Number.isFinite(value)) {

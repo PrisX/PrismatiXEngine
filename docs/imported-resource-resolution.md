@@ -37,3 +37,26 @@ register assets in the package. Continue to use Story static resource
 references, `resourceIncludes`, or the project asset catalog for build-time
 dependencies. Keep the source format decoder in its importer and report every
 missing or ambiguous lookup before writing generated Story files.
+
+To write a command after resolving its resources, use
+`serializeStoryCommand(name, arguments)`. It quotes strings and encodes JSON
+values so the Story parser can read them back:
+
+```ts
+import {serializeStoryCommand} from "@prismatix/authoring-sdk";
+
+const line = serializeStoryCommand("show", {
+  character: "hero", asset: "Assets/Characters/hero smile.png",
+  transition: "auto",
+});
+if (!line.valid || !line.value)
+  throw new Error(JSON.stringify(line.diagnostics));
+// line.value can be appended to a .pxstory file.
+```
+
+This helper checks that the line is syntactically parseable; project
+compilation still checks whether the command, resource, character, and flow
+targets are valid. `[if ...]` uses an expression grammar and must be authored
+separately. To keep save identities stable across reimports, follow the Story
+sidecar workflow in the Authoring SDK README; neither helper writes files or
+silently updates a published identity map.

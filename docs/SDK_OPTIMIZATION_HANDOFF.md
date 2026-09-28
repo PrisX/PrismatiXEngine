@@ -6,6 +6,8 @@
 
 ### 2026-09-27—28 後續進度
 
+- **通用匯入器可安全產生 Story 指令。** `serializeStoryCommand(name, arguments)` 將命名 JSON 參數編成可由 `.pxstory` 解析器讀回的單行指令，拒絕不合法名稱、非 JSON 數值及須用表達式語法的 `if`；只保證語法，語意和存檔身分仍交給 project 編譯與 sidecar 流程。此路徑發現 canonical JSON 對名為 `__proto__` 的作者資料鍵會遺失，現保留為一般 JSON 鍵。SDK 187/187、千戀四語 368 scene／31,339 資源唯讀 validate 通過；千戀私有匯入器尚未改用此 helper。
+
 - **可重用的 importer 素材索引。** `createImportedResourceResolver(paths)` 收取已列舉的專案相對路徑，精確路徑優先；裸檔名只有唯一候選才解析，有副檔名時先過濾副檔名，同名／跨平台大小寫衝突回報所有候選，絕不靠檔案大小或列舉順序猜。它不讀檔、不解 PSB、不代替 build dependency graph。Senren `Assets` 唯讀盤點有 35 組重複 stem，故不能直接把私有匯入器目前「挑較大檔」的路徑換掉而不審核。SDK 184/184、千戀四語 368 scene／31,339 資源唯讀 validate 通過；私有匯入器尚未採用新 resolver。
 
 - **Story 內建指令不再靜默忽略拼錯的具名參數。** `compileStory` 對已知指令的未知參數報 `PXSTORY1017` 並定位該值；`set` 的變數名寫法、`if` 表達式與 extension 自己的參數契約保留。指令補全補上 `chapter`、跨 scene 目標與音訊的可用參數，不再建議 voice／SE 不支援的 fade。SDK 182/182、千戀四語 368 scene／31,339 資源唯讀 validate 通過。

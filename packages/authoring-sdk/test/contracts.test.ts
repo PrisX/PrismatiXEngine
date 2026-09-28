@@ -27,6 +27,12 @@ test("canonical JSON sorts every object level deterministically", () => {
   assert.equal(canonicalJson(value), canonicalJson(value));
 });
 
+test("canonical JSON preserves prototype-shaped authored keys as data", () => {
+  const value = JSON.parse('{"z":1,"__proto__":{"label":"kept"}}') as JsonValue;
+  assert.equal(canonicalJson(value, false),
+    '{"__proto__":{"label":"kept"},"z":1}\n');
+});
+
 test("project contract is strict, bounded, and path-safe", () => {
   const project = {
     format: "PrismatiXProject",
