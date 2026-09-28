@@ -79,6 +79,16 @@ private:
     void MainLoop();
     void Shutdown();
     bool SaveProfileIfWritable();
+    // Progress writes are coalesced: unlocks flush within a few seconds,
+    // read-state marks at the next safe point or after a longer interval.
+    void MarkProfileDirty(bool urgent);
+    void FlushProfileIfDue();
+    // Writes settings on a worker; used where the UI must not wait on disk.
+    void SaveSettingsInBackground();
+    // Autosave and quicksave: state and pixels are captured now, the thumbnail
+    // encode and encrypted write happen on a worker.
+    void SaveSlotInBackground(int slot);
+    void HarvestBackgroundSave(bool wait);
     bool SaveSettingsIfWritable();
     bool ApplyFullscreenSetting(bool fullscreen);
     void BeginRuntimeIrPreload();
@@ -133,6 +143,7 @@ private:
     bool VideoFrame(float dt);
     void ConfigureE2EJourney();
     void DriveE2EJourney();
+    void DriveBenchJourney();
     void CaptureE2EGalleryFrame();
     void CaptureUIRoutesE2EFrame();
     bool CapturePresentationE2EFrame(std::string_view name);
@@ -143,6 +154,14 @@ private:
     crypto::Key m_saveKey{};
     std::vector<crypto::Key> m_saveFallbackKeys;
     bool m_profileWritable = true;
+    bool m_profileTrusted = false;
+    bool m_profileDirty = false;
+    bool m_profileUrgent = false;
+    std::uint64_t m_profileDirtySince = 0;
+    std::future<bool> m_profileWrite;
+    std::future<bool> m_settingsWrite;
+    std::future<bool> m_saveWrite;
+    int m_saveWriteSlot = 0;
     bool m_settingsWritable = true;
     progress::GlobalProfile m_profile;
     progress::GameSettings m_settings;
@@ -300,6 +319,12 @@ private:
     bool m_incompatibleSaveE2E = false;
     int m_incompatibleSaveE2EStage = 0;
     std::uint64_t m_incompatibleSaveE2EStartedAt = 0;
+    bool m_benchE2E = false;
+    int m_benchStage = 0;
+    std::uint64_t m_benchStageAt = 0;
+    std::uint64_t m_benchSequence = 0;
+    std::size_t m_benchRouteIndex = 0;
+    int m_benchSettledFrames = 0;
     int m_e2eClearCountBeforeF2 = 0;
     std::optional<Variant> m_e2eSessionValueBeforeF2;
     accessibility::SpeechService m_speech;

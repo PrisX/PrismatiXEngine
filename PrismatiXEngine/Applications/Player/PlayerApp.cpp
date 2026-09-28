@@ -2,6 +2,7 @@
 
 #include "Engine/Graphics/Screenshot.h"
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Diagnostics/FrameProfiler.h"
 #include "Engine/IO/PackageVerifier.h"
 #include "Engine/Progression/AwaitedWork.h"
 #include "Engine/Progression/GlobalProfileStore.h"
@@ -1070,6 +1071,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                     uiFont != settings->end() && uiFont->is_string()) {
                     const auto safe = SafeVfsRelativePath(uiFont->get<std::string>());
                     if (safe && m_runtime.VFS().Exists(*safe)) {
+                        m_runtime.Assets().PrefetchFontFile(*safe);
                         if (const Status applied = m_ui.SetDefaultFont(*safe); !applied) {
                             for (const auto& diagnostic : applied.Diagnostics())
                                 diag::Emit(diagnostic);
@@ -1643,30 +1645,34 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     }
     PX_LOG_DEBUG("Player boot: engine.ready emitted");
     m_session->VM().SetUnlockHook([this](const std::string& kind, const std::string& id) {
-        if (kind == "cg") m_profile.UnlockCG(id);
-        else if (kind == "scene") {
-            m_profile.UnlockScene(id);
+        // Scripts repeat unlocks whenever an event image is shown again; only
+        // a new unlock touches the UI model or the profile file.
+        if (kind == "cg") {
+            if (!m_profile.UnlockCG(id)) return;
+        } else if (kind == "scene") {
+            if (!m_profile.UnlockScene(id)) return;
             if (const Status updated = m_ui.UpdateUiData(
                     "sceneUnlocked." + id, Variant(true)); !updated)
                 for (const auto& diagnostic : updated.Diagnostics())
                     diag::Emit(diagnostic);
         } else if (kind == "music") {
-            m_profile.UnlockMusic(id);
+            if (!m_profile.UnlockMusic(id)) return;
             if (const Status updated = m_ui.UpdateUiData(
                     "musicUnlocked." + id, Variant(true)); !updated)
                 for (const auto& diagnostic : updated.Diagnostics())
                     diag::Emit(diagnostic);
         } else return;
-        SaveProfileIfWritable();
+        MarkProfileDirty(true);
         PX_LOG_INFO("Player progression unlocked kind={} id={}", kind, id);
     });
     m_session->VM().SetSeenHook([this](const std::string& key) {
-        const bool seen = m_profile.HasSeen(key);
-        m_profile.MarkSeen(key);
-        return seen;
+        const bool firstRead = m_profile.MarkSeen(key);
+        if (firstRead) MarkProfileDirty(false);
+        return !firstRead;
     });
     m_session->VM().SetChoiceSeenHook([this](const std::string& key) {
         m_profile.MarkChoiceSeen(key);
+        MarkProfileDirty(false);
     });
     m_session->VM().SetVideoHook([this](const std::string& path, bool skippable) {
         // Deferred: opened on the next frame so we never re-enter VM::Run().
@@ -2043,14 +2049,58 @@ void PlayerApp::PlayMotionMarker(const sdk::MotionAudioMarker& marker) {
 }
 
 bool PlayerApp::SaveProfileIfWritable() {
+    diag::FrameProfiler::Instance().Note("profile-write");
     if (!m_profileWritable) {
         PX_LOG_ERROR(
             "Profile write suppressed because the existing file failed to load");
         return false;
     }
-    return progress::SaveGlobalProfilePreservingExisting(
-        m_profile, PathToUtf8(m_saveDirectory / "profile.dat"),
-        &m_saveKey, m_saveFallbackKeys);
+    if (m_profileWrite.valid()) m_profileTrusted = m_profileWrite.get() || m_profileTrusted;
+    const std::string path = PathToUtf8(m_saveDirectory / "profile.dat");
+    // The first write verifies that an existing file is ours before replacing
+    // it; afterwards this process owns the file and can overwrite directly.
+    const bool saved = m_profileTrusted
+        ? progress::SaveGlobalProfile(m_profile, path, &m_saveKey)
+        : progress::SaveGlobalProfilePreservingExisting(
+              m_profile, path, &m_saveKey, m_saveFallbackKeys);
+    if (saved) {
+        m_profileTrusted = true;
+        m_profileDirty = false;
+        m_profileUrgent = false;
+    }
+    return saved;
+}
+
+void PlayerApp::MarkProfileDirty(const bool urgent) {
+    if (!m_profileDirty) m_profileDirtySince = SDL_GetTicks();
+    m_profileDirty = true;
+    m_profileUrgent = m_profileUrgent || urgent;
+}
+
+void PlayerApp::FlushProfileIfDue() {
+    if (m_profileWrite.valid()) {
+        if (m_profileWrite.wait_for(std::chrono::seconds(0)) !=
+            std::future_status::ready)
+            return;
+        if (m_profileWrite.get()) m_profileTrusted = true;
+    }
+    if (!m_profileDirty || !m_profileWritable) return;
+    const std::uint64_t age = SDL_GetTicks() - m_profileDirtySince;
+    if (age < (m_profileUrgent ? 2'000u : 30'000u)) return;
+    if (!m_profileTrusted) {
+        (void)SaveProfileIfWritable();
+        return;
+    }
+    nlohmann::json encoded;
+    if (!m_profile.TryToJson(encoded)) return;
+    m_profileDirty = false;
+    m_profileUrgent = false;
+    m_profileWrite = std::async(
+        std::launch::async,
+        [path = PathToUtf8(m_saveDirectory / "profile.dat"),
+         text = encoded.dump(), key = m_saveKey] {
+            return progress::SaveJsonText(path, text, &key);
+        });
 }
 
 bool PlayerApp::SaveSettingsIfWritable() {
@@ -2059,9 +2109,25 @@ bool PlayerApp::SaveSettingsIfWritable() {
             "Settings write suppressed because the existing file failed to load");
         return false;
     }
+    if (m_settingsWrite.valid()) (void)m_settingsWrite.get();
     return m_settings.SaveWithInputBindings(
         PathToUtf8(m_saveDirectory / "config.dat"),
         m_runtime.GetInput(), &m_saveKey, m_saveFallbackKeys);
+}
+
+void PlayerApp::SaveSettingsInBackground() {
+    if (!m_settingsWritable) return;
+    if (m_settingsWrite.valid()) (void)m_settingsWrite.get();
+    // Input bindings are captured here, on the thread that owns Input.
+    progress::GameSettings snapshot = m_settings;
+    snapshot.CaptureInputBindings(m_runtime.GetInput());
+    m_settingsWrite = std::async(
+        std::launch::async,
+        [snapshot = std::move(snapshot),
+         path = PathToUtf8(m_saveDirectory / "config.dat"), key = m_saveKey,
+         fallback = m_saveFallbackKeys] {
+            return snapshot.SavePreservingExisting(path, &key, fallback);
+        });
 }
 
 bool PlayerApp::ApplyFullscreenSetting(const bool fullscreen) {
@@ -2177,6 +2243,15 @@ void PlayerApp::FinishBootPresentation() {
             PX_LOG_INFO("Player title BGM started path={} handle={}",TitleBgmPath(),handle.value);
     }
     PX_LOG_INFO("Player presentation ready route={}", m_boot.startRoute);
+    // While the title idles, decode the screens players open first so their
+    // first appearance does not wait on image decoding.
+    for (const std::string_view route : {"hud", "save", "load", "settings", "backlog"}) {
+        if (!m_boot.routeScenes.contains(std::string(route))) continue;
+        auto images = m_ui.RouteImageDependencies(route);
+        if (!images) continue;
+        for (const auto& path : images.Value())
+            m_runtime.Assets().PreloadTexture(path, graphics::AssetPreloadPriority::Low);
+    }
 }
 
 void PlayerApp::BeginPresentationTransition(
@@ -2394,6 +2469,7 @@ void PlayerApp::GameStartTransitionFrame(const float dt,
 }
 
 bool PlayerApp::LoadSlot(int slot) {
+    HarvestBackgroundSave(true);
     auto snap = m_saves.Load(slot);
     if (!snap) {
         return false;
@@ -2581,7 +2657,8 @@ std::optional<progress::SaveSnapshot> PlayerApp::MakeSnapshot(
     const std::uint64_t now = m_runtime.GetClock().NowMs();
     snap.playtimeMs = m_playtimeBaseMs +
         (now >= m_playtimeStartedAtMs ? now - m_playtimeStartedAtMs : 0);
-    const RuntimeSession::GameState state = m_session->CaptureState(snap.playtimeMs);
+    const RuntimeSession::GameState state =
+        m_session->CaptureState(snap.playtimeMs, includeBacklog);
     snap.gameId = m_boot.gameId;
     snap.packageFingerprint = m_boot.packageFingerprint;
     snap.contentVersion = m_boot.contentVersion;
@@ -2629,7 +2706,41 @@ std::optional<progress::SaveSnapshot> PlayerApp::MakeSnapshot(
     return snap;
 }
 
+void PlayerApp::SaveSlotInBackground(const int slot) {
+    diag::FrameProfiler::Instance().Note("save-slot-async");
+    HarvestBackgroundSave(true);
+    auto captured = MakeSnapshot(/*includeBacklog=*/true);
+    if (!captured) return;
+    SDL_Surface* frame =
+        graphics::CaptureFrameSurface(m_runtime.Renderer().Handle());
+    m_saveWriteSlot = slot;
+    m_saveWrite = std::async(
+        std::launch::async,
+        [this, slot, frame, snap = std::move(*captured)]() mutable {
+            snap.thumbnailPng = graphics::EncodeThumbnailPng(frame, 256, 144);
+            return m_saves.Save(slot, snap);
+        });
+}
+
+void PlayerApp::HarvestBackgroundSave(const bool wait) {
+    if (!m_saveWrite.valid()) return;
+    if (!wait && m_saveWrite.wait_for(std::chrono::seconds(0)) !=
+                     std::future_status::ready)
+        return;
+    const int slot = m_saveWriteSlot;
+    if (!m_saveWrite.get()) {
+        diag::Emit({.severity = diag::Severity::Error, .code = "PXPLAYER6001",
+                    .category = "Player.Save",
+                    .message = "Could not save slot " + std::to_string(slot)});
+        return;
+    }
+    if (m_scriptHost) m_scriptHost->Emit("save.written", {{"slot", std::to_string(slot)}});
+    PX_LOG_INFO("Saved slot {}", slot);
+}
+
 bool PlayerApp::SaveSlot(int slot, std::vector<std::uint8_t> thumbnail) {
+    diag::FrameProfiler::Instance().Note("save-slot");
+    HarvestBackgroundSave(true);
     auto captured = MakeSnapshot(/*includeBacklog=*/true);
     if (!captured) return false;
     progress::SaveSnapshot snap = std::move(*captured);
@@ -2900,6 +3011,8 @@ ui::SettingsPresentation PlayerApp::SettingsUI() const {
 }
 
 void PlayerApp::OpenScreen(const std::string& route) {
+    // Slot pages list files on disk; a pending autosave must land first.
+    HarvestBackgroundSave(true);
     std::string target=route;if(target=="saveload")target="load";
     const auto current = m_session->Routes().CurrentModalRoute();
     const auto extraMode = [](const std::string_view value) {
@@ -3567,7 +3680,10 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             audio.PlayBGM(TitleBgmPath(), true, 300);
             m_musicTrackSelected = false;
         }
-        SaveSettingsIfWritable(); SaveProfileIfWritable();
+        // Closing a menu must not wait on disk; both files are written by
+        // background workers and flushed synchronously at shutdown.
+        SaveSettingsInBackground();
+        MarkProfileDirty(true);
         PX_LOG_INFO("Player overlay closed modal={} route={}",
                     m_session->Routes().CurrentModalRoute(),
                     m_session->Routes().CurrentRoute());
@@ -3599,6 +3715,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
 }
 
 void PlayerApp::RenderStageWithScripts() {
+    const diag::ScopedFramePhase profiled(diag::FramePhase::StageRender);
     if (m_scriptHost)
         m_scriptHost->RenderRetained(script::RenderPhase::BeforeStage);
     m_session->Stage().Render();
@@ -3607,6 +3724,7 @@ void PlayerApp::RenderStageWithScripts() {
 }
 
 void PlayerApp::RenderUIWithScripts() {
+    const diag::ScopedFramePhase profiled(diag::FramePhase::UiRender);
     if (m_scriptHost)
         m_scriptHost->RenderRetained(script::RenderPhase::BeforeUI);
     float shakeX = 0.0f;
@@ -3750,6 +3868,12 @@ void PlayerApp::ConfigureE2EJourney() {
         PX_LOG_INFO("Player incompatible save UI E2E armed");
         return;
     }
+    if(std::string_view(journey)=="bench"){
+        m_benchE2E = true;
+        m_benchStageAt = SDL_GetTicks();
+        PX_LOG_INFO("Player bench armed");
+        return;
+    }
     if(std::string_view(journey)!="catalog")return;
     m_e2eStage=E2EStage::AwaitTitle;
     m_e2eStartedAt=SDL_GetTicks();
@@ -3776,7 +3900,90 @@ bool PlayerApp::CapturePresentationE2EFrame(const std::string_view name){
     return saved;
 }
 
+void PlayerApp::DriveBenchJourney() {
+    // Reading (auto), skipping, then opening each menu route. Timings come
+    // from the frame profiler (PRISMATIX_PERF) plus the summaries logged here.
+    static constexpr std::array<std::string_view, 5> kRoutes{
+        "save", "load", "settings", "backlog", "gallery"};
+    const std::uint64_t now = SDL_GetTicks();
+    const auto lines = [this] {
+        return m_session->Backlog().LastSequence() - m_benchSequence;
+    };
+    switch (m_benchStage) {
+        case 0:
+            if (m_appState == AppState::Title && m_ui.CurrentRoute() == "title" &&
+                !m_routePreloadBatch) {
+                StartGame();
+                m_benchStage = 1;
+            }
+            break;
+        case 1:
+            if (m_appState == AppState::Game && !m_gameStartTransitionActive) {
+                m_settings.skipReadOnly = false;
+                m_benchSequence = m_session->Backlog().LastSequence();
+                m_benchStageAt = now;
+                m_benchStage = 2;
+            }
+            break;
+        case 2:
+            if (m_session->VM().State() == vn::VMState::WaitingChoice)
+                m_session->SelectChoice(0);
+            m_skipMode = true;
+            if (now - m_benchStageAt >= 15'000) {
+                PX_LOG_INFO("Player bench skip lines={} seconds=15 linesPerSecond={:.1f}",
+                            lines(), static_cast<double>(lines()) / 15.0);
+                m_skipMode = false;
+                m_autoMode = true;
+                m_settings.autoWaitMs = 300;
+                m_benchSequence = m_session->Backlog().LastSequence();
+                m_benchStageAt = now;
+                m_benchStage = 3;
+            }
+            break;
+        case 3:
+            if (m_session->VM().State() == vn::VMState::WaitingChoice)
+                m_session->SelectChoice(0);
+            m_autoMode = true;
+            if (now - m_benchStageAt >= 20'000) {
+                PX_LOG_INFO("Player bench reading lines={} seconds=20", lines());
+                m_autoMode = false;
+                m_benchStage = 4;
+            }
+            break;
+        case 4:
+            if (m_benchRouteIndex >= kRoutes.size()) {
+                PX_LOG_INFO("Player bench complete");
+                m_benchE2E = false;
+                m_quitRequested = true;
+                break;
+            }
+            OpenScreen(std::string(kRoutes[m_benchRouteIndex]));
+            m_benchStageAt = now;
+            m_benchSettledFrames = 0;
+            m_benchStage = 5;
+            break;
+        case 5:
+            if (m_routePreloadBatch ||
+                m_runtime.Renderer().PresentationHoldActive()) break;
+            if (++m_benchSettledFrames == 1)
+                PX_LOG_INFO("Player bench route={} readyMs={}",
+                            kRoutes[m_benchRouteIndex], now - m_benchStageAt);
+            if (m_benchSettledFrames >= 90) {
+                HandleUIAction({"overlay.close", {}});
+                ++m_benchRouteIndex;
+                m_benchStage = 4;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
 void PlayerApp::DriveE2EJourney() {
+    if (m_benchE2E) {
+        DriveBenchJourney();
+        return;
+    }
     if (m_incompatibleSaveE2E) {
         if (SDL_GetTicks() - m_incompatibleSaveE2EStartedAt > 30'000) {
             PX_LOG_ERROR("Player incompatible save UI E2E timed out stage={}",
@@ -4552,7 +4759,17 @@ bool PlayerApp::VideoFrame(float dt) {
     if (!vmWaiting && m_scriptVideoHandle == 0) return false;
     px::Input& input = m_runtime.GetInput();
 
+    const bool skipping =
+        m_skipMode || input.KeyDown(SDL_SCANCODE_LCTRL) ||
+        input.KeyDown(SDL_SCANCODE_RCTRL);
+    if (!m_pendingVideo.empty() && vmWaiting && m_videoSkippable && skipping) {
+        // Skip passes over a skippable movie without decoding a frame.
+        m_pendingVideo.clear();
+        m_session->VM().NotifyVideoDone();
+        return false;
+    }
     if (!m_pendingVideo.empty()) {
+        diag::FrameProfiler::Instance().Note("video-open");
         const float volume = static_cast<float>(m_settings.bgmVolume) / 128.0f;
         if (!m_video->Open(m_pendingVideo, volume)) {
             m_pendingVideo.clear();
@@ -4572,7 +4789,7 @@ bool PlayerApp::VideoFrame(float dt) {
     m_video->Update(dt);
     const bool skipRequested =
         m_videoSkippable &&
-        (input.ActionPressed(InputAction::Advance) ||
+        (skipping || input.ActionPressed(InputAction::Advance) ||
          input.ActionPressed(InputAction::Cancel));
     if (skipRequested) m_video->Skip();
 
@@ -4626,6 +4843,7 @@ void PlayerApp::ProcessScriptSafePoint() {
 }
 
 void PlayerApp::UpdateScriptScheduler(const float dt) {
+    const diag::ScopedFramePhase profiled(diag::FramePhase::Script);
     if (m_scriptHost) {
         script::AdvanceScriptFrame(
             *m_scriptHost, dt,
@@ -4736,11 +4954,33 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         m_skipMode = false;
     }
     const bool skipping = m_skipMode || ctrlSkip;
-    if (skipping && !advancedByClick &&
-        (m_session->VM().State() == vn::VMState::WaitingClick ||
-         m_session->VM().State() == vn::VMState::WaitingTimer)) {
-        if (!m_session->Dialogue().Finished()) m_session->Dialogue().ShowAll();
-        advanceDialogue();
+    m_session->VM().SetFastForward(skipping);
+    const auto skippableWait = [this] {
+        return m_session->VM().State() == vn::VMState::WaitingClick ||
+               m_session->VM().State() == vn::VMState::WaitingTimer;
+    };
+    if (skipping && !advancedByClick && skippableWait()) {
+        // Skip is not bound to one line per displayed frame. Advance through
+        // as many lines as fit a small slice of the frame; only the last one
+        // is ever presented, and fast-forward keeps voices and transitions
+        // from being started for lines nobody sees.
+        constexpr int kMaxSkipLinesPerFrame = 12;
+        constexpr std::uint64_t kSkipBudgetNs = 4'000'000;
+        const diag::ScopedFramePhase profiled(diag::FramePhase::Logic);
+        const std::uint64_t skipStart = SDL_GetTicksNS();
+        for (int line = 0; line < kMaxSkipLinesPerFrame; ++line) {
+            if (!m_session->Dialogue().Finished()) m_session->Dialogue().ShowAll();
+            advanceDialogue();
+            if (!skippableWait() ||
+                !m_session->Routes().CurrentModalRoute().empty() ||
+                SDL_GetTicksNS() - skipStart >= kSkipBudgetNs)
+                break;
+            if (!ctrlSkip && m_settings.skipReadOnly &&
+                !m_session->VM().CurrentLineSeen()) {
+                m_skipMode = false;
+                break;
+            }
+        }
         m_autoTimerStart = 0;
     } else if (m_autoMode && m_session->VM().State() == vn::VMState::WaitingClick &&
                m_session->Dialogue().Finished()) {
@@ -4755,17 +4995,19 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         m_autoTimerStart = 0;
     }
 
-    m_session->Update(now, dt);
+    {
+        const diag::ScopedFramePhase profiled(diag::FramePhase::Logic);
+        m_session->Update(now, dt);
+    }
     const std::string& storyBgm = m_session->VM().CurrentBgm();
     if (storyBgm != m_lastStoryBgm) {
         m_lastStoryBgm = storyBgm;
         if (!storyBgm.empty() &&
             std::ranges::find(m_musicTracks, storyBgm) != m_musicTracks.end()) {
             const std::string id = std::filesystem::path(storyBgm).stem().string();
-            if (!m_profile.MusicUnlocked(id)) {
-                m_profile.UnlockMusic(id);
+            if (m_profile.UnlockMusic(id)) {
                 (void)m_ui.UpdateUiData("musicUnlocked." + id, Variant(true));
-                SaveProfileIfWritable();
+                MarkProfileDirty(true);
             }
         }
     }
@@ -4784,6 +5026,8 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
                 m_speech.Speak(e.speaker.empty() ? e.text : e.speaker + ". " + e.text);
         }
         if (latestEntry) {
+            const diag::ScopedFramePhase profiled(diag::FramePhase::Logic);
+            diag::FrameProfiler::Instance().Note("rollback-snapshot");
             if (auto snapshot = MakeSnapshot(/*includeBacklog=*/false)) {
                 RollbackEntry entry;
                 entry.snap = std::move(*snapshot);
@@ -4801,8 +5045,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     // shows the scene the player was deciding on.
     if (m_session->VM().State() == vn::VMState::WaitingChoice) {
         if (!m_autoSavedChoice) {
-            SaveSlot(kAutoSaveSlot,
-                     graphics::CaptureThumbnailPng(m_runtime.Renderer().Handle(), 256, 144));
+            SaveSlotInBackground(kAutoSaveSlot);
             m_autoSavedChoice = true;
         }
     } else {
@@ -4827,7 +5070,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     }
 
     if (m_saveRequested) {
-        SaveSlot(0, graphics::CaptureThumbnailPng(m_runtime.Renderer().Handle(), 256, 144));
+        SaveSlotInBackground(0);
         m_saveRequested = false;
     }
     if(m_presentationE2E&&m_presentationE2EStage==3&&
@@ -4881,6 +5124,8 @@ void PlayerApp::MainLoop() {
         // Script jobs and accepted save/load requests have one application
         // clock and safe point, independent of the currently presented route.
         UpdateScriptScheduler(dt);
+        FlushProfileIfDue();
+        HarvestBackgroundSave(false);
 
         if(m_appState==AppState::BootSplash){
             SplashFrame(dt);
@@ -5021,6 +5266,7 @@ void PlayerApp::Shutdown() {
     // Subsystems referencing the runtime must go before Runtime::Shutdown.
     m_scriptHost.reset();
     m_splash.reset();
+    HarvestBackgroundSave(true);
     // The video player owns an SDL audio stream and textures; it must close
     // before Runtime::Shutdown quits SDL.
     m_video.reset();
