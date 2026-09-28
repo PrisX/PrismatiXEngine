@@ -292,6 +292,18 @@ Common UI shorthands:
   buttons whose action is `overlay.close`, `route.back`, or ends in `.cancel`.
   `activateSoundPath` on a control overrides both.
 
+`compileProject` also checks route UI against the stock Player's host
+contract. Bindings under Player-owned roots (`saveLoad.*`, `settings.*`,
+`dialogue.*`, `title.*`, `system.*`, ...) must name data the Player
+publishes (`PXBUILD1100`, with a suggestion for near misses), fields bound as
+`item.*` inside `saveLoad.slots` or `gallery.items` templates must exist
+(`PXBUILD1102`), and a node on the `hud`, `save`, `load`, `settings`,
+`gallery` or `backlog` route that reuses a name the Player looks up (`Slots`,
+`Master`, `Speaker`, ...) with a different control type is reported as a
+warning (`PXBUILD1101`) because the Player will ignore it. Paths declared in
+`player.uiData` belong to the project and are not checked here, and a
+project that declares `authoring.uiContract` for its own host skips this check.
+
 Bindings can address array items and object fields, for example
 `bind={{text: "saveLoad.slots[0].title"}}`. The native ViewModel must define
 `saveLoad.slots` as an array containing an object with a string `title` before

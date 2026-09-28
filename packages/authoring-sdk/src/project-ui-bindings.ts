@@ -2,6 +2,7 @@ import type {UiTypeRegistryMetadata} from "./semantic.js";
 import type {AuthoringDiagnostic, JsonValue, SourceSpan} from "./types.js";
 import type {ProjectDocument} from "./project.js";
 import {jsonPointerSpans} from "./json-source-spans.js";
+import {validatePlayerUiContract} from "./player-ui-contract.js";
 
 type JsonObject = Record<string, JsonValue>;
 type ResolvedValue = {readonly declared: boolean; readonly value: JsonValue | undefined};
@@ -169,9 +170,14 @@ export function validatePlayerUiBindings(project: ProjectDocument,
   uiDocuments: ReadonlyMap<string, JsonValue>,
   registry?: UiTypeRegistryMetadata,
   documentSources?: Readonly<Record<string, string>>,
-  projectSource?: {readonly path: string; readonly text: string}): readonly AuthoringDiagnostic[] {
+  projectSource?: {readonly path: string; readonly text: string},
+  profileVariables?: readonly string[]): readonly AuthoringDiagnostic[] {
   const data = object(project.settings?.["player.uiData"]);
   const contractValue = project.settings?.["authoring.uiContract"];
+  // A declared authoring.uiContract describes a non-Player host.
+  const hostDiagnostics = contractValue !== undefined ? [] : validatePlayerUiContract({uiEntryPoints: project.uiEntryPoints,
+    ...(project.settings === undefined ? {} : {settings: project.settings}),
+    ...(profileVariables === undefined ? {} : {profileVariables})}, uiDocuments);
   const source = projectSource ?? (documentSources?.["project.pxproject"] === undefined
     ? undefined : {path: "project.pxproject", text: documentSources["project.pxproject"]});
   let contractSpans: ReadonlyMap<string, SourceSpan> | undefined;
@@ -191,19 +197,29 @@ export function validatePlayerUiBindings(project: ProjectDocument,
   const contract = parsedContract.contract;
   const diagnostics: AuthoringDiagnostic[] = [...parsedContract.diagnostics];
   const finish = (): readonly AuthoringDiagnostic[] => {
-    if (documentSources === undefined) return diagnostics;
+    const all = [...diagnostics, ...hostDiagnostics];
+    if (documentSources === undefined) return all;
     const indexed = new Map<string, ReturnType<typeof jsonPointerSpans>>();
-    return diagnostics.map((diagnostic) => {
+    return all.map((diagnostic) => {
       if (diagnostic.path === undefined || diagnostic.details === undefined ||
           !uiDocuments.has(diagnostic.path)) return diagnostic;
+      const path = diagnostic.path;
+      const spansFor = () => {
+        let spans = indexed.get(path);
+        if (spans === undefined) {
+          spans = jsonPointerSpans(documentSources[path], uiDocuments.get(path), path);
+          indexed.set(path, spans);
+        }
+        return spans;
+      };
+      const named = /^nodes\[(\d+)\]\.name:/u.exec(diagnostic.details);
+      if (named !== null) {
+        const span = spansFor().get(`/nodes/${named[1]}/name`);
+        return span === undefined ? diagnostic : {...diagnostic, span};
+      }
       const field = /^nodes\[(\d+)\]\.(itemSource|bindings)\.([^:]+):/u.exec(diagnostic.details);
       if (field === null) return diagnostic;
-      const path = diagnostic.path;
-      let spans = indexed.get(path);
-      if (spans === undefined) {
-        spans = jsonPointerSpans(documentSources[path], uiDocuments.get(path), path);
-        indexed.set(path, spans);
-      }
+      const spans = spansFor();
       const escape = (value: string) => value.replaceAll("~", "~0").replaceAll("/", "~1");
       const prefix = `/nodes/${field[1]}/${field[2]}`;
       const property = field[2] === "itemSource"

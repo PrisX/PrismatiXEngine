@@ -16,6 +16,7 @@ export * from "./project-resources.js";
 export * from "./project-actions.js";
 export * from "./project-normalization.js";
 export * from "./project.js";
+export * from "./player-ui-contract.js";
 export * from "./portrait.js";
 export * from "./resources.js";
 export * from "./save-migration-authoring.js";

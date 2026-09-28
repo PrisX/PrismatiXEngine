@@ -780,7 +780,9 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   }
   diagnostics.push(...validatePlayerUiBindings(project,
     new Map([...uiDocuments, ...uiComponentDocuments]), input.uiTypeRegistry,
-    input.documentSources, input.projectSource));
+    input.documentSources, input.projectSource,
+    game?.variables.filter((variable) => variable.scope === "profile")
+      .map((variable) => variable.name)));
   if (storyIndex !== undefined && storyIndex.entryScene !== project.entry.story) {
     diagnostics.push(locatedIssue("PXBUILD1005", "Project entry.story must match storyIndex.entryScene",
       project.storyIndex, "/entry/story", project.entry.story, project.entry.story,
