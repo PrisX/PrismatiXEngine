@@ -83,8 +83,9 @@ test("speaker options change expression and position before the line", () => {
     ["showCharacter", "44444444-4444-4444-8444-444444444444", "1"],
     ["dialogue", "", ""],
   ]);
-  assert.equal(ops[1]!.sourceId, ops[2]!.sourceId);
-  assert.notEqual(ops[1]!.operationId, ops[2]!.operationId);
+  // Runtime IR requires one source id per operation.
+  assert.equal(ops[1]!.sourceId, `${ops[2]!.sourceId}/showCharacter`);
+  assert.equal(new Set(ops.map(({sourceId}) => sourceId)).size, ops.length);
   assert.ok(codes("@yuki[frown] hi\n", {characters: [yuki]}).includes("PXSTORY1114"));
   assert.ok(codes("@直哉[smile] hi\n").includes("PXSTORY1162"));
   assert.ok(codes("@yuki[smile]\nhi\n", {characters: [yuki]}).includes("PXSTORY1018"));
@@ -94,9 +95,9 @@ test("speaker options change expression and position before the line", () => {
 test("an authored id pins every operation from one inline line", () => {
   const ops = operations("[id greet]\n@yuki[smile] やあ\n", {characters: [yuki]});
   assert.equal(ops.length, 2);
-  assert.equal(ops[0]!.sourceId, ops[1]!.sourceId);
-  assert.equal(ops[0]!.sourceId, operations("[id greet]\n@yuki[smile] 違う文\n",
-    {characters: [yuki]})[0]!.sourceId);
+  assert.equal(ops[0]!.sourceId, `${ops[1]!.sourceId}/showCharacter`);
+  assert.equal(ops[1]!.sourceId, operations("[id greet]\n@yuki[smile] 違う文\n",
+    {characters: [yuki]})[1]!.sourceId);
 });
 
 test("show classifies extra positional words as expression or position", () => {
@@ -168,7 +169,7 @@ test("act, se.stop, voice.stop, and window shake lower to typed operations", () 
   assert.equal(ops[1]!.arguments.character, yuki.id);
   assert.deepEqual(ops[2]!.arguments, {character: yuki.id, preset: "float",
     size: "6", time: "2s", loop: "-1", ease: "inout"});
-  assert.equal(ops[3]!.sourceId, ops[4]!.sourceId);
+  assert.equal(ops[3]!.sourceId, `${ops[4]!.sourceId}/actorAction`);
 });
 
 test("act rejects unknown presets and out-of-range parameters", () => {

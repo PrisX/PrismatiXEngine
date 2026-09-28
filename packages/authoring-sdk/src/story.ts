@@ -628,9 +628,9 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     return value;
   };
 
-  // One authored line may emit several operations (for example an inline
-  // expression change before dialogue). They share the line's source id and
-  // stay distinct through their operation kind.
+  // One authored line may emit several operations (an inline expression or
+  // action before dialogue). Runtime IR needs a unique source id per
+  // operation, so the extra ones derive theirs from the line's id.
   const claimSourceId = (node: StoryNode): string => {
     const sourceId = pendingAuthoredSourceId === undefined
       ? node.externalSourceId ?? node.id
@@ -772,12 +772,12 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
           ...(position === undefined ? {} : {position}),
         });
         if (shown === undefined) continue;
-        emit(node, "showCharacter", shown, node.raw.trim(), sourceId);
+        emit(node, "showCharacter", shown, node.raw.trim(), `${sourceId}/showCharacter`);
       }
       if (act !== undefined && node.name !== undefined) {
         const action = actionArguments(node, node.name, act, {});
         if (action === undefined) continue;
-        emit(node, "actorAction", action, node.raw.trim(), sourceId);
+        emit(node, "actorAction", action, node.raw.trim(), `${sourceId}/actorAction`);
       }
       const resolvedVoice = voice === undefined ? undefined : resolveResource(node, voice, "voice");
       if (voice !== undefined && resolvedVoice === undefined) continue;
@@ -1263,6 +1263,12 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     ));
   }
 
+  const seenSourceIds = new Set<string>();
+  for (const operation of operations) {
+    if (seenSourceIds.has(operation.sourceId))
+      diagnostics.push(error("PXSTORY1219", `Story source id is used by more than one operation: ${operation.sourceId}`));
+    seenSourceIds.add(operation.sourceId);
+  }
   const valid = !diagnostics.some((item) => item.severity === "error");
   const locations = [...resourceLocations].map(([source, span]) => ({source, span}));
   if (!valid) return {resourceDependencies: [...resourceDependencies].sort(),
