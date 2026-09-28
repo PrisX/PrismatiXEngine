@@ -145,6 +145,7 @@ TextLayoutService::~TextLayoutService() {
 
 void TextLayoutService::SetLocale(std::string locale) {
     m_locale = locale.empty() ? "und" : std::move(locale);
+    m_cache.Clear();
 }
 
 bool TextLayoutService::LocaleIsRightToLeft() const {
@@ -168,8 +169,31 @@ TextLayout TextLayoutService::Layout(const std::string_view value,
                                      const std::string& fontPath, const int size,
                                      const int wrapWidth,
                                      const TextOrientation orientation,
-                                     std::size_t verticalRows) const {
-    const std::string input(value);
+                                     const std::size_t verticalRows) const {
+    std::string key;
+    key.reserve(fontPath.size() + value.size() + 48);
+    key.append(fontPath);
+    key += '|';
+    key += std::to_string(size);
+    key += '|';
+    key += std::to_string(wrapWidth);
+    key += orientation == TextOrientation::Vertical ? "|v" : "|h";
+    key += std::to_string(verticalRows);
+    key += '|';
+    key.append(value);
+    TextLayout cached;
+    if (m_cache.Get(key, cached)) return cached;
+    TextLayout shaped = Shape(std::string(value), fontPath, size, wrapWidth,
+                              orientation, verticalRows);
+    m_cache.Put(key, shaped);
+    return shaped;
+}
+
+TextLayout TextLayoutService::Shape(const std::string& input,
+                                    const std::string& fontPath, const int size,
+                                    const int wrapWidth,
+                                    const TextOrientation orientation,
+                                    std::size_t verticalRows) const {
     TTF_Font* font = m_assets.Font(fontPath, std::max(1, size), 0);
     if (!font || input.empty()) return {input, m_locale, {}, {}};
     const BidiResolution bidi = ResolveBidi(input, LocaleIsRightToLeft());
@@ -198,7 +222,7 @@ TextLayout TextLayoutService::Layout(const std::string_view value,
         for (std::size_t index = 0; index < count; ++index) {
             const std::size_t start = boundaries[index];
             const std::size_t length = boundaries[index + 1] - start;
-            const std::string_view glyph = value.substr(start, length);
+            const std::string_view glyph = std::string_view(input).substr(start, length);
             if (glyph == "\n" || glyph == "\r\n") {
                 if (row > 0) ++column;
                 row = 0;

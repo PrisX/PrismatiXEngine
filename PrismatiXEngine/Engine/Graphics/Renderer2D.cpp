@@ -1,4 +1,5 @@
 #include "Engine/Graphics/Renderer2D.h"
+#include "Engine/Diagnostics/FrameProfiler.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
 
@@ -96,7 +97,23 @@ void Renderer2D::SetLogicalSize(int width, int height, bool updateTextDensity) {
     SDL_SetRenderLogicalPresentation(m_renderer, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
     m_compositor.SetLogicalSize(width, height);
     DestroyFrameTargets();
-    if(updateTextDensity&&m_textSamplingMode==TextSamplingMode::Auto&&width>0&&height>0){int outputW=width,outputH=height;(void)SDL_GetCurrentRenderOutputSize(m_renderer,&outputW,&outputH);const float density=std::min(static_cast<float>(outputW)/width,static_cast<float>(outputH)/height);const int effective=std::clamp(static_cast<int>(std::ceil(std::max(2.0f,density))),2,4);if(effective!=m_effectiveTextSupersample){m_effectiveTextSupersample=effective;ClearTextCache();}}
+    if(updateTextDensity)UpdateTextDensity();
+}
+
+void Renderer2D::UpdateTextDensity() {
+    if (m_textSamplingMode != TextSamplingMode::Auto || m_logicalW <= 0 || m_logicalH <= 0)
+        return;
+    // Glyphs are rasterized at the output resolution: 1x when the window is at
+    // or below the logical size, 2x and up on high-density or 4K output.
+    int outputW = m_logicalW, outputH = m_logicalH;
+    (void)SDL_GetCurrentRenderOutputSize(m_renderer, &outputW, &outputH);
+    const float density = std::min(static_cast<float>(outputW) / m_logicalW,
+                                   static_cast<float>(outputH) / m_logicalH);
+    const int effective = std::clamp(static_cast<int>(std::ceil(density - 0.05f)), 1, 4);
+    if (effective != m_effectiveTextSupersample) {
+        m_effectiveTextSupersample = effective;
+        ClearTextCache();
+    }
 }
 
 void Renderer2D::GetLogicalSize(int& width, int& height) const {
@@ -1048,8 +1065,10 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
 
     // Backlogs and long sessions can otherwise grow the cache without bound.
     if (m_textCache.size() >= kTextCacheLimit) {
+        diag::FrameProfiler::Instance().Note("text-cache-clear");
         ClearTextCache();
     }
+    diag::FrameProfiler::Instance().Note("text-raster");
 
     TTF_Font* font = m_assets.Font(fontPath, size * ss, outline * ss);
     if (!font || text.empty()) {
@@ -1166,6 +1185,7 @@ void Renderer2D::SetTextLocale(
 }
 
 void Renderer2D::ClearTextCache() {
+    m_textLayout.ClearCache();
     for (auto& [key, entry] : m_textCache) {
         if (entry.texture) SDL_DestroyTexture(entry.texture);
     }

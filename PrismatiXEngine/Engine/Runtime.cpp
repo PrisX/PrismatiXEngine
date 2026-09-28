@@ -6,6 +6,7 @@
 #if !defined(PRISMATIX_PREVIEW_WASM)
 #include "Engine/IO/Crypto.h"
 #endif
+#include "Engine/Diagnostics/FrameProfiler.h"
 #include "Engine/Support/Logger.h"
 
 namespace px {
@@ -129,12 +130,17 @@ bool Runtime::BeginFrame() {
     if (!m_running) {
         return false;
     }
+    diag::FrameProfiler::Instance().BeginFrame();
+    const diag::ScopedFramePhase profiled(diag::FramePhase::Events);
     m_input.NewFrame();
     SDL_Event event;
+    bool resized = false;
     while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) resized = true;
         SDL_ConvertEventToRenderCoordinates(m_window.Renderer(), &event);
         m_input.Process(event);
     }
+    if (resized && m_renderer) m_renderer->UpdateTextDensity();
     if (m_input.QuitRequested()) {
         m_running = false;
         return false;
@@ -153,8 +159,12 @@ bool Runtime::BeginFrame() {
 }
 
 void Runtime::EndFrame() {
-    if (m_renderer) m_renderer->EndFrame();
-    m_window.Present();
+    {
+        const diag::ScopedFramePhase profiled(diag::FramePhase::Present);
+        if (m_renderer) m_renderer->EndFrame();
+        m_window.Present();
+    }
+    diag::FrameProfiler::Instance().EndFrame();
 }
 
 }  // namespace px

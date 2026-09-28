@@ -110,6 +110,8 @@ public:
     ~Renderer2D();
 
     void SetLogicalSize(int width, int height, bool updateTextDensity = true);
+    // Re-derives the text raster density after the window's pixel size changes.
+    void UpdateTextDensity();
     void GetLogicalSize(int& width, int& height) const;
 
     // Runtime owns these calls. Every complete frame is rendered into a

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Core/Types.h"
+#include "Engine/Support/LRUCache.h"
 
 #include <cstddef>
 #include <string>
@@ -67,13 +68,22 @@ public:
         int wrapWidth = 0,
         TextOrientation orientation = TextOrientation::Horizontal,
         std::size_t verticalRows = 0) const;
+    // Shaped layouts are cached: UI measure, fit-to-box, ruby placement and
+    // accessibility all ask for the same text repeatedly. Font changes must
+    // clear it.
+    void ClearCache() const { m_cache.Clear(); }
 
 private:
     [[nodiscard]] bool LocaleIsRightToLeft() const;
+    [[nodiscard]] TextLayout Shape(
+        const std::string& input, const std::string& fontPath, int size,
+        int wrapWidth, TextOrientation orientation,
+        std::size_t verticalRows) const;
 
     graphics::AssetCache& m_assets;
     TTF_TextEngine* m_engine = nullptr;
     std::string m_locale = "und";
+    mutable support::LRUCache<std::string, TextLayout> m_cache{512};
 };
 
 }  // namespace px::text
