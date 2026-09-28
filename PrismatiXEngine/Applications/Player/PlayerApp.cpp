@@ -1820,6 +1820,18 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
             return false;
         }
+        if (const Status defined = m_ui.DefineUiData(
+                "settings.page" + std::to_string(page), Variant(page == 1)); !defined) {
+            for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
+            return false;
+        }
+    }
+    for (int page = 1; page <= m_savePages; ++page) {
+        if (const Status defined = m_ui.DefineUiData(
+                "saveLoad.page" + std::to_string(page), Variant(page == 1)); !defined) {
+            for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
+            return false;
+        }
     }
     for (const char* chapter : {"op", "i", "ii", "iii", "iv", "v", "vi"}) {
         if (const Status defined = m_ui.DefineUiData(
