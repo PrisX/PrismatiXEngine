@@ -128,6 +128,9 @@ public:
     void UnregisterTexture(const std::string& key);
 
     [[nodiscard]] TTF_Font* Font(const std::string& path, int size, int outline = 0);
+    // Starts reading a font file on a worker so the first text drawn with it
+    // does not stall on a multi-megabyte archive read.
+    void PrefetchFontFile(const std::string& path);
     // Locale switching replaces the ordered SDL_ttf fallback chain and drops
     // only font resources; textures and in-flight texture preloads survive.
     bool SetFontFallbackChain(std::vector<std::string> paths);
@@ -189,6 +192,11 @@ private:
     std::vector<PendingTexture> m_pendingTextures;
     std::unordered_map<AssetPreloadBatchId, BatchState> m_preloadBatches;
     std::unordered_map<std::string, FontEntry> m_fonts;
+    // Encoded font files keyed by resolved path. Every size and outline of a
+    // face shares one read: CJK fonts are tens of megabytes, and re-reading
+    // and verifying them per size stalled the frame on each new text size.
+    std::unordered_map<std::string, std::shared_ptr<io::Bytes>> m_fontFiles;
+    std::unordered_map<std::string, std::future<std::optional<io::Bytes>>> m_fontFileLoads;
     std::vector<std::string> m_fontFallbackChain;
     bool m_configuringFontFallbacks = false;
     std::uint64_t m_frame = 0;
@@ -198,8 +206,10 @@ private:
     std::size_t m_textureBudgetBytes=512u*1024u*1024u;
     std::size_t m_residentTextureBytes=0;
     std::size_t m_preloadConcurrency = 4;
-    std::size_t m_preloadStartsPerFrame = 2;
-    std::size_t m_preloadUploadsPerFrame = 2;
+    // Zero selects the automatic policy: start up to the worker concurrency
+    // and upload within a per-frame time budget.
+    std::size_t m_preloadStartsPerFrame = 0;
+    std::size_t m_preloadUploadsPerFrame = 0;
     std::size_t m_imageDecodeByteLimit = 256u * 1024u * 1024u;
     bool m_asyncPreloadEnabled=true;
 

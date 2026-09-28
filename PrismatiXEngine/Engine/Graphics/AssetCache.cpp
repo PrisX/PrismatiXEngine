@@ -1,4 +1,5 @@
 #include "Engine/Graphics/AssetCache.h"
+#include "Engine/Diagnostics/FrameProfiler.h"
 
 #include "Engine/Support/Logger.h"
 #include "Engine/Diagnostics/Diagnostic.h"
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <optional>
 #include <sstream>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -94,7 +96,13 @@ void AssetDiagnostic(std::string code,const std::string& path,std::string messag
 }
 }
 
-AssetCache::AssetCache(SDL_Renderer* renderer, io::VFS& vfs) : m_renderer(renderer), m_vfs(vfs) {}
+AssetCache::AssetCache(SDL_Renderer* renderer, io::VFS& vfs)
+    : m_renderer(renderer), m_vfs(vfs) {
+    // Decoding is CPU bound and independent per image; leave one core for the
+    // main thread and one for audio.
+    const unsigned cores = std::thread::hardware_concurrency();
+    m_preloadConcurrency = std::clamp<std::size_t>(cores > 2 ? cores - 2 : 2, 2, 8);
+}
 
 AssetCache::~AssetCache() {
     Clear();
@@ -291,7 +299,9 @@ void AssetCache::QueueTexture(const std::string& path,
 
 void AssetCache::LaunchQueuedTextures() {
     std::size_t started = 0;
-    while (started < m_preloadStartsPerFrame &&
+    const std::size_t startLimit =
+        m_preloadStartsPerFrame ? m_preloadStartsPerFrame : m_preloadConcurrency;
+    while (started < startLimit &&
            m_pendingTextures.size() < m_preloadConcurrency &&
            !m_queuedTextures.empty()) {
         auto selected = std::max_element(
@@ -330,6 +340,16 @@ void AssetCache::LaunchQueuedTextures() {
                                 .height = 0,
                                 .decodedBytes = 0,
                                 .error = SDL_GetError()};
+                    // Renderers take 32-bit pixels. Converting here keeps the
+                    // RGB24/paletted conversion off the main thread's upload.
+                    if (surface->format != SDL_PIXELFORMAT_ARGB8888 &&
+                        surface->format != SDL_PIXELFORMAT_ABGR8888) {
+                        if (SDL_Surface* converted = SDL_ConvertSurface(
+                                surface, SDL_PIXELFORMAT_ARGB8888)) {
+                            SDL_DestroySurface(surface);
+                            surface = converted;
+                        }
+                    }
                     const std::size_t decodedBytes =
                         static_cast<std::size_t>(surface->w) *
                         static_cast<std::size_t>(surface->h) * 4u;
@@ -358,6 +378,11 @@ void AssetCache::LaunchQueuedTextures() {
 }
 
 void AssetCache::HarvestPendingTextures() {
+    // Without explicit frame limits, uploads are bounded by time rather than
+    // a fixed count: a menu with dozens of small images appears within a frame
+    // or two, while a burst of full-screen backgrounds spreads across frames.
+    constexpr std::uint64_t kUploadBudgetNs = 6'000'000;
+    const std::uint64_t uploadStart = SDL_GetTicksNS();
     std::size_t uploaded = 0;
     for (auto iterator = m_pendingTextures.begin();
          iterator != m_pendingTextures.end();) {
@@ -373,7 +398,10 @@ void AssetCache::HarvestPendingTextures() {
 
         const bool currentSession = iterator->session == m_assetSession;
         const bool requested = iterator->cacheRequest || !iterator->batches.empty();
-        if (currentSession && requested && uploaded >= m_preloadUploadsPerFrame) {
+        const bool overBudget = m_preloadUploadsPerFrame
+            ? uploaded >= m_preloadUploadsPerFrame
+            : uploaded > 0 && SDL_GetTicksNS() - uploadStart >= kUploadBudgetNs;
+        if (currentSession && requested && overBudget) {
             ++iterator;
             continue;
         }
@@ -498,6 +526,8 @@ TextureHandle AssetCache::Texture(const std::string& path) {
                     }))
         return {};
 
+    if (diag::FrameProfiler::Instance().Enabled())
+        diag::FrameProfiler::Instance().Note("sync-texture:" + path);
     auto bytes = ReadImageInput(m_vfs, path);
     if (!bytes) {
         PX_LOG_WARN("AssetCache: texture not found '{}'", path);
@@ -616,24 +646,43 @@ TTF_Font* AssetCache::Font(const std::string& path, int size, int outline) {
         return it->second.font;
     }
 
-    auto bytes = m_vfs.Read(path);
+    if (diag::FrameProfiler::Instance().Enabled())
+        diag::FrameProfiler::Instance().Note("font-open:" + std::to_string(size));
     std::string resolvedPath = path;
-    if (!bytes && path == "Content/Fonts/NotoSansTC-Bold.ttf") {
+    std::shared_ptr<io::Bytes> held;
+    const auto readFontFile = [this](const std::string& candidate) {
+        if (const auto cached = m_fontFiles.find(candidate);
+            cached != m_fontFiles.end())
+            return cached->second;
+        std::optional<io::Bytes> bytes;
+        if (auto pending = m_fontFileLoads.find(candidate);
+            pending != m_fontFileLoads.end()) {
+            bytes = pending->second.get();
+            m_fontFileLoads.erase(pending);
+        } else {
+            bytes = m_vfs.Read(candidate);
+        }
+        if (!bytes) return std::shared_ptr<io::Bytes>{};
+        auto shared = std::make_shared<io::Bytes>(std::move(*bytes));
+        m_fontFiles.emplace(candidate, shared);
+        return shared;
+    };
+    held = readFontFile(path);
+    if (!held && path == "Content/Fonts/NotoSansTC-Bold.ttf") {
         resolvedPath = "Resources/Fonts/NotoSansTC-Bold.ttf";
-        bytes = m_vfs.Read(resolvedPath);
-        if (bytes) {
+        held = readFontFile(resolvedPath);
+        if (held) {
             PX_LOG_WARN("AssetCache: project font missing '{}'; using fallback '{}'", path,
                         resolvedPath);
         }
     }
-    if (!bytes) {
+    if (!held) {
         PX_LOG_WARN("AssetCache: font not found '{}'", path);
         AssetDiagnostic("PXASSET7007",path,"Font asset was not found");
         m_fonts[key] = {};
         return nullptr;
     }
 
-    auto held = std::make_shared<io::Bytes>(std::move(*bytes));
     SDL_IOStream* io = SDL_IOFromConstMem(held->data(), held->size());
     TTF_Font* font = io ? TTF_OpenFontIO(io, /*closeio=*/true, static_cast<float>(size)) : nullptr;
     if (!font) {
@@ -658,6 +707,19 @@ TTF_Font* AssetCache::Font(const std::string& path, int size, int outline) {
     return font;
 }
 
+void AssetCache::PrefetchFontFile(const std::string& path) {
+    if (path.empty() || m_fontFiles.contains(path) ||
+        m_fontFileLoads.contains(path))
+        return;
+    try {
+        m_fontFileLoads.emplace(
+            path, std::async(std::launch::async,
+                             [vfs = &m_vfs, path] { return vfs->Read(path); }));
+    } catch (const std::exception&) {
+        // Font() falls back to a synchronous read.
+    }
+}
+
 bool AssetCache::SetFontFallbackChain(std::vector<std::string> paths) {
     paths.erase(std::remove_if(paths.begin(), paths.end(),
                                [](const auto& path) { return path.empty(); }),
@@ -665,6 +727,7 @@ bool AssetCache::SetFontFallbackChain(std::vector<std::string> paths) {
     if (paths == m_fontFallbackChain) return false;
     DestroyFonts();
     m_fontFallbackChain = std::move(paths);
+    for (const auto& path : m_fontFallbackChain) PrefetchFontFile(path);
     return true;
 }
 
@@ -681,6 +744,13 @@ void AssetCache::DestroyResidentAssets() {
     m_textures.clear();
     m_residentTextureBytes=0;
     DestroyFonts();
+    // A new asset session may mount different content under the same paths.
+    for (auto& [path, load] : m_fontFileLoads) {
+        (void)path;
+        if (load.valid()) load.wait();
+    }
+    m_fontFileLoads.clear();
+    m_fontFiles.clear();
 }
 
 void AssetCache::DestroyFonts() {
