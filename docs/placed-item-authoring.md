@@ -102,6 +102,42 @@ as an exact ViewModel property. Other hosts should run the check after
 registering their own data and formatters, then use `UpdateUiData` for changes.
 Paths outside declared roots remain the host's responsibility.
 
+For a non-Player host, register values and formatters before validating the
+authored contract, and validate before mounting routes. This example uses the
+`settings.confirmations` contract above and assumes `project` is the parsed
+`project.pxproject` JSON:
+
+```cpp
+px::Status PrepareAuthoredUi(px::ui::GalgameUI& ui,
+                             const nlohmann::json& project) {
+    auto status = ui.DefineUiData(
+        "settings.confirmations", px::Variant(px::VariantArray{}));
+    if (!status) return status;
+    status = ui.RegisterUiFormatter({
+        "CaptionCase", px::VariantType::String, px::VariantType::String,
+        [](const px::Variant& value) -> px::Result<px::Variant> {
+            // Replace this pass-through body with the host's caption format.
+            return px::Result<px::Variant>::Success(value.Clone());
+        }});
+    if (!status) return status;
+    return ui.ValidateUiContract(
+        project.at("settings").at("authoring.uiContract").dump());
+}
+
+px::Status RefreshConfirmations(px::ui::GalgameUI& ui,
+                                px::VariantArray rows) {
+    return ui.UpdateUiData("settings.confirmations",
+                           px::Variant(std::move(rows)));
+}
+```
+
+The host supplies each row's declared `key`, `rect`, and `caption` fields.
+`UpdateUiData` checks a candidate value before notifying mounted UI, so a
+bad late row does not replace the last valid array. The host must also
+register its Action commands and their handlers before an authored screen
+uses them; the UI contract above describes values and formatter types, not
+Action implementations.
+
 Resource paths supplied only through dynamic item bindings still need explicit
 asset inclusion (for example `resourceIncludes`) until the compiler can infer
 those runtime dependencies.

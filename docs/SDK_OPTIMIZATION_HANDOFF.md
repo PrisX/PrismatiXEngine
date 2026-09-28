@@ -2,9 +2,11 @@
 
 更新：2026-09-28。此文件以當前兩個本機 repo 和實際測試為準；不是「全部完成」聲明。較完整的逐項發現與歷史量測在 `C:\Users\owenl\C\Projects\SenrenBankaPSX\docs\SDK_FEEDBACK.md`。該檔按時間追加，早段的「尚未實作」有些已被後段取代，閱讀時以最新段落與程式碼為準。
 
-**目前優先順序（使用者 2026-09-28 指示）**：先完善可重用的 SDK Authoring 功能；封裝／大型 build 效能及《千戀＊萬花》1:1 移植暫不列為此階段完成條件。近期 Authoring 已補主要跨檔來源定位、Story 錨點刪除保護、重複與未知參數拒絕，以及匯入時不猜測同名素材的純資料 resolver。仍須分別決定並驗收：(1) 舊 Story 錨點變動時真正的存檔遷移契約，現有 `--accept-removals` 只是人工確認；(2) 從 Senren 私有 PSB 轉換流程抽出的通用 source decoder／importer 規格，不能直接搬私有格式；(3) JavaScript `say` 作者 API 與其存檔／已讀身分，現有 Story `@alias` 已可多語但 JS session 僅唯讀 dialogue；(4) 非 Player host 的 UI 值、formatter、Action 註冊範例和剩餘可重用合約。動態立繪 dress／pose／face 若要成為單一 descriptor 的正式 API，需另定存檔與依賴語意；不要把原作逐幀還原混在此項。
+**目前優先順序（使用者 2026-09-28 指示）**：先完善可重用的 SDK Authoring 功能；封裝／大型 build 效能及《千戀＊萬花》1:1 移植暫不列為此階段完成條件。近期 Authoring 已補主要跨檔來源定位、Story 錨點刪除保護、重複與未知參數拒絕、匯入時不猜測同名素材的純資料 resolver，以及匯入用指令序列化 helper。仍須分別決定並驗收：(1) 舊 Story 錨點變動時真正的存檔遷移契約，現有 `--accept-removals` 只是人工確認；(2) 從 Senren 私有 PSB 轉換流程抽出的通用 source decoder／importer 規格，不能直接搬私有格式；(3) JavaScript `say` 作者 API 與其存檔／已讀身分，現有 Story `@alias` 已可多語但 JS session 僅唯讀 dialogue；(4) 非 Player host 的自訂 Action 宣告／執行合約。非 Player host 的 UI 值、formatter、晚更新接線範例已補在 `docs/placed-item-authoring.md`。動態立繪 dress／pose／face 若要成為單一 descriptor 的正式 API，需另定存檔與依賴語意；不要把原作逐幀還原混在此項。
 
 ### 2026-09-27—28 後續進度
+
+- **非 Player host 的 UI contract 接線範例。** `docs/placed-item-authoring.md` 依既有 native contract 測試提供 `DefineUiData` → `RegisterUiFormatter` → `ValidateUiContract` → `UpdateUiData` 的 C++ 呼叫順序；晚到的 item 欄位驗證仍由原生 API 保護。自訂 Action handler 仍由 host 註冊，尚無通用的 Authoring Action 宣告合約。
 
 - **通用匯入器可安全產生 Story 指令。** `serializeStoryCommand(name, arguments)` 將命名 JSON 參數編成可由 `.pxstory` 解析器讀回的單行指令，拒絕不合法名稱、非 JSON 數值及須用表達式語法的 `if`；只保證語法，語意和存檔身分仍交給 project 編譯與 sidecar 流程。此路徑發現 canonical JSON 對名為 `__proto__` 的作者資料鍵會遺失，現保留為一般 JSON 鍵。SDK 187/187、千戀四語 368 scene／31,339 資源唯讀 validate 通過；千戀私有匯入器尚未改用此 helper。
 
