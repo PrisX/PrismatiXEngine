@@ -37,8 +37,7 @@ function isDynamicLibrary(name: string): boolean {
 
 function copiedRuntimeLibrary(name: string): boolean {
   const lower = name.toLowerCase();
-  return isDynamicLibrary(name) && !lower.includes("shadercross") &&
-    !lower.includes("dxcompiler") && lower !== "dxil.dll" &&
+  return isDynamicLibrary(name) && lower !== "dxil.dll" &&
     !lower.includes("spirv-cross");
 }
 

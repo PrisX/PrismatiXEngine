@@ -302,6 +302,19 @@ Status RegisterBuiltinUITypes() {
         As<Control>(o)->SetVisibility(v ? Visibility::Visible : Visibility::Hidden);
         return Status::Ok();
     }));
+    auto showTransition = NumberProperty("showTransitionSeconds", "Display", [](const Object& o) {
+        return As<Control>(o)->ShowTransitionSeconds();
+    }, [](Object& o, double v) {
+        if (!std::isfinite(v) || v < 0.0 || v > 2.0)
+            return TypeError("showTransitionSeconds must be between 0 and 2");
+        As<Control>(o)->SetShowTransitionSeconds(static_cast<float>(v));
+        return Status::Ok();
+    });
+    showTransition.editor.hasRange = true;
+    showTransition.editor.minimum = 0;
+    showTransition.editor.maximum = 2;
+    showTransition.editor.step = 0.01;
+    control.properties.push_back(std::move(showTransition));
     auto visibilityProperty=StringProperty("visibility", "Behavior", [](const Object& o) {
         switch (As<Control>(o)->GetVisibility()) { case Visibility::Visible: return std::string("Visible"); case Visibility::Hidden: return std::string("Hidden"); default: return std::string("Collapsed"); }
     }, [](Object& o, std::string v) {
@@ -801,6 +814,7 @@ Status RegisterBuiltinUITypes() {
     addSliderTexture("knobPressedPath","Knob pressed texture",[](const Object& o){return As<Slider>(o)->KnobPressedPath();},[](Object& o,std::string v){As<Slider>(o)->SetKnobPressedPath(std::move(v));return Status::Ok();});
     auto railHeight=NumberProperty("railHeight","Skin",[](const Object& o){return As<Slider>(o)->RailHeight();},[](Object& o,double v){As<Slider>(o)->SetRailHeight(static_cast<float>(v));return Status::Ok();});railHeight.editor.hasRange=true;railHeight.editor.minimum=1;railHeight.editor.maximum=128;railHeight.editor.step=1;slider.properties.push_back(std::move(railHeight));
     auto knobSize=NumberProperty("knobSize","Skin",[](const Object& o){return As<Slider>(o)->KnobSize();},[](Object& o,double v){As<Slider>(o)->SetKnobSize(static_cast<float>(v));return Status::Ok();});knobSize.editor.hasRange=true;knobSize.editor.minimum=1;knobSize.editor.maximum=256;knobSize.editor.step=1;slider.properties.push_back(std::move(knobSize));
+    slider.properties.push_back(BoolProperty("fillRailToValue", "Skin", [](const Object& o){return As<Slider>(o)->FillRailToValue();}, [](Object& o,bool v){As<Slider>(o)->SetFillRailToValue(v);return Status::Ok();}));
     slider.signals.push_back({"valueChanged", "數值變更", "Slider value changed.", {{"value", VariantType::Number}}});add(std::move(slider));
     TypeInfo lineEdit{"LineEdit","Control","UI/Input",[]{return std::make_unique<LineEdit>();}};
     lineEdit.properties.push_back(StringProperty("text","Content",[](const Object& o){return As<LineEdit>(o)->Text();},[](Object& o,std::string v){As<LineEdit>(o)->SetText(std::move(v));return Status::Ok();}));

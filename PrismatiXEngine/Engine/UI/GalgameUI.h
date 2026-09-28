@@ -10,6 +10,7 @@
 #include <functional>
 #include <cstddef>
 #include <memory>
+#include <map>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -55,6 +56,14 @@ struct SettingsPresentation {
     int bgm = 128;
     int se = 128;
     int voice = 128;
+    std::map<std::string, int, std::less<>> voiceProfiles;
+    std::map<std::string, bool, std::less<>> voiceProfileMuted;
+    bool masterMuted = false;
+    bool bgmMuted = false;
+    bool seMuted = false;
+    bool voiceMuted = false;
+    bool duckBgmOnVoice = true;
+    bool continueVoiceOnAdvance = false;
     int textSpeedMs = 30;
     bool skipReadOnly = true;
     bool fullscreen = false;

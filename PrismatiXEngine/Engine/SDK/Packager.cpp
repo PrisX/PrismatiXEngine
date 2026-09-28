@@ -1711,9 +1711,7 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
 
 bool RuntimeLibrary(const std::filesystem::path& path) {
     const std::string filename = Lower(px::PathToUtf8(path.filename()));
-    if (filename.find("shadercross") != std::string::npos ||
-        filename.find("dxcompiler") != std::string::npos ||
-        filename == "dxil.dll" ||
+    if (filename == "dxil.dll" ||
         filename.find("spirv-cross") != std::string::npos)
         return false;
     const std::string extension = Lower(px::PathToUtf8(path.extension()));

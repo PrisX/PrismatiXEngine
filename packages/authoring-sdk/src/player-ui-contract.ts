@@ -67,8 +67,10 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
     ...Array.from({length: 12}, (_, slot) => ["image", "title", "subtitle", "enabled"]
       .map((field) => `saveLoad.slot${slot}.${field}`)).flat(),
     ...["fullscreen", "windowed", "skipReadOnly", "skipAll", "masterValue", "bgmValue",
-      "seValue", "voiceValue", "textSpeedValue"].map((field) => `settings.${field}`),
+      "seValue", "voiceValue", "textSpeedValue", "duckOn", "duckOff",
+      "voiceCarryOn", "voiceCarryOff"].map((field) => `settings.${field}`),
     ...["visible", "save", "load", "overwrite"].map((field) => `saveLoad.confirm.${field}`),
+    "saveLoad.error.visible",
     ...["visible", "reset", "exit"].map((field) => `system.confirm.${field}`),
     ...range("settings.page", 4), ...range("replay.page", 4),
     ...range("saveLoad.page", Number.isSafeInteger(pages) && pages > 0 ? pages : 1),

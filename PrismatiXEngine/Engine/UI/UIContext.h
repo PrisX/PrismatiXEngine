@@ -132,6 +132,7 @@ private:
 
     [[nodiscard]] BehaviorRuntimeServices BehaviorServices();
     void ConfigureControlRuntime();
+    void ConfigureControlTree(scene::Node& node);
     [[nodiscard]] Status ValidateTriggers(
         Control& root, const std::vector<TriggerBinding>& triggers,
         const BehaviorGraph* graph) const;

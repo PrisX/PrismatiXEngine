@@ -175,6 +175,8 @@ public:
     void SetBGMVolume(int volume);
     void SetSEVolume(int volume);
     void SetVoiceVolume(int volume);
+    void SetVoiceProfileVolume(std::string profile, int volume);
+    void SetVoiceDuckingEnabled(bool enabled);
     void SetAmbienceVolume(int volume);
     void SetMainVolume(int volume);
     [[nodiscard]] int BGMVolume() const { return m_bgmVolume; }
@@ -262,6 +264,8 @@ private:
     int m_bgmVolume = 96;
     int m_seVolume = 110;
     int m_voiceVolume = 128;
+    std::unordered_map<std::string, int> m_voiceProfileVolumes;
+    bool m_voiceDuckingEnabled = true;
     int m_ambienceVolume = 96;
     int m_mainVolume = 128;
     bool m_voiceDucking = false;

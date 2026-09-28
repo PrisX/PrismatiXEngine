@@ -43,6 +43,34 @@ PersistLoadStatus GameSettings::LoadWithFallback(
         candidate.bgmVolume = j.value("bgmVolume", candidate.bgmVolume);
         candidate.seVolume = j.value("seVolume", candidate.seVolume);
         candidate.voiceVolume = j.value("voiceVolume", candidate.voiceVolume);
+        candidate.masterMuted = j.value("masterMuted", candidate.masterMuted);
+        candidate.bgmMuted = j.value("bgmMuted", candidate.bgmMuted);
+        candidate.seMuted = j.value("seMuted", candidate.seMuted);
+        candidate.voiceMuted = j.value("voiceMuted", candidate.voiceMuted);
+        candidate.duckBgmOnVoice = j.value("duckBgmOnVoice", candidate.duckBgmOnVoice);
+        candidate.continueVoiceOnAdvance = j.value("continueVoiceOnAdvance", candidate.continueVoiceOnAdvance);
+        candidate.voiceProfileVolumes.clear();
+        if (j.contains("voiceProfileVolumes")) {
+            const auto& profiles = j.at("voiceProfileVolumes");
+            if (!profiles.is_object() || profiles.size() > 128)
+                throw Json::type_error::create(302, "voice profiles must be a bounded object", &profiles);
+            for (auto it = profiles.begin(); it != profiles.end(); ++it) {
+                if (it.key().empty() || it.key().size() > 64 || !it.value().is_number_integer())
+                    throw Json::type_error::create(302, "voice profile is invalid", &it.value());
+                candidate.voiceProfileVolumes[it.key()] = std::clamp(it.value().get<int>(), 0, 128);
+            }
+        }
+        candidate.voiceProfileMuted.clear();
+        if (j.contains("voiceProfileMuted")) {
+            const auto& muted = j.at("voiceProfileMuted");
+            if (!muted.is_object() || muted.size() > 128)
+                throw Json::type_error::create(302, "voice mutes must be a bounded object", &muted);
+            for (auto it = muted.begin(); it != muted.end(); ++it) {
+                if (it.key().empty() || it.key().size() > 64 || !it.value().is_boolean())
+                    throw Json::type_error::create(302, "voice mute is invalid", &it.value());
+                candidate.voiceProfileMuted[it.key()] = it.value().get<bool>();
+            }
+        }
         candidate.textSpeedMs = j.value("textSpeedMs", candidate.textSpeedMs);
         candidate.autoWaitMs = j.value("autoWaitMs", candidate.autoWaitMs);
         candidate.skipReadOnly = j.value("skipReadOnly", candidate.skipReadOnly);
@@ -130,6 +158,14 @@ bool GameSettings::Save(const std::string& path, const crypto::Key* key) const {
     j["bgmVolume"] = bgmVolume;
     j["seVolume"] = seVolume;
     j["voiceVolume"] = voiceVolume;
+    j["masterMuted"] = masterMuted;
+    j["bgmMuted"] = bgmMuted;
+    j["seMuted"] = seMuted;
+    j["voiceMuted"] = voiceMuted;
+    j["duckBgmOnVoice"] = duckBgmOnVoice;
+    j["continueVoiceOnAdvance"] = continueVoiceOnAdvance;
+    if (!voiceProfileVolumes.empty()) j["voiceProfileVolumes"] = voiceProfileVolumes;
+    if (!voiceProfileMuted.empty()) j["voiceProfileMuted"] = voiceProfileMuted;
     j["textSpeedMs"] = textSpeedMs;
     j["autoWaitMs"] = autoWaitMs;
     j["skipReadOnly"] = skipReadOnly;

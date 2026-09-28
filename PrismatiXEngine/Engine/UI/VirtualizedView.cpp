@@ -60,7 +60,10 @@ Vec2 VirtualizedView::MeasureOverride(Vec2 available) {
 std::unique_ptr<Control> VirtualizedView::Acquire(const std::string& key) {
     std::unique_ptr<Control> value;
     if (!m_pool.empty()) { value = std::move(m_pool.back()); m_pool.pop_back(); }
-    else if (m_factory) value = m_factory();
+    else if (m_factory) {
+        value = m_factory();
+        if (value && m_itemCreated) m_itemCreated(*value);
+    }
     if (value) AssignItemIds(*value, "px.virtual-item/" + Id().ToString() + "/" +
                                      std::to_string(key.size()) + ":" + key);
     return value;

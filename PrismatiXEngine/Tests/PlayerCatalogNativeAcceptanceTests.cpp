@@ -268,6 +268,10 @@ public:
                const bool expectRemovedResource = false) {
         if(m_result.valid())return false;
 #if defined(_WIN32)
+        // A missing packaged DLL must fail the test without opening a system
+        // error dialog on the developer's desktop.
+        SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS |
+                     SEM_NOGPFAULTERRORBOX);
         const std::string command="cd /d "+ShellQuote(workingDirectory)+
             " && set \"PRISMATIX_PLAYER_DATA_ROOT="+userDataRoot.string()+
             "\"&& set PRISMATIX_E2E_JOURNEY=catalog"+
@@ -860,6 +864,13 @@ int main(int argc, char* argv[]) {
             ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId));
 
         const auto packagedPlayer = output / player.filename();
+#if defined(_WIN32)
+        suite.Require(std::filesystem::is_regular_file(
+                          output / "SDL3_shadercross.dll") &&
+                          std::filesystem::is_regular_file(
+                              output / "dxcompiler.dll"),
+                      "packaged Player includes imported shader runtime libraries");
+#endif
         const auto launchDirectory = fixture.path / "UnrelatedWorkingDirectory";
         std::filesystem::create_directories(launchDirectory / "Save");
         const auto unrelatedSave = launchDirectory / "Save/profile.dat";

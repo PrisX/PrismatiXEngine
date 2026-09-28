@@ -174,6 +174,10 @@ public:
     [[nodiscard]] float Rotation() const { return m_rotation; }
     void SetOpacity(float value) { m_opacity = std::clamp(value,0.0f,1.0f); }
     [[nodiscard]] float Opacity() const { return m_opacity; }
+    void SetShowTransitionSeconds(float value) {
+        m_showTransitionSeconds = std::clamp(value, 0.0f, 2.0f);
+    }
+    [[nodiscard]] float ShowTransitionSeconds() const { return m_showTransitionSeconds; }
     void SetModulate(Color value) { m_modulate = value; }
     [[nodiscard]] Color Modulate() const { return m_modulate; }
     void SetClipContent(bool value) { m_clipContent = value; }
@@ -266,6 +270,8 @@ private:
     Vec2 m_translation{};
     float m_rotation = 0.0f;
     float m_opacity = 1.0f;
+    float m_showTransitionSeconds = 0.0f;
+    float m_showElapsed = 0.0f;
     Color m_modulate{255,255,255,255};
     bool m_clipContent = false;
     std::string m_accessibilityLabel;

@@ -2649,6 +2649,10 @@ int main() {
         const auto effectOutput = fixture.path / "Build/EffectGame";
         std::filesystem::copy(root, effectRoot,
                               std::filesystem::copy_options::recursive);
+#ifdef _WIN32
+        Write(effectRoot / "Tools/SDL3_shadercross.dll", "shadercross-runtime");
+        Write(effectRoot / "Tools/dxcompiler.dll", "dxcompiler-runtime");
+#endif
         auto project = nlohmann::json::parse(Read(effectRoot / "project.pxproject"));
         project["graphicsTier"] = "gpu-effects";
         project["effects"] = nlohmann::json::array(
@@ -2814,10 +2818,12 @@ int main() {
 #endif
         suite.Expect(!archive.Contains("Effects/dream-tone.frag.hlsl"),
                      "Player package does not contain injectable shader source");
+#ifdef _WIN32
         suite.Expect(
-            !std::filesystem::exists(effectOutput / "SDL3_shadercross.dll") &&
-                !std::filesystem::exists(effectOutput / "dxcompiler.dll"),
-            "Player distribution excludes build-time shader compiler libraries");
+            Read(effectOutput / "SDL3_shadercross.dll") == "shadercross-runtime" &&
+                Read(effectOutput / "dxcompiler.dll") == "dxcompiler-runtime",
+            "Player package retains shadercross and its imported DXC runtime");
+#endif
         for (const auto& artifact : effect.artifacts) {
             const auto bytes = archive.Read(artifact.asset);
             suite.Expect(bytes && !bytes->empty() &&

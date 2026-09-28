@@ -619,6 +619,12 @@ void TestProfileAndSettingsSchemas() {
     settings.masterVolume = 73;
     settings.bgmVolume = 64;
     settings.voiceVolume = 96;
+    settings.masterMuted = true;
+    settings.voiceMuted = true;
+    settings.duckBgmOnVoice = false;
+    settings.continueVoiceOnAdvance = true;
+    settings.voiceProfileVolumes["rnd"] = 63;
+    settings.voiceProfileMuted["rnd"] = true;
     settings.language = "ja-JP";
     settings.textScale = 1.25f;
     settings.highContrast = true;
@@ -649,7 +655,7 @@ void TestProfileAndSettingsSchemas() {
               px::progress::PersistLoadStatus::Loaded,
           "a host loads settings and input bindings together");
     Check(
-        loadedSettings.masterVolume == 73 && loadedSettings.bgmVolume == 64 && loadedSettings.voiceVolume == 96 && loadedSettings.language == "ja-JP" && loadedSettings.textScale == 1.25f && loadedSettings.highContrast && loadedSettings.reducedMotion && loadedSettings.selfVoicing && loadedSettings.keyboardBindings.at("quick-save") == std::vector<int>{f11} && loadedSettings.wheelBindings.at("backlog").threshold == 1.5f,
+        loadedSettings.masterVolume == 73 && loadedSettings.bgmVolume == 64 && loadedSettings.voiceVolume == 96 && loadedSettings.masterMuted && loadedSettings.voiceMuted && !loadedSettings.duckBgmOnVoice && loadedSettings.continueVoiceOnAdvance && loadedSettings.voiceProfileVolumes.at("rnd") == 63 && loadedSettings.voiceProfileMuted.at("rnd") && loadedSettings.language == "ja-JP" && loadedSettings.textScale == 1.25f && loadedSettings.highContrast && loadedSettings.reducedMotion && loadedSettings.selfVoicing && loadedSettings.keyboardBindings.at("quick-save") == std::vector<int>{f11} && loadedSettings.wheelBindings.at("backlog").threshold == 1.5f,
         "game settings should preserve audio, locale, accessibility, keyboard, and wheel overrides"
     );
     Check(restoredInput.KeyBindings("quick-save") ==

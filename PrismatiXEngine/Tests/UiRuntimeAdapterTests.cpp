@@ -416,6 +416,15 @@ void TestAuthoredItemTemplate() {
     px::ui::UIContext context;
     std::int64_t selectedIndex = -1;
     std::string selectedKey;
+    int configuredItemButtons = 0;
+    int itemButtonActivations = 0;
+    context.SetControlRuntimeConfigurator([&](px::ui::Control& control) {
+        if (control.Name() != "SlotButton") return;
+        ++configuredItemButtons;
+        (void)control.ConnectSignal("activated", [&](const auto&) {
+            ++itemButtonActivations;
+        });
+    });
     px::ui::ActionDescriptor selectDescriptor;
     selectDescriptor.id = "item.select";
     selectDescriptor.label = "Select item";
@@ -462,10 +471,14 @@ void TestAuthoredItemTemplate() {
     auto* firstButton = first ? dynamic_cast<px::ui::Button*>(first->Child(0)) : nullptr;
     Check(firstButton && firstButton->Text() == "First",
           "item.* binding must set the Runtime property on each clone");
+    Check(configuredItemButtons == 2,
+          "late-created slot buttons must receive Player runtime configuration");
     const auto firstId = first->Id();
     firstButton->Activate();
     Check(selectedIndex == 0 && selectedKey == "first",
           "item Action placeholders must resolve to the current index and key");
+    Check(itemButtonActivations == 1,
+          "late-created slot buttons must emit configured activation feedback");
 
     Check(static_cast<bool>(model.Write("slots", px::Variant(px::VariantArray{
         makeItem("second", "Second changed"), makeItem("first", "First changed")}))),
@@ -480,6 +493,8 @@ void TestAuthoredItemTemplate() {
     movedButton->Activate();
     Check(selectedIndex == 1 && selectedKey == "first",
           "reordered item Actions must use the new index, not their original index");
+    Check(configuredItemButtons == 2 && itemButtonActivations == 2,
+          "reordered slots must retain one activation listener per button");
     Check(static_cast<bool>(model.Write("slots", px::Variant(px::VariantArray{makeItem("first", "Only")}))),
           "repeater collection must allow shrinking");
     (void)context.Root()->Measure({300, 200});

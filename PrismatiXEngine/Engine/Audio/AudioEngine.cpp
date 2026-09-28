@@ -342,9 +342,9 @@ bool AudioEngine::StartVoice(const std::string& path) {
     }
     m_voiceAudio = AudioEntry{audio, held, 0};
     if (!MIX_SetTrackAudio(m_voiceTrack, audio)) return false;
+    m_voicePath = path;
     ApplyMixGains();
     if (!MIX_PlayTrack(m_voiceTrack, 0)) return false;
-    m_voicePath = path;
     return true;
 }
 
@@ -886,7 +886,42 @@ void AudioEngine::SetVoiceVolume(int volume) {
     m_voiceVolume = std::clamp(volume,0,128);ApplyMixGains();
 }
 
-void AudioEngine::ApplyMixGains(){const float main=ToGain(m_mainVolume),duck=m_voiceDucking?0.45f:1.0f;for(auto* track:m_bgmTracks)if(track)MIX_SetTrackGain(track,ToGain(m_bgmVolume)*main*duck);for(auto* track:m_seTracks)if(track)MIX_SetTrackGain(track,ToGain(m_seVolume)*main);if(m_voiceTrack)MIX_SetTrackGain(m_voiceTrack,ToGain(m_voiceVolume)*main);if(m_ambienceTrack)MIX_SetTrackGain(m_ambienceTrack,ToGain(m_ambienceVolume)*main*duck);}
+void AudioEngine::SetVoiceProfileVolume(std::string profile, int volume) {
+    if (profile.empty() || profile.size() > 64) return;
+    m_voiceProfileVolumes[std::move(profile)] = std::clamp(volume, 0, 128);
+    ApplyMixGains();
+}
+
+void AudioEngine::SetVoiceDuckingEnabled(bool enabled) {
+    m_voiceDuckingEnabled = enabled;
+    ApplyMixGains();
+}
+
+void AudioEngine::ApplyMixGains(){
+    const float main=ToGain(m_mainVolume),duck=(m_voiceDuckingEnabled&&m_voiceDucking)?0.45f:1.0f;
+    for(auto* track:m_bgmTracks)if(track)MIX_SetTrackGain(track,ToGain(m_bgmVolume)*main*duck);
+    for(auto* track:m_seTracks)if(track)MIX_SetTrackGain(track,ToGain(m_seVolume)*main);
+    int profileVolume = 128;
+    if (!m_voicePath.empty()) {
+        const auto slash = m_voicePath.find_last_of("/\\");
+        const auto parent = slash == std::string::npos ? std::string_view{} :
+            std::string_view(m_voicePath).substr(0, slash);
+        const auto parentSlash = parent.find_last_of("/\\");
+        const std::string code(parent.substr(parentSlash == std::string_view::npos ? 0 : parentSlash + 1));
+        if (const auto exact = m_voiceProfileVolumes.find(code);
+            exact != m_voiceProfileVolumes.end()) profileVolume = exact->second;
+        else {
+            const std::string_view filename = std::string_view(m_voicePath).substr(
+                slash == std::string::npos ? 0 : slash + 1);
+            const std::string_view group = filename.starts_with("man_") ? "man" :
+                filename.starts_with("fem_") ? "fem" : "";
+            if (const auto fallback = m_voiceProfileVolumes.find(std::string(group));
+                fallback != m_voiceProfileVolumes.end()) profileVolume = fallback->second;
+        }
+    }
+    if(m_voiceTrack)MIX_SetTrackGain(m_voiceTrack,ToGain(m_voiceVolume)*ToGain(profileVolume)*main);
+    if(m_ambienceTrack)MIX_SetTrackGain(m_ambienceTrack,ToGain(m_ambienceVolume)*main*duck);
+}
 void AudioEngine::SetAmbienceVolume(int volume){m_ambienceVolume=std::clamp(volume,0,128);ApplyMixGains();}
 void AudioEngine::SetMainVolume(int volume){m_mainVolume=std::clamp(volume,0,128);ApplyMixGains();}
 

@@ -782,6 +782,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         PX_LOG_INFO("Player user data directory={} legacySavesImported={}",
                     PathToUtf8(userData.Value()), imported.Value());
     }
+    if (const char* isolatedSaveDir = SDL_getenv("PRISMATIX_E2E_SAVE_DIR");
+        isolatedSaveDir && *isolatedSaveDir)
+        m_saveDirectory = std::filesystem::path(isolatedSaveDir);
     bool runtimeReady = m_runtime.Init(m_boot.config);
     if (!runtimeReady && m_boot.optionalPackApplied) {
         diag::Emit(diag::Diagnostic{
@@ -844,17 +847,28 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_saves.Configure(PathToUtf8(m_saveDirectory), &m_saveKey,
                       m_saveFallbackKeys);
     PX_LOG_DEBUG("Player boot: persistence configured");
-    m_runtime.Audio().SetMainVolume(m_settings.masterVolume);
-    m_runtime.Audio().SetBGMVolume(m_settings.bgmVolume);
-    m_runtime.Audio().SetSEVolume(m_settings.seVolume);
-    m_runtime.Audio().SetVoiceVolume(m_settings.voiceVolume);
+    m_runtime.Audio().SetMainVolume(m_settings.masterMuted ? 0 : m_settings.masterVolume);
+    m_runtime.Audio().SetBGMVolume(m_settings.bgmMuted ? 0 : m_settings.bgmVolume);
+    m_runtime.Audio().SetSEVolume(m_settings.seMuted ? 0 : m_settings.seVolume);
+    m_runtime.Audio().SetVoiceVolume(m_settings.voiceMuted ? 0 : m_settings.voiceVolume);
+    m_runtime.Audio().SetVoiceDuckingEnabled(m_settings.duckBgmOnVoice);
+    for (const auto& [profile, volume] : m_settings.voiceProfileVolumes)
+        m_runtime.Audio().SetVoiceProfileVolume(profile,
+            m_settings.voiceProfileMuted[profile] ? 0 : volume);
+    for (const auto& [profile, muted] : m_settings.voiceProfileMuted)
+        if (muted && !m_settings.voiceProfileVolumes.contains(profile))
+            m_runtime.Audio().SetVoiceProfileVolume(profile, 0);
     if (m_settings.fullscreen) {
-        SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), true);
+        if (!SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), true) ||
+            !SDL_SyncWindow(m_runtime.GetWindow().Handle()))
+            PX_LOG_WARN("Player startup fullscreen request failed: {}", SDL_GetError());
     } else if (m_settings.windowWidth >= 320 && m_settings.windowHeight >= 180) {
         SDL_SetWindowSize(m_runtime.GetWindow().Handle(), m_settings.windowWidth,
                           m_settings.windowHeight);
         SDL_SetWindowPosition(m_runtime.GetWindow().Handle(), SDL_WINDOWPOS_CENTERED,
                               SDL_WINDOWPOS_CENTERED);
+        if (!SDL_SyncWindow(m_runtime.GetWindow().Handle()))
+            PX_LOG_WARN("Player startup windowed size request failed: {}", SDL_GetError());
     }
 
     m_session = std::make_unique<RuntimeSession>(RuntimeSession::Services{
@@ -1667,6 +1681,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     });
     const std::vector<std::string> authoredUiCommands = {
         "set.fullscreen.on", "set.fullscreen.off", "set.fullscreen.toggle",
+        "set.mute.master", "set.mute.bgm", "set.mute.se", "set.mute.voice",
+        "set.duck.on", "set.duck.off", "set.voiceCarry.on", "set.voiceCarry.off",
+        "set.voiceProfile.value",
         "set.reducedmotion.on", "set.reducedmotion.off",
         "settings.reset", "settings.noop",
         "title.confirm.accept", "title.confirm.cancel",
@@ -1683,6 +1700,14 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             !registered) {
             for (const auto& diagnostic : registered.Diagnostics())
                 diag::Emit(diagnostic);
+            return false;
+        }
+    }
+    for (const char* command : {"set.voiceProfile.mute", "voiceProfile.test",
+                                "audio.test.se"}) {
+        if (const Status registered = m_ui.RegisterActionCommand(command, "argument");
+            !registered) {
+            for (const auto& diagnostic : registered.Diagnostics()) diag::Emit(diagnostic);
             return false;
         }
     }
@@ -2040,13 +2065,40 @@ bool PlayerApp::SaveSettingsIfWritable() {
 }
 
 bool PlayerApp::ApplyFullscreenSetting(const bool fullscreen) {
-    if (m_settings.fullscreen == fullscreen) return SaveSettingsIfWritable();
-    if (!SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), fullscreen)) {
+    SDL_Window* window = m_runtime.GetWindow().Handle();
+    const bool actuallyFullscreen =
+        (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+    if (m_settings.fullscreen == fullscreen && actuallyFullscreen == fullscreen)
+        return true;
+    if (!SDL_SetWindowFullscreen(window, fullscreen) || !SDL_SyncWindow(window)) {
         PX_LOG_WARN("Player fullscreen change rejected: {}", SDL_GetError());
         return false;
     }
+    if (!fullscreen) {
+        // SDL restores the size from before entering fullscreen. The Player is
+        // initially created at the game's logical resolution, so that size can
+        // itself cover the entire monitor. Restore the saved windowed size.
+        SDL_SetWindowSize(window, std::max(320, m_settings.windowWidth),
+                          std::max(180, m_settings.windowHeight));
+        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED,
+                              SDL_WINDOWPOS_CENTERED);
+        if (!SDL_SyncWindow(window)) {
+            PX_LOG_WARN("Player windowed size change rejected: {}", SDL_GetError());
+            return false;
+        }
+    }
+    if (((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0) != fullscreen) {
+        PX_LOG_WARN("Player fullscreen change was not applied by the window manager");
+        return false;
+    }
     m_settings.fullscreen = fullscreen;
+    (void)m_ui.UpdateUiData("settings.fullscreen", Variant(fullscreen));
+    (void)m_ui.UpdateUiData("settings.windowed", Variant(!fullscreen));
     (void)SaveSettingsIfWritable();
+    int width = 0, height = 0;
+    SDL_GetWindowSize(window, &width, &height);
+    PX_LOG_INFO("Player display mode applied fullscreen={} size={}x{}",
+                fullscreen, width, height);
     return true;
 }
 
@@ -2822,10 +2874,29 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
 }
 
 ui::SettingsPresentation PlayerApp::SettingsUI() const {
-    return {m_settings.masterVolume, m_settings.bgmVolume, m_settings.seVolume, m_settings.voiceVolume,
-            m_settings.textSpeedMs, m_settings.skipReadOnly, m_settings.fullscreen,
-            m_settings.textScale,m_settings.highContrast,m_settings.reducedMotion,m_settings.selfVoicing,
-            m_settings.language,m_supportedLocales};
+    ui::SettingsPresentation presentation;
+    presentation.master = m_settings.masterVolume;
+    presentation.bgm = m_settings.bgmVolume;
+    presentation.se = m_settings.seVolume;
+    presentation.voice = m_settings.voiceVolume;
+    presentation.voiceProfiles = m_settings.voiceProfileVolumes;
+    presentation.voiceProfileMuted = m_settings.voiceProfileMuted;
+    presentation.masterMuted = m_settings.masterMuted;
+    presentation.bgmMuted = m_settings.bgmMuted;
+    presentation.seMuted = m_settings.seMuted;
+    presentation.voiceMuted = m_settings.voiceMuted;
+    presentation.duckBgmOnVoice = m_settings.duckBgmOnVoice;
+    presentation.continueVoiceOnAdvance = m_settings.continueVoiceOnAdvance;
+    presentation.textSpeedMs = m_settings.textSpeedMs;
+    presentation.skipReadOnly = m_settings.skipReadOnly;
+    presentation.fullscreen = m_settings.fullscreen;
+    presentation.textScale = m_settings.textScale;
+    presentation.highContrast = m_settings.highContrast;
+    presentation.reducedMotion = m_settings.reducedMotion;
+    presentation.selfVoicing = m_settings.selfVoicing;
+    presentation.language = m_settings.language;
+    presentation.languages = m_supportedLocales;
+    return presentation;
 }
 
 void PlayerApp::OpenScreen(const std::string& route) {
@@ -2853,6 +2924,7 @@ void PlayerApp::OpenScreen(const std::string& route) {
                                     Variant(page == 1));
     }
     if (target == "save" || target == "load") {
+        (void)m_ui.UpdateUiData("saveLoad.error.visible", Variant(false));
         for (int page = 1; page <= m_savePages; ++page)
             (void)m_ui.UpdateUiData("saveLoad.page" + std::to_string(page),
                                     Variant(page == m_saveLoadPage));
@@ -3114,21 +3186,98 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             if (SaveSlot(*pending, m_menuThumb))
                 (void)m_ui.ShowSaveLoad(true, SaveItems(true));
         } else {
-            BeginPresentationTransition(m_routeTransition);
-            (void)LoadSlot(*pending);
+            if (LoadSlot(*pending))
+                BeginPresentationTransition(m_routeTransition);
+            else
+                (void)m_ui.UpdateUiData("saveLoad.error.visible", Variant(true));
         }
     } else if (t == "saveLoad.confirm.cancel") {
         m_pendingSaveLoadSlot.reset();
         (void)m_ui.SetSaveLoadConfirmation(ui::GalgameUI::SaveLoadPrompt::None);
+    } else if (t == "saveLoad.error.dismiss") {
+        (void)m_ui.UpdateUiData("saveLoad.error.visible", Variant(false));
     } else if (t == "set.master.value") {
         m_settings.masterVolume = std::clamp(std::atoi(action.argument.c_str()), 0, 128);
+        m_settings.masterMuted = false;
         audio.SetMainVolume(m_settings.masterVolume);
+        if (auto* label = FindUiControlNamed<ui::Label>(m_ui.Root(), "MuteMasterLabel"))
+            label->SetText("□MUTE");
     } else if (t == "set.bgm.value") {
-        m_settings.bgmVolume=std::clamp(std::atoi(action.argument.c_str()),0,128);audio.SetBGMVolume(m_settings.bgmVolume);
+        m_settings.bgmVolume=std::clamp(std::atoi(action.argument.c_str()),0,128);m_settings.bgmMuted=false;audio.SetBGMVolume(m_settings.bgmVolume);
+        if (auto* label = FindUiControlNamed<ui::Label>(m_ui.Root(), "MuteBGMLabel")) label->SetText("□MUTE");
     } else if (t == "set.se.value") {
-        m_settings.seVolume=std::clamp(std::atoi(action.argument.c_str()),0,128);audio.SetSEVolume(m_settings.seVolume);
+        m_settings.seVolume=std::clamp(std::atoi(action.argument.c_str()),0,128);m_settings.seMuted=false;audio.SetSEVolume(m_settings.seVolume);
+        if (auto* label = FindUiControlNamed<ui::Label>(m_ui.Root(), "MuteSELabel")) label->SetText("□MUTE");
     } else if (t == "set.voice.value") {
-        m_settings.voiceVolume=std::clamp(std::atoi(action.argument.c_str()),0,128);audio.SetVoiceVolume(m_settings.voiceVolume);
+        m_settings.voiceVolume=std::clamp(std::atoi(action.argument.c_str()),0,128);m_settings.voiceMuted=false;audio.SetVoiceVolume(m_settings.voiceVolume);
+        if (auto* label = FindUiControlNamed<ui::Label>(m_ui.Root(), "MuteVoiceLabel")) label->SetText("□MUTE");
+    } else if (t.starts_with("set.mute.")) {
+        const std::string bus = t.substr(std::string("set.mute.").size());
+        bool* muted = nullptr;
+        int volume = 0;
+        std::string label;
+        if (bus == "master") { muted = &m_settings.masterMuted; volume = m_settings.masterVolume; label = "MuteMasterLabel"; }
+        else if (bus == "bgm") { muted = &m_settings.bgmMuted; volume = m_settings.bgmVolume; label = "MuteBGMLabel"; }
+        else if (bus == "se") { muted = &m_settings.seMuted; volume = m_settings.seVolume; label = "MuteSELabel"; }
+        else if (bus == "voice") { muted = &m_settings.voiceMuted; volume = m_settings.voiceVolume; label = "MuteVoiceLabel"; }
+        if (muted) {
+            *muted = !*muted;
+            const int effective = *muted ? 0 : volume;
+            if (bus == "master") audio.SetMainVolume(effective);
+            else if (bus == "bgm") audio.SetBGMVolume(effective);
+            else if (bus == "se") audio.SetSEVolume(effective);
+            else audio.SetVoiceVolume(effective);
+            if (auto* control = FindUiControlNamed<ui::Label>(m_ui.Root(), label))
+                control->SetText(*muted ? "☑MUTE" : "□MUTE");
+            const char* sliderName = bus == "master" ? "Master" :
+                bus == "bgm" ? "BGM" : bus == "se" ? "SE" : "Voice";
+            if (auto* slider = FindUiControlNamed<ui::Slider>(m_ui.Root(), sliderName))
+                slider->SetValueSilently(*muted ? 0 : std::round(volume * 100.0 / 128.0));
+            if (bus == "master")
+                (void)m_ui.UpdateUiData("settings.masterValue", Variant(*muted ? "mute" :
+                    std::to_string(static_cast<int>(std::round(volume * 100.0 / 128.0)))));
+        }
+    } else if (t == "set.duck.on" || t == "set.duck.off") {
+        m_settings.duckBgmOnVoice = t.ends_with(".on");
+        audio.SetVoiceDuckingEnabled(m_settings.duckBgmOnVoice);
+        (void)m_ui.UpdateUiData("settings.duckOn", Variant(m_settings.duckBgmOnVoice));
+        (void)m_ui.UpdateUiData("settings.duckOff", Variant(!m_settings.duckBgmOnVoice));
+    } else if (t == "set.voiceCarry.on" || t == "set.voiceCarry.off") {
+        m_settings.continueVoiceOnAdvance = t.ends_with(".on");
+        (void)m_ui.UpdateUiData("settings.voiceCarryOn", Variant(m_settings.continueVoiceOnAdvance));
+        (void)m_ui.UpdateUiData("settings.voiceCarryOff", Variant(!m_settings.continueVoiceOnAdvance));
+    } else if (t == "set.voiceProfile.value") {
+        const auto separator = action.argument.find(':');
+        if (separator != std::string::npos && separator > 0 && separator <= 64) {
+            const std::string id = action.argument.substr(0, separator);
+            const int volume = std::clamp(std::atoi(action.argument.c_str() + separator + 1), 0, 128);
+            m_settings.voiceProfileVolumes[id] = volume;
+            m_settings.voiceProfileMuted[id] = false;
+            audio.SetVoiceProfileVolume(id, volume);
+            if (auto* label = FindUiControlNamed<ui::Label>(m_ui.Root(),
+                    "VoiceProfileMute_" + id + "Label")) label->SetText("□MUTE");
+        }
+    } else if (t == "set.voiceProfile.mute") {
+        const std::string& id = action.argument;
+        if (!id.empty() && id.size() <= 64) {
+            const bool muted = !(m_settings.voiceProfileMuted[id]);
+            m_settings.voiceProfileMuted[id] = muted;
+            const auto volume = m_settings.voiceProfileVolumes.find(id);
+            audio.SetVoiceProfileVolume(id, muted ? 0 :
+                volume == m_settings.voiceProfileVolumes.end() ? 128 : volume->second);
+            if (auto* label = FindUiControlNamed<ui::Label>(m_ui.Root(),
+                    "VoiceProfileMute_" + id + "Label"))
+                label->SetText(muted ? "☑MUTE" : "□MUTE");
+            if (auto* slider = FindUiControlNamed<ui::Slider>(m_ui.Root(),
+                    "VoiceProfile_" + id))
+                slider->SetValueSilently(muted ? 0 : std::round(
+                    (volume == m_settings.voiceProfileVolumes.end() ? 128 : volume->second)
+                    * 100.0 / 128.0));
+        }
+    } else if (t == "voiceProfile.test") {
+        audio.PlayVoice(action.argument);
+    } else if (t == "audio.test.se") {
+        audio.PlaySE(action.argument);
     } else if (t == "set.speed.value") {
         m_settings.textSpeedMs=std::clamp(std::atoi(action.argument.c_str()),0,120);m_session->VM().SetDefaultTextSpeed(m_settings.textSpeedMs);
     } else if (t == "set.skipread.value") {
@@ -3137,8 +3286,6 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         (void)ApplyFullscreenSetting(action.argument == "true");
     } else if (t == "set.fullscreen.on" || t == "set.fullscreen.off") {
         (void)ApplyFullscreenSetting(t.ends_with(".on"));
-        if (m_ui.CurrentRoute() == "settings")
-            (void)m_ui.ShowSettings(SettingsUI());
     } else if(t=="set.textscale.value") { m_settings.textScale=std::clamp(std::atoi(action.argument.c_str())/100.0f,.75f,2.0f);
     } else if(t=="set.highcontrast.value") { m_settings.highContrast=action.argument=="true";
     } else if(t=="set.reducedmotion.value") { m_settings.reducedMotion=action.argument=="true";
@@ -3485,6 +3632,40 @@ void PlayerApp::RenderUIWithScripts() {
     if (shaking) m_runtime.Renderer().PopTransform();
     if (m_scriptHost)
         m_scriptHost->RenderRetained(script::RenderPhase::AfterUI);
+    if (m_settingsSoundE2E && m_settingsSoundE2EStage == 3 &&
+        !m_routePreloadBatch &&
+        !m_runtime.Renderer().PresentationHoldActive()) {
+        if (const auto& transition = m_session->Routes().ActiveTransition();
+            transition && m_runtime.Renderer().ScreenEffectPlaying(transition->handle))
+            return;
+        const auto summary = graphics::CaptureFrameSummary(m_runtime.Renderer().Handle());
+        const bool hasFirst = FindUiControlNamed<ui::Slider>(m_ui.Root(), "VoiceProfile_rnd") != nullptr;
+        const bool hasLast = FindUiControlNamed<ui::Slider>(m_ui.Root(), "VoiceProfile_fem") != nullptr;
+        const bool captured = CapturePresentationE2EFrame("settings-sound");
+        const int originalMaster = m_runtime.Audio().MainVolume();
+        HandleUIAction({"set.mute.master", {}});
+        const bool muted = m_runtime.Audio().MainVolume() == 0;
+        HandleUIAction({"set.mute.master", {}});
+        const bool restored = m_runtime.Audio().MainVolume() == originalMaster;
+        HandleUIAction({"set.voiceProfile.value", "rnd:64"});
+        const bool profileChanged = m_settings.voiceProfileVolumes["rnd"] == 64;
+        HandleUIAction({"set.voiceProfile.mute", "rnd"});
+        const bool profileMuted = m_settings.voiceProfileMuted["rnd"];
+        HandleUIAction({"set.voiceProfile.mute", "rnd"});
+        const std::string testVoice = "Assets/Original/sound/vo/rnd/fem_rnd_000001.ogg";
+        HandleUIAction({"voiceProfile.test", testVoice});
+        const bool testPlayed = m_runtime.Audio().CaptureState().voice.path == testVoice;
+        m_runtime.Audio().StopVoice();
+        const bool passed = hasFirst && hasLast && captured &&
+            summary.Valid() && summary.sampledColors >= 8 && muted &&
+            restored && profileChanged && profileMuted && testPlayed;
+        PX_LOG_INFO("Player settings sound E2E {} colors={} first={} last={} mute={} test={}",
+                    passed ? "passed" : "failed", summary.sampledColors,
+                    hasFirst, hasLast, muted && restored, testPlayed);
+        m_e2eFailed = !passed;
+        m_settingsSoundE2E = false;
+        m_quitRequested = true;
+    }
 }
 
 void PlayerApp::ScreensFrame(float dt) {
@@ -3542,6 +3723,33 @@ void PlayerApp::ConfigureE2EJourney() {
         PX_LOG_INFO("Player UI actions E2E armed");
         return;
     }
+    if(std::string_view(journey)=="settings-fullscreen"){
+        m_settingsFullscreenE2E=true;
+        m_settingsFullscreenE2EStartedAt=SDL_GetTicks();
+        PX_LOG_INFO("Player settings fullscreen E2E armed");
+        return;
+    }
+    if(std::string_view(journey)=="save-load-confirm"){
+        m_saveLoadConfirmE2E = true;
+        m_saveLoadConfirmE2EStartedAt = SDL_GetTicks();
+        PX_LOG_INFO("Player save/load confirmation E2E armed");
+        return;
+    }
+    if(std::string_view(journey)=="settings-sound"){
+        m_settingsSoundE2E = true;
+        m_settingsSoundE2EStartedAt = SDL_GetTicks();
+        const char* captureDir = SDL_getenv("PRISMATIX_E2E_CAPTURE_DIR");
+        m_presentationE2ECaptureDir = captureDir ? captureDir : "e2e-settings-sound";
+        PX_LOG_INFO("Player settings sound E2E armed captureDir={}",
+                    m_presentationE2ECaptureDir);
+        return;
+    }
+    if(std::string_view(journey)=="save-load-incompatible"){
+        m_incompatibleSaveE2E = true;
+        m_incompatibleSaveE2EStartedAt = SDL_GetTicks();
+        PX_LOG_INFO("Player incompatible save UI E2E armed");
+        return;
+    }
     if(std::string_view(journey)!="catalog")return;
     m_e2eStage=E2EStage::AwaitTitle;
     m_e2eStartedAt=SDL_GetTicks();
@@ -3569,6 +3777,174 @@ bool PlayerApp::CapturePresentationE2EFrame(const std::string_view name){
 }
 
 void PlayerApp::DriveE2EJourney() {
+    if (m_incompatibleSaveE2E) {
+        if (SDL_GetTicks() - m_incompatibleSaveE2EStartedAt > 30'000) {
+            PX_LOG_ERROR("Player incompatible save UI E2E timed out stage={}",
+                         m_incompatibleSaveE2EStage);
+            m_e2eFailed = true;
+            m_incompatibleSaveE2E = false;
+            m_quitRequested = true;
+            return;
+        }
+        switch (m_incompatibleSaveE2EStage) {
+            case 0:
+                if (m_appState == AppState::Title && m_ui.CurrentRoute() == "title") {
+                    OpenScreen("load");
+                    m_incompatibleSaveE2EStage = 1;
+                }
+                break;
+            case 1:
+                if (m_ui.CurrentRoute() == "load") {
+                    HandleUIAction({"load.slot", "1"});
+                    m_incompatibleSaveE2EStage = 2;
+                }
+                break;
+            case 2: {
+                HandleUIAction({"saveLoad.confirm.accept", {}});
+                auto* error = FindUiControlNamed<ui::Control>(m_ui.Root(), "SaveLoadError");
+                const bool passed = error && error->IsVisibleInTree() &&
+                    m_ui.CurrentRoute() == "load" && m_appState == AppState::Title;
+                PX_LOG_INFO("Player incompatible save UI E2E {}", passed ? "passed" : "failed");
+                m_e2eFailed = !passed;
+                m_incompatibleSaveE2E = false;
+                m_quitRequested = true;
+                break;
+            }
+            default: break;
+        }
+        return;
+    }
+    if (m_settingsSoundE2E) {
+        if (SDL_GetTicks() - m_settingsSoundE2EStartedAt > 30'000) {
+            PX_LOG_ERROR("Player settings sound E2E timed out stage={}",
+                         m_settingsSoundE2EStage);
+            m_e2eFailed = true;
+            m_settingsSoundE2E = false;
+            m_quitRequested = true;
+            return;
+        }
+        if (m_settingsSoundE2EStage == 0 && m_appState == AppState::Title &&
+            m_ui.CurrentRoute() == "title") {
+            OpenScreen("settings");
+            m_settingsSoundE2EStage = 1;
+        } else if (m_settingsSoundE2EStage == 1 &&
+                   m_ui.CurrentRoute() == "settings") {
+            m_settingsPage = 3;
+            for (int page = 1; page <= 4; ++page)
+                (void)m_ui.UpdateUiData("settings.page" + std::to_string(page),
+                                        Variant(page == 3));
+            m_settingsSoundE2EStage = 2;
+        } else if (m_settingsSoundE2EStage == 2 &&
+                   !m_routePreloadBatch &&
+                   SDL_GetTicks() - m_settingsSoundE2EStartedAt > 2'000) {
+            m_settingsSoundE2EStage = 3;
+        }
+        return;
+    }
+    if (m_saveLoadConfirmE2E) {
+        const auto finish = [this](bool passed) {
+            m_e2eFailed = !passed;
+            PX_LOG_INFO("Player save/load confirmation E2E {}", passed ? "passed" : "failed");
+            m_saveLoadConfirmE2E = false;
+            m_quitRequested = true;
+        };
+        if (SDL_GetTicks() - m_saveLoadConfirmE2EStartedAt > 90'000) {
+            PX_LOG_ERROR("Player save/load confirmation E2E timed out stage={}",
+                         m_saveLoadConfirmE2EStage);
+            finish(false);
+            return;
+        }
+        switch (m_saveLoadConfirmE2EStage) {
+            case 0:
+                if (m_appState == AppState::Title && m_ui.CurrentRoute() == "title") {
+                    StartGame();
+                    m_saveLoadConfirmE2EStage = 1;
+                }
+                break;
+            case 1:
+                if (m_appState == AppState::Game && !m_gameStartTransitionActive &&
+                    m_session->Dialogue().Active()) {
+                    if (!SaveSlot(1, {})) { finish(false); break; }
+                    OpenScreen("load");
+                    m_saveLoadConfirmE2EStage = 2;
+                }
+                break;
+            case 2:
+                if (m_ui.CurrentRoute() == "load") {
+                    HandleUIAction({"load.slot", "1"});
+                    m_saveLoadConfirmE2EStage = 3;
+                }
+                break;
+            case 3:
+                HandleUIAction({"saveLoad.confirm.accept", {}});
+                if (m_appState == AppState::Game && m_ui.CurrentRoute() != "load")
+                    finish(true);
+                else
+                    finish(false);
+                break;
+            default: break;
+        }
+        return;
+    }
+    if(m_settingsFullscreenE2E){
+        if(SDL_GetTicks()-m_settingsFullscreenE2EStartedAt>30'000){
+            PX_LOG_ERROR("Player settings fullscreen E2E timed out stage={}",
+                         m_settingsFullscreenE2EStage);
+            m_e2eFailed=true;m_settingsFullscreenE2E=false;m_quitRequested=true;
+            return;
+        }
+        const auto activate=[this](const char* name){
+            auto* button=FindUiControlNamed<ui::Button>(m_ui.Root(),name);
+            if(button)button->Activate();
+            return button!=nullptr;
+        };
+        switch(m_settingsFullscreenE2EStage){
+            case 0:
+                if(m_appState==AppState::Title&&m_ui.CurrentRoute()=="title"){
+                    OpenScreen("settings");
+                    m_settingsFullscreenE2EStage=1;
+                }
+                break;
+            case 1:
+                if(m_ui.CurrentRoute()=="settings"){
+                    if(!activate("FullscreenModeLabelHit")){
+                        PX_LOG_ERROR("Player settings fullscreen label button missing");
+                        m_e2eFailed=true;m_settingsFullscreenE2E=false;m_quitRequested=true;
+                    }else m_settingsFullscreenE2EStage=2;
+                }
+                break;
+            case 2:
+                if(m_settings.fullscreen&&
+                   (SDL_GetWindowFlags(m_runtime.GetWindow().Handle())&
+                    SDL_WINDOW_FULLSCREEN)){
+                    if(!activate("WindowModeLabelHit")){
+                        PX_LOG_ERROR("Player settings windowed label button missing");
+                        m_e2eFailed=true;m_settingsFullscreenE2E=false;m_quitRequested=true;
+                    }else m_settingsFullscreenE2EStage=3;
+                }
+                break;
+            case 3:
+                if(!m_settings.fullscreen&&
+                   !(SDL_GetWindowFlags(m_runtime.GetWindow().Handle())&
+                     SDL_WINDOW_FULLSCREEN)){
+                    int width = 0, height = 0;
+                    SDL_GetWindowSize(m_runtime.GetWindow().Handle(), &width, &height);
+                    if (width != m_settings.windowWidth ||
+                        height != m_settings.windowHeight) {
+                        PX_LOG_ERROR("Player windowed E2E size mismatch actual={}x{} expected={}x{}",
+                                     width, height, m_settings.windowWidth, m_settings.windowHeight);
+                        m_e2eFailed = true;
+                    } else {
+                        PX_LOG_INFO("Player settings fullscreen E2E complete windowed={}x{}",
+                                    width, height);
+                    }
+                    m_settingsFullscreenE2E=false;m_quitRequested=true;
+                }
+                break;
+            default:break;
+        }
+        return;
+    }
     if(m_saveLoadE2E){
         if(SDL_GetTicks()-m_saveLoadE2EStartedAt>120'000){
             PX_LOG_ERROR("Player save-load E2E timed out before title");
@@ -4309,12 +4685,19 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         !input.KeyDown(SDL_SCANCODE_RALT);
     const bool nonKeyboardAdvance =
         input.ActionPressedWithoutKeyboard(InputAction::Advance);
+    const auto advanceDialogue = [this] {
+        if (!m_settings.continueVoiceOnAdvance &&
+            m_session->VM().State() == vn::VMState::WaitingClick &&
+            m_session->Dialogue().Finished())
+            m_runtime.Audio().StopVoice();
+        m_session->Advance();
+    };
 
     bool advancedByClick = false;
     if (!m_storyHudVisible && m_session->Routes().CurrentModalRoute().empty()) {
         if ((input.LeftClick() || advanceKey || nonKeyboardAdvance) &&
             m_session->VM().State() != vn::VMState::WaitingChoice) {
-            m_session->Advance();
+            advanceDialogue();
             advancedByClick = true;
             m_autoMode = false;
             m_skipMode = false;
@@ -4339,7 +4722,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         }
         if (!uiConsumed && (input.LeftClick() || advanceKey || nonKeyboardAdvance) &&
                m_session->VM().State() != vn::VMState::WaitingChoice) {
-            m_session->Advance();
+            advanceDialogue();
             advancedByClick = true;
             m_autoMode = false;
             m_skipMode = false;
@@ -4357,7 +4740,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         (m_session->VM().State() == vn::VMState::WaitingClick ||
          m_session->VM().State() == vn::VMState::WaitingTimer)) {
         if (!m_session->Dialogue().Finished()) m_session->Dialogue().ShowAll();
-        m_session->Advance();
+        advanceDialogue();
         m_autoTimerStart = 0;
     } else if (m_autoMode && m_session->VM().State() == vn::VMState::WaitingClick &&
                m_session->Dialogue().Finished()) {
@@ -4365,7 +4748,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
             m_autoTimerStart = now;
         } else if (now - m_autoTimerStart >=
                    static_cast<std::uint64_t>(std::max(0, m_settings.autoWaitMs))) {
-            m_session->Advance();
+            advanceDialogue();
             m_autoTimerStart = 0;
         }
     } else {

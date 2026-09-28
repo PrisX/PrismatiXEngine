@@ -7,6 +7,7 @@
 #include "Engine/Platform/Input.h"
 #include "Engine/Text/Typography.h"
 #include "Engine/UI/Widgets.h"
+#include "Engine/UI/VirtualizedView.h"
 #include "Engine/UI/Actions/BuiltInActionProvider.h"
 
 #include <algorithm>
@@ -436,7 +437,10 @@ void UIContext::ResetAnimationPropertyOverrides(const std::string_view target) {
 
 void UIContext::ConfigureControlRuntime() {
     if (!m_root) return;
-    std::function<void(scene::Node&)> visit = [&](scene::Node& node) {
+    ConfigureControlTree(*m_root);
+}
+
+void UIContext::ConfigureControlTree(scene::Node& node) {
         if (auto* control = dynamic_cast<Control*>(&node)) {
             if (m_textRenderer) {
                 control->SetTextLayoutProvider([this](const Control& target,
@@ -453,11 +457,13 @@ void UIContext::ConfigureControlRuntime() {
             }
             if (auto* button = dynamic_cast<Button*>(control))
                 button->SetInputBindingService(m_bindingInput, m_bindingChanged);
+            if (auto* view = dynamic_cast<VirtualizedView*>(control))
+                view->SetItemCreatedCallback([this](Control& item) {
+                    ConfigureControlTree(item);
+                });
             if (m_configureControlRuntime) m_configureControlRuntime(*control);
         }
-        for (const auto& child : node.Children()) visit(*child);
-    };
-    visit(*m_root);
+        for (const auto& child : node.Children()) ConfigureControlTree(*child);
 }
 
 BehaviorRuntimeServices UIContext::BehaviorServices(){

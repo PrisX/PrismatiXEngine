@@ -42,6 +42,10 @@ public:
     }
 
     Status SetSource(std::shared_ptr<IVirtualItemSource> source, Factory factory);
+    // Called once for each newly created item subtree, including authored cells.
+    void SetItemCreatedCallback(std::function<void(Control&)> callback) {
+        m_itemCreated = std::move(callback);
+    }
     void SetGridColumns(std::size_t columns);
     void SetItemExtent(Vec2 extent);
     void SetGap(Vec2 gap);
@@ -72,6 +76,7 @@ private:
 
     std::shared_ptr<IVirtualItemSource> m_source;
     Factory m_factory;
+    std::function<void(Control&)> m_itemCreated;
     // A visible item's Runtime identity follows its source key, not its
     // current index. Reordering data must not recreate focused controls.
     std::unordered_map<std::string, Uuid> m_realized;

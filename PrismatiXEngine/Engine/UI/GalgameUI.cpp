@@ -189,6 +189,10 @@ GalgameUI::GalgameUI() {
     for (const char* property : {"fullscreen", "windowed", "skipReadOnly", "skipAll"})
         (void)m_viewModel.Define(std::string("settings.") + property,
                                  Variant(false), true);
+    (void)m_viewModel.Define("settings.duckOn", Variant(true), true);
+    (void)m_viewModel.Define("settings.duckOff", Variant(false), true);
+    (void)m_viewModel.Define("settings.voiceCarryOn", Variant(false), true);
+    (void)m_viewModel.Define("settings.voiceCarryOff", Variant(true), true);
     for (const char* property : {"masterValue", "bgmValue", "seValue",
                                  "voiceValue", "textSpeedValue"})
         (void)m_viewModel.Define(std::string("settings.") + property,
@@ -196,6 +200,7 @@ GalgameUI::GalgameUI() {
     for (const char* property : {"visible", "save", "load", "overwrite"})
         (void)m_viewModel.Define(
             std::string("saveLoad.confirm.") + property, Variant(false), true);
+    (void)m_viewModel.Define("saveLoad.error.visible", Variant(false), true);
     (void)m_viewModel.Define("title.confirm.visible", Variant(false), true);
     for (const char* property : {"visible", "reset", "exit"})
         (void)m_viewModel.Define(
@@ -213,6 +218,7 @@ GalgameUI::GalgameUI() {
     (void)RegisterActionCommand("cg.view", "resource");
     (void)RegisterActionCommand("saveLoad.confirm.accept");
     (void)RegisterActionCommand("saveLoad.confirm.cancel");
+    (void)RegisterActionCommand("saveLoad.error.dismiss");
     (void)RegisterActionCommand("system.confirm.accept");
     (void)RegisterActionCommand("system.confirm.cancel");
     (void)m_context.Commands().Register("hud.toolbar.pin",[this](const Variant&){return ToggleHudToolbarPinned();});
@@ -1116,10 +1122,14 @@ Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
     (void)m_viewModel.Write("settings.windowed", Variant(!s.fullscreen));
     (void)m_viewModel.Write("settings.skipReadOnly", Variant(s.skipReadOnly));
     (void)m_viewModel.Write("settings.skipAll", Variant(!s.skipReadOnly));
+    (void)m_viewModel.Write("settings.duckOn", Variant(s.duckBgmOnVoice));
+    (void)m_viewModel.Write("settings.duckOff", Variant(!s.duckBgmOnVoice));
+    (void)m_viewModel.Write("settings.voiceCarryOn", Variant(s.continueVoiceOnAdvance));
+    (void)m_viewModel.Write("settings.voiceCarryOff", Variant(!s.continueVoiceOnAdvance));
     const auto percent=[](double value,double maximum){
         return std::to_string(static_cast<int>(value*100.0/maximum+0.5));
     };
-    (void)m_viewModel.Write("settings.masterValue", Variant(percent(s.master,128)));
+    (void)m_viewModel.Write("settings.masterValue", Variant(s.masterMuted ? "mute" : percent(s.master,128)));
     (void)m_viewModel.Write("settings.bgmValue", Variant(percent(s.bgm,128)));
     (void)m_viewModel.Write("settings.seValue", Variant(percent(s.se,128)));
     (void)m_viewModel.Write("settings.voiceValue", Variant(percent(s.voice,128)));
@@ -1141,7 +1151,41 @@ Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
             });
         }
     };
-    slider("Master",s.master,128,"set.master.value","settings.masterValue");slider("BGM",s.bgm,128,"set.bgm.value","settings.bgmValue");slider("SE",s.se,128,"set.se.value","settings.seValue");slider("Voice",s.voice,128,"set.voice.value","settings.voiceValue");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value","settings.textSpeedValue");
+    slider("Master",s.masterMuted ? 0 : s.master,128,"set.master.value","settings.masterValue");slider("BGM",s.bgmMuted ? 0 : s.bgm,128,"set.bgm.value","settings.bgmValue");slider("SE",s.seMuted ? 0 : s.se,128,"set.se.value","settings.seValue");slider("Voice",s.voiceMuted ? 0 : s.voice,128,"set.voice.value","settings.voiceValue");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value","settings.textSpeedValue");
+    for (const auto& [name, muted] : std::initializer_list<std::pair<const char*, bool>>{
+             {"MuteMasterLabel", s.masterMuted}, {"MuteBGMLabel", s.bgmMuted},
+             {"MuteSELabel", s.seMuted}, {"MuteVoiceLabel", s.voiceMuted}})
+        if (auto* label = FindNamed<Label>(m_context.Root(), name))
+            label->SetText(muted ? "☑MUTE" : "□MUTE");
+    const auto configureProfiles = [this, &s](auto&& self, Control* root) -> void {
+        if (!root) return;
+        constexpr std::string_view prefix = "VoiceProfile_";
+        if (root->Name().starts_with(prefix)) {
+            if (auto* control = dynamic_cast<Slider*>(root)) {
+                const std::string id(root->Name().substr(prefix.size()));
+                const auto stored = s.voiceProfiles.find(id);
+                const int value = stored == s.voiceProfiles.end() ? 128 : stored->second;
+                const int percent = static_cast<int>(std::round(value * 100.0 / 128.0));
+                control->SetRange(0, 100, 1);
+                const bool muted = s.voiceProfileMuted.contains(id) && s.voiceProfileMuted.at(id);
+                control->SetValue(muted ? 0 : percent);
+                if (auto* label = FindNamed<Label>(m_context.Root(), "VoiceProfileValue_" + id))
+                    label->SetText(std::to_string(percent));
+                if (auto* label = FindNamed<Label>(m_context.Root(), "VoiceProfileMute_" + id + "Label"))
+                    label->SetText(muted ? "☑MUTE" : "□MUTE");
+                control->SetOnChanged([this, id](double changed) {
+                    const int percent = static_cast<int>(std::round(changed));
+                    if (auto* label = FindNamed<Label>(m_context.Root(), "VoiceProfileValue_" + id))
+                        label->SetText(std::to_string(percent));
+                    Emit("set.voiceProfile.value", id + ":" +
+                        std::to_string(static_cast<int>(std::round(changed * 128.0 / 100.0))));
+                });
+            }
+        }
+        for (const auto& child : root->Children())
+            if (auto* control = dynamic_cast<Control*>(child.get())) self(self, control);
+    };
+    configureProfiles(configureProfiles, m_context.Root());
     if(auto* skip=FindNamed<CheckBox>(m_context.Root(),"SkipRead")){skip->SetChecked(s.skipReadOnly);skip->SetOnToggled([this](bool value){Emit("set.skipread.value",value?"true":"false");});}
     if(auto* full=FindNamed<CheckBox>(m_context.Root(),"Fullscreen")){full->SetChecked(s.fullscreen);full->SetOnToggled([this](bool value){Emit("set.fullscreen.value",value?"true":"false");});}
     slider("TextScale",s.textScale*100.0,200,"set.textscale.value");

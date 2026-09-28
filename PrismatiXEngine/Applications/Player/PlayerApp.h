@@ -288,6 +288,18 @@ private:
     bool m_uiActionsE2E = false;
     int m_uiActionsE2EStage = 0;
     std::uint64_t m_uiActionsE2EStartedAt = 0;
+    bool m_settingsFullscreenE2E = false;
+    int m_settingsFullscreenE2EStage = 0;
+    std::uint64_t m_settingsFullscreenE2EStartedAt = 0;
+    bool m_saveLoadConfirmE2E = false;
+    int m_saveLoadConfirmE2EStage = 0;
+    std::uint64_t m_saveLoadConfirmE2EStartedAt = 0;
+    bool m_settingsSoundE2E = false;
+    int m_settingsSoundE2EStage = 0;
+    std::uint64_t m_settingsSoundE2EStartedAt = 0;
+    bool m_incompatibleSaveE2E = false;
+    int m_incompatibleSaveE2EStage = 0;
+    std::uint64_t m_incompatibleSaveE2EStartedAt = 0;
     int m_e2eClearCountBeforeF2 = 0;
     std::optional<Variant> m_e2eSessionValueBeforeF2;
     accessibility::SpeechService m_speech;

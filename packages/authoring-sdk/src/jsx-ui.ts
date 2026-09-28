@@ -276,6 +276,8 @@ export interface SliderProps extends Omit<UiNodeProps, "children"> {
   readonly knobPressedPath?: string;
   readonly railHeight?: number;
   readonly knobSize?: number;
+  /** Clip the active rail image to the current value, preserving its full source scale. */
+  readonly fillRailToValue?: boolean;
 }
 
 /** A skinnable button that displays and edits one registered keyboard action. */
@@ -654,17 +656,17 @@ export function TextureButton(props: TextureButtonProps): UiElement {
 export function Slider(props: SliderProps): UiElement {
   const {minimum, maximum, step, value, railPath, railHoverPath,
     railPressedPath, knobPath, knobHoverPath, knobPressedPath, railHeight,
-    knobSize, ...rest} = props;
+    knobSize, fillRailToValue, ...rest} = props;
   const optional = {minimum, maximum, step, value, railPath, railHoverPath,
     railPressedPath, knobPath, knobHoverPath, knobPressedPath, railHeight,
-    knobSize};
+    knobSize, fillRailToValue};
   return node("control", "Slider", {
     ...rest,
     accessibilityRole: props.accessibilityRole ?? "slider",
     runtimeProperties: {
       ...props.runtimeProperties,
       ...Object.fromEntries(Object.entries(optional)
-        .filter((entry): entry is [string, string | number] => entry[1] !== undefined)),
+        .filter((entry): entry is [string, string | number | boolean] => entry[1] !== undefined)),
     },
   });
 }

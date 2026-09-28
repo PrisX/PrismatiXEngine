@@ -414,6 +414,7 @@ public:
     [[nodiscard]] std::string_view TypeName() const override{return "Slider";}
     void SetRange(double minimum,double maximum,double step=0.0);
     void SetValue(double value);
+    void SetValueSilently(double value);
     [[nodiscard]] double Value() const{return m_value;}
     [[nodiscard]] double Minimum() const{return m_min;}
     [[nodiscard]] double Maximum() const{return m_max;}
@@ -433,8 +434,10 @@ public:
     void CollectImageDependencies(std::vector<std::string>& paths) const override;
     void SetRailHeight(float value){m_railHeight=std::max(1.0f,value);}
     void SetKnobSize(float value){m_knobSize=std::max(1.0f,value);}
+    void SetFillRailToValue(bool value){m_fillRailToValue=value;}
     [[nodiscard]] float RailHeight() const{return m_railHeight;}
     [[nodiscard]] float KnobSize() const{return m_knobSize;}
+    [[nodiscard]] bool FillRailToValue() const{return m_fillRailToValue;}
     void SetOnChanged(Changed value){m_changed=std::move(value);}
     void HandleEvent(UIEvent& event) override;
     bool PerformAccessibilityAction(std::string_view action,
@@ -444,6 +447,7 @@ private:void SetFromPosition(float x);double m_min=0,m_max=1,m_step=0,m_value=0;
     std::string m_railPath,m_railHoverPath,m_railPressedPath;
     std::string m_knobPath,m_knobHoverPath,m_knobPressedPath;
     float m_railHeight=6.0f,m_knobSize=14.0f;
+    bool m_fillRailToValue=false;
 };
 
 class LineEdit : public Control {

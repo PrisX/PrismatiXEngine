@@ -68,7 +68,14 @@ void Control::SetCustomMinimumSize(Vec2 value) { m_customMinimum = value; Invali
 void Control::SetMaximumSize(Vec2 value) { m_maximum = value; InvalidateLayout(); }
 void Control::SetSizeFlags(SizeFlag h, SizeFlag v) { m_horizontalFlags = h; m_verticalFlags = v; InvalidateLayout(); }
 void Control::SetStretchRatio(float value) { m_stretchRatio = std::max(0.001f, value); InvalidateLayout(); }
-void Control::SetVisibility(Visibility value) { m_visibility = value; InvalidateLayout(); }
+void Control::SetVisibility(Visibility value) {
+    if (m_visibility != Visibility::Visible && value == Visibility::Visible)
+        m_showElapsed = 0.0f;
+    else if (value != Visibility::Visible)
+        m_showElapsed = m_showTransitionSeconds;
+    m_visibility = value;
+    InvalidateLayout();
+}
 
 AccessibilitySemantics Control::DescribeAccessibility() const {
     AccessibilitySemantics semantics{
@@ -265,14 +272,20 @@ void Control::EmitInputSignal(const UIEvent& event) {
 }
 
 void Control::Update(float deltaSeconds) {
+    if (m_visibility == Visibility::Visible && m_showElapsed < m_showTransitionSeconds &&
+        std::isfinite(deltaSeconds) && deltaSeconds > 0.0f)
+        m_showElapsed = std::min(m_showTransitionSeconds, m_showElapsed + deltaSeconds);
     for (const auto& child : Children())
         if (auto* control = dynamic_cast<Control*>(child.get())) control->Update(deltaSeconds);
 }
 
 void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
     if (m_visibility != Visibility::Visible) return;
-    Color tint=m_modulate;tint.a=static_cast<std::uint8_t>(static_cast<float>(tint.a)*m_opacity);
-    renderer.PushTransform({m_layoutRect.x+m_pivot.x*m_layoutRect.w+m_translation.x,m_layoutRect.y+m_pivot.y*m_layoutRect.h+m_translation.y},m_scale,m_rotation,tint);
+    const float progress = m_showTransitionSeconds > 0.0f
+        ? std::clamp(m_showElapsed / m_showTransitionSeconds, 0.0f, 1.0f) : 1.0f;
+    const float remaining = 1.0f - progress;
+    Color tint=m_modulate;tint.a=static_cast<std::uint8_t>(static_cast<float>(tint.a)*m_opacity*(1.0f-remaining*remaining));
+    renderer.PushTransform({m_layoutRect.x+m_pivot.x*m_layoutRect.w+m_translation.x,m_layoutRect.y+m_pivot.y*m_layoutRect.h+m_translation.y+8.0f*remaining*remaining},m_scale,m_rotation,tint);
     if(m_clipContent)renderer.PushClip(m_layoutRect);
     DrawSelf(renderer, theme);
     for(const auto& child:Children())if(auto* control=dynamic_cast<Control*>(child.get()))control->Draw(renderer,theme);

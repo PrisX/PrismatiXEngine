@@ -16,6 +16,14 @@ struct GameSettings {
     int bgmVolume = 96;
     int seVolume = 110;
     int voiceVolume = 128;
+    std::map<std::string, int, std::less<>> voiceProfileVolumes;
+    std::map<std::string, bool, std::less<>> voiceProfileMuted;
+    bool masterMuted = false;
+    bool bgmMuted = false;
+    bool seMuted = false;
+    bool voiceMuted = false;
+    bool duckBgmOnVoice = true;
+    bool continueVoiceOnAdvance = false;
 
     int textSpeedMs = 28;
     int autoWaitMs = 1400;

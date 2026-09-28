@@ -794,7 +794,8 @@ void CheckBox::HandleEvent(UIEvent& event){
 void CheckBox::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){Button::DrawSelf(renderer,theme);const Rect r=LayoutRect();const float size=std::min(22.0f,r.h-10);renderer.DrawRoundedRect({r.x+8,r.y+(r.h-size)*.5f,size,size},3,{20,23,30,255});if(m_checked)renderer.DrawRoundedRect({r.x+12,r.y+(r.h-size)*.5f+4,size-8,size-8},2,theme.Resolve(*this).focused.border);}
 
 void Slider::SetRange(double minimum,double maximum,double step){m_min=minimum;m_max=std::max(minimum,maximum);m_step=std::max(0.0,step);SetValue(m_value);}
-void Slider::SetValue(double value){value=std::clamp(value,m_min,m_max);if(m_step>0)value=m_min+std::round((value-m_min)/m_step)*m_step;if(value==m_value)return;m_value=value;EmitSignal("valueChanged",{{"value",m_value}});if(m_changed)m_changed(m_value);}
+void Slider::SetValueSilently(double value){value=std::clamp(value,m_min,m_max);if(m_step>0)value=m_min+std::round((value-m_min)/m_step)*m_step;m_value=value;}
+void Slider::SetValue(double value){const double previous=m_value;SetValueSilently(value);if(m_value==previous)return;EmitSignal("valueChanged",{{"value",m_value}});if(m_changed)m_changed(m_value);}
 void Slider::SetFromPosition(float x){const Rect r=LayoutRect();const float knob=std::min(std::max(1.0f,m_knobSize),std::max(r.w,r.h));const float travel=r.w-knob;const double ratio=travel>0?std::clamp((x-r.x-knob*.5f)/travel,0.0f,1.0f):0;SetValue(m_min+(m_max-m_min)*ratio);}
 void Slider::HandleEvent(UIEvent& event){if(event.type==UIEventType::PointerDown||(event.type==UIEventType::PointerMove&&Pressed())){SetFromPosition(event.position.x);event.handled=true;}else if(event.type==UIEventType::KeyDown){if(event.key==SDL_SCANCODE_LEFT)SetValue(m_value-(m_step>0?m_step:(m_max-m_min)/100));else if(event.key==SDL_SCANCODE_RIGHT)SetValue(m_value+(m_step>0?m_step:(m_max-m_min)/100));else return;event.handled=true;}}
 bool Slider::PerformAccessibilityAction(const std::string_view action,
@@ -826,14 +827,28 @@ void Slider::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){
     const float ratio=m_max>m_min?static_cast<float>((m_value-m_min)/(m_max-m_min)):0;
     const float railHeight=std::min(r.h,m_railHeight);
     const Rect rail{r.x,r.y+(r.h-railHeight)*.5f,r.w,railHeight};
-    const std::string* railPath=&m_railPath;
-    if(Pressed()&&!m_railPressedPath.empty())railPath=&m_railPressedPath;
-    else if((Hovered()||Focused())&&!m_railHoverPath.empty())railPath=&m_railHoverPath;
-    if(!railPath->empty())
-        renderer.DrawImageInRect(*railPath,rail,graphics::ContentScaleMode::Stretch,
+    const auto drawRail = [&](const std::string& path) {
+        renderer.DrawImageInRect(path,rail,graphics::ContentScaleMode::Stretch,
             graphics::HorizontalAlignment::Center,
             graphics::VerticalAlignment::Center,255);
-    else{
+    };
+    if(m_fillRailToValue) {
+        if(!m_railPath.empty()) drawRail(m_railPath);
+        const std::string* fillPath=&m_railPressedPath;
+        if(!Pressed()&&(Hovered()||Focused())&&!m_railHoverPath.empty())
+            fillPath=&m_railHoverPath;
+        if(fillPath->empty()) fillPath=&m_railPath;
+        if(!fillPath->empty()&&ratio>0) {
+            renderer.PushClip({rail.x,rail.y,rail.w*ratio,rail.h});
+            drawRail(*fillPath);
+            renderer.PopClip();
+        }
+    } else if(!m_railPath.empty()||!m_railHoverPath.empty()||!m_railPressedPath.empty()) {
+        const std::string* railPath=&m_railPath;
+        if(Pressed()&&!m_railPressedPath.empty())railPath=&m_railPressedPath;
+        else if((Hovered()||Focused())&&!m_railHoverPath.empty())railPath=&m_railHoverPath;
+        if(!railPath->empty()) drawRail(*railPath);
+    } else {
         renderer.DrawRoundedRect(rail,railHeight*.5f,style.normal.background);
         Rect fill=rail;fill.w*=ratio;
         renderer.DrawRoundedRect(fill,railHeight*.5f,style.focused.border);
