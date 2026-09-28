@@ -180,6 +180,14 @@ public:
     }
     void NotifyVideoDone();
     void WaitExternal() { m_state = VMState::WaitingExternal; }
+    // Session commands (for example a screen transition) hold the script
+    // for a time. Click and skip advance past it like an authored [wait].
+    void WaitFor(std::uint64_t milliseconds) {
+        m_timerMs = milliseconds;
+        m_timerStart = m_nowMs;
+        m_state = VMState::WaitingTimer;
+        m_waitRequested = true;
+    }
     void NotifyExternalDone();
     void SetUnlockHook(std::function<void(const std::string& kind, const std::string& id)> hook) {
         m_unlockHook = std::move(hook);
@@ -338,6 +346,8 @@ private:
     std::optional<int> m_seekTargetPc;
     bool m_seeking = false;
     bool m_fastForward = false;
+    // Set by WaitFor from a command hook; the run loop yields once for it.
+    bool m_waitRequested = false;
     bool m_safetyRejected = false;
     std::uint64_t m_instructionsWithoutObservableYield = 0;
     VMRunResult m_lastRunResult{};

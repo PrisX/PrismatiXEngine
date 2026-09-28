@@ -23,6 +23,7 @@ const maximumStoryBytes = 16 * 1024 * 1024;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const audioDurationPattern = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?:ms|s)?$/u;
 const positiveNumberPattern = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/u;
+const signedNumberPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/u;
 // Built-in command parameters are closed. `set` accepts a variable name as a
 // key, `if` is an expression, and extension commands have their own contract.
 const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
@@ -31,7 +32,12 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   chapter: ["title"],
   say: ["speaker", "text", "character"],
   narrate: ["text"],
-  bg: ["asset", "rule", "duration", "vague"],
+  bg: ["asset", "rule", "duration", "vague", "transition", "x", "y", "zoom", "rotate",
+    "anchor", "ease", "from-x", "from-y", "from-zoom"],
+  image: ["name", "asset", "x", "y", "zoom", "rotate", "anchor", "alpha", "z", "duration",
+    "ease", "from-x", "from-y", "from-zoom", "from-alpha"],
+  "image.hide": ["name", "duration"],
+  transition: ["duration", "rule", "vague", "wait"],
   show: ["character", "expression", "asset", "sprite", "position", "x", "y", "scale", "transition"],
   move: ["character", "position", "x", "y", "scale", "duration", "ease", "wait"],
   hide: ["character", "transition"],
@@ -649,8 +655,10 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
   const actionArguments = (node: StoryNode, alias: string, preset: string | undefined,
     options: {readonly size?: string; readonly time?: string; readonly loop?: string;
       readonly ease?: string}): Record<string, string> | undefined => {
-    const character = characters.get(alias);
-    if ((context.characters?.length ?? 0) > 0 && character === undefined) {
+    // `window` addresses the message window instead of a character.
+    const messageWindow = alias === "window";
+    const character = messageWindow ? undefined : characters.get(alias);
+    if (!messageWindow && (context.characters?.length ?? 0) > 0 && character === undefined) {
       diagnostics.push(error("PXSTORY1113", `Unknown character alias: ${alias}`, node.span));
       return undefined;
     }
@@ -673,12 +681,47 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       return undefined;
     }
     return {
-      character: character?.id ?? alias, preset,
+      character: messageWindow ? "$window" : character?.id ?? alias, preset,
       ...(options.size === undefined ? {} : {size: options.size}),
       ...(options.time === undefined ? {} : {time: options.time}),
       ...(options.loop === undefined ? {} : {loop: options.loop}),
       ...(options.ease === undefined ? {} : {ease: options.ease}),
     };
+  };
+
+  // Explicit framing shared by [bg] and [image]: position of the top-left
+  // corner at zoom 1, zoom and rotation about an anchor in image pixels, and
+  // from-* start values for an eased move.
+  const framingArguments = (node: StoryNode, named: (name: string) => string | undefined):
+    Record<string, string> | undefined => {
+    const framed: Record<string, string> = {};
+    const numbers: readonly (readonly [string, string, boolean])[] = [
+      ["x", "x", false], ["y", "y", false], ["zoom", "zoom", true], ["rotate", "rotate", false],
+      ["from-x", "fromX", false], ["from-y", "fromY", false], ["from-zoom", "fromZoom", true],
+    ];
+    for (const [authored, key, positive] of numbers) {
+      const value = named(authored);
+      if (value === undefined) continue;
+      if (!signedNumberPattern.test(value) || !Number.isFinite(Number(value)) ||
+          (positive && Number(value) <= 0)) {
+        diagnostics.push(error("PXSTORY1230", `${node.name} ${authored} must be a ${
+          positive ? "positive " : ""}number`, node.span));
+        return undefined;
+      }
+      framed[key] = value;
+    }
+    const anchor = named("anchor");
+    if (anchor !== undefined) {
+      const parts = anchor.split(",");
+      if (parts.length !== 2 || parts.some((part) => !signedNumberPattern.test(part.trim()))) {
+        diagnostics.push(error("PXSTORY1231", `${node.name} anchor must be x,y in image pixels`, node.span));
+        return undefined;
+      }
+      framed.anchor = parts.map((part) => part.trim()).join(",");
+    }
+    const ease = named("ease");
+    if (ease !== undefined) framed.ease = ease;
+    return framed;
   };
 
   // Shared by [show] and inline `@alias[expression position]` dialogue.
@@ -863,11 +906,86 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
           const resolved = resolveResource(node, assetName, "bg");
           const authoredRule = named("rule");
           const rule = authoredRule === undefined ? undefined : resolveResource(node, authoredRule, "rule");
-          if (resolved !== undefined && (authoredRule === undefined || rule !== undefined)) emit(node, "background", {
+          const transition = named("transition");
+          const framing = framingArguments(node, named);
+          if (transition !== undefined && transition !== "true" && transition !== "false")
+            diagnostics.push(error("PXSTORY1145", "bg transition must be true or false", node.span));
+          else if (framing !== undefined && resolved !== undefined &&
+                   (authoredRule === undefined || rule !== undefined)) emit(node, "background", {
             asset: resolved,
             ...(rule === undefined ? {} : {rule}),
             ...(named("duration") === undefined ? {} : {duration: named("duration")!}),
             ...(named("vague") === undefined ? {} : {vague: named("vague")!}),
+            ...(transition === undefined ? {} : {transition}),
+            ...framing,
+          });
+        }
+        break;
+      }
+      case "image": {
+        // [image cg1 ev_uni_c12_01 x=-300 y=-616 zoom=0.35 anchor=960,947]
+        const name = named("name") ?? positional(0);
+        const assetName = named("asset") ?? positional(1);
+        const duration = named("duration");
+        const alpha = named("alpha");
+        const fromAlpha = named("from-alpha");
+        const z = named("z");
+        const framing = framingArguments(node, named);
+        const unit = (value: string | undefined) => value === undefined ||
+          (positiveNumberPattern.test(value) && Number(value) <= 1);
+        if (name === undefined || assetName === undefined)
+          diagnostics.push(error("PXSTORY1232", "image requires a name and a resource", node.span));
+        else if (!identifierPattern.test(name))
+          diagnostics.push(error("PXSTORY1233", "image name must be a stable identifier", node.span));
+        else if (!unit(alpha) || !unit(fromAlpha))
+          diagnostics.push(error("PXSTORY1234", "image alpha must be between 0 and 1", node.span));
+        else if (z !== undefined && !/^-?\d{1,4}$/u.test(z))
+          diagnostics.push(error("PXSTORY1235", "image z must be an integer", node.span));
+        else if (duration !== undefined && !validAudioDuration(duration))
+          diagnostics.push(error("PXSTORY1236", "image duration must be a non-negative number of ms or s", node.span));
+        else if (framing !== undefined) {
+          const resolved = resolveResource(node, assetName, "bg");
+          const byte = (value: string) => String(Math.round(Number(value) * 255));
+          if (resolved !== undefined) emit(node, "image", {
+            name, asset: resolved, ...framing,
+            ...(alpha === undefined ? {} : {alpha: byte(alpha)}),
+            ...(fromAlpha === undefined ? {} : {fromAlpha: byte(fromAlpha)}),
+            ...(z === undefined ? {} : {z}),
+            ...(duration === undefined ? {} : {duration}),
+          });
+        }
+        break;
+      }
+      case "image.hide": {
+        const name = named("name") ?? positional(0);
+        const duration = named("duration") ?? positional(1);
+        if (name === undefined || (name !== "all" && !identifierPattern.test(name)))
+          diagnostics.push(error("PXSTORY1237", "image.hide requires an image name or all", node.span));
+        else if (duration !== undefined && !validAudioDuration(duration))
+          diagnostics.push(error("PXSTORY1236", "image duration must be a non-negative number of ms or s", node.span));
+        else emit(node, "hideImage", {name: name === "all" ? "*" : name,
+          ...(duration === undefined ? {} : {duration})});
+        break;
+      }
+      case "transition": {
+        // Everything the script changed since the last displayed frame is
+        // revealed together: [bg ... transition=false] [show ...] [transition 500ms]
+        const duration = named("duration") ?? positional(0) ?? "500ms";
+        const authoredRule = named("rule");
+        const vague = named("vague");
+        const wait = named("wait");
+        if (!validAudioDuration(duration))
+          diagnostics.push(error("PXSTORY1238", "transition duration must be a non-negative number of ms or s", node.span));
+        else if (vague !== undefined && (!/^\d{1,3}$/u.test(vague) || Number(vague) > 255))
+          diagnostics.push(error("PXSTORY1239", "transition vague must be 0-255", node.span));
+        else if (wait !== undefined && wait !== "true" && wait !== "false")
+          diagnostics.push(error("PXSTORY1239", "transition wait must be true or false", node.span));
+        else {
+          const rule = authoredRule === undefined ? undefined : resolveResource(node, authoredRule, "rule");
+          if (authoredRule === undefined || rule !== undefined) emit(node, "transition", {
+            duration, ...(rule === undefined ? {} : {rule}),
+            ...(vague === undefined ? {} : {vague}),
+            ...(wait === undefined ? {} : {wait}),
           });
         }
         break;
@@ -1289,7 +1407,7 @@ export interface StoryCommandCompletion {
 }
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
-  const builtins = ["id", "chapter", "say", "narrate", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "shake", "camera", "act", "se.stop", "voice.stop"];
+  const builtins = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "shake", "camera", "act", "se.stop", "voice.stop"];
   const builtinParameters: Readonly<Record<string, StoryCommandCompletion["parameters"]>> = {
     id: [{name:"value", required:true}],
     chapter: [{name:"title", required:true}],
@@ -1300,7 +1418,18 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
     bg: [
       {name:"asset", required:true}, {name:"rule", required:false},
       {name:"duration", required:false}, {name:"vague", required:false},
+      {name:"transition", required:false, values:[true, false]},
+      ...["x", "y", "zoom", "rotate", "anchor", "ease", "from-x", "from-y", "from-zoom"]
+        .map((name) => ({name, required:false})),
     ],
+    image: [
+      {name:"name", required:true}, {name:"asset", required:true},
+      ...["x", "y", "zoom", "rotate", "anchor", "alpha", "z", "duration", "ease",
+        "from-x", "from-y", "from-zoom", "from-alpha"].map((name) => ({name, required:false})),
+    ],
+    "image.hide": [{name:"name", required:true}, {name:"duration", required:false}],
+    transition: [{name:"duration", required:false}, {name:"rule", required:false},
+      {name:"vague", required:false}, {name:"wait", required:false, values:[true, false]}],
     show: [
       {name:"character", required:true}, {name:"expression", required:false}, {name:"asset", required:false},
       {name:"position", required:false, values:["left", "center", "right"]},

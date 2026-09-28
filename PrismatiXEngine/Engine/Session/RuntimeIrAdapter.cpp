@@ -431,6 +431,33 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             Add(command, "rule", Argument(operation, "rule"));
             Add(command, "time", DurationMilliseconds(Argument(operation, "duration")));
             Add(command, "vague", Argument(operation, "vague"));
+            Add(command, "transition", Argument(operation, "transition"));
+            for (const char* name : {"x", "y", "zoom", "rotate", "anchor", "ease"})
+                Add(command, name, Argument(operation, name));
+            Add(command, "from_x", Argument(operation, "fromX"));
+            Add(command, "from_y", Argument(operation, "fromY"));
+            Add(command, "from_zoom", Argument(operation, "fromZoom"));
+        } else if (operation.kind == "image") {
+            command.type = "layer";
+            Add(command, "name", Argument(operation, "name"));
+            Add(command, "file", Argument(operation, "asset"));
+            Add(command, "time", DurationMilliseconds(Argument(operation, "duration")));
+            for (const char* name : {"x", "y", "zoom", "rotate", "anchor", "alpha", "z", "ease"})
+                Add(command, name, Argument(operation, name));
+            Add(command, "from_x", Argument(operation, "fromX"));
+            Add(command, "from_y", Argument(operation, "fromY"));
+            Add(command, "from_zoom", Argument(operation, "fromZoom"));
+            Add(command, "from_alpha", Argument(operation, "fromAlpha"));
+        } else if (operation.kind == "hideImage") {
+            command.type = "layer_clear";
+            Add(command, "name", Argument(operation, "name"));
+            Add(command, "time", DurationMilliseconds(Argument(operation, "duration")));
+        } else if (operation.kind == "transition") {
+            command.type = "screen_transition";
+            Add(command, "time", DurationMilliseconds(Argument(operation, "duration")));
+            Add(command, "rule", Argument(operation, "rule"));
+            Add(command, "vague", Argument(operation, "vague"));
+            Add(command, "wait", Argument(operation, "wait"));
         } else if (operation.kind == "showCharacter") {
             command.type = "char";
             Add(command, "id", Argument(operation, "character"));

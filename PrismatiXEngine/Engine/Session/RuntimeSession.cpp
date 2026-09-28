@@ -352,6 +352,24 @@ bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
         }
         return true;
     }
+    if (command.type == "screen_transition") {
+        // A whole-screen transition from the last presented frame. Commands
+        // before it in the same step change the Stage without being shown,
+        // which is the Artemis/KiriKiri "trans" model.
+        const double milliseconds = CommandNumber(command, "time", 500.0);
+        if (milliseconds <= 0.0 || m_vm.FastForward() || m_vm.Seeking()) return true;
+        const float seconds = static_cast<float>(milliseconds / 1000.0);
+        const std::string rule = ResourcePath(command, "rule");
+        const auto handle = rule.empty()
+            ? m_services.renderer.PlayScreenEffect("crossfade", seconds)
+            : m_services.renderer.PlayRuleScreenTransition(
+                  rule, seconds, static_cast<int>(CommandNumber(command, "vague", 64.0)));
+        // The duration is Story timing even when the renderer cannot play it.
+        (void)handle;
+        if (CommandBool(command, "wait", true))
+            m_vm.WaitFor(static_cast<std::uint64_t>(milliseconds));
+        return true;
+    }
     if (command.type == "screen_effect") {
         const std::string preset = command.Get("preset");
         const animation::AnimationClip* selected = nullptr;

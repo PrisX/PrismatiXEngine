@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <charconv>
 #include <sstream>
+#include <utility>
 
 namespace px::vn {
 
@@ -50,6 +51,40 @@ Color ParseColor(const std::string& s, Color fallback) {
         ++idx;
     }
     return c;
+}
+
+// Explicit image framing from x/y/zoom/rotate/anchor ("ax,ay"). Omitted
+// fields keep `base`, so [bg same x=...] pans without resetting the zoom. The
+// from-* form reads from_x/from_y/from_zoom with the target as the default.
+std::optional<Stage::Placement> ParsePlacement(
+    const Command& cmd, const std::optional<Stage::Placement>& base = std::nullopt) {
+    if (!cmd.Has("x") && !cmd.Has("y") && !cmd.Has("zoom") &&
+        !cmd.Has("rotate") && !cmd.Has("anchor"))
+        return std::nullopt;
+    Stage::Placement placement = base.value_or(Stage::Placement{});
+    if (cmd.Has("x")) placement.x = ParseFloat(cmd.Get("x"));
+    if (cmd.Has("y")) placement.y = ParseFloat(cmd.Get("y"));
+    if (cmd.Has("zoom")) placement.zoom = std::max(0.001f, ParseFloat(cmd.Get("zoom"), 1.0f));
+    if (cmd.Has("rotate")) placement.rotation = ParseFloat(cmd.Get("rotate"));
+    const std::string anchor = cmd.Get("anchor");
+    if (const auto comma = anchor.find(','); comma != std::string::npos) {
+        placement.anchored = true;
+        placement.anchorX = ParseFloat(anchor.substr(0, comma));
+        placement.anchorY = ParseFloat(anchor.substr(comma + 1));
+    }
+    return placement;
+}
+
+std::optional<Stage::Placement> ParseFromPlacement(
+    const Command& cmd, const std::optional<Stage::Placement>& target) {
+    if (!target || (!cmd.Has("from_x") && !cmd.Has("from_y") && !cmd.Has("from_zoom")))
+        return std::nullopt;
+    Stage::Placement from = *target;
+    if (cmd.Has("from_x")) from.x = ParseFloat(cmd.Get("from_x"));
+    if (cmd.Has("from_y")) from.y = ParseFloat(cmd.Get("from_y"));
+    if (cmd.Has("from_zoom"))
+        from.zoom = std::max(0.001f, ParseFloat(cmd.Get("from_zoom"), 1.0f));
+    return from;
 }
 
 bool TruthyFlag(const Command& cmd) {
@@ -390,6 +425,7 @@ VMRunResult VM::RunSlice(const std::size_t maxInstructions) {
     const auto& code = m_program.code;
     const std::size_t sliceBudget = std::max<std::size_t>(1, maxInstructions);
     std::size_t executed = 0;
+    m_waitRequested = false;
     const auto finishSlice = [this, &executed](const VMRunStatus status,
                                                const bool observableYield) {
         if (observableYield) m_instructionsWithoutObservableYield = 0;
@@ -609,7 +645,7 @@ VMRunResult VM::RunSlice(const std::size_t maxInstructions) {
 
         ExecuteSimple(cmd);
         ++m_pc;
-        if (m_state == VMState::WaitingExternal)
+        if (m_state == VMState::WaitingExternal || std::exchange(m_waitRequested, false))
             return finishSlice(VMRunStatus::AwaitingInput, true);
     }
     m_state = VMState::Finished;
@@ -634,31 +670,75 @@ void VM::ExecuteSimple(const Command& cmd) {
     }
     if (t == "bg") {
         const std::string file = Resolve(m_config.bgDir, cmd.Get("file", cmd.Get("value")));
+        const int durationMs = ParseInt(cmd.Get("time", cmd.Get("ms")), 0);
         if (cmd.Has("rule")) {
             m_stage.SetBackgroundRule(file, Resolve(m_config.ruleDir, cmd.Get("rule")),
-                                      ParseInt(cmd.Get("time", cmd.Get("ms")), 600),
+                                      durationMs > 0 ? durationMs : 600,
                                       ParseInt(cmd.Get("vague"), 64));
         } else {
-            m_stage.SetBackground(file, TruthyFlag(cmd));
+            m_stage.SetBackground(file, TruthyFlag(cmd), durationMs);
         }
+        // Framing applies to a new background at once and pans or zooms an
+        // unchanged one over the same duration.
+        if (const auto placement = ParsePlacement(cmd, m_stage.BackgroundPlacement()))
+            m_stage.PlaceBackground(placement, ParseFromPlacement(cmd, placement),
+                                    durationMs, cmd.Get("ease", "outCubic"));
         return;
     }
     if (t == "layer") {
         const std::string name = cmd.Get("name", cmd.Get("id"));
         const std::string file = cmd.Get("file", cmd.Get("value"));
+        const int durationMs = ParseInt(cmd.Get("time", cmd.Get("ms")), 0);
         if (cmd.Has("clear") || file == "none") {
-            m_stage.ClearLayer(name);
+            m_stage.FadeOutLayer(name, durationMs);
             return;
         }
-        const int alpha = ParseInt(cmd.Get("alpha", cmd.Get("opacity")), 255);
-        m_stage.SetLayer(name, Resolve(m_config.bgDir, file), ParseFloat(cmd.Get("x")),
-                         ParseFloat(cmd.Get("y")), ParseFloat(cmd.Get("scale"), 1.0f),
-                         static_cast<std::uint8_t>(std::clamp(alpha, 0, 255)),
-                         ParseInt(cmd.Get("z"), 0));
+        const bool existed = m_stage.HasLayer(name);
+        const float x = ParseFloat(cmd.Get("x"));
+        const float y = ParseFloat(cmd.Get("y"));
+        const float zoom = std::max(0.001f, ParseFloat(cmd.Get("zoom", cmd.Get("scale")), 1.0f));
+        const int alpha = std::clamp(ParseInt(cmd.Get("alpha", cmd.Get("opacity")), 255), 0, 255);
+        // A new layer with a duration fades in unless a start is authored.
+        const int fromAlpha = std::clamp(
+            ParseInt(cmd.Get("from_alpha"), !existed && durationMs > 0 ? 0 : alpha), 0, 255);
+        const float fromX = cmd.Has("from_x") ? ParseFloat(cmd.Get("from_x")) : x;
+        const float fromY = cmd.Has("from_y") ? ParseFloat(cmd.Get("from_y")) : y;
+        const float fromZoom = cmd.Has("from_zoom")
+            ? std::max(0.001f, ParseFloat(cmd.Get("from_zoom"), 1.0f)) : zoom;
+        const bool animated = !m_fastForward && durationMs > 0 &&
+            (fromX != x || fromY != y || fromZoom != zoom || fromAlpha != alpha);
+        m_stage.SetLayerTransform(
+            name, Resolve(m_config.bgDir, file), animated ? fromX : x,
+            animated ? fromY : y, animated ? fromZoom : zoom,
+            animated ? fromZoom : zoom, ParseFloat(cmd.Get("rotate")),
+            static_cast<std::uint8_t>(animated ? fromAlpha : alpha),
+            ParseInt(cmd.Get("z"), 0));
+        const auto placement = ParsePlacement(cmd);
+        m_stage.SetLayerAnchor(name, placement && placement->anchored,
+                               placement ? placement->anchorX : 0.0f,
+                               placement ? placement->anchorY : 0.0f);
+        if (animated) {
+            Stage::TweenSpec spec;
+            spec.hasX = spec.hasY = spec.hasScale = spec.hasAlpha = true;
+            spec.x = x;
+            spec.y = y;
+            spec.scale = zoom;
+            spec.alpha = static_cast<float>(alpha);
+            spec.durationMs = durationMs;
+            spec.ease = cmd.Get("ease", "outCubic");
+            (void)m_stage.Animate(name, spec);
+        }
         return;
     }
     if (t == "layer_clear") {
-        m_stage.ClearLayer(cmd.Get("name", cmd.Get("id")));
+        const std::string name = cmd.Get("name", cmd.Get("id"));
+        const int durationMs = ParseInt(cmd.Get("time", cmd.Get("ms")), 0);
+        if (name == "*" || name == "all") {
+            for (const auto& layer : m_stage.LayerNames())
+                m_stage.FadeOutLayer(layer, durationMs);
+        } else {
+            m_stage.FadeOutLayer(name, durationMs);
+        }
         return;
     }
     if (t == "char") {

@@ -358,6 +358,64 @@ void TestStageMotionStoryPlaybackAndRestore() {
               std::abs(completed.stage.cameraZoom - 1.2f) < .01f &&
               completed.vm.state == px::vn::VMState::Finished,
           "inline camera reaches its target and releases Story");
+
+    px::RuntimeSession framingRuntime({vfs, audio, renderer, assets});
+    const auto op = [](const char* id, const char* kind, nlohmann::json arguments) {
+        return nlohmann::json{{"operationId", id}, {"sourceId", id}, {"kind", kind},
+                              {"text", ""}, {"arguments", std::move(arguments)}};
+    };
+    const nlohmann::json framingIr{
+        {"format", "PrismatiXRuntimeIR"}, {"schemaRevision", 2},
+        {"documentId", "framing-story"}, {"committedRevision", 0},
+        {"operations", nlohmann::json::array({
+            op("frame", "background", {{"asset", "wide.png"}, {"transition", "false"},
+                                       {"x", "-800"}, {"y", "-473"}, {"zoom", "0.9"},
+                                       {"anchor", "1920,1126"}}),
+            op("pan", "background", {{"asset", "wide.png"}, {"x", "-600"},
+                                     {"duration", "1s"}, {"ease", "linear"}}),
+            op("cg", "image", {{"name", "cg1"}, {"asset", "event.png"}, {"x", "10"},
+                               {"zoom", "0.5"}, {"anchor", "100,50"}, {"alpha", "255"},
+                               {"z", "9"}, {"duration", "1s"}, {"ease", "linear"}}),
+            op("trans", "transition", {{"duration", "500ms"}}),
+            op("clear", "hideImage", {{"name", "*"}, {"duration", "1s"}}),
+            op("end", "endStory", nlohmann::json::object())})}};
+    Check(framingRuntime.StartRuntimeIrText(framingIr.dump(), "framing-story.pxir"),
+          "Runtime IR starts framed images and a screen transition");
+    const auto framed = framingRuntime.CaptureState();
+    const auto layer = std::ranges::find_if(framed.stage.layers, [](const auto& saved) {
+        return saved.name == "cg1";
+    });
+    Check(framed.stage.backgroundPlacement &&
+              framed.stage.backgroundPlacement->anchored &&
+              std::abs(framed.stage.backgroundPlacement->anchorX - 1920.0f) < .01f &&
+              std::abs(framed.stage.backgroundPlacement->x + 800.0f) < .01f &&
+              std::abs(framed.stage.backgroundPlacement->zoom - 0.9f) < .01f,
+          "a framed background keeps its anchor and eases from its previous framing");
+    Check(layer != framed.stage.layers.end() && layer->anchored &&
+              std::abs(layer->anchorX - 100.0f) < .01f && layer->alpha == 0 &&
+              layer->z == 9,
+          "a new image layer with a duration fades in from transparent");
+    Check(framed.vm.state == px::vn::VMState::WaitingTimer,
+          "a screen transition holds the Story for its duration");
+    framingRuntime.Update(500, 0.5f);
+    const auto framingMidpoint = framingRuntime.CaptureState();
+    const auto fading = std::ranges::find_if(framingMidpoint.stage.layers, [](const auto& saved) {
+        return saved.name == "cg1";
+    });
+    Check(std::abs(framingMidpoint.stage.backgroundPlacement->x + 700.0f) < .5f,
+          "the framed background pans with its authored ease");
+    Check(fading != framingMidpoint.stage.layers.end(),
+          "a hidden image stays while it fades out");
+    Check(framingMidpoint.vm.state == px::vn::VMState::Finished,
+          "the transition wait releases the Story");
+    framingRuntime.Stage().ClearAll();
+    Check(framingRuntime.Stage().RestoreState(framingMidpoint.stage),
+          "framing, anchors, and a fading layer restore from a save");
+    framingRuntime.Update(1500, 1.0f);
+    const auto finished = framingRuntime.CaptureState();
+    Check(std::abs(finished.stage.backgroundPlacement->x + 600.0f) < .01f &&
+              finished.stage.layers.empty(),
+          "the pan reaches its target and a hidden image is removed after fading");
 }
 
 void TestCanonicalTimelineRuntime() {

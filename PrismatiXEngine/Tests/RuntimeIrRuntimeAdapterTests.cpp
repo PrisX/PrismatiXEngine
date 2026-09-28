@@ -414,6 +414,7 @@ int main() {
         "wait",           "timeline",       "effect",       "shake",        "ui",
         "hudVisibility",  "unlock",         "customNode",   "camera",
         "actorAction",    "stopSoundEffect", "stopVoice",
+        "image",          "hideImage",      "transition",
     };
     assert(schemaKinds == exercisedKinds);
 
@@ -469,6 +470,12 @@ int main() {
         Operation("all-unlock", "unlock", {{"kind", "cg"}, {"id", "ev101a"}}),
         Operation("all-custom", "customNode", {{"type", "nvl"}, {"value", "{}"}}),
         Operation("all-camera", "camera", {{"value", "pan"}}),
+        Operation("all-image", "image", {{"name", "cg"}, {"asset", "cg.png"},
+            {"x", "-10"}, {"zoom", "0.5"}, {"anchor", "10,20"}, {"alpha", "128"},
+            {"z", "9"}, {"duration", "300ms"}, {"fromAlpha", "0"}}),
+        Operation("all-hide-image", "hideImage", {{"name", "*"}, {"duration", "1s"}}),
+        Operation("all-transition", "transition", {{"duration", "0.5s"},
+            {"rule", "rule.png"}, {"vague", "40"}, {"wait", "false"}}),
         Operation("all-call", "callFragment", {{"target", "fragment"}}),
         Operation("all-end-story", "endStory"),
         Operation("all-fragment", "fragment", {{"target", "fragment"}}),
@@ -515,6 +522,19 @@ int main() {
     }));
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "stopvoice";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "layer" && command.Get("name") == "cg" &&
+               command.Get("anchor") == "10,20" && command.Get("time") == "300" &&
+               command.Get("from_alpha") == "0";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "layer_clear" && command.Get("name") == "*" &&
+               command.Get("time") == "1000";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "screen_transition" && command.Get("time") == "500" &&
+               command.Get("vague") == "40" && command.Get("wait") == "false";
     }));
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "char" && command.Get("transitionMode") == "auto" &&

@@ -589,6 +589,41 @@ test("camera pans and zooms inline without a motion resource", () => {
     assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === code));
 });
 
+test("framed backgrounds, image layers, and screen transitions lower to Runtime IR", () => {
+  const compiled = compileStory(parseStory(
+    "[bg Assets/BG/wide.png transition=false x=-800 y=-473 zoom=0.9 anchor=1920,1126]\n" +
+    "[bg Assets/BG/wide.png x=-600 duration=2s ease=inOutSine from-zoom=1.1]\n" +
+    "[image cg1 Assets/CG/event.png x=-300 y=-616 zoom=0.35 anchor=960,947 alpha=1 z=9 duration=300ms from-alpha=0]\n" +
+    "[image.hide cg1 400ms]\n[image.hide all]\n" +
+    "[transition 500ms]\n[transition rule=Assets/Rule/wipe.png vague=40 duration=1s wait=false]\n" +
+    "[act window hop size=5]\n",
+    "Story/framing.pxstory"), {documentId:"framing"});
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) =>
+    [operation.kind, operation.arguments]), [
+    ["background", {asset:"Assets/BG/wide.png", transition:"false", x:"-800", y:"-473",
+      zoom:"0.9", anchor:"1920,1126"}],
+    ["background", {asset:"Assets/BG/wide.png", duration:"2s", x:"-600", fromZoom:"1.1",
+      ease:"inOutSine"}],
+    ["image", {name:"cg1", asset:"Assets/CG/event.png", x:"-300", y:"-616", zoom:"0.35",
+      anchor:"960,947", alpha:"255", fromAlpha:"0", z:"9", duration:"300ms"}],
+    ["hideImage", {name:"cg1", duration:"400ms"}],
+    ["hideImage", {name:"*"}],
+    ["transition", {duration:"500ms"}],
+    ["transition", {duration:"1s", rule:"Assets/Rule/wipe.png", vague:"40", wait:"false"}],
+    ["actorAction", {character:"$window", preset:"hop", size:"5"}],
+  ]);
+  const invalid = compileStory(parseStory(
+    "[bg Assets/BG/a.png zoom=0]\n[bg Assets/BG/a.png anchor=10]\n" +
+    "[image Assets/CG/a.png]\n[image cg1 Assets/CG/a.png alpha=2]\n" +
+    "[transition -1]\n[transition vague=300]\n",
+    "Story/invalid-framing.pxstory"), {documentId:"invalid-framing"});
+  assert.equal(invalid.valid, false);
+  for (const code of ["PXSTORY1230", "PXSTORY1231", "PXSTORY1232", "PXSTORY1234",
+                      "PXSTORY1238", "PXSTORY1239"])
+    assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === code), code);
+});
+
 test("Story extension commands accept structured JSON literals and preserve typed payloads", () => {
   const parsed = parseStory(
     `[stage.compose offset=[100, 200] bounds=[0,0,1280,720] tint=[255,128,64,255] tags=["night", "rain"] metadata={"weather":"rain", "strength":0.8} asset={"path":"Assets/CG/rain.webp"}]\n`,

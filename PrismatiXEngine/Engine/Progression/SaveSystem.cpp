@@ -884,8 +884,37 @@ Json LayersToJson(const std::vector<vn::Stage::SavedLayer>& layers) {
                         { "rotation", l.rotation },
                         { "alpha", l.alpha },
                         { "z", l.z } });
+        if (l.anchored)
+            arr.back()["anchor"] = Json::array({l.anchorX, l.anchorY});
     }
     return arr;
+}
+
+Json PlacementToJson(const std::optional<vn::Stage::Placement>& placement) {
+    if (!placement) return nullptr;
+    Json json{{"x", placement->x}, {"y", placement->y},
+              {"zoom", placement->zoom}, {"rotation", placement->rotation}};
+    if (placement->anchored)
+        json["anchor"] = Json::array({placement->anchorX, placement->anchorY});
+    return json;
+}
+
+std::optional<vn::Stage::Placement> PlacementFromJson(const Json& json) {
+    if (json.is_null()) return std::nullopt;
+    if (!json.is_object()) throw std::invalid_argument("stage framing must be an object");
+    vn::Stage::Placement placement;
+    placement.x = json.value("x", 0.0f);
+    placement.y = json.value("y", 0.0f);
+    placement.zoom = json.value("zoom", 1.0f);
+    placement.rotation = json.value("rotation", 0.0f);
+    if (const auto anchor = json.find("anchor"); anchor != json.end()) {
+        if (!anchor->is_array() || anchor->size() != 2)
+            throw std::invalid_argument("stage framing anchor must be [x, y]");
+        placement.anchored = true;
+        placement.anchorX = anchor->at(0).get<float>();
+        placement.anchorY = anchor->at(1).get<float>();
+    }
+    return placement;
 }
 
 std::vector<vn::Stage::SavedLayer> LayersFromJson(const Json& arr) {
@@ -900,6 +929,13 @@ std::vector<vn::Stage::SavedLayer> LayersFromJson(const Json& arr) {
                                              j.value("alpha", 255), j.value("z", 0),
                                              j.value("scaleY", j.value("scale", 1.0f)),
                                              j.value("rotation", 0.0f) });
+        if (const auto anchor = j.find("anchor"); anchor != j.end()) {
+            if (!anchor->is_array() || anchor->size() != 2)
+                throw std::invalid_argument("stage layer anchor must be [x, y]");
+            out.back().anchored = true;
+            out.back().anchorX = anchor->at(0).get<float>();
+            out.back().anchorY = anchor->at(1).get<float>();
+        }
     }
     return out;
 }
@@ -1199,6 +1235,7 @@ Json StageToJson(const vn::Stage::RuntimeState& state) {
                           {"fromY", tween.fromY}, {"fromScale", tween.fromScale},
                           {"fromAlpha", tween.fromAlpha}, {"elapsed", tween.elapsed},
                           {"duration", tween.duration}});
+        if (tween.removeWhenDone) tweens.back()["removeWhenDone"] = true;
     }
     const Json motion = state.motion
         ? Json{{"path", state.motion->path},
@@ -1211,6 +1248,9 @@ Json StageToJson(const vn::Stage::RuntimeState& state) {
     return {{"background", state.background},
             {"previousBackground", state.previousBackground},
             {"backgroundFade", state.backgroundFade},
+            {"backgroundFadeSpeed", state.backgroundFadeSpeed},
+            {"backgroundFraming", PlacementToJson(state.backgroundPlacement)},
+            {"previousBackgroundFraming", PlacementToJson(state.previousBackgroundPlacement)},
             {"ruleTransition", {{"active", state.ruleActive},
                                 {"oldBackground", state.ruleOldBackground},
                                 {"newBackground", state.ruleNewBackground},
@@ -1239,6 +1279,11 @@ vn::Stage::RuntimeState StageFromJson(const Json& json) {
     state.background = json.value("background", std::string{});
     state.previousBackground = json.value("previousBackground", std::string{});
     state.backgroundFade = json.value("backgroundFade", 1.0f);
+    state.backgroundFadeSpeed = json.value("backgroundFadeSpeed", 2.5f);
+    if (const auto framing = json.find("backgroundFraming"); framing != json.end())
+        state.backgroundPlacement = PlacementFromJson(*framing);
+    if (const auto framing = json.find("previousBackgroundFraming"); framing != json.end())
+        state.previousBackgroundPlacement = PlacementFromJson(*framing);
     if (const auto motion = json.find("motion");
         motion != json.end() && !motion->is_null()) {
         if (!motion->is_object() || !motion->contains("path") ||
@@ -1301,7 +1346,7 @@ vn::Stage::RuntimeState StageFromJson(const Json& json) {
             TweenSpecFromJson(value.at("spec")), value.value("fromX", 0.0f),
             value.value("fromY", 0.0f), value.value("fromScale", 1.0f),
             value.value("fromAlpha", 255.0f), value.value("elapsed", 0.0f),
-            value.value("duration", 0.6f)});
+            value.value("duration", 0.6f), value.value("removeWhenDone", false)});
     }
     return state;
 }

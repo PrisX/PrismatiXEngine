@@ -252,13 +252,18 @@ bool Stage::BackgroundSettled(const std::string& path) {
     return m_assets.TextureSettled(path);
 }
 
-void Stage::SetBackground(const std::string& path, bool transition) {
+void Stage::SetBackground(const std::string& path, bool transition,
+                          const int fadeMs) {
     if (path == m_bgPath) {
         return;
     }
     EndRuleTransition();
     m_prevBgPath = m_bgPath;
     m_bgPath = path;
+    m_prevBgPlacement = m_bgPlacement;
+    m_bgPlacement.reset();
+    std::erase_if(m_tweens, [](const Tween& tween) { return tween.name == "$bg"; });
+    m_bgFadeSpeed = fadeMs > 0 ? 1000.0f / static_cast<float>(fadeMs) : kBgFadeSpeed;
     m_bgWait = 0.0f;
     // An instant change still waits for the decode behind the old image
     // rather than flashing an empty frame; Update completes it at once.
@@ -268,8 +273,67 @@ void Stage::SetBackground(const std::string& path, bool transition) {
     if (m_bgInstant) {
         m_bgFade = 1.0f;
         m_prevBgPath.clear();
+        m_prevBgPlacement.reset();
         m_bgInstant = false;
     }
+}
+
+void Stage::PlaceBackground(std::optional<Placement> placement,
+                            std::optional<Placement> from, const int durationMs,
+                            std::string ease) {
+    std::erase_if(m_tweens, [](const Tween& tween) { return tween.name == "$bg"; });
+    if (!placement) {
+        m_bgPlacement.reset();
+        return;
+    }
+    const std::optional<Placement> start = from ? from : m_bgPlacement;
+    m_bgPlacement = placement;
+    if (durationMs <= 0 || m_fastForward || !start) return;
+    // The eased values are position and zoom; anchor and rotation are taken
+    // from the target at once.
+    m_bgPlacement->x = start->x;
+    m_bgPlacement->y = start->y;
+    m_bgPlacement->zoom = start->zoom;
+    Tween tween;
+    tween.name = "$bg";
+    tween.spec.hasX = tween.spec.hasY = tween.spec.hasScale = true;
+    tween.spec.x = placement->x;
+    tween.spec.y = placement->y;
+    tween.spec.scale = placement->zoom;
+    tween.spec.durationMs = durationMs;
+    tween.spec.ease = std::move(ease);
+    tween.fromX = start->x;
+    tween.fromY = start->y;
+    tween.fromScale = start->zoom;
+    tween.duration = static_cast<float>(durationMs) / 1000.0f;
+    m_tweens.push_back(std::move(tween));
+}
+
+void Stage::DrawBackgroundImage(const std::string& path,
+                                const std::optional<Placement>& placement,
+                                const std::uint8_t alpha) {
+    if (!placement) {
+        m_renderer.DrawImageAuto(path, graphics::DisplayMode::Fill, alpha);
+        return;
+    }
+    const graphics::TextureHandle texture = m_assets.Texture(path);
+    int width = 0;
+    int height = 0;
+    graphics::AssetCache::TextureSize(texture, width, height);
+    if (!texture || width <= 0 || height <= 0) return;
+    const float pivotX = placement->anchored ? placement->anchorX : width * 0.5f;
+    const float pivotY = placement->anchored ? placement->anchorY : height * 0.5f;
+    const float radians = placement->rotation * 0.017453292519943295f;
+    const float a = std::cos(radians) * placement->zoom;
+    const float b = std::sin(radians) * placement->zoom;
+    const float c = -b;
+    const float d = a;
+    m_renderer.PushAffineTransform(
+        {a, b, c, d, placement->x + pivotX - (a * pivotX + c * pivotY),
+         placement->y + pivotY - (b * pivotX + d * pivotY)});
+    m_renderer.DrawImage(path, Rect{0.0f, 0.0f, static_cast<float>(width),
+                                    static_cast<float>(height)}, alpha);
+    m_renderer.PopTransform();
 }
 
 namespace {
@@ -540,6 +604,46 @@ void Stage::SetLayerTransform(const std::string& name, const std::string& imageP
                                    layer.rotation,
                                    static_cast<float>(layer.alpha) / 255.0f};
     node.z = layer.z;
+}
+
+void Stage::SetLayerAnchor(const std::string& name, const bool anchored,
+                           const float x, const float y) {
+    const auto found = m_layers.find(name);
+    if (found == m_layers.end()) return;
+    found->second.anchored = anchored && std::isfinite(x) && std::isfinite(y);
+    found->second.anchorX = found->second.anchored ? x : 0.0f;
+    found->second.anchorY = found->second.anchored ? y : 0.0f;
+}
+
+void Stage::FadeOutLayer(const std::string& name, const int durationMs) {
+    const auto found = m_layers.find(name);
+    if (found == m_layers.end()) return;
+    if (durationMs <= 0 || m_fastForward) {
+        ClearLayer(name);
+        return;
+    }
+    std::erase_if(m_tweens, [&name](const Tween& tween) { return tween.name == name; });
+    Tween tween;
+    tween.isLayer = true;
+    tween.name = name;
+    tween.spec.hasAlpha = true;
+    tween.spec.alpha = 0.0f;
+    tween.spec.durationMs = durationMs;
+    tween.spec.ease = "linear";
+    tween.fromX = found->second.x;
+    tween.fromY = found->second.y;
+    tween.fromScale = found->second.scale;
+    tween.fromAlpha = static_cast<float>(found->second.alpha);
+    tween.duration = static_cast<float>(durationMs) / 1000.0f;
+    tween.removeWhenDone = true;
+    m_tweens.push_back(std::move(tween));
+}
+
+std::vector<std::string> Stage::LayerNames() const {
+    std::vector<std::string> names;
+    names.reserve(m_layers.size());
+    for (const auto& [name, layer] : m_layers) names.push_back(name);
+    return names;
 }
 
 void Stage::ClearLayer(const std::string& name) {
@@ -995,6 +1099,15 @@ void Stage::UpdateTweens(float dt) {
             if (spec.hasX) m_cameraX = support::Lerp(tween.fromX, spec.x, t);
             if (spec.hasY) m_cameraY = support::Lerp(tween.fromY, spec.y, t);
             if (spec.hasScale) m_cameraZoom = support::Lerp(tween.fromScale, spec.scale, t);
+        } else if (tween.name == "$bg") {
+            if (!m_bgPlacement) {
+                alive = false;
+            } else {
+                if (spec.hasX) m_bgPlacement->x = support::Lerp(tween.fromX, spec.x, t);
+                if (spec.hasY) m_bgPlacement->y = support::Lerp(tween.fromY, spec.y, t);
+                if (spec.hasScale)
+                    m_bgPlacement->zoom = support::Lerp(tween.fromScale, spec.scale, t);
+            }
         } else if (!tween.isLayer) {
             auto ait = m_actors.find(tween.name);
             if (ait == m_actors.end()) {
@@ -1014,7 +1127,11 @@ void Stage::UpdateTweens(float dt) {
                 Layer& layer = lit->second;
                 if (spec.hasX) layer.x = support::Lerp(tween.fromX, spec.x, t);
                 if (spec.hasY) layer.y = support::Lerp(tween.fromY, spec.y, t);
-                if (spec.hasScale) layer.scale = support::Lerp(tween.fromScale, spec.scale, t);
+                if (spec.hasScale) {
+                    // Layers zoom uniformly; scaleY used to keep its old value.
+                    layer.scale = support::Lerp(tween.fromScale, spec.scale, t);
+                    layer.scaleY = layer.scale;
+                }
                 if (spec.hasAlpha) {
                     layer.alpha = static_cast<std::uint8_t>(
                         std::clamp(support::Lerp(tween.fromAlpha, spec.alpha, t), 0.0f, 255.0f));
@@ -1031,7 +1148,10 @@ void Stage::UpdateTweens(float dt) {
         }
 
         if (!alive || raw >= 1.0f) {
+            const bool remove = alive && tween.removeWhenDone;
+            const std::string name = tween.name;
             it = m_tweens.erase(it);
+            if (remove) ClearLayer(name);
         } else {
             ++it;
         }
@@ -1188,6 +1308,9 @@ void Stage::ClearAll() {
     m_bgPath.clear();
     m_prevBgPath.clear();
     m_bgFade = 1.0f;
+    m_bgFadeSpeed = kBgFadeSpeed;
+    m_bgPlacement.reset();
+    m_prevBgPlacement.reset();
     m_bgInstant = false;
     m_bgWait = 0.0f;
     m_shakeRemaining = 0.0f;
@@ -1313,9 +1436,10 @@ void Stage::Update(float dt) {
     if (waiting && (m_bgFade < 1.0f || m_ruleState.active)) m_bgWait += dt;
 
     if (m_bgFade < 1.0f && !preparingRule && !waiting) {
-        m_bgFade = m_bgInstant ? 1.0f : std::min(1.0f, m_bgFade + kBgFadeSpeed * dt);
+        m_bgFade = m_bgInstant ? 1.0f : std::min(1.0f, m_bgFade + m_bgFadeSpeed * dt);
         if (m_bgFade >= 1.0f) {
             m_prevBgPath.clear();
+            m_prevBgPlacement.reset();
             m_bgInstant = false;
         }
     }
@@ -1444,11 +1568,11 @@ void Stage::Render() {
     if (m_ruleState.active && !m_ruleState.ready && m_ruleState.progress > 0.0f)
         FinishRulePreparation(true);
     if (!m_prevBgPath.empty() && m_bgFade < 1.0f) {
-        m_renderer.DrawImageAuto(m_prevBgPath, graphics::DisplayMode::Fill, 255);
+        DrawBackgroundImage(m_prevBgPath, m_prevBgPlacement, 255);
     }
     if (!m_bgPath.empty()) {
         const auto alpha = static_cast<std::uint8_t>(std::clamp(m_bgFade, 0.0f, 1.0f) * 255.0f);
-        m_renderer.DrawImageAuto(m_bgPath, graphics::DisplayMode::Fill, alpha);
+        DrawBackgroundImage(m_bgPath, m_bgPlacement, alpha);
     }
     RenderRuleOverlay(compositing);
 
@@ -1519,8 +1643,16 @@ void Stage::Render() {
         drawable.localBounds =
             {0.0f, 0.0f, static_cast<float>(textureWidth),
              static_cast<float>(textureHeight)};
-        drawable.world = ResolveNodeTransform(
-            name, {textureWidth * 0.5f, textureHeight * 0.5f});
+        if (layer.anchored) {
+            // Zoom about the anchor: the node pivot only centres rotation,
+            // so shift by the part of the anchor the scale moved.
+            drawable.world = ResolveNodeTransform(name, {layer.anchorX, layer.anchorY});
+            drawable.world.tx += (1.0f - layer.scale) * layer.anchorX;
+            drawable.world.ty += (1.0f - layer.scaleY) * layer.anchorY;
+        } else {
+            drawable.world = ResolveNodeTransform(
+                name, {textureWidth * 0.5f, textureHeight * 0.5f});
+        }
         if (!drawable.world.visible || drawable.world.opacity <= 0.0f)
             continue;
         drawable.worldBounds =
@@ -1907,7 +2039,8 @@ std::vector<Stage::SavedLayer> Stage::SnapshotLayers() const {
     out.reserve(m_layers.size());
     for (const auto& [name, layer] : m_layers) {
         out.push_back(SavedLayer{ name, layer.imagePath, layer.x, layer.y, layer.scale,
-                                  layer.alpha, layer.z, layer.scaleY, layer.rotation });
+                                  layer.alpha, layer.z, layer.scaleY, layer.rotation,
+                                  layer.anchored, layer.anchorX, layer.anchorY });
     }
     return out;
 }
@@ -1928,6 +2061,7 @@ void Stage::RestoreLayers(const std::vector<SavedLayer>& layers) {
                           s.rotation,
                           static_cast<std::uint8_t>(std::clamp(s.alpha, 0, 255)),
                           s.z);
+        SetLayerAnchor(s.name, s.anchored, s.anchorX, s.anchorY);
     }
 }
 
@@ -2048,6 +2182,9 @@ Stage::RuntimeState Stage::CaptureState() const {
     state.background = m_bgPath;
     state.previousBackground = m_prevBgPath;
     state.backgroundFade = m_bgFade;
+    state.backgroundFadeSpeed = m_bgFadeSpeed;
+    state.backgroundPlacement = m_bgPlacement;
+    state.previousBackgroundPlacement = m_prevBgPlacement;
     state.ruleActive = m_ruleState.active;
     state.ruleOldBackground = m_ruleState.oldBackgroundPath;
     state.ruleNewBackground = m_ruleState.newBackgroundPath;
@@ -2093,7 +2230,8 @@ Stage::RuntimeState Stage::CaptureState() const {
     for (const Tween& tween : m_tweens) {
         state.tweens.push_back(SavedTween{tween.isLayer, tween.name, tween.spec,
                                           tween.fromX, tween.fromY, tween.fromScale,
-                                          tween.fromAlpha, tween.elapsed, tween.duration});
+                                          tween.fromAlpha, tween.elapsed, tween.duration,
+                                          tween.removeWhenDone});
     }
     return state;
 }
@@ -2122,6 +2260,22 @@ Status Stage::RestoreState(const RuntimeState& state) {
     m_bgPath = state.background;
     m_prevBgPath = state.previousBackground;
     m_bgFade = std::clamp(state.backgroundFade, 0.0f, 1.0f);
+    m_bgFadeSpeed = std::isfinite(state.backgroundFadeSpeed) &&
+                            state.backgroundFadeSpeed > 0.0f
+                        ? state.backgroundFadeSpeed
+                        : kBgFadeSpeed;
+    const auto validPlacement = [&finite](const std::optional<Placement>& value) {
+        return !value || (finite(value->x) && finite(value->y) &&
+                          finite(value->zoom) && value->zoom > 0.0f &&
+                          finite(value->rotation) && finite(value->anchorX) &&
+                          finite(value->anchorY));
+    };
+    if (!validPlacement(state.backgroundPlacement) ||
+        !validPlacement(state.previousBackgroundPlacement))
+        return Status::Fail(StageRestoreError(
+            "PXSTAGE7510", "Saved background framing contains invalid numbers"));
+    m_bgPlacement = state.backgroundPlacement;
+    m_prevBgPlacement = state.previousBackgroundPlacement;
     m_bgInstant = false;
     m_bgWait = 0.0f;
     m_cameraX = state.cameraX;
@@ -2190,7 +2344,8 @@ Status Stage::RestoreState(const RuntimeState& state) {
         }
         m_tweens.push_back(Tween{saved.layer, saved.target, saved.spec, saved.fromX,
                                   saved.fromY, saved.fromScale, saved.fromAlpha,
-                                  saved.elapsed, saved.duration});
+                                  saved.elapsed, saved.duration,
+                                  saved.removeWhenDone});
     }
     if (state.ruleActive) {
         m_bgPath = state.ruleOldBackground;

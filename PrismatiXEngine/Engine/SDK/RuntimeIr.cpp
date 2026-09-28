@@ -30,7 +30,7 @@ bool ExecutableOperationKind(const std::string_view kind) {
         "condition",     "else",           "endCondition",
         "label",         "jump",           "wait",
         "timeline",      "effect",         "shake",          "ui",
-        "hudVisibility", "actorAction",   "stopSoundEffect", "stopVoice",
+        "hudVisibility", "image",        "hideImage",      "transition", "actorAction",   "stopSoundEffect", "stopVoice",
         "unlock",        "customNode",     "camera",
     };
     for (const auto candidate : kinds)

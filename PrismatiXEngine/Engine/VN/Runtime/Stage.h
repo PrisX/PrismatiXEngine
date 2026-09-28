@@ -36,7 +36,32 @@ public:
     Stage(graphics::Renderer2D& renderer, graphics::AssetCache& assets);
     ~Stage();
 
-    void SetBackground(const std::string& path, bool transition = true);
+    // Explicit framing of an image. `x`,`y` place its top-left corner as if
+    // at zoom 1; zoom and rotation (degrees) apply about the anchor, given in
+    // image pixels, or about the image centre when not anchored. This is the
+    // Artemis/KiriKiri layer model: a large image framed by position and zoom.
+    struct Placement {
+        float x = 0.0f;
+        float y = 0.0f;
+        float zoom = 1.0f;
+        float rotation = 0.0f;
+        bool anchored = false;
+        float anchorX = 0.0f;
+        float anchorY = 0.0f;
+    };
+
+    // fadeMs > 0 replaces the default crossfade time of a transition.
+    void SetBackground(const std::string& path, bool transition = true,
+                       int fadeMs = 0);
+    // Frames the current background explicitly; nullopt restores fitting it
+    // to cover the stage. A positive duration eases from `from`, or from the
+    // current framing, to `placement`.
+    void PlaceBackground(std::optional<Placement> placement,
+                         std::optional<Placement> from = std::nullopt,
+                         int durationMs = 0, std::string ease = "outCubic");
+    [[nodiscard]] const std::optional<Placement>& BackgroundPlacement() const {
+        return m_bgPlacement;
+    }
     // KAG-style universal transition: dissolves to newBgPath through a
     // grayscale rule image (dark areas switch first). Falls back to a plain
     // crossfade when the rule or old background cannot be loaded.
@@ -51,6 +76,16 @@ public:
                            float x, float y, float scaleX, float scaleY,
                            float rotation, std::uint8_t alpha, int z);
     void ClearLayer(const std::string& name);
+    // Scales and rotates a layer about an anchor in image pixels instead of
+    // its top-left corner (scale) and centre (rotation).
+    void SetLayerAnchor(const std::string& name, bool anchored, float x = 0.0f,
+                        float y = 0.0f);
+    // Fades a layer out, then removes it. durationMs <= 0 removes it at once.
+    void FadeOutLayer(const std::string& name, int durationMs);
+    [[nodiscard]] std::vector<std::string> LayerNames() const;
+    [[nodiscard]] bool HasLayer(const std::string& name) const {
+        return m_layers.contains(name);
+    }
 
     enum class NodeKind : std::uint8_t { Group, Image, Character };
     struct NodeTransform {
@@ -213,6 +248,9 @@ public:
         int z = 0;
         float scaleY = 1.0f;
         float rotation = 0.0f;
+        bool anchored = false;
+        float anchorX = 0.0f;
+        float anchorY = 0.0f;
     };
     [[nodiscard]] std::vector<SavedLayer> SnapshotLayers() const;
     void RestoreLayers(const std::vector<SavedLayer>& layers);
@@ -227,6 +265,7 @@ public:
         float fromAlpha = 255.0f;
         float elapsed = 0.0f;
         float duration = 0.6f;
+        bool removeWhenDone = false;
     };
 
     struct SavedMotion {
@@ -244,6 +283,9 @@ public:
         std::string background;
         std::string previousBackground;
         float backgroundFade = 1.0f;
+        float backgroundFadeSpeed = 2.5f;
+        std::optional<Placement> backgroundPlacement;
+        std::optional<Placement> previousBackgroundPlacement;
         bool ruleActive = false;
         std::string ruleOldBackground;
         std::string ruleNewBackground;
@@ -314,6 +356,9 @@ private:
         float rotation = 0.0f;
         std::uint8_t alpha = 255;
         int z = 0;
+        bool anchored = false;
+        float anchorX = 0.0f;
+        float anchorY = 0.0f;
     };
 
     // Grayscale rule image resampled to the stage size. Row extrema let a
@@ -367,6 +412,8 @@ private:
         float fromAlpha = 255.0f;
         float elapsed = 0.0f;
         float duration = 0.6f;
+        // A fade-out that removes its layer when it completes.
+        bool removeWhenDone = false;
     };
 
     struct MotionPlayback {
@@ -415,6 +462,9 @@ private:
     };
 
     [[nodiscard]] float SlotCenterX(int slot) const;
+    void DrawBackgroundImage(const std::string& path,
+                             const std::optional<Placement>& placement,
+                             std::uint8_t alpha);
     void RenderRuleOverlay(bool compositing);
     void RenderScreenEffects();
     void EndRuleTransition();
@@ -466,6 +516,9 @@ private:
     std::string m_bgPath;
     std::string m_prevBgPath;
     float m_bgFade = 1.0f;
+    float m_bgFadeSpeed = 2.5f;
+    std::optional<Placement> m_bgPlacement;
+    std::optional<Placement> m_prevBgPlacement;
 
     float m_shakeRemaining = 0.0f;
     float m_shakeDuration = 0.0f;
