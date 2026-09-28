@@ -237,6 +237,14 @@ private:
     Label* m_speaker = nullptr;
     Label* m_dialogue = nullptr;
     int m_dialogueBaseFontSize = 30;
+    // The fitted dialogue size depends only on the full line and the box;
+    // RefreshHUD runs every frame, so the last answer is kept.
+    struct DialogueFit {
+        std::string text;
+        int requested = 0;
+        Rect bounds{};
+        int size = 0;
+    } m_dialogueFit;
     Label* m_nvlText = nullptr;
     VBoxContainer* m_choices = nullptr;
     std::vector<std::string> m_presentedChoices;

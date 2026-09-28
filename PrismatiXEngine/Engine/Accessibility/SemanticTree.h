@@ -36,6 +36,10 @@ public:
         const Uuid&, std::string_view action, std::string_view value)>;
     virtual ~SemanticAdapter() = default;
     virtual void Publish(const SemanticTree& tree) = 0;
+    // Building a snapshot shapes the text of every control. Platform bridges
+    // return false while no assistive technology is attached so the UI can
+    // skip that work; the first publish after attaching is always taken.
+    [[nodiscard]] virtual bool NeedsPublish() const { return true; }
     void SetActionHandler(ActionHandler handler) {
         m_actionHandler = std::move(handler);
     }

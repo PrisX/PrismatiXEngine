@@ -106,11 +106,22 @@ int Label::FontSizeToFit(std::string_view content, int requested,
     if (width <= 0.0f || height <= 0.0f || content.empty()) return requested;
     const std::string plain = text::ParseRubyMarkup(content).plain;
     const int wrap = std::max(1, static_cast<int>(std::floor(width)));
-    for (int size = requested; size >= 12; --size) {
+    const auto fits = [&](const int size) {
         const auto layout = MeasureTextLayout(plain, size, wrap);
-        if (!layout || layout->Size().y <= height - 8.0f) return size;
+        return !layout || layout->Size().y <= height - 8.0f;
+    };
+    if (fits(requested)) return requested;
+    // Wrapped height grows with the size, so the largest fitting size is
+    // found by bisection instead of shaping every size down to the minimum.
+    int low = 12;
+    int high = requested - 1;
+    if (!fits(low)) return low;
+    while (low < high) {
+        const int middle = low + (high - low + 1) / 2;
+        if (fits(middle)) low = middle;
+        else high = middle - 1;
     }
-    return 12;
+    return low;
 }
 
 void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
@@ -1087,6 +1098,7 @@ void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
     const int baseSize = FontSize() > 0 ? FontSize() : style.fontSize;
     if (!m_vertical) {
         Label::DrawSelf(renderer, theme);
+        if (m_ruby.empty()) return;
         const int wrap = Wrap()
                              ? std::max(1, static_cast<int>(
                                                std::floor(LayoutRect().w)))
@@ -1107,8 +1119,12 @@ void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
         renderer.PushClip({LayoutRect().x, LayoutRect().y - rubyExtent,
                            LayoutRect().w, LayoutRect().h + rubyExtent});
         for (const auto& ruby : m_ruby) {
+            // A typewriter reveal shows a prefix of the text; a reading is
+            // drawn only once its whole base is visible.
+            if (ruby.prefix.size() + ruby.base.size() > Text().size()) continue;
             const Rect base = layout.BoundsForRange(ruby.prefix.size(),
                                                     ruby.base.size());
+            if (base.w <= 0.0f) continue;
             const int rubySize = std::max(8, baseSize / 2);
             const Vec2 reading = renderer.MeasureText(
                 ruby.reading, style.font, rubySize);

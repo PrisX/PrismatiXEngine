@@ -234,6 +234,10 @@ public:
         if (m_comInitialized) CoUninitialize();
     }
 
+    [[nodiscard]] bool NeedsPublish() const override {
+        return m_clientSeen || UiaClientsAreListening();
+    }
+
     void Publish(const SemanticTree& tree) override {
         Uuid root;
         std::optional<Uuid> focus;
@@ -345,6 +349,7 @@ private:
             GetPropW(hwnd, kAdapterProperty));
         if (self && message == WM_GETOBJECT &&
             static_cast<LONG>(lParam) == UiaRootObjectId) {
+            self->m_clientSeen = true;
             const Uuid root = self->Root();
             if (!root.Empty()) {
                 auto owner = self->shared_from_this();
@@ -380,6 +385,7 @@ private:
     WNDPROC m_previous = nullptr;
     DWORD m_thread = 0;
     bool m_comInitialized = false;
+    bool m_clientSeen = false;
     mutable std::mutex m_mutex;
     std::unordered_map<Uuid, Entry, UuidHash> m_entries;
     Uuid m_root;

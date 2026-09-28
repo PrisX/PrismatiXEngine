@@ -611,7 +611,7 @@ bool UIContext::Update(const Input& input, int viewportWidth, int viewportHeight
     if (m_imagePreloadSink)
         for (const auto& path : MountedImageDependencies())
             m_imagePreloadSink(path);
-    if (m_accessibilityAdapter)
+    if (m_accessibilityAdapter && m_accessibilityAdapter->NeedsPublish())
         m_accessibilityAdapter->Publish(accessibility::SemanticTreeBuilder::Build(
             *m_root, ++m_accessibilityRevision));
     return m_input && m_input->LastFrameConsumed();

@@ -3,6 +3,7 @@
 #include "Engine/UI/Actions/BuiltInActionProvider.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Diagnostics/FrameProfiler.h"
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/UI/Layout.h"
@@ -902,9 +903,15 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
         const int requested = static_cast<int>(std::lround(
             m_dialogueBaseFontSize * std::clamp(p.textScale, .75f, 2.0f)));
         const Rect bounds = m_dialogue->LayoutRect();
-        m_dialogue->SetFontSize(m_dialogue->FontSizeToFit(
-            p.fullText.empty() ? p.text : p.fullText, requested,
-            bounds.w, bounds.h));
+        const std::string& fitText = p.fullText.empty() ? p.text : p.fullText;
+        if (m_dialogueFit.size == 0 || m_dialogueFit.requested != requested ||
+            m_dialogueFit.bounds.w != bounds.w || m_dialogueFit.bounds.h != bounds.h ||
+            m_dialogueFit.text != fitText) {
+            m_dialogueFit = {fitText, requested, bounds,
+                             m_dialogue->FontSizeToFit(fitText, requested,
+                                                       bounds.w, bounds.h)};
+        }
+        m_dialogue->SetFontSize(m_dialogueFit.size);
         const std::string desiredEffect = p.reducedMotion ? std::string{} : p.effect;
         if (desiredEffect != m_activeDialogueEffect) {
             if (!m_activeDialogueEffect.empty())
@@ -1205,7 +1212,7 @@ Status GalgameUI::ShowVideoOverlay(bool skippable) {
     return Status::Ok();
 }
 
-bool GalgameUI::Update(const Input& input, int width, int height,float deltaSeconds) { const bool consumed=m_context.Update(input,width,height,deltaSeconds);auto actions=std::move(m_pendingActions);m_pendingActions.clear();for(const auto& action:actions)if(m_sink)m_sink(action);return consumed; }
+bool GalgameUI::Update(const Input& input, int width, int height,float deltaSeconds) { const diag::ScopedFramePhase profiled(diag::FramePhase::UiUpdate); const bool consumed=m_context.Update(input,width,height,deltaSeconds);auto actions=std::move(m_pendingActions);m_pendingActions.clear();for(const auto& action:actions)if(m_sink)m_sink(action);return consumed; }
 void GalgameUI::Render(graphics::Renderer2D& renderer) { m_context.Render(renderer); }
 
 }  // namespace px::ui

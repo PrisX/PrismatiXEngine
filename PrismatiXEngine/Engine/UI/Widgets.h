@@ -42,9 +42,9 @@ public:
     [[nodiscard]] std::string_view TypeName() const override { return "Label"; }
     void SetText(std::string value) { if (m_text == value) return; m_text = std::move(value); InvalidateLayout(); }
     [[nodiscard]] const std::string& Text() const { return m_text; }
-    void SetWrap(bool value) { m_wrap = value; InvalidateLayout(); }
+    void SetWrap(bool value) { if (m_wrap == value) return; m_wrap = value; InvalidateLayout(); }
     [[nodiscard]] bool Wrap() const { return m_wrap; }
-    void SetFontSize(int value) { m_fontSize = value; InvalidateLayout(); }
+    void SetFontSize(int value) { if (m_fontSize == value) return; m_fontSize = value; InvalidateLayout(); }
     [[nodiscard]] int FontSize() const { return m_fontSize; }
     [[nodiscard]] int FontSizeToFit(std::string_view content, int requested,
                                     float width, float height) const;
@@ -81,9 +81,9 @@ public:
     explicit Button(std::string text = {}, std::string name = "Button");
     ~Button() override;
     [[nodiscard]] std::string_view TypeName() const override { return "Button"; }
-    void SetText(std::string value) { m_text = std::move(value); InvalidateLayout(); }
+    void SetText(std::string value) { if (m_text == value) return; m_text = std::move(value); InvalidateLayout(); }
     [[nodiscard]] const std::string& Text() const { return m_text; }
-    void SetFontSize(int value) { m_fontSize = value; InvalidateLayout(); }
+    void SetFontSize(int value) { if (m_fontSize == value) return; m_fontSize = value; InvalidateLayout(); }
     [[nodiscard]] int FontSize() const { return m_fontSize; }
     void SetTextColor(Color value) { m_textColor = value; m_hasTextColor = true; }
     void ClearTextColor() { m_hasTextColor = false; }
