@@ -250,6 +250,16 @@ GalgameUI::GalgameUI() {
     }
 }
 
+void GalgameUI::SetBuiltinCanvas(const int width, const int height) {
+    for (auto& entry : CreateBuiltinUiPackage(width, height)) {
+        const auto found = m_templates.find(std::string(entry.route));
+        if (found == m_templates.end() ||
+            !found->second.sourcePath.starts_with("BuiltinUI/"))
+            continue;
+        found->second.document = std::move(entry.document);
+    }
+}
+
 GalgameUI::~GalgameUI() {
     for (const auto& sourceId : m_hostActionSourceIds)
         (void)m_context.Actions().Catalog().RemoveSource(
@@ -1030,7 +1040,12 @@ Status GalgameUI::ShowBacklog(std::vector<BacklogEntryPresentation> entries,
     if (!list) return GalgameFailure("PXUI2805", "Backlog template requires a ListView named Entries");
     if (!list->HasSource()) {
         m_items = std::make_shared<ItemSource>(std::move(legacyItems), *this);
-        if (const Status bound = list->SetSource(m_items, [] { return std::make_unique<Button>(); });
+        if (const Status bound = list->SetSource(m_items, [] {
+                // A log reads from the left like the message it repeats.
+                auto line = std::make_unique<Button>();
+                line->SetHorizontalAlignment(HorizontalTextAlignment::Left);
+                return line;
+            });
             !bound)
             return bound;
     } else {
@@ -1074,6 +1089,8 @@ Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
             {"subtitle", Variant(item ? item->subtitle : std::string{})},
             {"enabled", Variant(item && !item->disabled)},
         });
+        // Only the first twelve slots have legacy per-slot paths.
+        if (index >= 12) continue;
         const std::string prefix = "saveLoad.slot" + std::to_string(index) + ".";
         (void)m_viewModel.Write(prefix + "image", Variant(item ? item->image : std::string{}));
         (void)m_viewModel.Write(prefix + "title", Variant(item ? item->title : std::string{}));

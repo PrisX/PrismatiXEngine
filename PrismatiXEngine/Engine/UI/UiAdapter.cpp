@@ -582,15 +582,16 @@ protected:
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override {
         Color fill = Hovered() ? m_hover : m_background;
         if (!Enabled()) fill.a = static_cast<std::uint8_t>(fill.a * m_disabledOpacity);
-        renderer.DrawRoundedRect(LayoutRect(), 6.0f, fill);
-        if (Focused()) renderer.DrawBorder(LayoutRect(), 2.0f, 6.0f, m_focus);
+        renderer.DrawRoundedRect(LayoutRect(), 8.0f, fill);
+        if (Focused()) renderer.DrawBorder(LayoutRect(), 2.0f, 8.0f, m_focus);
         Rect textArea = LayoutRect();
         textArea.x += 12.0f;
         textArea.w = std::max(0.0f, textArea.w - 24.0f);
         Color textColor = m_text;
         if (!Enabled()) textColor.a = static_cast<std::uint8_t>(textColor.a * m_disabledOpacity);
         const auto style = theme.Resolve(*this);
-        renderer.DrawTextInRect(Text(), textArea, style.font, style.fontSize,
+        renderer.DrawTextInRect(Text(), textArea, style.font,
+                                FontSize() > 0 ? FontSize() : style.fontSize,
                                 textColor,
                                 graphics::HorizontalAlignment::Center,
                                 graphics::VerticalAlignment::Center, false);

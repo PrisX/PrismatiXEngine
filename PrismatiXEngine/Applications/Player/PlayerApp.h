@@ -332,6 +332,8 @@ private:
     int m_benchSettledFrames = 0;
     std::uint64_t m_benchReadingShot = 0;
     std::uint64_t m_benchCapturedEffect = 0;
+    bool m_benchChoiceCaptured = false;
+    bool m_benchDialogueCaptured = false;
     int m_e2eClearCountBeforeF2 = 0;
     std::optional<Variant> m_e2eSessionValueBeforeF2;
     accessibility::SpeechService m_speech;

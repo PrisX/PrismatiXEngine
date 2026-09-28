@@ -1767,6 +1767,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         animation::TargetKind::Text,
         [this](const auto& binding,const Variant& value){return m_ui.ApplyAnimationProperty(binding,value);},
         validateUiAnimation);
+    m_ui.SetBuiltinCanvas(m_boot.config.logicalWidth, m_boot.config.logicalHeight);
     PX_LOG_DEBUG("Player boot: registering typed UI templates");
     const auto registerTemplate=[this](const std::string& route,const std::string& path){
         auto text=m_runtime.VFS().ReadText(path);if(!text){diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPLAYER5003",.category="Player.UI",.message="Required UI template is missing: "+path};d.source.path=path;diag::Emit(d);return false;}
@@ -3994,7 +3995,9 @@ void PlayerApp::DriveBenchJourney() {
     switch (m_benchStage) {
         case 0:
             if (m_appState == AppState::Title && m_ui.CurrentRoute() == "title" &&
-                !m_routePreloadBatch) {
+                !m_routePreloadBatch && ++m_benchSettledFrames >= 60) {
+                m_benchSettledFrames = 0;
+                BenchCapture("title");
                 StartGame();
                 m_benchStage = 1;
             }
@@ -4008,9 +4011,22 @@ void PlayerApp::DriveBenchJourney() {
             }
             break;
         case 2:
-            if (m_session->VM().State() == vn::VMState::WaitingChoice)
+            if (m_session->VM().State() == vn::VMState::WaitingChoice) {
+                if (!m_benchChoiceCaptured) {
+                    // Hold the prompt a few frames so the capture shows it.
+                    if (++m_benchSettledFrames < 20) break;
+                    m_benchSettledFrames = 0;
+                    m_benchChoiceCaptured = true;
+                    BenchCapture("choice");
+                    break;
+                }
                 m_session->SelectChoice(0);
-            m_skipMode = true;
+            }
+            if (m_benchSettledFrames == 0 && lines() >= 1 && !m_benchDialogueCaptured) {
+                m_benchDialogueCaptured = true;
+                BenchCapture("dialogue");
+            }
+            m_skipMode = !m_benchChoiceCaptured ? lines() >= 1 : true;
             if (now - m_benchStageAt >= 15'000) {
                 PX_LOG_INFO("Player bench skip lines={} seconds=15 linesPerSecond={:.1f}",
                             lines(), static_cast<double>(lines()) / 15.0);

@@ -98,6 +98,9 @@ public:
                             const std::string& sourcePath={});
     Status RegisterRouteTemplate(std::string route, std::string_view scene,
                                  const std::string& sourcePath = {});
+    // Lays the stock screens out for the project's logical resolution.
+    // Authored route templates are left untouched.
+    void SetBuiltinCanvas(int width, int height);
     [[nodiscard]] Result<std::vector<std::string>> RouteImageDependencies(
         std::string_view route) const;
     [[nodiscard]] std::vector<std::string> MountedImageDependencies() const {

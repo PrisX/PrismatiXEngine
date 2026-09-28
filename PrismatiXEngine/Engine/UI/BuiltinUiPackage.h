@@ -15,6 +15,8 @@ struct BuiltinUiEntry {
 // The default Galgame shell is expressed as ordinary UI documents. Projects
 // replace any route by registering an authored document with the same route;
 // Runtime code never needs a second, special-purpose layout path.
-[[nodiscard]] std::vector<BuiltinUiEntry> CreateBuiltinUiPackage();
+// Screens are designed on 1280x720 and scaled to the given logical size.
+[[nodiscard]] std::vector<BuiltinUiEntry> CreateBuiltinUiPackage(int width = 1280,
+                                                                 int height = 720);
 
 }  // namespace px::ui
