@@ -1655,6 +1655,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         "set.reducedmotion.on", "set.reducedmotion.off",
         "settings.reset", "settings.noop",
         "title.confirm.accept", "title.confirm.cancel",
+        "system.confirm.accept", "system.confirm.cancel",
         "music.play", "music.previous", "music.stop", "music.resume",
         "music.next", "music.about", "music.random",
         "music.scroll.home", "music.scroll.up", "music.scroll.down",
@@ -2949,6 +2950,8 @@ void PlayerApp::PresentRoute(const std::string& route,
     std::string target=route;if(target=="saveload")target="load";
     BeginRouteVisualPreload(target);
     (void)m_ui.SetTitleConfirmation(false);
+    m_pendingSystemPrompt = ui::GalgameUI::SystemPrompt::None;
+    (void)m_ui.SetSystemConfirmation(m_pendingSystemPrompt);
     m_pendingSaveLoadSlot.reset();
     const auto present = [this](const Status& status) {
         if (status) return true;
@@ -3173,7 +3176,11 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             m_pendingSaveScreen = true;
     } else if (t == "settings.open") {
         OpenScreen("settings");
-    } else if (t == "settings.reset") {
+    } else if (t == "settings.reset" &&
+               m_ui.SupportsSystemConfirmation()) {
+        m_pendingSystemPrompt = ui::GalgameUI::SystemPrompt::Reset;
+        (void)m_ui.SetSystemConfirmation(m_pendingSystemPrompt);
+    } else if (t == "settings.reset" || t == "system.reset.apply") {
         const std::string locale=m_settings.language;
         const bool fullscreen=m_settings.fullscreen;
         m_settings=progress::GameSettings{};
@@ -3381,6 +3388,11 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             else RollbackToBacklogSequence(entry->sequence);
         }
     } else if (t == "overlay.close") {
+        if (m_pendingSystemPrompt != ui::GalgameUI::SystemPrompt::None) {
+            m_pendingSystemPrompt = ui::GalgameUI::SystemPrompt::None;
+            (void)m_ui.SetSystemConfirmation(m_pendingSystemPrompt);
+            return;
+        }
         if (m_pendingSaveLoadSlot) {
             m_pendingSaveLoadSlot.reset();
             (void)m_ui.SetSaveLoadConfirmation(ui::GalgameUI::SaveLoadPrompt::None);
@@ -3397,8 +3409,22 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         PX_LOG_INFO("Player overlay closed modal={} route={}",
                     m_session->Routes().CurrentModalRoute(),
                     m_session->Routes().CurrentRoute());
+    } else if (t == "system.confirm.cancel") {
+        m_pendingSystemPrompt = ui::GalgameUI::SystemPrompt::None;
+        (void)m_ui.SetSystemConfirmation(m_pendingSystemPrompt);
+    } else if (t == "system.confirm.accept") {
+        const auto prompt = std::exchange(
+            m_pendingSystemPrompt, ui::GalgameUI::SystemPrompt::None);
+        (void)m_ui.SetSystemConfirmation(m_pendingSystemPrompt);
+        if (prompt == ui::GalgameUI::SystemPrompt::Reset)
+            HandleUIAction({"system.reset.apply", {}});
+        else if (prompt == ui::GalgameUI::SystemPrompt::Exit)
+            m_quitRequested = true;
     } else if (t == "app.quit") {
-        m_quitRequested = true;
+        if (m_ui.SupportsSystemConfirmation()) {
+            m_pendingSystemPrompt = ui::GalgameUI::SystemPrompt::Exit;
+            (void)m_ui.SetSystemConfirmation(m_pendingSystemPrompt);
+        } else m_quitRequested = true;
     } else {
         diag::Emit(diag::Diagnostic{.severity = diag::Severity::Error,
                                     .code = "PXPLAYER5023",

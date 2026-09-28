@@ -225,6 +225,8 @@ private:
     std::optional<SavePresentationState> m_beforeSavePresentation;
     std::optional<int> m_pendingSaveLoadSlot;
     bool m_pendingSaveLoadSaveMode = false;
+    ui::GalgameUI::SystemPrompt m_pendingSystemPrompt =
+        ui::GalgameUI::SystemPrompt::None;
     std::vector<std::uint8_t> m_menuThumb;
     std::string m_viewingCG;
 

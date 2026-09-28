@@ -196,6 +196,9 @@ GalgameUI::GalgameUI() {
         (void)m_viewModel.Define(
             std::string("saveLoad.confirm.") + property, Variant(false), true);
     (void)m_viewModel.Define("title.confirm.visible", Variant(false), true);
+    for (const char* property : {"visible", "reset", "exit"})
+        (void)m_viewModel.Define(
+            std::string("system.confirm.") + property, Variant(false), true);
     const std::vector<std::string> commands={
         "game.start", "game.continue", "load.open", "save.open",
         "gallery.open", "settings.open", "extra.open", "flowchart.open",
@@ -209,6 +212,8 @@ GalgameUI::GalgameUI() {
     (void)RegisterActionCommand("cg.view", "resource");
     (void)RegisterActionCommand("saveLoad.confirm.accept");
     (void)RegisterActionCommand("saveLoad.confirm.cancel");
+    (void)RegisterActionCommand("system.confirm.accept");
+    (void)RegisterActionCommand("system.confirm.cancel");
     (void)m_context.Commands().Register("hud.toolbar.pin",[this](const Variant&){return ToggleHudToolbarPinned();});
     for (auto& entry : CreateBuiltinUiPackage()) {
         const auto screen = ScreenFromId(entry.route);
@@ -1052,6 +1057,22 @@ bool GalgameUI::SupportsTitleConfirmation() const {
 
 Status GalgameUI::SetTitleConfirmation(const bool visible) {
     return m_viewModel.Write("title.confirm.visible", Variant(visible));
+}
+
+bool GalgameUI::SupportsSystemConfirmation() const {
+    return FindNamed<Control>(m_context.Root(), "SystemConfirm") != nullptr;
+}
+
+Status GalgameUI::SetSystemConfirmation(const SystemPrompt prompt) {
+    for (const auto& [name, enabled] : {
+             std::pair{"visible", prompt != SystemPrompt::None},
+             std::pair{"reset", prompt == SystemPrompt::Reset},
+             std::pair{"exit", prompt == SystemPrompt::Exit}}) {
+        const Status written = m_viewModel.Write(
+            std::string("system.confirm.") + name, Variant(enabled));
+        if (!written) return written;
+    }
+    return Status::Ok();
 }
 
 Status GalgameUI::ShowGallery(std::vector<GalgameItem> entries) {

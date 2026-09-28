@@ -169,6 +169,9 @@ public:
     Status SetSaveLoadConfirmation(SaveLoadPrompt prompt);
     [[nodiscard]] bool SupportsTitleConfirmation() const;
     Status SetTitleConfirmation(bool visible);
+    enum class SystemPrompt { None, Reset, Exit };
+    [[nodiscard]] bool SupportsSystemConfirmation() const;
+    Status SetSystemConfirmation(SystemPrompt prompt);
     Status ShowGallery(std::vector<GalgameItem> entries);
     Status ShowSettings(const SettingsPresentation& settings);
     Status ShowVideoOverlay(bool skippable);
