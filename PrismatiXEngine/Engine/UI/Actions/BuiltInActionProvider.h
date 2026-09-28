@@ -14,6 +14,9 @@ public:
     [[nodiscard]] std::string_view ProviderId() const override { return "builtin"; }
     [[nodiscard]] ActionOrigin Origin() const override { return ActionOrigin::BuiltIn; }
     [[nodiscard]] bool CanInvoke(std::string_view action) const override;
+    [[nodiscard]] bool HasHandler(std::string_view action) const {
+        return m_handlers.contains(std::string(action));
+    }
     Status Invoke(const ActionInvocation& invocation) override;
 
     Status Register(std::string action, Handler handler);

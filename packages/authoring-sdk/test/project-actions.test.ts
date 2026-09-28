@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {validateUiActionUsage} from "../src/index.js";
-import type {ExtensionManifest} from "../src/index.js";
+import {validateHostActionContract, validateUiActionUsage} from "../src/index.js";
+import type {ExtensionManifest, HostActionContract} from "../src/index.js";
 
 const extension: ExtensionManifest = {
   format: "PrismatiXExtension", schemaRevision: 2, language: "javascript",
@@ -88,4 +88,21 @@ test("item-template Action placeholders are checked against extension parameter 
   }]};
   assert.ok(validateUiActionUsage(document, [invalidExtension], "Items.pxui")
     .some((diagnostic) => diagnostic.code === "PXBUILD1062"));
+});
+
+test("host Action declarations reuse typed UI argument validation", () => {
+  const host: HostActionContract = {format: "PrismatiXActionContract", schemaRevision: 1,
+    actions: [{id: "host.open", safety: {previewSafe: true,
+      deterministic: true, seekSafe: true, rollbackSafe: true},
+    parameters: [{name: "target", type: "string", required: true}]}]};
+  assert.deepEqual(validateHostActionContract(host, "prismatix.json"), []);
+  const document = {nodes: [{onClick: {id: "host.open", arguments: {target: 7}}}]};
+  assert.equal(validateUiActionUsage(document, [], "Title.pxui", undefined,
+    host.actions)[0]?.code, "PXBUILD1062");
+  assert.equal(validateUiActionUsage({nodes: [{onClick: {
+    id: "host.open", arguments: {target: "settings"}}}]}, [], "Title.pxui",
+  undefined, host.actions).length, 0);
+  assert.ok(validateHostActionContract({...host, actions: [
+    host.actions[0]!, host.actions[0]!,
+  ]}, "prismatix.json").some((item) => item.code === "PXSDKSEM1107"));
 });

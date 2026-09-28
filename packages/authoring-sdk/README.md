@@ -19,6 +19,10 @@ Named keyboard actions, contexts, and default bindings can be authored in
 [input action guide](../../docs/input-actions.md). The older `inputBindings`
 entries remain readable for migrated projects.
 
+Embedding applications can declare typed Action signatures in
+`settings["authoring.actionContract"]` and check their native handlers before
+mounting UI; see the [host Action guide](../../docs/host-action-authoring.md).
+
 ## Dynamic resource families
 
 Static Story/UI references and catalog assets are collected automatically. If

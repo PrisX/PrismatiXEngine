@@ -1709,6 +1709,57 @@ int main() {
               applicationButton->Opacity() == 0.7f,
           "failed detached property patch leaves every live Runtime property unchanged");
 
+    const auto hostContract = nlohmann::json{
+        {"format", "PrismatiXActionContract"}, {"schemaRevision", 1},
+        {"actions", nlohmann::json::array({{
+            {"id", "host.contract.open"},
+            {"parameters", nlohmann::json::array({{
+                {"name", "target"}, {"type", "string"}, {"required", true}
+            }})},
+            {"safety", {{"previewSafe", true}, {"deterministic", true},
+                        {"seekSafe", true}, {"rollbackSafe", true}}}
+        }})}
+    };
+    auto makeHostDescriptor = [] {
+        px::ui::ActionDescriptor descriptor;
+        descriptor.id = "host.contract.open";
+        descriptor.arguments = {{.name = "target", .type = px::VariantType::String,
+                                 .required = true}};
+        return descriptor;
+    };
+    {
+        px::ui::GalgameUI hostUi;
+        std::string opened;
+        Check(hostUi.RegisterHostAction(makeHostDescriptor(),
+            [&opened](const px::ui::ActionInvocation& invocation) {
+                opened = *invocation.arguments.at("target").TryGet<std::string>();
+                return px::Status::Ok();
+            }).IsOk(), "host Action must register a typed native handler");
+        Check(hostUi.ValidateActionContract(hostContract.dump()).IsOk(),
+              "host Action contract must match the registered signature and safety");
+        auto wrongType = hostContract;
+        wrongType["actions"][0]["parameters"][0]["type"] = "integer";
+        Check(!hostUi.ValidateActionContract(wrongType.dump()),
+              "host Action contract must reject parameter type drift");
+        auto wrongSafety = hostContract;
+        wrongSafety["actions"][0]["safety"]["rollbackSafe"] = false;
+        Check(!hostUi.ValidateActionContract(wrongSafety.dump()),
+              "host Action contract must reject safety drift");
+        px::ui::ActionInvocation invocation;
+        invocation.action = "host.contract.open";
+        invocation.arguments.emplace("target", px::Variant("settings"));
+        Check(hostUi.Actions().Dispatch(std::move(invocation)).IsOk() &&
+              opened == "settings", "host Action must dispatch its typed argument");
+    }
+    {
+        px::ui::GalgameUI hostUi;
+        Check(!hostUi.ValidateActionContract(hostContract.dump()),
+              "destroyed host must not leave a stale global Action descriptor");
+        Check(hostUi.RegisterHostAction(makeHostDescriptor(),
+            [](const px::ui::ActionInvocation&) { return px::Status::Ok(); }).IsOk(),
+            "a later host must be able to register the same Action id");
+    }
+
     px::ui::GalgameUI playerUi;
     playerUi.SetUiAssetResolver([](const std::string_view id) -> std::optional<std::string> { return id == "66666666-6666-4666-8666-666666666666" ? std::optional<std::string>{ "Content/logo.png" } : std::nullopt; });
     Check(playerUi.RegisterTemplate(px::ui::GalgameUI::Screen::Title, scene, "Content/UI/Title.pxui").IsOk(), "Player UI entry accepts a packaged UI document template");

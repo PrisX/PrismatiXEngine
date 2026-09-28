@@ -68,6 +68,39 @@ const {behaviorGraph: _behaviorGraph, behaviorTriggers: _behaviorTriggers,
 const component = {...componentContent, format: "PrismatiXUIComponent",
   componentInterface: {properties: [], signals: [], slots: []}};
 
+test("project host Action contract checks authored UI before publication", () => {
+  const actionContract = {format: "PrismatiXActionContract", schemaRevision: 1,
+    actions: [{id: "host.open", safety: {previewSafe: true,
+      deterministic: true, seekSafe: true, rollbackSafe: true},
+    parameters: [{name: "target", type: "string", required: true}]}]};
+  const authorProject = {...project, settings: {"authoring.actionContract": actionContract}};
+  const compile = (target: unknown) => compileProject({project: authorProject,
+    documents: {"Story/story.pxindex": storyIndex, "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": {...ui, nodes: [{...ui.nodes[0], onClick: {
+        id: "host.open", arguments: {target},
+      }}]}},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+  });
+  const valid = compile("settings");
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  assert.deepEqual(valid.artifact?.project.settings?.["authoring.actionContract"],
+    actionContract);
+  assert.ok(compile(7).diagnostics.some((item) => item.code === "PXBUILD1062"));
+  const unsupported = compileProject({project: {...project, settings: {
+    "authoring.actionContract": {...actionContract, actions: [{
+      ...actionContract.actions[0], parameters: [{name: "target", type: "null"}],
+    }]},
+  }}, documents: {"Story/story.pxindex": storyIndex,
+    "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
+  sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locale: "zh-TW", strings: {}}}});
+  assert.equal(unsupported.valid, false);
+  assert.ok(unsupported.diagnostics.some((item) => item.code === "PXSDKJSON1004"));
+});
+
 test("project compilation checks authored input action routes", () => {
   const compile = (route: string) => compileProject({project,
     documents: {"Story/story.pxindex": storyIndex,

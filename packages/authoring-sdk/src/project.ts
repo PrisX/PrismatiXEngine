@@ -3,7 +3,8 @@ import {contractDocumentByteLimit, parseDocument, validateDocument} from "./cont
 import {normalizeProject} from "./project-normalization.js";
 import {validateInputKeyUsage, type InputKeyRegistryMetadata} from "./input-keys.js";
 import {createJsonSourceLocator, jsonPointerSpans} from "./json-source-spans.js";
-import {validateUiActionUsage} from "./project-actions.js";
+import {validateHostActionContract, validateUiActionUsage,
+  type HostActionContract} from "./project-actions.js";
 import {validatePlayerUiBindings} from "./project-ui-bindings.js";
 import type {LayeredPortraitDocument} from "./portrait.js";
 import type {MotionDocument} from "./motion.js";
@@ -485,6 +486,11 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     return {diagnostics, valid: false};
   const projectPath = normalized.value.projectPath;
   const project = normalized.value.project;
+  const hostActionContract = project.settings?.["authoring.actionContract"] as
+    HostActionContract | undefined;
+  const hostActions = hostActionContract?.actions ?? [];
+  if (hostActionContract !== undefined)
+    diagnostics.push(...validateHostActionContract(hostActionContract, projectPath));
   const documents = normalized.value.documents;
   const sourceFiles = normalized.value.sourceFiles;
   const locales = normalized.value.locales;
@@ -592,6 +598,11 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         projectPath, action.id));
     extensionActionIds.add(action.id);
   }
+  for (const [index, action] of hostActions.entries()) if (extensionActionIds.has(action.id))
+    diagnostics.push(locatedIssue("PXBUILD1075",
+      "Host Action id collides with an extension Action",
+      projectPath, `/settings/authoring.actionContract/actions/${index}/id`,
+      action.id, action.id));
   const saveMigrationDocuments = new Map<string, SaveMigrationDocument>();
   const migrationSources = new Map<string, SaveMigrationDescriptor>();
   const versionKey = (version: SaveMigrationVersion) =>
@@ -662,7 +673,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         diagnostics.push(...validateUiPropertyUsage(ui, input.uiTypeRegistry,
           path, input.documentSources?.[path]));
       diagnostics.push(...validateUiActionUsage(ui, extensions, path,
-        input.documentSources?.[path]));
+        input.documentSources?.[path], hostActions));
       if (game !== undefined)
         diagnostics.push(...validateUiInputBindings(ui, game, path,
           input.documentSources?.[path]));
@@ -760,7 +771,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       diagnostics.push(...validateUiPropertyUsage(component, input.uiTypeRegistry,
         descriptor.source, input.documentSources?.[descriptor.source]));
     diagnostics.push(...validateUiActionUsage(component, extensions,
-      descriptor.source, input.documentSources?.[descriptor.source]));
+      descriptor.source, input.documentSources?.[descriptor.source], hostActions));
     if (game !== undefined)
       diagnostics.push(...validateUiInputBindings(component, game,
         descriptor.source, input.documentSources?.[descriptor.source]));

@@ -2613,6 +2613,73 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         },
         "maxProperties": 1024,
         "properties": {
+          "authoring.actionContract": {
+            "additionalProperties": false,
+            "properties": {
+              "actions": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                    },
+                    "parameters": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "name": {
+                            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                          },
+                          "required": {
+                            "type": "boolean"
+                          },
+                          "type": {
+                            "enum": [
+                              "boolean",
+                              "integer",
+                              "number",
+                              "string",
+                              "resource"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 64,
+                      "type": "array"
+                    },
+                    "safety": {
+                      "$ref": "https://prismatix.dev/contracts/extension.schema.json#/$defs/safety"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "parameters",
+                    "safety"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 256,
+                "type": "array"
+              },
+              "format": {
+                "const": "PrismatiXActionContract"
+              },
+              "schemaRevision": {
+                "const": 1
+              }
+            },
+            "required": [
+              "format",
+              "schemaRevision",
+              "actions"
+            ],
+            "type": "object"
+          },
           "authoring.uiContract": {
             "additionalProperties": false,
             "properties": {
@@ -4788,7 +4855,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
   "motion.schema.json": "300c1bbdeb16abf4faa8014afa81800e8d72a1e7f1f6d06d309cf53ba2980f01",
   "portrait.schema.json": "658421c74dacc9d8247b64c6a00389c069b7516f57f863f399160161a1207f16",
-  "project.schema.json": "a49f8cc1eb55b2c98a36627b742ddeef88e15b23c380140beecd84e76f23036f",
+  "project.schema.json": "3df44e931b9fb047a49ee08c1adfd2dd03a7c9c26b99c894580ac31ce03624fc",
   "runtime-ir.schema.json": "04c51fc94dc46b500d78877d29dba1dffe1f41619211af24e48cf48699bf0836",
   "save-migration.schema.json": "b66062b76495dfec0ec9dc1a9c7f0bfc1c49967a5748b2a48f7e186c9cf8533e",
   "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",

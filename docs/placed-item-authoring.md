@@ -136,7 +136,8 @@ The host supplies each row's declared `key`, `rect`, and `caption` fields.
 bad late row does not replace the last valid array. The host must also
 register its Action commands and their handlers before an authored screen
 uses them; the UI contract above describes values and formatter types, not
-Action implementations.
+Action implementations. For typed host Actions, see the
+[host Action authoring contract](host-action-authoring.md).
 
 Resource paths supplied only through dynamic item bindings still need explicit
 asset inclusion (for example `resourceIncludes`) until the compiler can infer

@@ -1,5 +1,6 @@
 #include "Engine/UI/GalgameUI.h"
 #include "Engine/UI/BuiltinUiPackage.h"
+#include "Engine/UI/Actions/BuiltInActionProvider.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Graphics/Renderer2D.h"
@@ -204,6 +205,12 @@ GalgameUI::GalgameUI() {
         value.sourcePath = "BuiltinUI/" + std::string(entry.route) + ".pxui";
         m_templates.emplace(std::string(entry.route), std::move(value));
     }
+}
+
+GalgameUI::~GalgameUI() {
+    for (const auto& sourceId : m_hostActionSourceIds)
+        (void)m_context.Actions().Catalog().RemoveSource(
+            ActionOrigin::BuiltIn, sourceId);
 }
 
 Status GalgameUI::DefineUiData(std::string path, Variant value) {
@@ -411,6 +418,106 @@ Status GalgameUI::RegisterActionCommand(std::string command,
             Emit(registered, std::move(argument));
             return Status::Ok();
         });
+}
+
+Status GalgameUI::RegisterHostAction(
+    ActionDescriptor descriptor,
+    std::function<Status(const ActionInvocation&)> handler) {
+    if (!handler || descriptor.id.empty())
+        return GalgameFailure("PXUI2823", "Host Action needs an id and handler");
+    auto provider = std::dynamic_pointer_cast<BuiltInActionProvider>(
+        m_context.Actions().FindProvider("builtin"));
+    if (!provider)
+        return GalgameFailure("PXUI2823", "Host Action provider is unavailable");
+    descriptor.origin = ActionOrigin::BuiltIn;
+    descriptor.providerId = "builtin";
+    descriptor.sourceId = "GalgameUI.Host:" + descriptor.id;
+    descriptor.allowAdditionalArguments = false;
+    const std::string id = descriptor.id;
+    const std::string sourceId = descriptor.sourceId;
+    const Status declared = m_context.Actions().Catalog().Register(
+        std::move(descriptor));
+    if (!declared) return declared;
+    const Status registered = provider->Register(id, std::move(handler));
+    if (!registered) {
+        (void)m_context.Actions().Catalog().RemoveSource(
+            ActionOrigin::BuiltIn, sourceId);
+        return registered;
+    }
+    m_hostActionSourceIds.push_back(sourceId);
+    return Status::Ok();
+}
+
+Status GalgameUI::ValidateActionContract(const std::string_view document) {
+    const auto fail = [](std::string message, std::string id = {}) {
+        return GalgameFailure("PXUI2824", std::move(message) +
+            (id.empty() ? std::string{} : ": " + id));
+    };
+    if (document.empty() || document.size() > 1024 * 1024)
+        return fail("Host Action contract is empty or exceeds 1 MiB");
+    const auto root = nlohmann::json::parse(document, nullptr, false);
+    if (!root.is_object()) return fail("Invalid host Action contract");
+    try {
+        if (root.value("format", std::string{}) != "PrismatiXActionContract" ||
+            root.value("schemaRevision", 0) != 1 ||
+            !root.contains("actions") || !root["actions"].is_array() ||
+            root["actions"].size() > 256)
+            return fail("Invalid host Action contract envelope");
+        const auto provider = std::dynamic_pointer_cast<BuiltInActionProvider>(
+            m_context.Actions().FindProvider("builtin"));
+        std::set<std::string> seen;
+        const auto expectedType = [](const std::string_view type)
+            -> std::optional<VariantType> {
+            if (type == "boolean") return VariantType::Bool;
+            if (type == "integer") return VariantType::Integer;
+            if (type == "number") return VariantType::Number;
+            if (type == "string") return VariantType::String;
+            if (type == "resource") return VariantType::ResourceRef;
+            return std::nullopt;
+        };
+        for (const auto& action : root["actions"]) {
+            if (!action.is_object() || !action.contains("id") ||
+                !action["id"].is_string() || !action.contains("parameters") ||
+                !action["parameters"].is_array() ||
+                action["parameters"].size() > 64 ||
+                !action.contains("safety") || !action["safety"].is_object())
+                return fail("Invalid host Action declaration");
+            const auto id = action["id"].get<std::string>();
+            if (id.empty() || !seen.insert(id).second)
+                return fail("Duplicate or empty host Action", id);
+            const auto* descriptor = m_context.Actions().Catalog().Find(id);
+            if (!descriptor || descriptor->sourceId != "GalgameUI.Host:" + id ||
+                descriptor->providerId != "builtin" || !provider ||
+                !provider->HasHandler(id) || descriptor->allowAdditionalArguments ||
+                descriptor->arguments.size() != action["parameters"].size())
+                return fail("Host Action is missing or has the wrong signature", id);
+            const auto& safety = action["safety"];
+            if (safety.value("previewSafe", !descriptor->previewSafe) != descriptor->previewSafe ||
+                safety.value("deterministic", !descriptor->deterministic) != descriptor->deterministic ||
+                safety.value("seekSafe", !descriptor->seekSafe) != descriptor->seekSafe ||
+                safety.value("rollbackSafe", !descriptor->rollbackSafe) != descriptor->rollbackSafe)
+                return fail("Host Action safety contract does not match", id);
+            std::set<std::string> parameters;
+            for (const auto& parameter : action["parameters"]) {
+                if (!parameter.is_object() || !parameter.contains("name") ||
+                    !parameter["name"].is_string() || !parameter.contains("type") ||
+                    !parameter["type"].is_string())
+                    return fail("Invalid host Action parameter", id);
+                const auto name = parameter["name"].get<std::string>();
+                const auto type = expectedType(parameter["type"].get<std::string>());
+                if (!type || !parameters.insert(name).second ||
+                    std::none_of(descriptor->arguments.begin(),
+                        descriptor->arguments.end(), [&](const auto& actual) {
+                            return actual.name == name && actual.type == *type &&
+                                actual.required == parameter.value("required", false);
+                        }))
+                    return fail("Host Action parameter does not match", id + "." + name);
+            }
+        }
+    } catch (const nlohmann::json::exception&) {
+        return fail("Host Action contract has invalid field types");
+    }
+    return Status::Ok();
 }
 
 UIRuntimeState GalgameUI::CaptureRuntimeState() const {

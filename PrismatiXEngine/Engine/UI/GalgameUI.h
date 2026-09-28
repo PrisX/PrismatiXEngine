@@ -73,6 +73,7 @@ public:
     using ActionSink = std::function<void(const GalgameAction&)>;
 
     GalgameUI();
+    ~GalgameUI();
     // Production templates use the canonical public UI document contract.
     Status RegisterTemplate(Screen screen,std::string_view scene,
                             const std::string& sourcePath={});
@@ -107,6 +108,11 @@ public:
     // just to make a skinned screen interactive.
     Status RegisterActionCommand(std::string command,
                                  std::string argumentKey = "argument");
+    /** Register a typed host Action with an explicit native handler. */
+    Status RegisterHostAction(ActionDescriptor descriptor,
+                              std::function<Status(const ActionInvocation&)> handler);
+    /** Check declared host Actions before mounting authored routes. */
+    [[nodiscard]] Status ValidateActionContract(std::string_view document);
     void SetBehaviorVariableAccess(
         std::function<std::optional<Variant>(std::string_view)> read,
         std::function<Status(std::string_view, const Variant&)> write) {
@@ -236,6 +242,7 @@ private:
     UiComponentLoader m_studioComponentLoader;
     UiMotionLoader m_studioMotionLoader;
     std::vector<GalgameAction> m_pendingActions;
+    std::vector<std::string> m_hostActionSourceIds;
     std::optional<UIRuntimeState> m_lastGameplayState;
     std::unordered_map<std::string, Visibility> m_timelineVisibilityBase;
 };
