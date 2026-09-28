@@ -5021,6 +5021,9 @@ void PlayerApp::Shutdown() {
     // Subsystems referencing the runtime must go before Runtime::Shutdown.
     m_scriptHost.reset();
     m_splash.reset();
+    // The video player owns an SDL audio stream and textures; it must close
+    // before Runtime::Shutdown quits SDL.
+    m_video.reset();
     if (m_runtimePreload.valid()) m_runtimePreload.wait();
     m_session.reset();
     m_runtime.Shutdown();
