@@ -182,9 +182,12 @@ public:
     void WaitExternal() { m_state = VMState::WaitingExternal; }
     // Session commands (for example a screen transition) hold the script
     // for a time. Click and skip advance past it like an authored [wait].
-    void WaitFor(std::uint64_t milliseconds) {
+    // `hold` keeps an elapsed wait going while it returns true (a screen
+    // transition that fell behind wall-clock time); a click still skips it.
+    void WaitFor(std::uint64_t milliseconds, std::function<bool()> hold = {}) {
         m_timerMs = milliseconds;
         m_timerStart = m_nowMs;
+        m_timerHold = std::move(hold);
         m_state = VMState::WaitingTimer;
         m_waitRequested = true;
     }
@@ -348,6 +351,7 @@ private:
     bool m_fastForward = false;
     // Set by WaitFor from a command hook; the run loop yields once for it.
     bool m_waitRequested = false;
+    std::function<bool()> m_timerHold;
     bool m_safetyRejected = false;
     std::uint64_t m_instructionsWithoutObservableYield = 0;
     VMRunResult m_lastRunResult{};

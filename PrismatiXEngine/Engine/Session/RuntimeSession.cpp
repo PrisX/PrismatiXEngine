@@ -364,10 +364,13 @@ bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
             ? m_services.renderer.PlayScreenEffect("crossfade", seconds)
             : m_services.renderer.PlayRuleScreenTransition(
                   rule, seconds, static_cast<int>(CommandNumber(command, "vague", 64.0)));
-        // The duration is Story timing even when the renderer cannot play it.
-        (void)handle;
+        // The duration is Story timing even when the renderer cannot play it;
+        // a transition slowed by a long frame also holds the Story until done.
         if (CommandBool(command, "wait", true))
-            m_vm.WaitFor(static_cast<std::uint64_t>(milliseconds));
+            m_vm.WaitFor(static_cast<std::uint64_t>(milliseconds),
+                         [&renderer = m_services.renderer, handle] {
+                             return handle != 0 && renderer.ScreenEffectPlaying(handle);
+                         });
         return true;
     }
     if (command.type == "screen_effect") {

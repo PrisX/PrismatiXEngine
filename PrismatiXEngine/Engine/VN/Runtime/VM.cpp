@@ -1182,6 +1182,7 @@ void VM::OnAdvance() {
             Run();
         }
     } else if (m_state == VMState::WaitingTimer) {
+        m_timerHold = {};
         Run();
     }
 }
@@ -1195,7 +1196,8 @@ void VM::Update(std::uint64_t nowMs, float dt) {
                m_state == VMState::WaitingExternal) {
         m_dialogue.Update(nowMs);
     } else if (m_state == VMState::WaitingTimer) {
-        if (nowMs - m_timerStart >= m_timerMs) {
+        if (nowMs - m_timerStart >= m_timerMs && !(m_timerHold && m_timerHold())) {
+            m_timerHold = {};
             Run();
         }
     }
