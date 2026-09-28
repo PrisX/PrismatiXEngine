@@ -2718,7 +2718,9 @@ std::vector<ui::GalgameItem> PlayerApp::SaveItems(bool saveMode) {
             }
         }
         items.push_back({"slot-" + std::to_string(slot), label, subtitle, image,
-                         !saveMode && !info.exists, action, std::to_string(slot)});
+                         (saveMode && m_appState != AppState::Game) ||
+                             (!saveMode && !info.exists),
+                         action, std::to_string(slot)});
     };
 
     if (!saveMode && m_savePages == 1 && m_saveFirstSlot == 0) {
@@ -3142,7 +3144,11 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         OpenScreen("load");
     } else if (t == "save.open") {
         m_slotSaveMode = true;
-        m_pendingSaveScreen = true;
+        if (m_ui.CurrentScreen() == ui::GalgameUI::Screen::Load ||
+            m_appState != AppState::Game)
+            OpenScreen("save");
+        else
+            m_pendingSaveScreen = true;
     } else if (t == "settings.open") {
         OpenScreen("settings");
     } else if (t == "settings.reset") {
