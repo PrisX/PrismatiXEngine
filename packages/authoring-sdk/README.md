@@ -112,6 +112,11 @@ paths and reports ambiguous basenames instead of silently picking one; see
 `serializeStoryCommand(name, arguments)` safely encodes a named-argument Story
 line from JSON values for these importers. The Story project compiler remains
 the authority for command semantics and save identity.
+`buildImportedStorySource(path, lines)` creates a Story source and external ID
+sidecar from adapter-assigned stable IDs; `assembleImportedStoryProject(input)`
+combines scenes and locales into an index and checked output files. See
+[importing stories](../../docs/importing-stories.md). Neither API decodes a
+proprietary source format.
 
 For a versioned release, `planSaveAnchorPolicy(previousRuntimeIr,
 nextRuntimeIr, replacements)` compares compiled execution identities. It

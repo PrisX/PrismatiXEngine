@@ -2,9 +2,11 @@
 
 更新：2026-09-28。此文件以當前兩個本機 repo 和實際測試為準；不是「全部完成」聲明。較完整的逐項發現與歷史量測在 `C:\Users\owenl\C\Projects\SenrenBankaPSX\docs\SDK_FEEDBACK.md`。該檔按時間追加，早段的「尚未實作」有些已被後段取代，閱讀時以最新段落與程式碼為準。
 
-**目前優先順序（使用者 2026-09-28 指示）**：先完善可重用的 SDK Authoring 功能；封裝／大型 build 效能及《千戀＊萬花》1:1 移植暫不列為此階段完成條件。近期 Authoring 已補主要跨檔來源定位、Story 錨點刪除保護、重複與未知參數拒絕、匯入時不猜測同名素材的純資料 resolver、匯入用指令序列化 helper，以及大型 Story 可用的稀疏存檔錨點映射規則。仍須分別決定並驗收：(1) 真實舊存檔與新版劇本的逐位置遷移；`--accept-removals` 仍只是人工確認；(2) 從 Senren 私有 PSB 轉換流程抽出的通用 source decoder／importer 規格，不能直接搬私有格式；(3) JavaScript `say` 作者 API 與其存檔／已讀身分，現有 Story `@alias` 已可多語但 JS session 僅唯讀 dialogue；(4) 非 Player host 的自訂 Action 宣告／執行合約。非 Player host 的 UI 值、formatter、晚更新接線範例已補在 `docs/placed-item-authoring.md`。動態立繪 dress／pose／face 若要成為單一 descriptor 的正式 API，需另定存檔與依賴語意；不要把原作逐幀還原混在此項。
+**目前優先順序（使用者 2026-09-28 指示）**：先完善可重用的 SDK Authoring 功能；封裝／大型 build 效能及《千戀＊萬花》1:1 移植暫不列為此階段完成條件。近期 Authoring 已補主要跨檔來源定位、Story 錨點刪除保護、重複與未知參數拒絕、匯入時不猜測同名素材的純資料 resolver、指令序列化／多場景輸出組裝介面，以及大型 Story 可用的稀疏存檔錨點映射規則。仍須分別決定並驗收：(1) 真實舊存檔與新版劇本的逐位置遷移；`--accept-removals` 仍只是人工確認；(2) 讓 Senren 私有 SCN／PSB adapter 接上 SDK 匯入輸出介面，原作格式解碼仍留專案；(3) JavaScript `say` 作者 API 與其存檔／已讀身分，現有 Story `@alias` 已可多語但 JS session 僅唯讀 dialogue；(4) 非 Player host 的自訂 Action 宣告／執行合約。非 Player host 的 UI 值、formatter、晚更新接線範例已補在 `docs/placed-item-authoring.md`。動態立繪 dress／pose／face 若要成為單一 descriptor 的正式 API，需另定存檔與依賴語意；不要把原作逐幀還原混在此項。
 
 ### 2026-09-27—28 後續進度
+
+- **SDK 匯入輸出介面。** `buildImportedStorySource` 接受專用 decoder 翻譯後的逐行 Story 與穩定 ID，驗證每個可執行行都有 ID，產生 `.pxstory`／`.pxids.json`。`assembleImportedStoryProject` 將多場景、多語來源組成 index 和純資料檔案集合，拒絕缺語系、不同語系的 ID／操作種類不一致、同 namespace 重複 ID、路徑大小寫碰撞與不安全路徑；輸出還須由 `compileStoryProject`／`compileProject` 做語意檢查。SDK 195/195 測試通過。Senren 的 SCN／PSB 解碼器尚未接入此介面，SDK 也沒有通用 KAG 輸入解碼。詳見 `docs/importing-stories.md`。
 
 - **大型 Story 的稀疏存檔錨點遷移。** `.pxsave-migration` rev 2 新增 `anchor.policy: "map-or-preserve"`：只改明列的舊錨點，其他保持原 ID；舊 `map` 未命中即拒絕的規則不變。Native 改成先找完所有 mapping 再套用，避免 A→B、B→C 在同一份文件內意外連鎖；重複命中拒絕。Authoring schema、TS 型別、文件及 native 4 MiB 長度限制已對齊。SDK 188/188、SaveLoad native integration 1/1、contract generation check 通過。Player 載入時會驗目標 Runtime 文件與 source／operation pair；仍需用真實舊存檔驗改過的劇情位置及狀態語意，這一輪未重封 Player。舊版 Player 不認新 policy；單純 patch.pdx 無法替換 Player，已發行舊版需要新版基底發行包。詳見 `docs/save-migrations.md`。
 
