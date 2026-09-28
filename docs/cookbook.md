@@ -128,6 +128,44 @@ for `startle`/`wiggle`, degrees for `sway`), `time` is one segment,
 stops the current voice. `[shake 300ms 5 target=window]` shakes only the
 message window layer instead of the Stage.
 
+### Framing, image layers and whole-screen transitions
+
+A background can be framed instead of filling the screen. `x`/`y` place the
+image's top-left corner as if it were unscaled, `zoom` and `rotate` apply
+about `anchor` (image pixels; the image centre when omitted), and the
+`from-*` values start an eased move over `duration`. Repeating `[bg]` with
+the same image pans or zooms it; omitted framing values are kept:
+
+```pxstory
+[bg street-wide x=-800 y=-473 zoom=0.9 anchor=1920,1126]
+[bg street-wide x=-200 duration=4s ease=inOutSine]
+```
+
+`[image]` places a named layer with the same framing, plus `alpha` (0–1) and
+`z` (below 0 is behind characters, 0 and above in front). A new layer with a
+`duration` fades in; `[image.hide name]` or `[image.hide all]` fades out and
+removes it:
+
+```pxstory
+[image cg1 ev_park_01 x=-300 y=-616 zoom=0.35 anchor=960,947 z=10 duration=400ms]
+[image.hide cg1 400ms]
+```
+
+`[transition]` reveals every Stage change since the last displayed frame at
+once, as a crossfade or through a grayscale rule image. Stage the changes
+without their own fades, then transition; the Story waits unless `wait=false`,
+and a click or skip moves on:
+
+```pxstory
+[hide all transition=false]
+[bg classroom transition=false]
+[show guide smile center transition=false]
+[transition 1s rule=wipe-left vague=40]
+```
+
+Rule images resolve from `storyAssets.rule`. `[act window hop size=5]` plays
+any character action preset on the message window.
+
 To add an expression, add a source image and an expression with `assetPath` in `Characters/guide.pxcharacter`, then select its alias with `expression=...`. The Authoring project compiler generates canonical character, expression, and asset UUIDs when omitted; no catalog entry is needed for that image. For example, `{"name":"Happy","aliases":["happy"],"assetPath":"Assets/guide-happy.png"}` is enough inside `expressions`. TypeScript generators can use the exported `CharacterSourceDocument` type; the stricter `CharacterDocument` type describes the published canonical file. Validate this shorthand with `compileProject` or `prismatix validate`, not the low-level `validateDocument("character")` canonical checker. The generated IDs derive from the project, character source path, expression's first alias, and image path. Keep those stable across save-compatible releases, or pin `id`/`assetId` explicitly before renaming; a file move is not automatically a save migration. Positions are `left`, `center`, `right` (also 1/2/3). The move duration is milliseconds in the native session implementation.
 
 For a dynamically selected family of UI/media files, put the containing
@@ -246,7 +284,7 @@ The runtime has checkpoint state for VM/Stage, routes/UI, backlog and Timeline; 
 
 Checkpoint restore can re-enter command/Action code to reconstruct a suspended continuation. Engine operations are checked against the journal; divergent replay can fail. Keep persistent state in providers, and do not rely on external side effects being exactly-once across load/rollback. Provider capture/restore/migrate callbacks must be deterministic and must not call engine operations.
 
-Full-screen transition playback is transient: loading cancels it and restores the incoming Stage/UI state. Timeline playback has serialized state and await handling; this is not a promise to serialize GPU frames. Audio/video decoder positions and voice replay require the native journey tests for the specific boundary; do not promise sample-exact restoration merely because an asset and logical state are present. See the [audit](releases/0.2.0-audit.md) for tested versus untested restore combinations.
+Full-screen transition playback is transient: loading cancels it and restores the incoming Stage/UI state. Timeline playback has serialized state and await handling; this is not a promise to serialize GPU frames. Audio/video decoder positions and voice replay require the native journey tests for the specific boundary; do not promise sample-exact restoration merely because an asset and logical state are present. Test the specific restore boundaries your game depends on with the native journey tests.
 
 Runtime extensions run in QuickJS, without Node filesystem/process/network modules or unrestricted time/random/eval APIs. Installing a Node package does not make it a runtime dependency. TSX authoring is evaluated during the build in Node and is a separate trust boundary: only build projects and dependencies you trust. Runtime sandbox limits do not make arbitrary build-time project code safe.
 

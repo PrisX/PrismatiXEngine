@@ -37,7 +37,7 @@ prismatix build my-game
 
 `--output` changes distribution location only. Compiler-only automation must explicitly use `--artifact-only`. See [getting started](docs/getting-started.md) and the [cookbook](docs/cookbook.md).
 
-**Candidate status:** the `@prismatix/*` packages are privately assembled release candidates and are not yet published to the public npm registry. Desktop platform claims require separate native evidence; consult the [release audit](docs/releases/0.2.0-audit.md) for actual passes and blockers.
+**Candidate status:** the `@prismatix/*` packages are privately assembled release candidates and are not yet published to the public npm registry. Desktop platform claims require separate native evidence per target; see the [0.2.0 delivery contract](docs/releases/0.2.0.md).
 
 ## What authors get
 

@@ -2,7 +2,7 @@
 
 Install Node.js and npm first. CI is configured for Node.js 24.14.0; this candidate's local Windows journey was verified with Node.js 24.2.0. Other versions have not been revalidated for this candidate. Node.js is an author prerequisite, not installed by the commands below. The platform CLI package must contain the matching native runtime; authors do not need C++, CMake, vcpkg, an engine checkout or a separate runtime download.
 
-**Release status:** the commands below describe the intended published-package interface. Current evidence is from an isolated candidate registry, not public npm publication. Check the [release audit](releases/0.2.0-audit.md) for actual platform results.
+**Release status:** the commands below describe the intended published-package interface. Current evidence is from an isolated candidate registry, not public npm publication.
 
 ## Three commands
 
