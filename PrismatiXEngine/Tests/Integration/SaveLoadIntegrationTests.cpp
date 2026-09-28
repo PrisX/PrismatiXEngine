@@ -882,6 +882,60 @@ void TestExplicitSaveMigrationChain() {
         });
     Check(!badAnchor && source.anchor.operationId == "operation-old",
           "a migration without an exact anchor mapping is transactionally rejected");
+
+    const auto sparseMigration = [](std::string_view)
+        -> std::optional<std::string> {
+        return R"({
+          "format":"PrismatiXSaveMigration","schemaRevision":2,
+          "id":"chapter-1-5-to-2",
+          "from":{"contentVersion":"chapter-1","saveVersion":1},
+          "to":{"contentVersion":"chapter-2","saveVersion":2},
+          "anchor":{"policy":"map-or-preserve","mappings":[
+            {"from":{"runtimeDocumentId":"document-old","sourceId":"line-old","operationId":"operation-old"},
+             "to":{"runtimeDocumentId":"document-new","sourceId":"line-new","operationId":"operation-new"}},
+            {"from":{"runtimeDocumentId":"document-new","sourceId":"line-new","operationId":"operation-new"},
+             "to":{"runtimeDocumentId":"wrong","sourceId":"wrong","operationId":"wrong"}}
+          ]},"operations":[]
+        })";
+    };
+    auto sparseMapped = px::progress::MigrateSaveSnapshot(
+        source, {"commercial-vn", std::string(64, 'b'), "chapter-2", 2},
+        missingAnchor, sparseMigration);
+    Check(sparseMapped &&
+              sparseMapped.Value().anchor.runtimeDocumentId == "document-new" &&
+              sparseMapped.Value().anchor.operationId == "operation-new",
+          "sparse mappings apply once against the original anchor, without chaining");
+
+    auto unchangedSource = source;
+    unchangedSource.anchor = {"still-present", "line-still", "operation-still"};
+    auto sparsePreserved = px::progress::MigrateSaveSnapshot(
+        unchangedSource,
+        {"commercial-vn", std::string(64, 'b'), "chapter-2", 2},
+        missingAnchor, sparseMigration);
+    Check(sparsePreserved &&
+              sparsePreserved.Value().anchor.runtimeDocumentId == "still-present" &&
+              sparsePreserved.Value().anchor.operationId == "operation-still",
+          "sparse mappings preserve unlisted anchor identities");
+
+    auto duplicateMapping = px::progress::MigrateSaveSnapshot(
+        source, {"commercial-vn", std::string(64, 'b'), "chapter-2", 2},
+        missingAnchor,
+        [](std::string_view) -> std::optional<std::string> {
+            return R"({
+              "format":"PrismatiXSaveMigration","schemaRevision":2,
+              "id":"chapter-1-5-to-2",
+              "from":{"contentVersion":"chapter-1","saveVersion":1},
+              "to":{"contentVersion":"chapter-2","saveVersion":2},
+              "anchor":{"policy":"map-or-preserve","mappings":[
+                {"from":{"runtimeDocumentId":"document-old","sourceId":"line-old","operationId":"operation-old"},
+                 "to":{"runtimeDocumentId":"document-new","sourceId":"line-new","operationId":"operation-new"}},
+                {"from":{"runtimeDocumentId":"document-old","sourceId":"line-old","operationId":"operation-old"},
+                 "to":{"runtimeDocumentId":"other","sourceId":"other","operationId":"other"}}
+              ]},"operations":[]
+            })";
+        });
+    Check(!duplicateMapping && source.anchor.operationId == "operation-old",
+          "sparse mappings reject two destinations for one source anchor");
 }
 
 

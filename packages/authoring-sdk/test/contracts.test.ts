@@ -33,6 +33,27 @@ test("canonical JSON preserves prototype-shaped authored keys as data", () => {
     '{"__proto__":{"label":"kept"},"z":1}\n');
 });
 
+test("save migrations accept sparse anchor remaps and keep strict map distinct", () => {
+  const oldAnchor = {runtimeDocumentId: "document-old", sourceId: "line-old", operationId: "op-old"};
+  const newAnchor = {runtimeDocumentId: "document-new", sourceId: "line-new", operationId: "op-new"};
+  const migration = {
+    format: "PrismatiXSaveMigration", schemaRevision: 2, id: "chapter-1-to-2",
+    from: {contentVersion: "chapter-1", saveVersion: 1},
+    to: {contentVersion: "chapter-2", saveVersion: 2},
+    anchor: {policy: "map-or-preserve", mappings: [{from: oldAnchor, to: newAnchor}]},
+    operations: [],
+  };
+  assert.equal(validateDocument("saveMigration", migration).valid, true);
+  assert.equal(validateDocument("saveMigration", {...migration,
+    anchor: {policy: "map", mappings: migration.anchor.mappings}}).valid, true);
+  assert.equal(validateDocument("saveMigration", {...migration,
+    anchor: {policy: "map-or-preserve", mappings: []}}).valid, false);
+  assert.equal(validateDocument("saveMigration", {...migration,
+    anchor: {policy: "map-or-preserve", mappings: [{from: oldAnchor, to: {}}]}}).valid, false);
+  assert.equal(parseDocument("saveMigration", " ".repeat(4 * 1024 * 1024 + 1))
+    .diagnostics[0]?.code, "PXSDKJSON1001");
+});
+
 test("project contract is strict, bounded, and path-safe", () => {
   const project = {
     format: "PrismatiXProject",

@@ -1173,6 +1173,23 @@ test("compileProject validates and publishes an explicit save migration chain", 
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
   assert.ok(result.artifact?.files[descriptor.asset]?.includes("PrismatiXSaveMigration"));
 
+  const oversized = compileProject({
+    project: {...project, saveMigrations: [descriptor]},
+    documents: {
+      "Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": ui,
+      [descriptor.asset]: {...migration, operations: Array.from({length: 5}, (_, index) => ({
+        op: "setVariable", name: `var${index}`, value: "x".repeat(1024 * 1024),
+      }))},
+    },
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2, locale: "zh-TW", strings: {}}},
+  });
+  assert.equal(oversized.valid, false);
+  assert.equal(oversized.diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1074")?.path,
+    descriptor.asset);
+
   const mismatched = {...migration, id: "wrong-migration-id"};
   const mismatch = compileProject({
     project: {...project, saveMigrations: [descriptor]},

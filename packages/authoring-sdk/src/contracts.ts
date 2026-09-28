@@ -6,9 +6,11 @@ import {validateSemantics, validateUiPropertyUsage, type UiTypeRegistryMetadata}
 import type {AuthoringDiagnostic, JsonValue, Result} from "./types.js";
 
 const maximumDocumentBytes = 16 * 1024 * 1024;
+const maximumSaveMigrationBytes = 4 * 1024 * 1024;
 // Compiled aggregate artifacts share the native RuntimeIR/SourceMap 64 MiB
-// budget. Authored document and Story input limits remain 16 MiB.
+// budget. Save migrations have a smaller native reader limit.
 export function contractDocumentByteLimit(contractId: string): number {
+  if (contractId === "saveMigration") return maximumSaveMigrationBytes;
   return ["runtimeIr", "sourceMap"].includes(contractId) ? 64 * 1024 * 1024 : maximumDocumentBytes;
 }
 const ajv = new Ajv2020({allErrors: true, strict: true, allowUnionTypes: true});

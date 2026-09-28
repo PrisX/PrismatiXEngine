@@ -98,13 +98,25 @@ export interface SaveMigrationDescriptor {
   readonly asset: string;
 }
 
+export interface SaveMigrationAnchor {
+  readonly runtimeDocumentId: string;
+  readonly sourceId: string;
+  readonly operationId: string;
+}
+
+export type SaveMigrationAnchorPolicy =
+  | {readonly policy: "preserve"}
+  | {readonly policy: "map" | "map-or-preserve";
+    readonly mappings: readonly {readonly from: SaveMigrationAnchor;
+      readonly to: SaveMigrationAnchor}[]};
+
 export interface SaveMigrationDocument {
   readonly format: "PrismatiXSaveMigration";
   readonly schemaRevision: 2;
   readonly id: string;
   readonly from: SaveMigrationVersion;
   readonly to: SaveMigrationVersion;
-  readonly anchor: JsonValue;
+  readonly anchor: SaveMigrationAnchorPolicy;
   readonly operations: readonly JsonValue[];
 }
 
@@ -589,6 +601,13 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       "saveMigration", descriptor.asset, documents, diagnostics,
     );
     if (migration === undefined) continue;
+    if (Buffer.byteLength(canonicalJson(migration), "utf8") >
+        contractDocumentByteLimit("saveMigration")) {
+      diagnostics.push(issue("PXBUILD1074",
+        "Save migration exceeds the native 4 MiB document limit",
+        descriptor.asset));
+      continue;
+    }
     if (migration.id !== descriptor.id ||
         versionKey(migration.from) !== versionKey(descriptor.from) ||
         versionKey(migration.to) !== versionKey(descriptor.to)) {

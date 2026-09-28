@@ -335,7 +335,9 @@ This flag does not migrate saves or prove compatibility. Reorders and ambiguous 
 review. For a rewrite immediately beside an insertion, sync the rewrite first,
 then insert and sync again; a combined edit cannot always be safely matched
 because the sidecar stores fingerprints, not the old prose. Test existing saves
-before shipping a revised story.
+before shipping a revised story. For explicit cross-version anchor changes,
+see [save migration anchors](save-migrations.md), including the sparse
+`map-or-preserve` policy for large Stories.
 
 The global command delegates project commands to the exact local CLI pinned in the game's package.json. Commit that manifest and its lock. A missing or mismatched local CLI is diagnosed instead of silently using the global version. After preparation, dev/build use local packages and bundled runtime offline. Upgrade tool versions deliberately in a branch, reinstall the pinned dependencies, and test old saves and the packaged Player before distributing an update.
 

@@ -11,7 +11,7 @@
     "to":{"$ref":"#/$defs/version"},
     "anchor":{"oneOf":[
       {"type":"object","additionalProperties":false,"required":["policy"],"properties":{"policy":{"const":"preserve"}}},
-      {"type":"object","additionalProperties":false,"required":["policy","mappings"],"properties":{"policy":{"const":"map"},"mappings":{"type":"array","minItems":1,"maxItems":100000,"items":{"type":"object","additionalProperties":false,"required":["from","to"],"properties":{"from":{"$ref":"#/$defs/anchor"},"to":{"$ref":"#/$defs/anchor"}}}}}}
+      {"type":"object","additionalProperties":false,"required":["policy","mappings"],"properties":{"policy":{"enum":["map","map-or-preserve"]},"mappings":{"type":"array","minItems":1,"maxItems":100000,"items":{"type":"object","additionalProperties":false,"required":["from","to"],"properties":{"from":{"$ref":"#/$defs/anchor"},"to":{"$ref":"#/$defs/anchor"}}}}}}
     ]},
     "operations":{"type":"array","maxItems":100000,"items":{"oneOf":[
       {"type":"object","additionalProperties":false,"required":["op","from","to"],"properties":{"op":{"const":"renameVariable"},"from":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"to":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}}},

@@ -131,7 +131,7 @@ Status ApplyMigrationDocument(SaveSnapshot& candidate,
         }
         const std::string anchorPolicy =
             anchor.value("policy", std::string{});
-        if (anchorPolicy == "map") {
+        if (anchorPolicy == "map" || anchorPolicy == "map-or-preserve") {
             const auto& mappings = anchor.at("mappings");
             if (!mappings.is_array() || mappings.empty() ||
                 mappings.size() > kMaxMigrationOperations) {
@@ -139,9 +139,13 @@ Status ApplyMigrationDocument(SaveSnapshot& candidate,
                     "PXSAVE6208", "Mapped anchor policy requires a bounded mappings array",
                     descriptor.asset));
             }
-            bool mapped = false;
+            std::optional<ExecutionAnchor> mappedAnchor;
             for (const auto& mapping : mappings) {
-                if (!mapping.is_object()) continue;
+                if (!mapping.is_object()) {
+                    return Status::Fail(MigrationError(
+                        "PXSAVE6208", "Save migration contains an invalid anchor mapping",
+                        descriptor.asset));
+                }
                 ExecutionAnchor fromAnchor;
                 ExecutionAnchor toAnchor;
                 if (!ReadAnchor(mapping.value("from", Json{}), fromAnchor) ||
@@ -151,23 +155,24 @@ Status ApplyMigrationDocument(SaveSnapshot& candidate,
                         descriptor.asset));
                 }
                 if (SameAnchor(candidate.anchor, fromAnchor)) {
-                    if (mapped) {
+                    if (mappedAnchor) {
                         return Status::Fail(MigrationError(
                             "PXSAVE6209", "Save anchor maps to more than one destination",
                             descriptor.asset));
                     }
-                    candidate.anchor = std::move(toAnchor);
-                    mapped = true;
+                    mappedAnchor = std::move(toAnchor);
                 }
             }
-            if (!mapped) {
+            if (mappedAnchor) {
+                candidate.anchor = std::move(*mappedAnchor);
+            } else if (anchorPolicy == "map") {
                 return Status::Fail(MigrationError(
                     "PXSAVE6210", "Save migration has no mapping for the execution anchor",
                     descriptor.asset));
             }
         } else if (anchorPolicy != "preserve") {
             return Status::Fail(MigrationError(
-                "PXSAVE6208", "Save migration anchor policy must be preserve or map",
+                "PXSAVE6208", "Save migration anchor policy is invalid",
                 descriptor.asset));
         }
 
