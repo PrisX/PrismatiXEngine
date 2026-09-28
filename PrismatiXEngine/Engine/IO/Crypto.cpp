@@ -107,18 +107,39 @@ std::uint32_t Crc32(const std::uint8_t* data, std::size_t size) {
 
 std::uint32_t UpdateCrc32(std::uint32_t state, const std::uint8_t* data,
                           std::size_t size) {
-    static constexpr auto table = [] {
-        std::array<std::uint32_t, 256> values{};
-        for (std::uint32_t index = 0; index < values.size(); ++index) {
+    // Slicing-by-8: every archive read verifies its payload, so the
+    // byte-at-a-time loop was a measurable share of each asset load.
+    static constexpr auto tables = [] {
+        std::array<std::array<std::uint32_t, 256>, 8> values{};
+        for (std::uint32_t index = 0; index < 256; ++index) {
             std::uint32_t crc = index;
             for (int bit = 0; bit < 8; ++bit)
                 crc = (crc >> 1u) ^ (0xedb88320u & (0u - (crc & 1u)));
-            values[index] = crc;
+            values[0][index] = crc;
         }
+        for (std::uint32_t index = 0; index < 256; ++index)
+            for (std::size_t slice = 1; slice < 8; ++slice) {
+                const std::uint32_t previous = values[slice - 1][index];
+                values[slice][index] =
+                    (previous >> 8u) ^ values[0][previous & 0xffu];
+            }
         return values;
     }();
+    while (size >= 8) {
+        const std::uint32_t low =
+            state ^ (static_cast<std::uint32_t>(data[0]) |
+                     static_cast<std::uint32_t>(data[1]) << 8u |
+                     static_cast<std::uint32_t>(data[2]) << 16u |
+                     static_cast<std::uint32_t>(data[3]) << 24u);
+        state = tables[7][low & 0xffu] ^ tables[6][(low >> 8u) & 0xffu] ^
+                tables[5][(low >> 16u) & 0xffu] ^ tables[4][low >> 24u] ^
+                tables[3][data[4]] ^ tables[2][data[5]] ^
+                tables[1][data[6]] ^ tables[0][data[7]];
+        data += 8;
+        size -= 8;
+    }
     for (std::size_t index = 0; index < size; ++index)
-        state = (state >> 8u) ^ table[(state ^ data[index]) & 0xffu];
+        state = (state >> 8u) ^ tables[0][(state ^ data[index]) & 0xffu];
     return state;
 }
 
