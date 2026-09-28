@@ -507,7 +507,7 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
 }
 
 graphics::TextureHandle Stage::ReadyTexture(const std::string& path) {
-    if (m_assets.TextureSettled(path)) return m_assets.Texture(path);
+    if (!m_fastForward || m_assets.TextureSettled(path)) return m_assets.Texture(path);
     m_assets.PreloadTexture(path, graphics::AssetPreloadPriority::High);
     return {};
 }
