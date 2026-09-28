@@ -3,7 +3,7 @@
   "id": "{{PROJECT_ID}}",
   "defaultLocale": "{{LOCALE}}",
   "resolution": {"width": {{WIDTH}}, "height": {{HEIGHT}}},
-  "uiEntryPoints": {"title": "Content/UI/Title.pxui"},
+  "uiEntryPoints": {"title": "Content/UI/Title.tsx"},
   "assets": [
     {"id":"10000000-0000-4000-8000-000000000001","name":"Window at dusk","kind":"background","source":"Assets/window.png"},
     {"id":"30000000-0000-4000-8000-000000000001","name":"Noto Sans TC","kind":"font","source":"Content/Fonts/NotoSansTC-Bold.ttf"},

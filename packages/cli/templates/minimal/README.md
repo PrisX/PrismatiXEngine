@@ -4,7 +4,7 @@ Run `prismatix dev .` here, or `prismatix dev "path/to/your-game"` from another 
 
 This short Traditional Chinese story includes a guide, a background, two choices and two endings. `--locale` chooses the project's locale tag; it does not machine-translate the story. Noto Sans TC covers the starter's Traditional Chinese text. Retain its license when distributing the game.
 
-Start from the title screen. The default HUD supplies dialogue, choices, AUTO, SKIP, backlog, SAVE and LOAD. The title's Load button also opens saves. To customize the title, edit `Content/UI/Title.pxui`; custom HUD routes can be added to `prismatix.json` using the Authoring SDK.
+Start from the title screen. The default HUD supplies dialogue, choices, AUTO, SKIP, backlog, SAVE and LOAD. The title's Load button also opens saves. To customize the title, edit `Content/UI/Title.tsx` (positions there are fractions of the resolution); custom HUD routes can be added to `prismatix.json` using the Authoring SDK.
 
 Preview Save/Load slots are temporary checkpoints cleared by a rebuild or closing the Host. The packaged Player saves to disk and can load those saves after restarting.
 

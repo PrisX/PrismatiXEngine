@@ -18,7 +18,7 @@ export interface StarterOptions {
 }
 
 const templateRoot = fileURLToPath(new URL("../../templates/minimal", import.meta.url));
-const textExtensions = new Set([".json", ".pxstory", ".pxui", ".pxcharacter", ".md", ".txt"]);
+const textExtensions = new Set([".json", ".pxstory", ".pxui", ".tsx", ".pxcharacter", ".md", ".txt"]);
 const jsonText = (value: string): string => JSON.stringify(value).slice(1, -1);
 
 async function emptyDestination(target: string): Promise<boolean> {

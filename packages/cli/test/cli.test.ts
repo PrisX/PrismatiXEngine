@@ -224,8 +224,8 @@ test("create scaffolds a canonical playable starter without author-supplied UUID
   const project = join(root, "prismatix.json");
   const validated = run(["validate", project]);
   assert.equal(validated.status, 0, validated.stderr);
-  const ui = await readFile(join(root, "Content/UI/Title.pxui"), "utf8");
-  assert.match(ui, /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/u);
+  const ui = await readFile(join(root, "Content/UI/Title.tsx"), "utf8");
+  assert.match(ui, /const title = "Hello Game";/u);
   assert.doesNotMatch(ui, /\{\{[A-Z_]+\}\}/u);
   const manifest = JSON.parse(await readFile(project, "utf8")) as Record<string, unknown>;
   assert.deepEqual(Object.keys(manifest).sort(),

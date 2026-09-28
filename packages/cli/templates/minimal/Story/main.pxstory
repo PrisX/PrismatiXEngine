@@ -1,7 +1,7 @@
 ; Edit dialogue, save, and watch Preview update. The SDK keeps stable save IDs beside this file.
 *start
 [bg Assets/window.png]
-[show guide expression=smile position=center]
+[show guide smile center]
 @guide
 你好，我是小光。這是你的第一個故事。
 窗外的天空正在變色。今天想去哪裡呢？
@@ -20,5 +20,5 @@
 那就從「很久很久以前」開始。下一句，交給你來寫。
 
 *finish
-你可以用上方的 SAVE／LOAD 保存或讀取進度，再試另一個選項。
+你可以用對話框右上角的 SAVE／LOAD 保存或讀取進度，再試另一個選項。
 [end]
