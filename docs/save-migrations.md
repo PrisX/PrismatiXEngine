@@ -63,4 +63,6 @@ that variables, resources, and routes still make sense. Validate representative
 old slots at each changed position in the packaged Player.
 
 `map-or-preserve` requires a Player with this policy implemented. Earlier
-Players do not understand it; ship the current Player with the updated content.
+Players do not understand it. A content overlay cannot replace the Player
+executable, so an already released older Player needs a new base distribution
+with the updated runtime before it can use this policy.
