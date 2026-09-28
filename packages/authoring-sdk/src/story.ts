@@ -271,7 +271,8 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
     text = text.slice(1);
   }
 
-  let activeSpeaker: {readonly name: string; readonly literal: boolean} | undefined;
+  let activeSpeaker: {readonly name: string; readonly literal: boolean;
+    readonly display: boolean} | undefined;
   const lines = sourceLines(text);
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex]!;
@@ -325,6 +326,7 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
       let cursor = body.length - body.trimStart().length;
       let name: string | undefined;
       let literal = false;
+      let display = false;
       if (body[cursor] === "\"") {
         let end = cursor + 1;
         while (end < body.length && body[end] !== "\"") end += body[end] === "\\" ? 2 : 1;
@@ -340,6 +342,7 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
                !speakerTerminators.has(body[cursor]!)) cursor += 1;
         const authored = body.slice(begin, cursor);
         literal = !identifierPattern.test(authored);
+        display = literal;
         if (authored.length > 0 && (!literal || validLiteralSpeaker(authored))) name = authored;
       }
       if (name === undefined) {
@@ -365,11 +368,12 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
         cursor += length;
       }
       const spoken = body.slice(cursor).trim();
-      const speakerFields = {name, ...(literal ? {literalSpeaker: true} : {})};
+      const speakerFields = {name, ...(literal ? {literalSpeaker: true} : {}),
+        ...(display ? {displaySpeaker: true} : {})};
       if (spoken.length === 0) {
         if (options !== undefined) diagnostics.push(error("PXSTORY1018",
           "Speaker options apply to one line; write its text after them", lineSpan));
-        activeSpeaker = {name, literal};
+        activeSpeaker = {name, literal, display};
         nodes.push({id, kind: "speaker", span: lineSpan, raw, ...speakerFields});
       } else {
         activeSpeaker = undefined;
@@ -412,6 +416,7 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
       ...(activeSpeaker === undefined ? {} : {
         name: activeSpeaker.name,
         ...(activeSpeaker.literal ? {literalSpeaker: true} : {}),
+        ...(activeSpeaker.display ? {displaySpeaker: true} : {}),
       }),
     });
   }
@@ -455,6 +460,15 @@ function characterIndex(characters: readonly CharacterDocument[]): Map<string, C
     result.set(character.id, character);
     for (const alias of character.aliases) result.set(alias, character);
   }
+  // Display names (`[show 直哉 ...]`, `@直哉`) resolve when exactly one
+  // character uses them and they do not shadow an id or alias.
+  const byDisplay = new Map<string, CharacterDocument[]>();
+  for (const character of characters)
+    for (const name of new Set([character.displayName,
+      ...Object.values(character.displayNames ?? {})]))
+      byDisplay.set(name, [...byDisplay.get(name) ?? [], character]);
+  for (const [name, owners] of byDisplay)
+    if (owners.length === 1 && !result.has(name)) result.set(name, owners[0]!);
   return result;
 }
 
@@ -710,8 +724,9 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       continue;
     }
     if (node.kind === "dialogue") {
-      const character = node.literalSpeaker || node.name === undefined ?
-        undefined : characters.get(node.name);
+      const character = node.name === undefined ||
+        (node.literalSpeaker && !node.displaySpeaker) ? undefined : characters.get(node.name);
+      const literal = node.literalSpeaker === true && character === undefined;
       if (!node.literalSpeaker && (context.characters?.length ?? 0) > 0 &&
           character === undefined)
         diagnostics.push(error("PXSTORY1102", `Unknown character alias: ${node.name ?? ""}`, node.span));
@@ -744,7 +759,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       if (!optionsValid) continue;
       const sourceId = claimSourceId(node);
       if (expression !== undefined || position !== undefined || act !== undefined) {
-        if (node.literalSpeaker || node.name === undefined) {
+        if (literal || node.name === undefined) {
           diagnostics.push(error("PXSTORY1162",
             "Speaker expression, position, and act options require a character alias", node.span));
           continue;
@@ -766,7 +781,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       }
       const resolvedVoice = voice === undefined ? undefined : resolveResource(node, voice, "voice");
       if (voice !== undefined && resolvedVoice === undefined) continue;
-      emit(node, "dialogue", {speaker: localizedName ?? character?.displayName ?? node.name ?? "", character: node.literalSpeaker ? "" : character?.id ?? node.name ?? "", text: node.text ?? "",
+      emit(node, "dialogue", {speaker: localizedName ?? character?.displayName ?? node.name ?? "", character: literal ? "" : character?.id ?? node.name ?? "", text: node.text ?? "",
         ...(resolvedVoice === undefined ? {} : {voice: resolvedVoice})}, node.text ?? "", sourceId);
       continue;
     }

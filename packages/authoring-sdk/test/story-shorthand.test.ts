@@ -180,3 +180,16 @@ test("act rejects unknown presets and out-of-range parameters", () => {
   assert.ok(codes("@直哉[act=nod] hi\n").includes("PXSTORY1162"));
   assert.ok(codes("[shake 300ms target=hud]\n").includes("PXSTORY1139"));
 });
+
+test("unquoted display names resolve to the registered character that uses them", () => {
+  const ops = operations("[show 雪 smile left]\n@雪[act=nod]「おはよう」\n@直哉「やあ」\n@\"雪\" quoted stays literal\n",
+    {characters: [yuki]});
+  assert.deepEqual(ops.map(({kind, arguments: args}) => [kind, args.character ?? "", args.speaker ?? ""]), [
+    ["showCharacter", yuki.id, ""], ["actorAction", yuki.id, ""],
+    ["dialogue", yuki.id, "雪"], ["dialogue", "", "直哉"], ["dialogue", "", "雪"],
+  ]);
+  // A display name shared by two characters is ambiguous and stays literal.
+  const twin = {...yuki, id: "66666666-6666-4666-8666-666666666666", aliases: ["yuki2"]};
+  const shared = operations("@雪「どっち？」\n", {characters: [yuki, twin]});
+  assert.equal(shared[0]!.arguments.character, "");
+});

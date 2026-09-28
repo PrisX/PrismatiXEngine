@@ -91,6 +91,9 @@ export interface StoryNode {
   readonly name?: string;
   /** A quoted @"name" speaker is presentation text, not a character alias. */
   readonly literalSpeaker?: boolean;
+  /** An unquoted display name (`@直哉`): a character with that display name
+   * speaks, otherwise it is a literal speaker like `@"直哉"`. */
+  readonly displaySpeaker?: boolean;
   readonly text?: string;
   readonly arguments?: readonly StoryArgument[];
   /** Inline `@speaker[...]` options that apply to one dialogue line. */

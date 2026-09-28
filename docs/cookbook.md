@@ -42,8 +42,11 @@ save identities and the Runtime IR do not depend on which spelling you use.
 - `@name text` speaks one line and returns to narration; `@name` on its own
   line still starts a block that ends at the next empty line. Text may follow
   the name directly when it opens with `「`, `『`, `（`, `(` or `“`.
-- A name that is not an identifier (`@直哉`) is a display name, like
-  `@"直哉"`; only identifier names are checked against character aliases.
+- A name that is not an identifier (`@直哉`) is a display name: it speaks as
+  the registered character whose `displayName` it is, otherwise as a plain
+  label like `@"直哉"`. Character commands (`[show 直哉 ...]`,
+  `[act 直哉 nod]`, `[hide 直哉]`) accept the same display names. A quoted
+  `@"..."` is always a plain label.
 - `@alias[...]` options apply to that line only: a bare word is an expression
   alias or a position (`left`/`center`/`right`), and `voice=` plays with the
   line. Expression and position require a registered character alias.
@@ -53,7 +56,8 @@ save identities and the Runtime IR do not depend on which spelling you use.
 - In `[show alias ...]`, words after the alias are the expression or the
   position in either order. Showing a visible character again without a
   position keeps its slot, offset and scale, so expression changes no longer
-  snap it back to the center.
+  snap it back to the center. Giving a position starts a fresh placement:
+  omitted `x`, `y` and `scale` return to their defaults.
 
 Short resource names come from author-only search roots in `prismatix.json`:
 
