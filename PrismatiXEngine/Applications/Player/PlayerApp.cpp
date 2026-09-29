@@ -57,6 +57,16 @@ constexpr std::string_view kUIRouteE2ERoutes[] = {
 constexpr std::string_view kUIActionsE2EReplayLabel =
     "sb.115-afterver1-01.yos-part-15";
 
+// Player operations `player.confirmations` may ask before.
+constexpr std::string_view kConfirmableOperations[] = {
+    "quickSave", "quickLoad", "save", "overwrite", "load", "returnToTitle",
+    "exit", "backlogJump", "previousChoice", "nextChoice", "resetSettings"};
+
+bool IsConfirmableOperation(const std::string_view operation) {
+    return std::ranges::find(kConfirmableOperations, operation) !=
+           std::end(kConfirmableOperations);
+}
+
 template <typename T>
 T* FindUiControlNamed(ui::Control* root, const std::string_view name) {
     if (!root) return nullptr;
@@ -1188,7 +1198,60 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                         }
                         if (spec.min > spec.max) continue;
                         spec.def = std::clamp(spec.def, spec.min, spec.max);
+                        if (const auto binds = it.value().find("binds");
+                            binds != it.value().end()) {
+                            const auto binding = binds->is_string()
+                                ? ParseOptionBinding(binds->get<std::string>()) : std::nullopt;
+                            if (!binding) {
+                                PX_LOG_WARN("Player option {} binds an unknown behaviour; "
+                                            "the option is stored but has no effect", key);
+                            } else {
+                                spec.binding = *binding;
+                                const auto factor = [&](const char* field, const double fallback) {
+                                    const auto found = it.value().find(field);
+                                    return found != it.value().end() && found->is_number() &&
+                                           std::isfinite(found->get<double>())
+                                        ? found->get<double>() : fallback;
+                                };
+                                spec.scale = factor("scale", 1.0);
+                                spec.offset = factor("offset", 0.0);
+                            }
+                        }
                         m_optionSpecs.insert_or_assign(key, std::move(spec));
+                    }
+                }
+                if (const auto confirmations = settings->find("player.confirmations");
+                    confirmations != settings->end() && confirmations->is_object()) {
+                    const auto isName = [](const std::string& name) {
+                        return !name.empty() && name.size() <= 48 &&
+                               std::ranges::all_of(name, [](const unsigned char c) {
+                                   return std::isalnum(c) || c == '_'; });
+                    };
+                    for (auto it = confirmations->begin(); it != confirmations->end(); ++it) {
+                        if (!IsConfirmableOperation(it.key()) || !it.value().is_object()) {
+                            PX_LOG_WARN("Player cannot ask before {}; see player.confirmations",
+                                        it.key());
+                            continue;
+                        }
+                        const auto text = [&](const char* field, const std::string& fallback) {
+                            const auto found = it.value().find(field);
+                            return found == it.value().end() ? fallback
+                                : found->is_string() ? found->get<std::string>() : std::string();
+                        };
+                        ConfirmSpec confirm;
+                        confirm.kind = text("kind", it.key());
+                        confirm.dontAskOption = text("dontAskOption", "");
+                        if (!isName(confirm.kind) ||
+                            (it.value().contains("dontAskOption") && confirm.dontAskOption.empty()) ||
+                            (!confirm.dontAskOption.empty() &&
+                             !m_optionSpecs.contains(confirm.dontAskOption))) {
+                            PX_LOG_WARN("Player confirmation {} has an invalid kind or an "
+                                        "undeclared dontAskOption", it.key());
+                            continue;
+                        }
+                        if (std::ranges::find(m_dialogKinds, confirm.kind) == m_dialogKinds.end())
+                            m_dialogKinds.push_back(confirm.kind);
+                        m_confirmations.insert_or_assign(it.key(), std::move(confirm));
                     }
                 }
                 const auto transitionDuration = [](const nlohmann::json& owner,
@@ -3158,47 +3221,50 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
     return view;
 }
 
-namespace {
-constexpr std::string_view kDialogKinds[] = {
-    "qsave", "qload", "save", "save2", "load", "del",
-    "title", "exit", "jump", "next", "back", "reset"};
-}
-
 Status PlayerApp::DefineDialogData() {
     if (const Status defined = m_ui.DefineUiData("dialog.visible", Variant(false)); !defined)
         return defined;
     if (const Status defined = m_ui.DefineUiData("dialog.skipNext", Variant(false)); !defined)
         return defined;
-    for (const std::string_view kind : kDialogKinds)
+    for (const std::string& kind : m_dialogKinds)
         if (const Status defined = m_ui.DefineUiData(
-                "dialog.kind." + std::string(kind), Variant(false)); !defined)
+                "dialog.kind." + kind, Variant(false)); !defined)
             return defined;
     return Status::Ok();
 }
 
 void PlayerApp::PublishDialog() {
-    for (const std::string_view kind : kDialogKinds)
-        (void)m_ui.UpdateUiData("dialog.kind." + std::string(kind),
+    for (const std::string& kind : m_dialogKinds)
+        (void)m_ui.UpdateUiData("dialog.kind." + kind,
                                 Variant(m_dialog && m_dialog->kind == kind));
     (void)m_ui.UpdateUiData("dialog.skipNext", Variant(m_dialogSkipNext));
     (void)m_ui.UpdateUiData("dialog.visible", Variant(m_dialog.has_value()));
 }
 
-// Runs `accept` now when the player chose not to be asked (option
-// `dlg_<kind>` = 1) or the mounted route has no dialog to ask with;
-// otherwise shows the dialog and runs it on "yes".
-void PlayerApp::RequestConfirm(const std::string_view kind, std::function<void()> accept) {
+// Whether `operation` would show the authored dialog: the project lists it
+// and the mounted route has a ConfirmDialog to ask with.
+bool PlayerApp::AsksBefore(const std::string_view operation) const {
+    return m_confirmations.contains(operation) && m_ui.HasControlNamed("ConfirmDialog");
+}
+
+// Runs `accept` now when the project does not ask before `operation`, the
+// player chose not to be asked again or the mounted route has no dialog to
+// ask with; otherwise shows the dialog and runs it on "yes".
+void PlayerApp::RequestConfirm(const std::string_view operation, std::function<void()> accept) {
     if (m_dialog) return;
-    if (OptionValue("dlg_" + std::string(kind)) == 1 ||
-        !m_ui.HasControlNamed("ConfirmDialog")) {
+    const auto confirm = m_confirmations.find(operation);
+    if (!AsksBefore(operation) ||
+        (!confirm->second.dontAskOption.empty() &&
+         OptionValue(confirm->second.dontAskOption) != 0)) {
         accept();
         return;
     }
-    m_dialog = PendingDialog{std::string(kind), std::move(accept)};
+    m_dialog = PendingDialog{confirm->second.kind, confirm->second.dontAskOption,
+                             std::move(accept)};
     m_dialogSkipNext = false;
     PublishDialog();
-    // "Move the cursor automatically": land it on the yes button (dialogact 0).
-    if (OptionValue("mouse") == 1)
+    // Land the cursor on the yes button when the player asked for it.
+    if (m_dialogCursorWarp)
         if (const auto* yes = FindUiControlNamed<ui::Control>(m_ui.Root(), "DialogYes")) {
             const auto area = yes->LayoutRect();
             if (area.w > 0.0f && area.h > 0.0f)
@@ -3234,7 +3300,7 @@ void PlayerApp::UpdateCursorVisibility(const std::uint64_t now) {
         m_lastMouseY = input.MouseY();
         m_cursorActiveAt = now;
     }
-    const int hideAfter = OptionValue("cursor");
+    const int hideAfter = m_cursorHideDelayMs;
     const bool hide = hideAfter > 0 && now - m_cursorActiveAt >= static_cast<std::uint64_t>(hideAfter);
     if (hide != m_cursorHidden) {
         m_cursorHidden = hide;
@@ -3256,7 +3322,7 @@ void PlayerApp::PublishDock() {
     const bool inside = m_dockArea.valid &&
         input.MouseX() >= m_dockArea.x && input.MouseX() < m_dockArea.x + m_dockArea.width &&
         input.MouseY() >= m_dockArea.y && input.MouseY() < m_dockArea.y + m_dockArea.height;
-    const bool shown = OptionValue("dock") != 0 || !m_choiceTexts.empty() || inside;
+    const bool shown = m_dockPinned || !m_choiceTexts.empty() || inside;
     if (shown == m_dockShown) return;
     m_dockShown = shown;
     (void)m_ui.UpdateUiData("hud.dockShown", Variant(shown));
@@ -3314,29 +3380,66 @@ bool PlayerApp::SetOption(const std::string_view name, int value) {
     return true;
 }
 
-// The options the original Config screen exposes and the Player acts on.
+std::optional<PlayerApp::OptionBinding> PlayerApp::ParseOptionBinding(const std::string_view name) {
+    static constexpr std::pair<std::string_view, OptionBinding> kBindings[] = {
+        {"textSpeed", OptionBinding::TextSpeed},
+        {"autoWait", OptionBinding::AutoWait},
+        {"skipUnread", OptionBinding::SkipUnread},
+        {"messageWindowOpacity", OptionBinding::MessageWindowOpacity},
+        {"dimReadText", OptionBinding::DimReadText},
+        {"uiEffects", OptionBinding::UiEffects},
+        {"font", OptionBinding::Font},
+        {"keepSkipAfterChoice", OptionBinding::KeepSkipAfterChoice},
+        {"keepAutoAfterChoice", OptionBinding::KeepAutoAfterChoice},
+        {"cursorHideDelay", OptionBinding::CursorHideDelay},
+        {"dialogCursorWarp", OptionBinding::DialogCursorWarp},
+        {"dockPinned", OptionBinding::DockPinned},
+    };
+    for (const auto& [key, binding] : kBindings)
+        if (key == name) return binding;
+    return std::nullopt;
+}
+
+// Hands a bound option to the behaviour it names, as `value * scale + offset`
+// in that behaviour's unit; switches are on when the result is non-zero.
 void PlayerApp::ApplyOption(const std::string_view name, const int value) {
-    if (name == "mspeed") {
-        // 100 shows text at once; each point below adds a millisecond per character.
-        m_settings.textSpeedMs = std::clamp(100 - value, 0, 100);
+    const auto spec = m_optionSpecs.find(name);
+    if (spec == m_optionSpecs.end() || spec->second.binding == OptionBinding::None) return;
+    const double mapped = value * spec->second.scale + spec->second.offset;
+    const int bound = static_cast<int>(std::clamp(std::round(mapped), -1.0e9, 1.0e9));
+    const bool on = bound != 0;
+    switch (spec->second.binding) {
+    case OptionBinding::TextSpeed:
+        // Milliseconds per character; 0 shows the line at once.
+        m_settings.textSpeedMs = std::clamp(bound, 0, 120);
         if (m_session) m_session->VM().SetDefaultTextSpeed(m_settings.textSpeedMs);
-    } else if (name == "aspeed") {
-        // getASpeed(): (100 - aspeed) * automode_magni + automode_speed.
-        m_settings.autoWaitMs = (100 - value) * 60 + 600;
-    } else if (name == "messkip") {
-        // 0 skips only text already read, 1 skips everything.
-        m_settings.skipReadOnly = value == 0;
-        (void)m_ui.UpdateUiData("settings.skipReadOnly", Variant(value == 0));
-        (void)m_ui.UpdateUiData("settings.skipAll", Variant(value != 0));
-    } else if (name == "mw_alpha") {
-        m_messageWindowOpacity = std::clamp(value, 0, 100) / 100.0f;
-    } else if (name == "mw_aread") {
-        m_dimReadText = value != 0;
-    } else if (name == "effect") {
-        m_uiEffects = value != 0;
-    } else if (name == "font") {
-        if (value >= 1 && static_cast<std::size_t>(value) <= m_fontChoices.size())
-            (void)m_ui.SetDefaultFont(m_fontChoices[static_cast<std::size_t>(value) - 1]);
+        break;
+    case OptionBinding::AutoWait:
+        m_settings.autoWaitMs = std::clamp(bound, 0, 60'000);
+        break;
+    case OptionBinding::SkipUnread:
+        m_settings.skipReadOnly = !on;
+        (void)m_ui.UpdateUiData("settings.skipReadOnly", Variant(!on));
+        (void)m_ui.UpdateUiData("settings.skipAll", Variant(on));
+        break;
+    case OptionBinding::MessageWindowOpacity:
+        m_messageWindowOpacity = static_cast<float>(std::clamp(bound, 0, 100)) / 100.0f;
+        break;
+    case OptionBinding::DimReadText: m_dimReadText = on; break;
+    case OptionBinding::UiEffects: m_uiEffects = on; break;
+    case OptionBinding::Font:
+        // 1-based index into `player.fonts`; anything else keeps the theme font.
+        if (bound >= 1 && static_cast<std::size_t>(bound) <= m_fontChoices.size())
+            (void)m_ui.SetDefaultFont(m_fontChoices[static_cast<std::size_t>(bound) - 1]);
+        break;
+    case OptionBinding::KeepSkipAfterChoice: m_keepSkipAfterChoice = on; break;
+    case OptionBinding::KeepAutoAfterChoice: m_keepAutoAfterChoice = on; break;
+    case OptionBinding::CursorHideDelay:
+        m_cursorHideDelayMs = std::clamp(bound, 0, 3'600'000);
+        break;
+    case OptionBinding::DialogCursorWarp: m_dialogCursorWarp = on; break;
+    case OptionBinding::DockPinned: m_dockPinned = on; break;
+    case OptionBinding::None: break;
     }
 }
 
@@ -3640,7 +3743,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         (void)m_ui.ShowSaveLoad(saveMode, SaveItems(saveMode));
     } else if (t == "load.slot" || t == "save.slot") {
         const bool saveMode = t == "save.slot";
-        if (m_ui.HasControlNamed("ConfirmDialog")) {
+        if (saveMode ? AsksBefore("save") || AsksBefore("overwrite") : AsksBefore("load")) {
             char* end = nullptr;
             const long slot = std::strtol(action.argument.c_str(), &end, 10);
             if (end == action.argument.c_str() || *end != '\0' ||
@@ -3649,9 +3752,9 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
                 (!saveMode && !m_saves.Peek(static_cast<int>(slot)).exists))
                 return;
             const int number = static_cast<int>(slot);
-            const std::string_view kind = !saveMode ? "load"
-                : m_saves.Peek(number).exists ? "save2" : "save";
-            RequestConfirm(kind, [this, number, saveMode] {
+            const std::string_view operation = !saveMode ? "load"
+                : m_saves.Peek(number).exists ? "overwrite" : "save";
+            RequestConfirm(operation, [this, number, saveMode] {
                 if (saveMode) {
                     if (SaveSlot(number, m_menuThumb))
                         (void)m_ui.ShowSaveLoad(true, SaveItems(true));
@@ -3839,8 +3942,8 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             m_pendingSaveScreen = true;
     } else if (t == "settings.open") {
         OpenScreen("settings");
-    } else if (t == "settings.reset" && m_ui.HasControlNamed("ConfirmDialog")) {
-        RequestConfirm("reset", [this] { HandleUIAction({"system.reset.apply", {}}); });
+    } else if (t == "settings.reset" && AsksBefore("resetSettings")) {
+        RequestConfirm("resetSettings", [this] { HandleUIAction({"system.reset.apply", {}}); });
     } else if (t == "settings.reset" &&
                m_ui.SupportsSystemConfirmation()) {
         m_pendingSystemPrompt = ui::GalgameUI::SystemPrompt::Reset;
@@ -4025,8 +4128,8 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     } else if (t == "title.confirm.cancel") {
         (void)m_ui.SetTitleConfirmation(false);
     } else if (t == "title.open" && m_appState == AppState::Game &&
-               m_ui.HasControlNamed("ConfirmDialog")) {
-        RequestConfirm("title", [this] { HandleUIAction({"title.confirm.accept", {}}); });
+               AsksBefore("returnToTitle")) {
+        RequestConfirm("returnToTitle", [this] { HandleUIAction({"title.confirm.accept", {}}); });
     } else if (t == "title.open" && m_appState == AppState::Game &&
                m_ui.SupportsTitleConfirmation()) {
         (void)m_ui.SetTitleConfirmation(true);
@@ -4047,9 +4150,9 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         OpenScreen("backlog");
     } else if (t == "save.quick") {
         // Written after the Stage renders, so the thumbnail has no HUD.
-        RequestConfirm("qsave", [this] { m_saveRequested = true; });
+        RequestConfirm("quickSave", [this] { m_saveRequested = true; });
     } else if (t == "load.quick") {
-        RequestConfirm("qload", [this] {
+        RequestConfirm("quickLoad", [this] {
             if (m_saves.Peek(0).exists) (void)LoadSlot(0);
         });
     } else if (t == "voice.replay") {
@@ -4062,13 +4165,13 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
                 ? voiced->voice : m_session->VM().Config().voiceDir + voiced->voice);
     } else if (t == "choice.previous") {
         // The choice autosave is the state at the most recent choice prompt.
-        RequestConfirm("back", [this] {
+        RequestConfirm("previousChoice", [this] {
             if (m_saves.Peek(kAutoSaveSlot).exists) (void)LoadSlot(kAutoSaveSlot);
         });
     } else if (t == "choice.next") {
         // Skip stops at the next choice, and at unread text unless the
         // player allowed skipping it.
-        RequestConfirm("next", [this] {
+        RequestConfirm("nextChoice", [this] {
             m_skipMode = true;
             m_autoMode = false;
         });
@@ -4082,7 +4185,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         if (const auto* entry = m_session->Backlog().Find(sequence)) {
             if (t == "backlog.voice" && !entry->voice.empty())
                 m_runtime.Audio().PlayVoice(entry->voice.find('/') != std::string::npos ? entry->voice : m_session->VM().Config().voiceDir + entry->voice);
-            else RequestConfirm("jump", [this, sequence = entry->sequence] {
+            else RequestConfirm("backlogJump", [this, sequence = entry->sequence] {
                 RollbackToBacklogSequence(sequence);
             });
         }
@@ -4130,7 +4233,8 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         if (!m_dialog) return;
         auto dialog = std::move(*m_dialog);
         m_dialog.reset();
-        if (m_dialogSkipNext) (void)SetOption("dlg_" + dialog.kind, 1);
+        if (m_dialogSkipNext && !dialog.dontAskOption.empty())
+            (void)SetOption(dialog.dontAskOption, 1);
         m_dialogSkipNext = false;
         PublishDialog();
         dialog.accept();
@@ -4151,7 +4255,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
                 (void)SetOption(std::string_view(action.argument).substr(0, split),
                                 static_cast<int>(value));
         }
-    } else if (t == "app.quit" && m_ui.HasControlNamed("ConfirmDialog")) {
+    } else if (t == "app.quit" && AsksBefore("exit")) {
         RequestConfirm("exit", [this] { m_quitRequested = true; });
     } else if (t == "app.quit") {
         if (m_ui.SupportsSystemConfirmation()) {
@@ -4246,29 +4350,41 @@ void PlayerApp::RenderUIWithScripts(const float opacity) {
             transition && m_runtime.Renderer().ScreenEffectPlaying(transition->handle))
             return;
         const auto summary = graphics::CaptureFrameSummary(m_runtime.Renderer().Handle());
-        const bool hasFirst = FindUiControlNamed<ui::Slider>(m_ui.Root(), "VoiceProfile_rnd") != nullptr;
-        const bool hasLast = FindUiControlNamed<ui::Slider>(m_ui.Root(), "VoiceProfile_fem") != nullptr;
+        // The project's first and last voice profiles; the journey needs some.
+        const std::string firstProfile = m_voiceProfileIds.empty() ? "" : m_voiceProfileIds.front();
+        const std::string lastProfile = m_voiceProfileIds.empty() ? "" : m_voiceProfileIds.back();
+        const bool hasFirst = !firstProfile.empty() && FindUiControlNamed<ui::Slider>(
+            m_ui.Root(), "VoiceProfile_" + firstProfile) != nullptr;
+        const bool hasLast = !lastProfile.empty() && FindUiControlNamed<ui::Slider>(
+            m_ui.Root(), "VoiceProfile_" + lastProfile) != nullptr;
         const bool captured = CapturePresentationE2EFrame("settings-sound");
         const int originalMaster = m_runtime.Audio().MainVolume();
         HandleUIAction({"set.mute.master", {}});
         const bool muted = m_runtime.Audio().MainVolume() == 0;
         HandleUIAction({"set.mute.master", {}});
         const bool restored = m_runtime.Audio().MainVolume() == originalMaster;
-        HandleUIAction({"set.voiceProfile.value", "rnd:64"});
-        const bool profileChanged = m_settings.voiceProfileVolumes["rnd"] == 64;
-        HandleUIAction({"set.voiceProfile.mute", "rnd"});
-        const bool profileMuted = m_settings.voiceProfileMuted["rnd"];
-        HandleUIAction({"set.voiceProfile.mute", "rnd"});
-        const std::string testVoice = "Assets/Original/sound/vo/rnd/fem_rnd_000001.ogg";
-        HandleUIAction({"voiceProfile.test", testVoice});
-        const bool testPlayed = m_runtime.Audio().CaptureState().voice.path == testVoice;
-        m_runtime.Audio().StopVoice();
+        HandleUIAction({"set.voiceProfile.value", firstProfile + ":64"});
+        const bool profileChanged = m_settings.voiceProfileVolumes[firstProfile] == 64;
+        HandleUIAction({"set.voiceProfile.mute", firstProfile});
+        const bool profileMuted = m_settings.voiceProfileMuted[firstProfile];
+        HandleUIAction({"set.voiceProfile.mute", firstProfile});
+        // PRISMATIX_E2E_TEST_VOICE names a voice file the TEST button must play;
+        // without it the journey does not check playback.
+        const char* testVoiceEnv = SDL_getenv("PRISMATIX_E2E_TEST_VOICE");
+        const std::string testVoice = testVoiceEnv ? testVoiceEnv : "";
+        bool testPlayed = true;
+        if (!testVoice.empty()) {
+            HandleUIAction({"voiceProfile.test", testVoice});
+            testPlayed = m_runtime.Audio().CaptureState().voice.path == testVoice;
+            m_runtime.Audio().StopVoice();
+        }
         const bool passed = hasFirst && hasLast && captured &&
             summary.Valid() && summary.sampledColors >= 8 && muted &&
             restored && profileChanged && profileMuted && testPlayed;
         PX_LOG_INFO("Player settings sound E2E {} colors={} first={} last={} mute={} test={}",
                     passed ? "passed" : "failed", summary.sampledColors,
-                    hasFirst, hasLast, muted && restored, testPlayed);
+                    hasFirst, hasLast, muted && restored,
+                    testVoice.empty() ? "unchecked" : testPlayed ? "true" : "false");
         m_e2eFailed = !passed;
         m_settingsSoundE2E = false;
         m_quitRequested = true;
@@ -5404,9 +5520,9 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
 
     if (m_dialog == std::nullopt) {
         if (input.ActionPressed(InputAction::QuickLoad))
-            RequestConfirm("qload", [this] { LoadSlot(0); });
+            RequestConfirm("quickLoad", [this] { LoadSlot(0); });
         else if (input.ActionPressed(InputAction::QuickSave))
-            RequestConfirm("qsave", [this] { m_saveRequested = true; });
+            RequestConfirm("quickSave", [this] { m_saveRequested = true; });
     }
     if (input.ActionPressed(InputAction::OpenSave)) m_pendingSaveScreen = true;
 
@@ -5441,8 +5557,8 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
             m_hudHidden = false;
             if (!m_choiceWasPending) {
                 // Config: keep skipping/auto-reading after the choice is made.
-                m_resumeSkipAfterChoice = m_skipMode && OptionValue("skip") == 1;
-                m_resumeAutoAfterChoice = m_autoMode && OptionValue("auto") == 1;
+                m_resumeSkipAfterChoice = m_skipMode && m_keepSkipAfterChoice;
+                m_resumeAutoAfterChoice = m_autoMode && m_keepAutoAfterChoice;
             }
             m_choiceWasPending = true;
             m_skipMode = false;  // Skip always stops at choices.

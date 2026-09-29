@@ -47,6 +47,18 @@
           "duration":{"type":"number","minimum":0,"maximum":10}
         }}}
       }},
+      "player.options":{"type":"object","maxProperties":256,"propertyNames":{"type":"string","pattern":"^[A-Za-z0-9_]{1,48}$"},"additionalProperties":{"type":"object","additionalProperties":false,"properties":{
+        "default":{"type":"integer","minimum":-1000000000,"maximum":1000000000},
+        "min":{"type":"integer","minimum":-1000000000,"maximum":1000000000},
+        "max":{"type":"integer","minimum":-1000000000,"maximum":1000000000},
+        "choices":{"type":"array","minItems":1,"maxItems":64,"uniqueItems":true,"items":{"type":"integer","minimum":-1000000000,"maximum":1000000000}},
+        "binds":{"enum":["textSpeed","autoWait","skipUnread","messageWindowOpacity","dimReadText","uiEffects","font","keepSkipAfterChoice","keepAutoAfterChoice","cursorHideDelay","dialogCursorWarp","dockPinned"]},
+        "scale":{"type":"number"},"offset":{"type":"number"}
+      }}},
+      "player.confirmations":{"type":"object","propertyNames":{"enum":["quickSave","quickLoad","save","overwrite","load","returnToTitle","exit","backlogJump","previousChoice","nextChoice","resetSettings"]},"additionalProperties":{"type":"object","additionalProperties":false,"properties":{
+        "kind":{"type":"string","pattern":"^[A-Za-z0-9_]{1,48}$"},
+        "dontAskOption":{"type":"string","pattern":"^[A-Za-z0-9_]{1,48}$"}
+      }}},
       "player.splashes":{"type":"array","maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["scene"],"properties":{
         "scene":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
         "audio":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},

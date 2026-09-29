@@ -754,6 +754,43 @@ test("compileProject validates splash voice variants and packages every possible
   assert.ok(impossibleSkip.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1056"));
 });
 
+test("compileProject checks Player option bindings and confirmations", () => {
+  const compile = (settings: unknown) => compileProject({
+    project: {...project, settings},
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+  });
+  const settings = {
+    "player.options": {
+      speed: {default: 50, min: 0, max: 100, binds: "textSpeed", scale: -1, offset: 100},
+      askSave: {default: 0, choices: [0, 1]},
+    },
+    "player.confirmations": {quickSave: {kind: "qs", dontAskOption: "askSave"}, exit: {}},
+  };
+  const valid = compile(settings);
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  for (const invalid of [
+    {"player.options": {speed: {default: 50, binds: "textSpeeed"}}},
+    {"player.options": {speed: {default: 50, scale: "2"}}},
+    {"player.options": {"bad-name": {default: 0}}},
+    {"player.confirmations": {quickSaev: {}}},
+    {"player.confirmations": {exit: {kind: "has space"}}},
+  ]) assert.equal(compile(invalid).valid, false, JSON.stringify(invalid));
+  const undeclared = compile({...settings,
+    "player.confirmations": {exit: {dontAskOption: "askExit"}}});
+  assert.equal(undeclared.valid, false);
+  assert.ok(undeclared.diagnostics.some((item) => item.code === "PXBUILD1104"));
+  const twice = compile({"player.options": {
+    a: {default: 1, choices: [0, 1], binds: "dockPinned"},
+    b: {default: 1, choices: [0, 1], binds: "dockPinned"}}});
+  assert.equal(twice.valid, true, JSON.stringify(twice.diagnostics));
+  assert.deepEqual(twice.diagnostics.filter((item) => item.code === "PXBUILD1105")
+    .map((item) => item.severity), ["warning"]);
+});
+
 test("compileProject validates portraits referenced outside Story and collects every layer", () => {
   const descriptorPath = "Assets/Characters/Hero.pxportrait";
   const descriptor = {format: "PrismatiXLayeredPortrait", schemaRevision: 1,

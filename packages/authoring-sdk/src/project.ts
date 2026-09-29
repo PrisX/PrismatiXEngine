@@ -1132,6 +1132,37 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       }
     }
   }
+  const playerOptions = settings["player.options"];
+  const optionNames = playerOptions !== null && typeof playerOptions === "object" &&
+    !Array.isArray(playerOptions) ? Object.keys(playerOptions) : [];
+  const confirmations = settings["player.confirmations"];
+  if (confirmations !== null && typeof confirmations === "object" && !Array.isArray(confirmations)) {
+    for (const [operation, confirm] of Object.entries(confirmations)) {
+      if (confirm === null || typeof confirm !== "object" || Array.isArray(confirm)) continue;
+      const option = (confirm as Record<string, JsonValue>).dontAskOption;
+      if (typeof option === "string" && !optionNames.includes(option))
+        diagnostics.push(locatedIssue("PXBUILD1104",
+          "Confirmation dontAskOption must name an option declared in player.options",
+          projectPath, `/settings/player.confirmations/${pointerSegment(operation)}/dontAskOption`,
+          option, `settings.player.confirmations.${operation}.dontAskOption: ${option}`));
+    }
+  }
+  const boundBy = new Map<string, string>();
+  for (const name of optionNames) {
+    const spec = (playerOptions as Record<string, JsonValue>)[name];
+    if (spec === null || typeof spec !== "object" || Array.isArray(spec)) continue;
+    const binds = (spec as Record<string, JsonValue>).binds;
+    if (typeof binds !== "string") continue;
+    const earlier = boundBy.get(binds);
+    // Both options would drive one behaviour, and whichever the player set
+    // last would win.
+    if (earlier !== undefined)
+      diagnostics.push({...locatedIssue("PXBUILD1105",
+        `Options ${earlier} and ${name} both bind ${binds}`,
+        projectPath, `/settings/player.options/${pointerSegment(name)}/binds`, binds,
+        `settings.player.options.${name}.binds: ${binds}`), severity: "warning"});
+    else boundBy.set(binds, name);
+  }
   for (const key of ["player.titleBgm", "player.uiHoverSound", "player.uiActivateSound",
     "player.uiCancelSound"]) {
     const value = settings[key];

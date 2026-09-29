@@ -177,16 +177,25 @@ private:
     progress::GameSettings m_settings;
     progress::SaveSystem m_saves;
 
-    // Project-declared integer options (`player.options`) and the ones the
-    // Player itself acts on: message speed, auto speed, message window
-    // opacity, read-text colour, UI animation and the text font.
+    // Project-declared integer options (`player.options`). An option may bind
+    // one Player behaviour (`"binds"`); the Player acts on `value * scale +
+    // offset` in that behaviour's unit and ignores every other option.
+    enum class OptionBinding {
+        None, TextSpeed, AutoWait, SkipUnread, MessageWindowOpacity, DimReadText,
+        UiEffects, Font, KeepSkipAfterChoice, KeepAutoAfterChoice, CursorHideDelay,
+        DialogCursorWarp, DockPinned,
+    };
     struct OptionSpec {
         int def = 0;
         int min = 0;
         int max = 100;
         std::vector<int> choices;
+        OptionBinding binding = OptionBinding::None;
+        double scale = 1.0;
+        double offset = 0.0;
     };
     std::map<std::string, OptionSpec, std::less<>> m_optionSpecs;
+    [[nodiscard]] static std::optional<OptionBinding> ParseOptionBinding(std::string_view name);
     // `player.voiceProfiles.ids`: per-character voice volume groups the
     // settings screen may bind as `settings.profileMuted.<id>`.
     std::vector<std::string> m_voiceProfileIds;
@@ -194,6 +203,11 @@ private:
     float m_messageWindowOpacity = 1.0f;
     bool m_dimReadText = false;
     bool m_uiEffects = true;
+    bool m_keepSkipAfterChoice = false;
+    bool m_keepAutoAfterChoice = false;
+    int m_cursorHideDelayMs = 0;
+    bool m_dialogCursorWarp = false;
+    bool m_dockPinned = true;
     [[nodiscard]] int OptionValue(std::string_view name) const;
     bool SetOption(std::string_view name, int value);
     void ApplyOption(std::string_view name, int value);
@@ -202,8 +216,8 @@ private:
     Status DefineOptionData();
     // settings.muted.<bus> and settings.profileMuted.<voice> for the MUTE boxes.
     void PublishMuteData();
-    // Cursor auto-hide (option `cursor`, milliseconds; 0 = never) and the
-    // dialog warp (option `mouse`).
+    // Cursor auto-hide (`cursorHideDelay`, milliseconds; 0 = never) and the
+    // dialog warp (`dialogCursorWarp`).
     float m_lastMouseX = -1.0f;
     float m_lastMouseY = -1.0f;
     std::uint64_t m_cursorActiveAt = 0;
@@ -213,23 +227,33 @@ private:
     bool m_resumeAutoAfterChoice = false;
     void UpdateCursorVisibility(std::uint64_t now);
     // `hud.dockShown`: the HUD toolbar (original mw dock) is visible while it
-    // is pinned (option `dock`), a choice is up or the pointer is in its area.
+    // is pinned (`dockPinned`), a choice is up or the pointer is in its area.
     struct DockArea { float x = 0, y = 0, width = 0, height = 0; bool valid = false; } m_dockArea;
     bool m_dockShown = true;
     void PublishDock();
     void WarpCursorTo(float logicalX, float logicalY);
 
-    // Confirmation dialogs: the original asks before saving, loading,
-    // leaving and jumping unless the player ticked "do not ask again"
-    // (option `dlg_<kind>`). The dialog itself is authored UI, a control
-    // named ConfirmDialog driven by `dialog.*` data and actions.
+    // Confirmation dialogs (`player.confirmations`): each Player operation the
+    // project lists asks first, showing its `kind`, unless the player chose
+    // "do not ask again" (its `dontAskOption` is non-zero). The dialog itself
+    // is authored UI, a control named ConfirmDialog driven by `dialog.*` data
+    // and actions; unlisted operations run at once.
+    struct ConfirmSpec {
+        std::string kind;
+        std::string dontAskOption;
+    };
+    std::map<std::string, ConfirmSpec, std::less<>> m_confirmations;
+    // Distinct kinds, each published as `dialog.kind.<kind>`.
+    std::vector<std::string> m_dialogKinds;
     struct PendingDialog {
         std::string kind;
+        std::string dontAskOption;
         std::function<void()> accept;
     };
     std::optional<PendingDialog> m_dialog;
+    [[nodiscard]] bool AsksBefore(std::string_view operation) const;
     bool m_dialogSkipNext = false;
-    void RequestConfirm(std::string_view kind, std::function<void()> accept);
+    void RequestConfirm(std::string_view operation, std::function<void()> accept);
     void PublishDialog();
     Status DefineDialogData();
 

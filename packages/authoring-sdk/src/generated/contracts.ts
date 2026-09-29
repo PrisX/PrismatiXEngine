@@ -2761,6 +2761,100 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             ],
             "type": "object"
           },
+          "player.confirmations": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "dontAskOption": {
+                  "pattern": "^[A-Za-z0-9_]{1,48}$",
+                  "type": "string"
+                },
+                "kind": {
+                  "pattern": "^[A-Za-z0-9_]{1,48}$",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "propertyNames": {
+              "enum": [
+                "quickSave",
+                "quickLoad",
+                "save",
+                "overwrite",
+                "load",
+                "returnToTitle",
+                "exit",
+                "backlogJump",
+                "previousChoice",
+                "nextChoice",
+                "resetSettings"
+              ]
+            },
+            "type": "object"
+          },
+          "player.options": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "binds": {
+                  "enum": [
+                    "textSpeed",
+                    "autoWait",
+                    "skipUnread",
+                    "messageWindowOpacity",
+                    "dimReadText",
+                    "uiEffects",
+                    "font",
+                    "keepSkipAfterChoice",
+                    "keepAutoAfterChoice",
+                    "cursorHideDelay",
+                    "dialogCursorWarp",
+                    "dockPinned"
+                  ]
+                },
+                "choices": {
+                  "items": {
+                    "maximum": 1000000000,
+                    "minimum": -1000000000,
+                    "type": "integer"
+                  },
+                  "maxItems": 64,
+                  "minItems": 1,
+                  "type": "array",
+                  "uniqueItems": true
+                },
+                "default": {
+                  "maximum": 1000000000,
+                  "minimum": -1000000000,
+                  "type": "integer"
+                },
+                "max": {
+                  "maximum": 1000000000,
+                  "minimum": -1000000000,
+                  "type": "integer"
+                },
+                "min": {
+                  "maximum": 1000000000,
+                  "minimum": -1000000000,
+                  "type": "integer"
+                },
+                "offset": {
+                  "type": "number"
+                },
+                "scale": {
+                  "type": "number"
+                }
+              },
+              "type": "object"
+            },
+            "maxProperties": 256,
+            "propertyNames": {
+              "pattern": "^[A-Za-z0-9_]{1,48}$",
+              "type": "string"
+            },
+            "type": "object"
+          },
           "player.presentationTransitions": {
             "additionalProperties": false,
             "properties": {
@@ -4865,7 +4959,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
   "motion.schema.json": "300c1bbdeb16abf4faa8014afa81800e8d72a1e7f1f6d06d309cf53ba2980f01",
   "portrait.schema.json": "658421c74dacc9d8247b64c6a00389c069b7516f57f863f399160161a1207f16",
-  "project.schema.json": "706c3b6d093e60b4e710a98acc51bd39476f25c5c47cfb9a9d546442e373fb28",
+  "project.schema.json": "d1beb16dce5e718d8386832c3188b2a5f7aa66e91a047dba446e991231b50e31",
   "runtime-ir.schema.json": "39a8d9b5720de2f812b05095695313fa5e696102283766b2c76d9b39dfc89868",
   "save-migration.schema.json": "b66062b76495dfec0ec9dc1a9c7f0bfc1c49967a5748b2a48f7e186c9cf8533e",
   "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",

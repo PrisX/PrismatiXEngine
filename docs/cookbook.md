@@ -288,33 +288,76 @@ Create the actual clip with typed authoring contracts or adapt the existing samp
 
 `player.options` in `prismatix.json` declares small integer settings the Player
 stores with the player's preferences. Each entry has a `default` and either
-`min`/`max` or a list of `choices`:
+`min`/`max` or a list of `choices`. An option does nothing on its own; one that
+declares `binds` drives a Player behaviour with `value * scale + offset`
+(`scale` defaults to 1, `offset` to 0):
 
 ```json
 "player.options": {
-  "aspeed": {"default": 50, "min": 0, "max": 100},
-  "font": {"default": 1, "choices": [1, 2, 3]},
-  "dlg_qsave": {"default": 0, "choices": [0, 1]}
+  "textSpeed": {"default": 80, "min": 0, "max": 100,
+                "binds": "textSpeed", "scale": -1, "offset": 100},
+  "autoSpeed": {"default": 50, "min": 0, "max": 100,
+                "binds": "autoWait", "scale": -60, "offset": 6600},
+  "windowAlpha": {"default": 70, "min": 0, "max": 100, "binds": "messageWindowOpacity"},
+  "font": {"default": 1, "choices": [1, 2, 3], "binds": "font"},
+  "askQuickSave": {"default": 0, "choices": [0, 1]}
 }
 ```
 
-A `Slider` with `runtimeProperties={{optionKey: "aspeed"}}` edits an option and
-needs no host code. `{id: "option.set", arguments: {argument: "font=2"}}`
-sets one, and `options.<name>` (text) and `options.<name>.is<value>` (boolean)
-are bindable UI data. The Player itself acts on `mspeed` (text speed, 100 is
-instant), `aspeed` (auto-reading wait), `mw_alpha` (message window opacity),
-`mw_aread` (grey already-read text), `messkip`, `effect` (0 shows screens
-without transitions), `font` (index into `player.fonts`), `skip`/`auto`
-(resume after a choice), `cursor` (auto-hide after N ms) and `mouse` (move
-the cursor onto the control named `DialogYes` when a dialog opens).
+Here slider 100 shows text at once (0 ms per character) and each point below
+adds a millisecond; auto-reading waits 600 ms at 100 and 6.6 s at 0.
 
-A route that contains a control named `ConfirmDialog` gets confirmation
-prompts: quick save/load, saving, loading, returning to the title, backlog
-jumps, choice back/next, exit and reset ask first unless the player set the
-option `dlg_<kind>` to 1. The dialog reads `dialog.visible`,
-`dialog.skipNext` and `dialog.kind.<kind>` and answers with `dialog.accept`,
-`dialog.cancel` and `dialog.toggleSkip`. Kinds: `qsave`, `qload`, `save`,
-`save2`, `load`, `del`, `title`, `exit`, `jump`, `next`, `back`, `reset`.
+| `binds` | The Player receives |
+| --- | --- |
+| `textSpeed` | milliseconds per character, 0–120 (0 shows the line at once) |
+| `autoWait` | auto-reading wait in milliseconds, 0–60000 |
+| `skipUnread` | non-zero: skip also skips unread text |
+| `messageWindowOpacity` | message window opacity in percent, 0–100 |
+| `dimReadText` | non-zero: grey out text already read |
+| `uiEffects` | 0: show screens without transitions |
+| `font` | 1-based index into `player.fonts`; other values keep the theme font |
+| `keepSkipAfterChoice`, `keepAutoAfterChoice` | non-zero: resume skip / auto-reading after a choice |
+| `cursorHideDelay` | hide an idle cursor after this many milliseconds; 0 never hides it |
+| `dialogCursorWarp` | non-zero: move the cursor onto the control named `DialogYes` when a dialog opens |
+| `dockPinned` | 0: the HUD toolbar (`hud.dockShown`) shows only while the pointer is in `player.dockArea` or a choice is up |
+
+Behaviours no option binds keep their defaults (the toolbar is pinned, the
+cursor never hides). Two options binding one behaviour is warned about
+(`PXBUILD1105`); whichever the player set last wins. A misspelled `binds` is a
+validation error.
+
+A `Slider` with `runtimeProperties={{optionKey: "autoSpeed"}}` edits an option
+and needs no host code. `{id: "option.set", arguments: {argument: "font=2"}}`
+sets one, and `options.<name>` (text) and `options.<name>.is<value>` (boolean)
+are bindable UI data.
+
+`player.confirmations` lists the Player operations that ask before they run.
+Each names the `kind` its dialog shows (the operation's own name when left out)
+and, optionally, the option that stores "do not ask again":
+
+```json
+"player.confirmations": {
+  "quickSave": {"kind": "qsave", "dontAskOption": "askQuickSave"},
+  "save": {"kind": "save"},
+  "overwrite": {"kind": "save2"},
+  "exit": {}
+}
+```
+
+Operations: `quickSave`, `quickLoad`, `save` (into an empty slot), `overwrite`
+(an occupied slot), `load`, `returnToTitle`, `exit`, `backlogJump`,
+`previousChoice`, `nextChoice` and `resetSettings`. Several operations may share
+a kind. An operation asks only while the mounted route has a control named
+`ConfirmDialog` and its `dontAskOption` is 0; unlisted operations run at once.
+The dialog reads `dialog.visible`, `dialog.skipNext` and
+`dialog.kind.<kind>` (one boolean per declared kind) and answers with
+`dialog.accept`, `dialog.cancel` and `dialog.toggleSkip`; accepting with
+`dialog.skipNext` set stores 1 in the `dontAskOption`. `prismatix validate`
+rejects a `dontAskOption` that `player.options` does not declare
+(`PXBUILD1104`), a binding to an undeclared `dialog.kind.<kind>`
+(`PXBUILD1100`) and warns about a `ConfirmDialog` when nothing is listed
+(`PXBUILD1103`).
+
 Any control can fade out when hidden instead of vanishing:
 `showTransitionSeconds`, `hideTransitionSeconds`, `showOffsetY`,
 `hideOffsetY` and `linearTransition` are ordinary runtime properties.

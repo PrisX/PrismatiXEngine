@@ -56,3 +56,31 @@ test("bindings under Player-owned roots must name published data", () => {
     ["PXBUILD1102", "saveLoad.slots items have no field subtitel; did you mean subtitle?"],
   ]);
 });
+
+test("dialog kinds and voice profiles come from the project's settings", () => {
+  const hud = document([
+    jsx(Group, {name: "ConfirmDialog", position: [0, 0], size: [200, 100], children: [
+      jsx(Text, {name: "AskSave", text: "", position: [0, 0], size: [100, 20],
+        bind: {visible: "dialog.kind.qsave"}}),
+      jsx(Text, {name: "AskExit", text: "", position: [0, 30], size: [100, 20],
+        bind: {visible: "dialog.kind.exit"}}),
+      jsx(Text, {name: "Muted", text: "", position: [0, 60], size: [100, 20],
+        bind: {visible: "settings.profileMuted.hikari"}}),
+    ]}),
+  ]);
+  const check = (projectSettings: Record<string, never> | object) => validatePlayerUiContract(
+    {uiEntryPoints: {hud: "Content/UI/HUD.tsx"}, settings: projectSettings as never},
+    new Map([["Content/UI/HUD.pxui", hud as never]]))
+    .map(({code, message}) => [code, message.split(";")[0]]);
+  assert.deepEqual(check({
+    "player.confirmations": {quickSave: {kind: "qsave"}, exit: {}, typo: {kind: "ignored"}},
+    "player.voiceProfiles": {ids: ["hikari"]},
+  }), []);
+  // Without declarations the dialog never opens and nothing is published.
+  assert.deepEqual(check({}), [
+    ["PXBUILD1103", "ConfirmDialog is never shown because player.confirmations lists no operation"],
+    ["PXBUILD1100", "The Player publishes no UI data at dialog.kind.qsave"],
+    ["PXBUILD1100", "The Player publishes no UI data at dialog.kind.exit"],
+    ["PXBUILD1100", "The Player publishes no UI data at settings.profileMuted.hikari"],
+  ]);
+});

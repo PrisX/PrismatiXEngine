@@ -40,13 +40,23 @@ const reservedRoots = new Set(["dialogue", "chapter", "music", "saveLoad", "gall
   "settings", "title", "system", "replay", "profileFlags", "musicUnlocked", "sceneUnlocked",
   "dialog", "options"]);
 
-/** Character voice groups of the original sound settings page. */
-const voiceProfiles = ["rnd", "szd", "mkd", "rna", "yum", "aid", "ked", "wtd", "tmd",
-  "sud", "knd", "skd", "mzd", "kid", "frd", "man", "fem"] as const;
+/** Player operations `player.confirmations` may ask before. */
+export const confirmableOperations = ["quickSave", "quickLoad", "save", "overwrite", "load",
+  "returnToTitle", "exit", "backlogJump", "previousChoice", "nextChoice", "resetSettings"] as const;
 
-/** Confirmation prompts the Player can ask; each publishes `dialog.kind.<name>`. */
-const dialogKinds = ["qsave", "qload", "save", "save2", "load", "del",
-  "title", "exit", "jump", "next", "back", "reset"] as const;
+/** Player behaviours a `player.options` entry may bind with `binds`. */
+export const optionBindings = ["textSpeed", "autoWait", "skipUnread", "messageWindowOpacity",
+  "dimReadText", "uiEffects", "font", "keepSkipAfterChoice", "keepAutoAfterChoice",
+  "cursorHideDelay", "dialogCursorWarp", "dockPinned"] as const;
+
+/** Dialog kinds the project's confirmations show; each publishes `dialog.kind.<kind>`. */
+export function playerDialogKinds(settings: Readonly<Record<string, JsonValue>>): string[] {
+  const kinds = Object.entries(object(settings["player.confirmations"]) ?? {})
+    .filter(([operation]) => (confirmableOperations as readonly string[]).includes(operation))
+    .map(([operation, confirm]) => object(confirm)?.kind ?? operation)
+    .filter((kind): kind is string => typeof kind === "string");
+  return [...new Set(kinds)];
+}
 
 export interface PlayerUiContractInput {
   readonly uiEntryPoints: Readonly<Record<string, string>>;
@@ -70,6 +80,7 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
   const pages = Number(object(settings["player.saveLayout"])?.pages ?? 1);
   const tracks = Array.isArray(settings["player.musicTracks"])
     ? settings["player.musicTracks"] as JsonValue[] : [];
+  const voiceProfiles = object(settings["player.voiceProfiles"])?.ids;
   const stems = tracks.filter((track): track is string => typeof track === "string")
     .map((track) => track.slice(track.lastIndexOf("/") + 1).replace(/\.[^.]+$/u, ""));
   return new Set([
@@ -91,9 +102,12 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
       `sceneUnlocked.scene${String(index + 1).padStart(2, "0")}`),
     ...stems.map((stem) => `musicUnlocked.${stem}`),
     ...(input.profileVariables ?? []).map((name) => `profileFlags.${name}`),
-    "dialog.visible", "dialog.skipNext", ...dialogKinds.map((kind) => `dialog.kind.${kind}`),
+    "dialog.visible", "dialog.skipNext",
+    ...playerDialogKinds(settings).map((kind) => `dialog.kind.${kind}`),
     ...["master", "bgm", "se", "voice"].map((bus) => `settings.muted.${bus}`),
-    ...voiceProfiles.map((id) => `settings.profileMuted.${id}`),
+    ...(Array.isArray(voiceProfiles) ? voiceProfiles : [])
+      .filter((id): id is string => typeof id === "string")
+      .map((id) => `settings.profileMuted.${id}`),
     ...Object.entries(object(settings["player.options"]) ?? {}).flatMap(([name, spec]) => {
       const choices = object(spec)?.choices;
       return [`options.${name}`, ...(Array.isArray(choices) ? choices : [])
@@ -135,6 +149,7 @@ export function validatePlayerUiContract(input: PlayerUiContractInput,
   uiDocuments: ReadonlyMap<string, JsonValue>): readonly AuthoringDiagnostic[] {
   const diagnostics: AuthoringDiagnostic[] = [];
   const known = playerUiDataPaths(input);
+  const asksAnything = playerDialogKinds(input.settings ?? {}).length > 0;
   const authored = Object.keys(object(input.settings?.["player.uiData"]) ?? {});
   const isAuthored = (path: string) => authored.some((root) =>
     path === root || path.startsWith(`${root}.`) || path.startsWith(`${root}[`));
@@ -151,6 +166,10 @@ export function validatePlayerUiContract(input: PlayerUiContractInput,
     const contracts = (routes.get(path) ?? []).map((route) => namedNodes[route] ?? {});
     nodes.forEach((node, index) => {
       const name = typeof node.name === "string" ? node.name : "";
+      if (name === "ConfirmDialog" && !asksAnything)
+        diagnostics.push({severity: "warning", code: "PXBUILD1103",
+          message: "ConfirmDialog is never shown because player.confirmations lists no operation",
+          path, details: `nodes[${index}].name:${name}`});
       for (const contract of contracts) {
         const expected = contract[name];
         if (expected !== undefined && typeof node.runtimeType === "string" &&
