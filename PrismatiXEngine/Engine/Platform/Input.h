@@ -113,6 +113,9 @@ public:
     [[nodiscard]] bool ActionPressed(InputAction action) const;
     [[nodiscard]] bool ActionDown(InputAction action) const;
     [[nodiscard]] bool ActionPressedWithoutKeyboard(InputAction action) const;
+    // Pressed by a key, gamepad button or injection, not by a mouse button's
+    // default action (the UI already receives that press as a click).
+    [[nodiscard]] bool ActionPressedWithoutPointer(InputAction action) const;
     // Deterministic automation seam used by Player E2E and input conformance.
     void InjectAction(InputAction action);
     void InjectKeyPress(int scancode, bool held = false);

@@ -537,7 +537,7 @@ void TextureButton::DrawSelf(graphics::Renderer2D& renderer,
     const std::string* path = &m_normalPath;
     if (!Enabled() && !m_disabledPath.empty()) path = &m_disabledPath;
     else if (Pressed() && !m_pressedPath.empty()) path = &m_pressedPath;
-    else if ((Hovered() || Focused()) && !m_hoverPath.empty()) path = &m_hoverPath;
+    else if ((Hovered() || FocusVisible()) && !m_hoverPath.empty()) path = &m_hoverPath;
     if (!path->empty()) {
         renderer.DrawImageInRect(*path, LayoutRect(), ToScaleMode(m_scaleMode),
                                  graphics::HorizontalAlignment::Center,
@@ -900,7 +900,7 @@ void Slider::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){
     if(m_fillRailToValue) {
         if(!m_railPath.empty()) drawRail(m_railPath);
         const std::string* fillPath=&m_railPressedPath;
-        if(!Pressed()&&(Hovered()||Focused())&&!m_railHoverPath.empty())
+        if(!Pressed()&&(Hovered()||FocusVisible())&&!m_railHoverPath.empty())
             fillPath=&m_railHoverPath;
         if(fillPath->empty()) fillPath=&m_railPath;
         if(!fillPath->empty()&&ratio>0) {
@@ -911,7 +911,7 @@ void Slider::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){
     } else if(!m_railPath.empty()||!m_railHoverPath.empty()||!m_railPressedPath.empty()) {
         const std::string* railPath=&m_railPath;
         if(Pressed()&&!m_railPressedPath.empty())railPath=&m_railPressedPath;
-        else if((Hovered()||Focused())&&!m_railHoverPath.empty())railPath=&m_railHoverPath;
+        else if((Hovered()||FocusVisible())&&!m_railHoverPath.empty())railPath=&m_railHoverPath;
         if(!railPath->empty()) drawRail(*railPath);
     } else {
         renderer.DrawRoundedRect(rail,railHeight*.5f,style.normal.background);
@@ -923,7 +923,7 @@ void Slider::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){
                     knobSize,knobSize};
     const std::string* knobPath=&m_knobPath;
     if(Pressed()&&!m_knobPressedPath.empty())knobPath=&m_knobPressedPath;
-    else if((Hovered()||Focused())&&!m_knobHoverPath.empty())knobPath=&m_knobHoverPath;
+    else if((Hovered()||FocusVisible())&&!m_knobHoverPath.empty())knobPath=&m_knobHoverPath;
     if(!knobPath->empty())
         renderer.DrawImageInRect(*knobPath,knob,graphics::ContentScaleMode::Stretch,
             graphics::HorizontalAlignment::Center,

@@ -655,6 +655,32 @@ bool Input::ActionPressedWithoutKeyboard(const InputAction action) const {
     return false;
 }
 
+bool Input::ActionPressedWithoutPointer(const InputAction action) const {
+    if (action == InputAction::Count) return false;
+    const std::string_view name = ActionName(action);
+    if (!ActionActive(name)) return false;
+    bool emitted = false;
+    for (const InputEvent& event : m_events) {
+        if (event.type != InputEventType::Action || event.action != name)
+            continue;
+        const auto source = m_eventSources.find(event.id);
+        if (source != m_eventSources.end() &&
+            source->second.kind == EventSourceKind::Pointer)
+            continue;
+        emitted = true;
+        if (!EventDefaultSuppressed(event)) return true;
+    }
+    if (emitted) return false;
+    const auto found = m_namedBindings.find(name);
+    if (found == m_namedBindings.end()) return false;
+    return std::ranges::any_of(found->second.keys, [this](const int key) {
+               return m_keysPressed.contains(key) && !m_suppressedKeys.contains(key);
+           }) ||
+           std::ranges::any_of(found->second.gamepadButtons, [this](const int button) {
+               return m_gamepadButtonsPressed.contains(button);
+           });
+}
+
 void Input::InjectAction(const InputAction action) {
     if(action==InputAction::Count)return;
     m_injectedActions.insert(action);

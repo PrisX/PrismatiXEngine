@@ -319,10 +319,12 @@ void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
     if(m_clipContent)renderer.PopClip();renderer.PopTransform();
 }
 
-void Control::SetInteractionState(bool hovered, bool pressed, bool focused) {
+void Control::SetInteractionState(bool hovered, bool pressed, bool focused,
+                                  bool focusVisible) {
     m_hovered = hovered;
     m_pressed = pressed;
     m_focused = focused;
+    m_focusVisible = focusVisible;
 }
 
 Vec2 Control::MeasureOverride(Vec2 available) {

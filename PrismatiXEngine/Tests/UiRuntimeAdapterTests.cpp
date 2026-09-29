@@ -878,8 +878,9 @@ void TestExternalSaveTemplate() {
         std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     Check(shown.IsOk(), "external Save UI fixture must mount slots");
     std::string selected;
+    int slotActivations = 0;
     galgame.SetActionSink([&](const px::ui::GalgameAction& action) {
-        if (action.command == "save.slot") selected = action.argument;
+        if (action.command == "save.slot") { selected = action.argument; ++slotActivations; }
         if (action.command == "saveLoad.confirm.accept") selected = "confirmed";
     });
     px::Input input;
@@ -888,6 +889,9 @@ void TestExternalSaveTemplate() {
     input.InjectFrame(200.0f, 180.0f, false);
     (void)galgame.Update(input, 1920, 1080);
     Check(selected == "0", "external Save UI slot must dispatch a pointer click");
+    // The press's default "accept" action must not activate the button the
+    // press just focused; only the release's click does.
+    Check(slotActivations == 1, "a pointer click must activate a slot exactly once");
     Check(galgame.SupportsSaveLoadConfirmation(),
           "external Save UI must expose the authored confirmation dialog");
     Check(galgame.SetSaveLoadConfirmation(px::ui::GalgameUI::SaveLoadPrompt::Save).IsOk(),

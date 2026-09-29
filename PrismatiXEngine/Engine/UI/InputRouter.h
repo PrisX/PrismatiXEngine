@@ -52,6 +52,8 @@ private:
     Control* m_focused = nullptr;
     Vec2 m_lastPointer{-1000, -1000};
     bool m_lastFrameConsumed = false;
+    // False after pointer input, true after keyboard or gamepad input.
+    bool m_focusVisible = true;
     std::vector<FocusScope> m_focusScopes;
     Uuid m_autoModalId;
     std::optional<Uuid> m_previousFocusId;

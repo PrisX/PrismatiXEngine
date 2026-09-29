@@ -251,7 +251,11 @@ public:
     [[nodiscard]] bool Hovered() const { return m_hovered; }
     [[nodiscard]] bool Pressed() const { return m_pressed; }
     [[nodiscard]] bool Focused() const { return m_focused; }
-    void SetInteractionState(bool hovered, bool pressed, bool focused);
+    // Focused, and the focus should be drawn: the last input was not the
+    // pointer, so a clicked control does not keep its hover look.
+    [[nodiscard]] bool FocusVisible() const { return m_focused && m_focusVisible; }
+    void SetInteractionState(bool hovered, bool pressed, bool focused,
+                             bool focusVisible = true);
 
 protected:
     [[nodiscard]] std::optional<text::TextLayout> MeasureTextLayout(
@@ -291,6 +295,7 @@ private:
     bool m_hovered = false;
     bool m_pressed = false;
     bool m_focused = false;
+    bool m_focusVisible = true;
     ControlStyleBinding m_styleBinding;
     TokenRefValue m_styleToken;
     bool m_visualChecked = false;

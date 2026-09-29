@@ -224,7 +224,8 @@ void InputRouter::RefreshStates() {
     std::vector<Control*> stack{&m_root};
     while (!stack.empty()) {
         Control* node = stack.back(); stack.pop_back();
-        node->SetInteractionState(node == m_hovered, node == m_captured, node == m_focused);
+        node->SetInteractionState(node == m_hovered, node == m_captured, node == m_focused,
+                                  m_focusVisible);
         for (const auto& child : node->Children()) if (auto* c = dynamic_cast<Control*>(child.get())) stack.push_back(c);
     }
 }
@@ -246,6 +247,7 @@ void InputRouter::Update(const Input& input) {
         m_lastPointer = pointer;
     }
     if (input.LeftClick()) {
+        m_focusVisible = false;
         m_captured = hit;
         m_lastFrameConsumed = hit && hit->GetMouseFilter() == MouseFilter::Stop;
         if (hit && hit->GetFocusMode() != FocusMode::None) SetFocus(hit);
@@ -266,6 +268,13 @@ void InputRouter::Update(const Input& input) {
     }else if(input.ActionPressed(InputAction::FocusNext)){
         FocusNext(false);m_lastFrameConsumed=true;
     }
+    if (!input.PressedKeys().empty() ||
+        std::ranges::any_of(std::initializer_list<InputAction>{
+                InputAction::NavigateUp, InputAction::NavigateDown,
+                InputAction::NavigateLeft, InputAction::NavigateRight,
+                InputAction::FocusNext, InputAction::FocusPrevious},
+            [&](const InputAction action) { return input.ActionPressed(action); }))
+        m_focusVisible = true;
     const bool editing = m_focused && m_focused->CapturesTextInput();
     const bool shift = input.KeyDown(SDL_SCANCODE_LSHIFT) ||
                        input.KeyDown(SDL_SCANCODE_RSHIFT);
@@ -292,12 +301,14 @@ void InputRouter::Update(const Input& input) {
     navigate(InputAction::NavigateDown, SDL_SCANCODE_DOWN, {0, 1});
     navigate(InputAction::NavigateLeft, SDL_SCANCODE_LEFT, {-1, 0});
     navigate(InputAction::NavigateRight, SDL_SCANCODE_RIGHT, {1, 0});
-    if (m_focused && input.ActionPressed(InputAction::Accept) &&
+    // A mouse button's accept/cancel default action is the click itself,
+    // dispatched above; activating the focus again would run it twice.
+    if (m_focused && input.ActionPressedWithoutPointer(InputAction::Accept) &&
         (!editing || !input.KeyPressed(SDL_SCANCODE_SPACE)))
         Dispatch(m_focused, UIEvent{.type = UIEventType::Activate,
                                     .shift = shift,
                                     .control = control});
-    if (m_focused && input.ActionPressed(InputAction::Cancel))
+    if (m_focused && input.ActionPressedWithoutPointer(InputAction::Cancel))
         Dispatch(m_focused, UIEvent{.type = UIEventType::Cancel});
     if (m_focused) {
         for (int key : input.PressedKeys()) {
