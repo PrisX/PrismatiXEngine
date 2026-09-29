@@ -640,10 +640,23 @@ void AssetCache::UnregisterTexture(const std::string& key) {
     }
 }
 
-TTF_Font* AssetCache::Font(const std::string& path, int size, int outline) {
-    const std::string key = path + "|" + std::to_string(size) + "|" + std::to_string(outline);
+TTF_Font* AssetCache::Font(const std::string& styledPath, int size, int outline) {
+    const std::string key = styledPath + "|" + std::to_string(size) + "|" + std::to_string(outline);
     if (auto it = m_fonts.find(key); it != m_fonts.end()) {
         return it->second.font;
+    }
+    // text::StyledFontPath appends "|b", "|i" or "|bi": the same file drawn
+    // with SDL_ttf's synthesized bold/italic, as its own font object.
+    std::string path = styledPath;
+    std::string_view styleSuffix;
+    int style = TTF_STYLE_NORMAL;
+    if (const auto bar = styledPath.rfind('|'); bar != std::string::npos) {
+        styleSuffix = std::string_view(styledPath).substr(bar);
+        if (styleSuffix == "|b") style = TTF_STYLE_BOLD;
+        else if (styleSuffix == "|i") style = TTF_STYLE_ITALIC;
+        else if (styleSuffix == "|bi") style = TTF_STYLE_BOLD | TTF_STYLE_ITALIC;
+        if (style != TTF_STYLE_NORMAL) path.resize(bar);
+        else styleSuffix = {};
     }
 
     if (diag::FrameProfiler::Instance().Enabled())
@@ -694,12 +707,13 @@ TTF_Font* AssetCache::Font(const std::string& path, int size, int outline) {
     if (outline > 0) {
         TTF_SetFontOutline(font, outline);
     }
+    if (style != TTF_STYLE_NORMAL) TTF_SetFontStyle(font, style);
     m_fonts[key] = FontEntry{ font, held };
     if (!m_configuringFontFallbacks && !m_fontFallbackChain.empty()) {
         m_configuringFontFallbacks = true;
         for (const auto& fallbackPath : m_fontFallbackChain) {
             if (fallbackPath == path || fallbackPath == resolvedPath) continue;
-            if (TTF_Font* fallback = Font(fallbackPath, size, outline))
+            if (TTF_Font* fallback = Font(fallbackPath + std::string(styleSuffix), size, outline))
                 (void)TTF_AddFallbackFont(font, fallback);
         }
         m_configuringFontFallbacks = false;

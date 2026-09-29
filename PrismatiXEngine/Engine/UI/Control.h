@@ -115,6 +115,10 @@ public:
     using TextLayoutProvider = std::function<text::TextLayout(
         const Control&, std::string_view, int, int, text::TextOrientation,
         std::size_t)>;
+    // Mixed-font paragraphs; a run whose font path is empty or only a style
+    // suffix ("|b") uses the control's theme font.
+    using TextRunsLayoutProvider = std::function<text::TextLayout(
+        const Control&, std::string_view, const std::vector<text::TextFontRun>&, int)>;
     using SignalArguments = VariantObject;
     using SignalHandler = std::function<void(const SignalArguments&)>;
     using SignalConnection = std::uint64_t;
@@ -213,6 +217,10 @@ public:
         m_textLayoutProvider = std::move(provider);
         InvalidateLayout();
     }
+    void SetTextRunsLayoutProvider(TextRunsLayoutProvider provider) {
+        m_textRunsLayoutProvider = std::move(provider);
+        InvalidateLayout();
+    }
     // Custom controls may override this to expose domain-specific value,
     // state, and actions while retaining the shared semantic-tree lifecycle.
     [[nodiscard]] virtual AccessibilitySemantics DescribeAccessibility() const;
@@ -253,6 +261,12 @@ protected:
         if (!m_textLayoutProvider) return std::nullopt;
         return m_textLayoutProvider(*this, value, size, wrap, orientation,
                                     verticalRows);
+    }
+    [[nodiscard]] std::optional<text::TextLayout> MeasureTextRuns(
+        std::string_view value, const std::vector<text::TextFontRun>& runs,
+        int wrap = 0) const {
+        if (!m_textRunsLayoutProvider) return std::nullopt;
+        return m_textRunsLayoutProvider(*this, value, runs, wrap);
     }
     [[nodiscard]] virtual Vec2 MeasureOverride(Vec2 available);
     virtual void ArrangeOverride(Rect finalRect);
@@ -307,6 +321,7 @@ private:
     std::string m_accessibilityDescription;
     std::int32_t m_accessibilityFocusOrder = 0;
     TextLayoutProvider m_textLayoutProvider;
+    TextRunsLayoutProvider m_textRunsLayoutProvider;
     struct SignalSlot {
         SignalConnection id = 0;
         SignalHandler handler;

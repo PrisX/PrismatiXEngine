@@ -222,6 +222,11 @@ public:
         int wrap = 0,
         text::TextOrientation orientation = text::TextOrientation::Horizontal,
         std::size_t verticalRows = 0) const;
+    [[nodiscard]] text::TextLayout LayoutTextRuns(
+        const std::string& text, const std::vector<text::TextFontRun>& runs,
+        int wrap = 0) const {
+        return m_textLayout.LayoutRuns(text, runs, wrap);
+    }
     void DrawTextLayout(const text::TextLayout& layout, Vec2 origin,
                         const std::string& fontPath, int size, Color color,
                         std::uint8_t alpha = 255);

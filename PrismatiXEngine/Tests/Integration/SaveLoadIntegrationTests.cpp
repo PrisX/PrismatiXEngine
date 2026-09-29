@@ -205,8 +205,9 @@ void TestSaveValidation() {
     snapshot.vm.textEffect = "pulse";
     snapshot.vm.timerRemainingMs = 250;
     snapshot.dialogue.state.speaker = "Alice";
-    snapshot.dialogue.state.fullText = "Hello";
-    snapshot.dialogue.state.displayText = "Hel";
+    // Inline style markup is part of the dialogue text and must survive.
+    snapshot.dialogue.state.fullText = "[size=150%]He[/size]llo";
+    snapshot.dialogue.state.displayText = "[size=150%]He[/size]l";
     snapshot.dialogue.state.currentChar = 3;
     snapshot.dialogue.state.totalChars = 5;
     snapshot.dialogue.state.effect = "pulse";
@@ -415,7 +416,8 @@ void TestSaveValidation() {
               loaded->stage.motion->awaiting,
           "Stage motion position and await survive save serialization");
     Check(
-        loaded && loaded->vm.state == px::vn::VMState::WaitingChoice && loaded->vm.callStack.size() == 1 && loaded->vm.choices.size() == 1 && loaded->dialogue.state.displayText == "Hel" &&
+        loaded && loaded->vm.state == px::vn::VMState::WaitingChoice && loaded->vm.callStack.size() == 1 && loaded->vm.choices.size() == 1 && loaded->dialogue.state.displayText == "[size=150%]He[/size]l" &&
+        loaded->dialogue.state.fullText == "[size=150%]He[/size]llo" &&
             loaded->dialogue.speedMs == 42 && loaded->typedVariables.at("route").TryGet<std::string>() && loaded->typedVariables.at("flags").AsObject() && loaded->routes.stack.size() == 2 && loaded->routes.modals.size() == 1 &&
             loaded->timelines.size() == 1 && loaded->timelines.front().awaiting && loaded->animationClips.size() == 1 && loaded->animationClips.front().name == "Custom/Save" && loaded->stage.backgroundFade == 0.45f && loaded->stage.ruleActive && loaded->stage.ruleMask == "Content/Transitions/clouds.png" && loaded->stage.ruleProgress == 0.35f && loaded->stage.ruleVague == 48 && loaded->stage.cameraX == 16.0f && loaded->stage.cameraY == -9.0f && loaded->stage.cameraZoom == 1.15f && loaded->stage.actors.size() == 1 && loaded->stage.layers.size() == 1 && loaded->stage.layers.front().scaleY == 0.75f && loaded->stage.layers.front().rotation == 17.0f &&
             loaded->stage.nodes.size() == 3 && loaded->stage.nodes.front().name == "scene-root" && loaded->stage.nodes.front().children.size() == 2 && loaded->stage.particleEmitters.size() == 1 && loaded->stage.particleEmitters.front().spec.preset == px::vn::ParticlePreset::Snow && loaded->stage.particleEmitters.front().spec.advanced && loaded->stage.particleEmitters.front().spec.texture == "Content/Particles/snow-atlas.png" && loaded->stage.particleEmitters.front().spec.atlasFrameCount == 8 && loaded->stage.particleEmitters.front().spec.burst == 32 && loaded->stage.particleEmitters.front().spec.colorOverLifetime.size() == 2 && loaded->stage.particleEmitters.front().ticks == 901 && loaded->stage.particleEmitters.front().tickRemainder == 0.25 &&

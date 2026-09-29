@@ -87,6 +87,41 @@ On the imported 352-scene *Sakura no Uta* port, rewriting `[say]`/`[narrate]`,
 separate `[voice]` lines and full media paths into these forms removes about
 35% of the script's characters without changing any operation.
 
+### Inline text styles
+
+Dialogue and narration text may change font, size and colour mid-line, next
+to `[ruby=...]` and `[br]`:
+
+```pxstory
+@直哉「[size=150%]ぎゃあああ[/size]」
+[b]Stop[/b], she said, [color=#C04040]quietly[/color].
+[font=Assets/Fonts/hand.otf][i]a note in the margin[/i][/font]
+@guide [size=75%]（小声で）[/size][ruby=きおく]記憶[/ruby]がない。
+```
+
+| Tag | Effect |
+| --- | --- |
+| `[size=150%]` | percent of the enclosing size, 10%–400%; nested percentages multiply |
+| `[size=40]` | absolute size in logical pixels, 1–400 |
+| `[color=#RRGGBB]`, `[color=#RRGGBBAA]` | text colour; the control's outline is kept |
+| `[font=path]` | a font file by its project-relative path; the build packages it |
+| `[b]`, `[i]` | bold and italic, synthesized when the font has no such face |
+
+Each tag ends at its `[/size]`, `[/color]`, `[/font]`, `[/b]` or `[/i]`, or at
+the end of the line when left open (`PXSTORY1182`). Closing tags need not nest
+strictly: `[/b]` ends the most recent `[b]`. Runs on one line share a
+baseline, and a ruby reading is drawn at half its base's size in the base's
+colour. The tags take no typewriter step, so revealed text never shows half a
+tag; the backlog and saves keep the markup, so a loaded game shows the same
+styles. A line may open with a text tag and still be prose.
+
+The Player hides any other bracketed text in dialogue; `prismatix validate`
+warns about it (`PXSTORY1180`) and about style tags inside a ruby base, which
+are shown as written (`PXSTORY1184`); put them around `[ruby]` instead. An
+invalid size or colour is `PXSTORY1181` and a font path outside the project is
+`PXSTORY1183`. Styled lines wrap at Unicode line-break opportunities and are
+laid out left to right; right-to-left scripts keep to unstyled text.
+
 ## Characters, backgrounds and sound
 
 The starter registers `guide`, its `smile` expression and an original background. Reuse these without hand-writing another UUID:

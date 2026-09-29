@@ -5,6 +5,7 @@
 #include "Engine/Graphics/Texture.h"
 #include "Engine/SDK/Motion.h"
 #include "Engine/SDK/Portrait.h"
+#include "Engine/Text/Typography.h"
 
 #include <algorithm>
 #include <cmath>
@@ -59,6 +60,7 @@ public:
                                     float width, float height) const;
     void SetColor(Color value) { m_color = value; m_hasColor = true; }
     [[nodiscard]] Color GetColor() const { return m_color; }
+    [[nodiscard]] bool HasColor() const { return m_hasColor; }
     void SetOutlineSize(int value) { m_outlineSize = std::clamp(value, 0, 8); }
     [[nodiscard]] int OutlineSize() const { return m_outlineSize; }
     void SetOutlineColor(Color value) { m_outlineColor = value; }
@@ -512,9 +514,12 @@ protected:
     Vec2 MeasureOverride(Vec2 available) override;
     void DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) override;
 private:
+    void DrawStyled(graphics::Renderer2D& renderer, const Theme& theme, int baseSize);
     std::string m_markup;
     struct RubyDraw{std::string prefix,base,reading;};
     std::vector<RubyDraw> m_ruby;
+    // Inline [font]/[size]/[color]/[b]/[i] runs over Text(); empty when unstyled.
+    std::vector<text::TextRun> m_runs;
     bool m_vertical=false;
     std::size_t m_verticalRows=0;
 };

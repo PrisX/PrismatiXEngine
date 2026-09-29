@@ -189,6 +189,133 @@ TextLayout TextLayoutService::Layout(const std::string_view value,
     return shaped;
 }
 
+TextLayout TextLayoutService::LayoutRuns(const std::string_view value,
+                                         const std::vector<TextFontRun>& runs,
+                                         const int wrapWidth) const {
+    std::string key = "runs|" + std::to_string(wrapWidth);
+    for (const auto& run : runs) {
+        key += '|';
+        key += std::to_string(run.byteStart) + ',' + std::to_string(run.byteLength) + ',' +
+               std::to_string(run.size) + ',' + run.fontPath;
+    }
+    key += '|';
+    key.append(value);
+    TextLayout cached;
+    if (m_cache.Get(key, cached)) return cached;
+
+    struct RunMetrics { int ascent = 0; int height = 0; int lineSkip = 0; };
+    struct Item { std::size_t start = 0; std::size_t length = 0; float width = 0.0f;
+                  std::size_t run = 0; bool newline = false; };
+    std::vector<RunMetrics> metrics;
+    std::vector<Item> items;
+    for (std::size_t index = 0; index < runs.size(); ++index) {
+        const auto& run = runs[index];
+        if (run.byteStart + run.byteLength > value.size()) break;
+        RunMetrics metric;
+        if (TTF_Font* font = m_assets.Font(run.fontPath, std::max(1, run.size), 0)) {
+            metric = {TTF_GetFontAscent(font), TTF_GetFontHeight(font),
+                      TTF_GetFontLineSkip(font)};
+        }
+        metrics.push_back(metric);
+        const std::string_view text = value.substr(run.byteStart, run.byteLength);
+        for (std::size_t piece = 0; piece <= text.size();) {
+            const auto end = std::min(text.find('\n', piece), text.size());
+            if (end > piece) {
+                // SDL_ttf cluster rects are ink boxes; a cluster's advance is
+                // the growth of the measured prefix that ends with it.
+                const std::string_view part = text.substr(piece, end - piece);
+                const TextLayout shaped = Layout(part, run.fontPath, run.size, 0);
+                std::vector<std::pair<std::size_t, std::size_t>> spans;
+                for (const auto& cluster : shaped.Clusters())
+                    spans.emplace_back(cluster.byteStart, cluster.byteLength);
+                std::ranges::sort(spans);
+                TTF_Font* font = m_assets.Font(run.fontPath, std::max(1, run.size), 0);
+                if (font) ConfigureFont(font, part);
+                int previous = 0;
+                for (const auto& [start, length] : spans) {
+                    int width = 0, height = 0;
+                    if (font) (void)TTF_GetStringSize(font, part.data(), start + length, &width, &height);
+                    items.push_back({run.byteStart + piece + start, length,
+                                     static_cast<float>(std::max(0, width - previous)), index, false});
+                    previous = std::max(previous, width);
+                }
+            }
+            if (end == text.size()) break;
+            items.push_back({run.byteStart + end, 1, 0.0f, index, true});
+            piece = end + 1;
+        }
+    }
+    if (items.empty()) {
+        m_cache.Put(key, TextLayout(std::string(value), m_locale, {}, {}));
+        return TextLayout(std::string(value), m_locale, {}, {});
+    }
+
+    const auto breaks = LineBreakBoundaries(value, m_locale);
+    const auto breakBefore = [&](const std::size_t byte) {
+        return std::binary_search(breaks.begin(), breaks.end(), byte);
+    };
+    // Greedy fill: a line that overflows breaks at its last opportunity, or
+    // before the overflowing cluster when there is none.
+    std::vector<std::vector<Item>> lines(1);
+    float width = 0.0f;
+    std::size_t lastBreak = 0;
+    for (const auto& item : items) {
+        auto& line = lines.back();
+        if (item.newline) {
+            line.push_back(item);
+            lines.emplace_back();
+            width = 0.0f;
+            lastBreak = 0;
+            continue;
+        }
+        if (!line.empty() && breakBefore(item.start)) lastBreak = line.size();
+        if (wrapWidth > 0 && !line.empty() && width + item.width > static_cast<float>(wrapWidth)) {
+            const std::size_t split = lastBreak > 0 ? lastBreak : line.size();
+            std::vector<Item> carried(line.begin() + static_cast<std::ptrdiff_t>(split), line.end());
+            line.resize(split);
+            width = 0.0f;
+            for (const auto& moved : carried) width += moved.width;
+            lines.push_back(std::move(carried));
+            lastBreak = !lines.back().empty() && breakBefore(item.start) ? lines.back().size() : 0;
+        }
+        lines.back().push_back(item);
+        width += item.width;
+    }
+    if (lines.size() > 1 && lines.back().empty()) lines.pop_back();
+
+    std::vector<TextClusterLayout> clusters;
+    clusters.reserve(items.size());
+    float top = 0.0f;
+    float widest = 0.0f;
+    for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+        const auto& line = lines[lineIndex];
+        int ascent = 0;
+        int lineSkip = 0;
+        for (const auto& item : line) {
+            ascent = std::max(ascent, metrics[item.run].ascent);
+            lineSkip = std::max(lineSkip, metrics[item.run].lineSkip);
+        }
+        if (line.empty()) {
+            ascent = metrics.front().ascent;
+            lineSkip = metrics.front().lineSkip;
+        }
+        float x = 0.0f;
+        for (const auto& item : line) {
+            const auto& metric = metrics[item.run];
+            clusters.push_back({item.start, item.length, static_cast<int>(lineIndex),
+                                {x, top + static_cast<float>(ascent - metric.ascent),
+                                 item.width, static_cast<float>(metric.height)},
+                                false, false});
+            x += item.width;
+        }
+        widest = std::max(widest, x);
+        top += static_cast<float>(lineSkip);
+    }
+    TextLayout shaped(std::string(value), m_locale, {widest, top}, std::move(clusters));
+    m_cache.Put(key, shaped);
+    return shaped;
+}
+
 TextLayout TextLayoutService::Shape(const std::string& input,
                                     const std::string& fontPath, const int size,
                                     const int wrapWidth,

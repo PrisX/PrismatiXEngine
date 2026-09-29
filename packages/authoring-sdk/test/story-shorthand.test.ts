@@ -234,3 +234,34 @@ test("unquoted display names resolve to the registered character that uses them"
   const shared = operations("@雪「どっち？」\n", {characters: [yuki, twin]});
   assert.equal(shared[0]!.arguments.character, "");
 });
+
+test("inline text styles stay in dialogue text and are checked", () => {
+  const source = "@直哉「[size=150%]ぎゃあ[/size]」\n" +
+    "[narrate text=\"[b]太字[/b]と[color=#FF000080]赤[/color]と[ruby=よみ]読[/ruby]\"]\n" +
+    "[font=Assets/Fonts/hand.otf][i]手書き[/i][/font]です。\n";
+  const document = parseStory(source, "Story/short.pxstory");
+  const result = compileStory(document, {documentId: "short"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.diagnostics, []);
+  assert.deepEqual(result.runtimeIr!.operations.map(({arguments: args}) => args.text), [
+    "「[size=150%]ぎゃあ[/size]」",
+    "[b]太字[/b]と[color=#FF000080]赤[/color]と[ruby=よみ]読[/ruby]",
+    "[font=Assets/Fonts/hand.otf][i]手書き[/i][/font]です。",
+  ]);
+  assert.ok(result.resourceDependencies?.includes("Assets/Fonts/hand.otf"));
+});
+
+test("inline text style mistakes are reported on their line", () => {
+  const diagnostics = (source: string) => compileStory(parseStory(source, "Story/short.pxstory"),
+    {documentId: "short"}).diagnostics.map(({code, severity}) => [code, severity]);
+  assert.deepEqual(diagnostics("@a [size=0]x[/size]\n"), [["PXSTORY1181", "error"]]);
+  assert.deepEqual(diagnostics("@a [size=500%]x[/size]\n"), [["PXSTORY1181", "error"]]);
+  assert.deepEqual(diagnostics("@a [color=red]x[/color]\n"), [["PXSTORY1181", "error"]]);
+  assert.deepEqual(diagnostics("@a [b]x\n"), [["PXSTORY1182", "warning"]]);
+  assert.deepEqual(diagnostics("@a x[/i]\n"), [["PXSTORY1182", "warning"]]);
+  assert.deepEqual(diagnostics("@a x[wave]y\n"), [["PXSTORY1180", "warning"]]);
+  assert.deepEqual(diagnostics("@a [ruby=よ][b]読[/b][/ruby]\n"),
+    [["PXSTORY1184", "warning"], ["PXSTORY1184", "warning"]]);
+  assert.deepEqual(diagnostics("@a [font=../x.otf]x[/font]\n"), [["PXSTORY1183", "error"]]);
+  assert.deepEqual(diagnostics("@a [b]x[/b][br][size=40]y[/size]\n"), []);
+});

@@ -3,6 +3,7 @@
 #include "Engine/Graphics/AssetCache.h"
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/VFS.h"
+#include "Engine/Text/Typography.h"
 #include "Engine/VN/Commands/CommandRegistry.h"
 #include "Engine/VN/Runtime/Backlog.h"
 #include "Engine/VN/Runtime/Dialogue.h"
@@ -705,6 +706,72 @@ int main() {
         clearStage.ClearLayer("cg4");
         clearStage.ClearCharacters(false);
         clearStage.SetBackground("Assets/background.webp", false);
+    }
+
+    // Inline dialogue styles: tags become runs over the plain text next to
+    // ruby, take no typewriter step and stay in the backlog as markup.
+    {
+        const auto rich = px::text::ParseRubyMarkup(
+            "ab[size=150%][b]CD[/b][/size][color=#FF000080]E[ruby=い]F[/ruby][/color][bogus]G");
+        assert(rich.plain == "abCDEFG");
+        assert(rich.ruby.size() == 1 && rich.ruby.front().prefix == "abCDE");
+        assert(rich.runs.size() == 4);
+        assert(rich.runs[0].byteStart == 0 && rich.runs[0].byteLength == 2 &&
+               rich.runs[0].style.Plain());
+        assert(rich.runs[1].byteLength == 2 && rich.runs[1].style.bold &&
+               rich.runs[1].style.scale == 1.5f);
+        assert(rich.runs[2].byteStart == 4 && rich.runs[2].byteLength == 2 &&
+               rich.runs[2].style.color && rich.runs[2].style.color->r == 255 &&
+               rich.runs[2].style.color->g == 0 && rich.runs[2].style.color->a == 0x80);
+        assert(rich.runs[3].byteStart == 6 && rich.runs[3].style.Plain());
+        assert(px::text::ParseRubyMarkup("[ruby=a]b[/ruby][br]c").runs.empty());
+        assert(px::text::ParseRubyMarkup("[b][/b]x").runs.empty());
+        // Relative sizes multiply, an absolute size resets the scale, and an
+        // unclosed tag lasts to the end.
+        const auto nested = px::text::ParseRubyMarkup(
+            "[size=50%][size=200%]x[/size][size=30]y[/size]z[i]w");
+        assert(nested.plain == "xyzw" && nested.runs.size() == 4);
+        assert(nested.runs[0].style.Plain());
+        assert(nested.runs[1].style.size == 30 && nested.runs[1].style.scale == 1.0f);
+        assert(nested.runs[2].style.scale == 0.5f && !nested.runs[2].style.italic);
+        assert(nested.runs[3].style.italic && nested.runs[3].byteStart == 3);
+        // Closing tags need not nest strictly; a stray one changes nothing.
+        const auto crossed = px::text::ParseRubyMarkup("[b][font=F.otf]x[/b]y[/font][/color]z");
+        assert(crossed.runs.size() == 3 && crossed.runs[1].style.font == "F.otf" &&
+               !crossed.runs[1].style.bold && crossed.runs[2].style.Plain());
+        assert(px::text::ParseRubyMarkup("[color=red]x").runs.empty());
+        assert(px::text::StyleTagLength("[b]x") == 3);
+        assert(px::text::StyleTagLength("[/color]") == 8);
+        assert(px::text::StyleTagLength("[bold]") == 0);
+        assert(px::text::StyleTagLength("[size]") == 0);
+        assert(px::text::StyleTagLength("[/b=1]") == 0);
+        assert(px::text::StyledFontPath("F.otf", true, true) == "F.otf|bi");
+        assert(px::text::StyledFontPath("F.otf", false, false) == "F.otf");
+
+        px::vn::Dialogue styled;
+        styled.SetText("A", "a[size=200%]bc[/size]d[b]", 10, {}, {});
+        assert(styled.State().totalChars == 4);
+        assert(styled.State().fullText == "a[size=200%]bc[/size]d[b]");
+        styled.Update(1000);
+        styled.Update(1015);
+        assert(styled.State().displayText == "a");
+        styled.Update(1020);
+        assert(styled.State().displayText == "a[size=200%]b");
+        styled.Update(1030);
+        assert(styled.State().displayText == "a[size=200%]bc[/size]");
+        styled.Update(1040);
+        assert(styled.State().finished &&
+               styled.State().displayText == "a[size=200%]bc[/size]d[b]");
+
+        px::vn::Program styledLine;
+        px::vn::Command say;
+        say.type = "say";
+        say.args = {{"speaker", "A"}, {"text", "[size=75%]quiet[/size] {w=100}[color=#102030]end"}};
+        styledLine.code.push_back(std::move(say));
+        assert(clearVm.LoadCompiledProgram(std::move(styledLine), "memory://styled-say"));
+        assert(clearDialogue.State().fullText == "[size=75%]quiet[/size] [color=#102030]end");
+        assert(!clearBacklog.Entries().empty() &&
+               clearBacklog.Entries().back().text == clearDialogue.State().fullText);
     }
 
     px::vn::GameCatalog localizedCatalog;

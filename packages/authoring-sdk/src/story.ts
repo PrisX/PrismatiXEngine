@@ -1,6 +1,7 @@
 import {canonicalJson} from "./canonical-json.js";
 import {fnv1a64 as stableId} from "./fnv1a64.js";
 import {assetIdFromReference, canonicalResourceReference} from "./resources.js";
+import {inspectTextMarkup} from "./story-text-markup.js";
 import type {StoryAssetCategory} from "./story-assets.js";
 import {parseStoryExpression} from "./story-expression.js";
 import type {
@@ -269,8 +270,13 @@ function continues(text: string): boolean {
   return trailing % 2 === 1;
 }
 
+// Inline text tags no command shares a name with: a line opening with one is
+// prose (`[b]Loud[/b] she said.`), not a command.
+const leadingTextTag = /^\[(?:\/?[bi]|br|\/(?:font|size|color|ruby)|(?:font|size|color|ruby)=[^\]]*)\]/u;
+
 function isProse(trimmed: string): boolean {
-  return !trimmed.startsWith(";") && !trimmed.startsWith("*") && !trimmed.startsWith("[");
+  return !trimmed.startsWith(";") && !trimmed.startsWith("*") &&
+    (!trimmed.startsWith("[") || leadingTextTag.test(trimmed));
 }
 
 export function parseStory(text: string, path = "Story/untitled.pxstory"): StoryDocument {
@@ -396,7 +402,7 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
       }
       continue;
     }
-    if (trimmed.startsWith("[")) {
+    if (trimmed.startsWith("[") && !isProse(trimmed)) {
       if (!trimmed.endsWith("]")) {
         diagnostics.push(error("PXSTORY1012", "Command is missing a closing bracket", lineSpan));
         continue;
@@ -659,6 +665,20 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     mappings.push({operationId, sourceId, sourceUri: document.path, startLine: node.span.start.line, startColumn: node.span.start.column, endLine: node.span.end.line, endColumn: node.span.end.column});
   };
 
+  // Dialogue markup stays in the operation text; the Player reads it.
+  const checkTextMarkup = (node: StoryNode, text: string): void => {
+    const report = inspectTextMarkup(text);
+    for (const issue of report.issues)
+      diagnostics.push({...error(issue.code, issue.message, node.span), severity: issue.severity});
+    for (const font of report.fonts) {
+      const resolved = canonicalResourceReference(font, []);
+      if (resolved === undefined || resolved.source !== font)
+        diagnostics.push(error("PXSTORY1183",
+          `[font=${font}] must name a font file by its project-relative path`, node.span));
+      else rememberResource(resolved.source, node);
+    }
+  };
+
   // Layers an [image] in this document shows; [act image=...] warns on others.
   const imageNames = new Set<string>();
   for (const node of document.nodes) {
@@ -847,11 +867,13 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       }
       const resolvedVoice = voice === undefined ? undefined : resolveResource(node, voice, "voice");
       if (voice !== undefined && resolvedVoice === undefined) continue;
+      checkTextMarkup(node, node.text ?? "");
       emit(node, "dialogue", {speaker: localizedName ?? character?.displayName ?? node.name ?? "", character: literal ? "" : character?.id ?? node.name ?? "", text: node.text ?? "",
         ...(resolvedVoice === undefined ? {} : {voice: resolvedVoice})}, node.text ?? "", sourceId);
       continue;
     }
     if (node.kind === "narration") {
+      checkTextMarkup(node, node.text ?? "");
       emit(node, "narration", {text: node.text ?? ""}, node.text ?? "");
       continue;
     }
@@ -902,6 +924,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
             node.span));
           break;
         }
+        checkTextMarkup(node, authoredText);
         if (node.name === "say") {
           const character = typeof authoredCharacter === "string" && authoredCharacter.length > 0
             ? characters.get(authoredCharacter) : undefined;

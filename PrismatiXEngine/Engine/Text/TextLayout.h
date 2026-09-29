@@ -53,6 +53,14 @@ private:
     TextOrientation m_orientation = TextOrientation::Horizontal;
 };
 
+// A byte range of LayoutRuns text drawn with its own font and size.
+struct TextFontRun {
+    std::size_t byteStart = 0;
+    std::size_t byteLength = 0;
+    std::string fontPath;
+    int size = 0;
+};
+
 class TextLayoutService final {
 public:
     explicit TextLayoutService(graphics::AssetCache& assets);
@@ -68,6 +76,13 @@ public:
         int wrapWidth = 0,
         TextOrientation orientation = TextOrientation::Horizontal,
         std::size_t verticalRows = 0) const;
+    // One paragraph mixing fonts and sizes (inline dialogue styles). Lines
+    // break at '\n' and at UAX #14 opportunities within wrapWidth; every run
+    // on a line shares its baseline. Clusters keep their run's font height.
+    // Left-to-right only.
+    [[nodiscard]] TextLayout LayoutRuns(std::string_view value,
+                                        const std::vector<TextFontRun>& runs,
+                                        int wrapWidth = 0) const;
     // Shaped layouts are cached: UI measure, fit-to-box, ruby placement and
     // accessibility all ask for the same text repeatedly. Font changes must
     // clear it.

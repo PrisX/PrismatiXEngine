@@ -24,6 +24,30 @@ const StyleBox& StateBox(const Control& control, const ControlStyle& style) {
     return style.normal;
 }
 
+// Resolves inline style runs against the control's font and size. An empty
+// base font stays empty (plus a "|b"/"|i" suffix) for the UI context to fill
+// with the theme font.
+std::vector<text::TextFontRun> FontRuns(const std::vector<text::TextRun>& runs,
+                                        const std::string& baseFont, const int baseSize) {
+    std::vector<text::TextFontRun> resolved;
+    resolved.reserve(runs.size());
+    for (const auto& run : runs) {
+        const int size = run.style.size > 0 ? run.style.size : baseSize;
+        resolved.push_back({run.byteStart, run.byteLength,
+                            text::StyledFontPath(run.style.font.empty() ? baseFont : run.style.font,
+                                                 run.style.bold, run.style.italic),
+                            std::max(1, static_cast<int>(std::lround(
+                                static_cast<float>(size) * run.style.scale)))});
+    }
+    return resolved;
+}
+
+std::size_t RunAt(const std::vector<text::TextRun>& runs, const std::size_t byte) {
+    const auto found = std::upper_bound(runs.begin(), runs.end(), byte,
+        [](const std::size_t value, const text::TextRun& run) { return value < run.byteStart; });
+    return found == runs.begin() ? 0 : static_cast<std::size_t>(found - runs.begin() - 1);
+}
+
 void DrawBox(graphics::Renderer2D& renderer, Rect area, const StyleBox& box) {
     renderer.DrawRoundedRect(area, box.cornerRadius, box.background);
     if (box.borderWidth <= 0.0f) return;
@@ -104,10 +128,13 @@ Vec2 Label::MeasureOverride(Vec2 available) {
 int Label::FontSizeToFit(std::string_view content, int requested,
                          float width, float height) const {
     if (width <= 0.0f || height <= 0.0f || content.empty()) return requested;
-    const std::string plain = text::ParseRubyMarkup(content).plain;
+    const auto parsed = text::ParseRubyMarkup(content);
+    const std::string& plain = parsed.plain;
     const int wrap = std::max(1, static_cast<int>(std::floor(width)));
     const auto fits = [&](const int size) {
-        const auto layout = MeasureTextLayout(plain, size, wrap);
+        const auto layout = parsed.runs.empty()
+            ? MeasureTextLayout(plain, size, wrap)
+            : MeasureTextRuns(plain, FontRuns(parsed.runs, m_fontPath, size), wrap);
         return !layout || layout->Size().y <= height - 8.0f;
     };
     if (fits(requested)) return requested;
@@ -1099,7 +1126,7 @@ void LineEdit::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) {
 }
 
 RichTextLabel::RichTextLabel(std::string markup,std::string name):Label({},std::move(name)){SetWrap(true);SetMarkup(std::move(markup));}
-void RichTextLabel::SetMarkup(std::string markup){const auto parsed=text::ParseRubyMarkup(markup);if(m_markup==markup&&Text()==parsed.plain)return;m_markup=std::move(markup);m_ruby.clear();for(const auto& ruby:parsed.ruby)m_ruby.push_back({ruby.prefix,ruby.base,ruby.reading});SetText(parsed.plain);}
+void RichTextLabel::SetMarkup(std::string markup){auto parsed=text::ParseRubyMarkup(markup);if(m_markup==markup&&Text()==parsed.plain)return;m_markup=std::move(markup);m_ruby.clear();for(const auto& ruby:parsed.ruby)m_ruby.push_back({ruby.prefix,ruby.base,ruby.reading});if(m_runs.size()!=parsed.runs.size()||!std::equal(m_runs.begin(),m_runs.end(),parsed.runs.begin(),[](const text::TextRun& a,const text::TextRun& b){return a.byteStart==b.byteStart&&a.byteLength==b.byteLength&&a.style==b.style;}))InvalidateLayout();m_runs=std::move(parsed.runs);SetText(std::move(parsed.plain));}
 AccessibilitySemantics RichTextLabel::DescribeAccessibility() const {
     auto semantics = Label::DescribeAccessibility();
     const int wrap = m_vertical
@@ -1118,11 +1145,15 @@ AccessibilitySemantics RichTextLabel::DescribeAccessibility() const {
             (LayoutRect().w - semantics.text->layout.Size().x) * 0.5f;
     return semantics;
 }
-Vec2 RichTextLabel::MeasureOverride(const Vec2 available){if(!m_vertical)return Label::MeasureOverride(available);const int height=available.y>0.0f?std::max(1,static_cast<int>(std::floor(available.y))):0;if(const auto layout=MeasureTextLayout(Text(),FontSize(),height,text::TextOrientation::Vertical,m_verticalRows))return layout->Size();return Label::MeasureOverride(available);}
+Vec2 RichTextLabel::MeasureOverride(const Vec2 available){if(!m_vertical&&!m_runs.empty()){const int wrap=Wrap()&&available.x>0.0f?std::max(1,static_cast<int>(std::floor(available.x))):0;if(const auto layout=MeasureTextRuns(Text(),FontRuns(m_runs,FontPath(),FontSize()),wrap))return layout->Size();}if(!m_vertical)return Label::MeasureOverride(available);const int height=available.y>0.0f?std::max(1,static_cast<int>(std::floor(available.y))):0;if(const auto layout=MeasureTextLayout(Text(),FontSize(),height,text::TextOrientation::Vertical,m_verticalRows))return layout->Size();return Label::MeasureOverride(available);}
 void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
                              const Theme& theme) {
     const auto& style = theme.Resolve(*this);
     const int baseSize = FontSize() > 0 ? FontSize() : style.fontSize;
+    if (!m_vertical && !m_runs.empty()) {
+        DrawStyled(renderer, theme, baseSize);
+        return;
+    }
     if (!m_vertical) {
         Label::DrawSelf(renderer, theme);
         if (m_ruby.empty()) return;
@@ -1191,6 +1222,88 @@ void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
                                 {origin.x + base.x + base.w,
                                  origin.y + base.y},
                                 style.font, rubySize, style.text);
+    }
+    renderer.PopClip();
+}
+
+// Inline styles: each run is drawn in its own font, size and colour on a
+// shared baseline, then ruby readings above their bases at half the base's
+// run size.
+void RichTextLabel::DrawStyled(graphics::Renderer2D& renderer, const Theme& theme,
+                               const int baseSize) {
+    const auto& style = theme.Resolve(*this);
+    const std::string& baseFont = FontPath().empty() ? style.font : FontPath();
+    const Color baseColor = HasColor() ? GetColor() : (Enabled() ? style.text : style.textDisabled);
+    const auto runs = FontRuns(m_runs, baseFont, baseSize);
+    const Rect area = LayoutRect();
+    const int wrap = Wrap() ? std::max(1, static_cast<int>(std::floor(area.w))) : 0;
+    const auto layout = renderer.LayoutTextRuns(Text(), runs, wrap);
+    Vec2 origin{area.x, area.y};
+    if (VerticalAlignment() == VerticalTextAlignment::Center)
+        origin.y += (area.h - layout.Size().y) * 0.5f;
+    else if (VerticalAlignment() == VerticalTextAlignment::Bottom)
+        origin.y += area.h - layout.Size().y;
+    // Lines align on their own width, as SDL_ttf aligns wrapped lines.
+    std::vector<float> lineShift;
+    for (const auto& cluster : layout.Clusters()) {
+        const auto line = static_cast<std::size_t>(cluster.line);
+        if (lineShift.size() <= line) lineShift.resize(line + 1, 0.0f);
+        lineShift[line] = std::max(lineShift[line], cluster.bounds.x + cluster.bounds.w);
+    }
+    for (float& shift : lineShift) {
+        shift = HorizontalAlignment() == HorizontalTextAlignment::Center ? (area.w - shift) * 0.5f
+              : HorizontalAlignment() == HorizontalTextAlignment::Right ? area.w - shift : 0.0f;
+    }
+    const auto shiftOf = [&](const int line) {
+        return static_cast<std::size_t>(line) < lineShift.size()
+            ? lineShift[static_cast<std::size_t>(line)] : 0.0f;
+    };
+    const float rubyExtent = static_cast<float>(std::max(8, baseSize / 2));
+    const float edge = static_cast<float>(OutlineSize());
+    renderer.PushClip({area.x - edge, area.y - rubyExtent - edge,
+                       area.w + edge * 2.0f, area.h + rubyExtent + edge * 2.0f});
+    const auto& clusters = layout.Clusters();
+    for (std::size_t first = 0; first < clusters.size();) {
+        const std::size_t run = RunAt(m_runs, clusters[first].byteStart);
+        std::size_t last = first;
+        while (last + 1 < clusters.size() && clusters[last + 1].line == clusters[first].line &&
+               RunAt(m_runs, clusters[last + 1].byteStart) == run)
+            ++last;
+        const auto& head = clusters[first];
+        const std::size_t end = clusters[last].byteStart + clusters[last].byteLength;
+        std::string piece = Text().substr(head.byteStart, end - head.byteStart);
+        std::erase(piece, '\n');
+        if (!piece.empty() && run < runs.size()) {
+            const float width = clusters[last].bounds.x + clusters[last].bounds.w - head.bounds.x;
+            renderer.DrawTextInRect(piece,
+                {origin.x + shiftOf(head.line) + head.bounds.x, origin.y + head.bounds.y,
+                 width + static_cast<float>(runs[run].size), head.bounds.h},
+                runs[run].fontPath, runs[run].size, m_runs[run].style.color.value_or(baseColor),
+                graphics::HorizontalAlignment::Left, graphics::VerticalAlignment::Top, false,
+                255, OutlineSize(), OutlineColor());
+        }
+        first = last + 1;
+    }
+    for (const auto& ruby : m_ruby) {
+        // A typewriter reveal shows a prefix of the text; a reading is drawn
+        // only once its whole base is visible.
+        if (ruby.prefix.size() + ruby.base.size() > Text().size()) continue;
+        const Rect base = layout.BoundsForRange(ruby.prefix.size(), ruby.base.size());
+        if (base.w <= 0.0f) continue;
+        const std::size_t run = RunAt(m_runs, ruby.prefix.size());
+        if (run >= runs.size()) continue;
+        const int rubySize = std::max(8, runs[run].size / 2);
+        const Vec2 reading = renderer.MeasureText(ruby.reading, runs[run].fontPath, rubySize);
+        int line = 0;
+        for (const auto& cluster : clusters)
+            if (cluster.byteStart == ruby.prefix.size()) { line = cluster.line; break; }
+        renderer.DrawTextInRect(ruby.reading,
+            {origin.x + shiftOf(line) + base.x + base.w * 0.5f - reading.x * 0.5f,
+             origin.y + base.y - static_cast<float>(rubySize), reading.x + 2.0f,
+             static_cast<float>(rubySize) * 1.5f},
+            runs[run].fontPath, rubySize, m_runs[run].style.color.value_or(baseColor),
+            graphics::HorizontalAlignment::Left, graphics::VerticalAlignment::Top, false,
+            255, OutlineSize(), OutlineColor());
     }
     renderer.PopClip();
 }

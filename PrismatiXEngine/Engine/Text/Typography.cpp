@@ -1,5 +1,7 @@
 #include "Engine/Text/Typography.h"
 #include <algorithm>
+#include <charconv>
+#include <cmath>
 #include <cstdint>
 
 #if defined(PRISMATIX_UNICODE_TEXT_LIBS)
@@ -18,7 +20,123 @@ bool ExtendsCluster(char32_t value){return (value>=0x0300&&value<=0x036f)||(valu
 bool RegionalIndicator(char32_t value){return value>=0x1f1e6&&value<=0x1f1ff;}
 #endif
 }
-RichText ParseRubyMarkup(std::string_view markup){RichText result;for(std::size_t index=0;index<markup.size();){if(markup.substr(index).starts_with("[br]")){result.plain+='\n';index+=4;continue;}if(markup.substr(index).starts_with("[ruby=")){const auto header=markup.find(']',index),close=markup.find("[/ruby]",header==std::string_view::npos?index:header);if(header!=std::string_view::npos&&close!=std::string_view::npos){const std::string reading(markup.substr(index+6,header-index-6)),base(markup.substr(header+1,close-header-1));result.ruby.push_back({result.plain,base,reading});result.plain+=base;index=close+7;continue;}}if(markup[index]=='['){const auto close=markup.find(']',index);if(close!=std::string_view::npos){index=close+1;continue;}}result.plain.push_back(markup[index++]);}return result;}
+namespace {
+struct StyleTag { std::string_view name; std::string_view value; bool closing = false; std::size_t length = 0; };
+std::optional<StyleTag> ReadStyleTag(const std::string_view text) {
+    if (!text.starts_with('[')) return std::nullopt;
+    const auto close = text.find(']');
+    if (close == std::string_view::npos) return std::nullopt;
+    std::string_view body = text.substr(1, close - 1);
+    StyleTag tag{.closing = body.starts_with('/'), .length = close + 1};
+    if (tag.closing) body.remove_prefix(1);
+    const auto equals = body.find('=');
+    tag.name = body.substr(0, equals);
+    if (equals != std::string_view::npos) tag.value = body.substr(equals + 1);
+    const bool valued = tag.name == "font" || tag.name == "size" || tag.name == "color";
+    if (!valued && tag.name != "b" && tag.name != "i") return std::nullopt;
+    if (tag.closing ? equals != std::string_view::npos
+                    : valued != (equals != std::string_view::npos))
+        return std::nullopt;
+    return tag;
+}
+std::optional<Color> ParseHexColor(const std::string_view value) {
+    if (!value.starts_with('#') || (value.size() != 7 && value.size() != 9)) return std::nullopt;
+    std::uint8_t channels[4]{0, 0, 0, 255};
+    for (std::size_t index = 1; index < value.size(); index += 2) {
+        const auto result = std::from_chars(value.data() + index, value.data() + index + 2,
+                                            channels[(index - 1) / 2], 16);
+        if (result.ec != std::errc{} || result.ptr != value.data() + index + 2)
+            return std::nullopt;
+    }
+    return Color{channels[0], channels[1], channels[2], channels[3]};
+}
+void ApplyStyleTag(TextRunStyle& style, const StyleTag& tag) {
+    if (tag.name == "b") style.bold = true;
+    else if (tag.name == "i") style.italic = true;
+    else if (tag.name == "font") { if (!tag.value.empty()) style.font = std::string(tag.value); }
+    else if (tag.name == "color") { if (const auto color = ParseHexColor(tag.value)) style.color = color; }
+    else if (tag.name == "size") {
+        const bool relative = tag.value.ends_with('%');
+        const auto digits = relative ? tag.value.substr(0, tag.value.size() - 1) : tag.value;
+        float amount = 0.0f;
+        const auto result = std::from_chars(digits.data(), digits.data() + digits.size(), amount);
+        if (result.ec != std::errc{} || result.ptr != digits.data() + digits.size() ||
+            !std::isfinite(amount) || amount <= 0.0f)
+            return;
+        if (relative) style.scale *= std::clamp(amount / 100.0f, 0.1f, 4.0f);
+        else { style.size = std::clamp(static_cast<int>(std::lround(amount)), 1, 400); style.scale = 1.0f; }
+    }
+}
+}  // namespace
+
+std::size_t StyleTagLength(const std::string_view text) {
+    const auto tag = ReadStyleTag(text);
+    return tag ? tag->length : 0;
+}
+
+std::string StyledFontPath(const std::string_view path, const bool bold, const bool italic) {
+    std::string styled(path);
+    if (bold || italic) styled += bold && italic ? "|bi" : bold ? "|b" : "|i";
+    return styled;
+}
+
+RichText ParseRubyMarkup(std::string_view markup) {
+    RichText result;
+    // Open style tags in order; closing one reapplies the rest, so tags need
+    // not nest strictly.
+    std::vector<StyleTag> open;
+    TextRunStyle current;
+    bool styled = false;
+    std::size_t runStart = 0;
+    const auto restyle = [&] {
+        TextRunStyle next;
+        for (const auto& tag : open) ApplyStyleTag(next, tag);
+        if (next == current) return;
+        if (result.plain.size() > runStart)
+            result.runs.push_back({runStart, result.plain.size() - runStart, current});
+        runStart = result.plain.size();
+        current = std::move(next);
+    };
+    for (std::size_t index = 0; index < markup.size();) {
+        const auto rest = markup.substr(index);
+        if (rest.starts_with("[br]")) { result.plain += '\n'; index += 4; continue; }
+        if (rest.starts_with("[ruby=")) {
+            const auto header = markup.find(']', index);
+            const auto close = markup.find("[/ruby]", header == std::string_view::npos ? index : header);
+            if (header != std::string_view::npos && close != std::string_view::npos) {
+                const std::string reading(markup.substr(index + 6, header - index - 6));
+                const std::string base(markup.substr(header + 1, close - header - 1));
+                result.ruby.push_back({result.plain, base, reading});
+                result.plain += base;
+                index = close + 7;
+                continue;
+            }
+        }
+        if (const auto tag = ReadStyleTag(rest)) {
+            styled = true;
+            if (!tag->closing) open.push_back(*tag);
+            else if (const auto found = std::find_if(open.rbegin(), open.rend(),
+                         [&](const StyleTag& entry) { return entry.name == tag->name; });
+                     found != open.rend())
+                open.erase(std::next(found).base());
+            restyle();
+            index += tag->length;
+            continue;
+        }
+        if (markup[index] == '[') {
+            const auto close = markup.find(']', index);
+            if (close != std::string_view::npos) { index = close + 1; continue; }
+        }
+        result.plain.push_back(markup[index++]);
+    }
+    if (styled) {
+        if (result.plain.size() > runStart)
+            result.runs.push_back({runStart, result.plain.size() - runStart, current});
+        if (std::ranges::all_of(result.runs, [](const TextRun& run) { return run.style.Plain(); }))
+            result.runs.clear();
+    }
+    return result;
+}
 BidiLayoutInfo ResolveBidiDirections(const std::string_view text,
                                      const bool localeRightToLeft) {
     BidiLayoutInfo result;

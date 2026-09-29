@@ -450,6 +450,16 @@ void UIContext::ConfigureControlTree(scene::Node& node) {
                     return m_textRenderer->LayoutText(std::string(value), style.font,
                         size > 0 ? size : style.fontSize, wrap, orientation, rows);
                 });
+                control->SetTextRunsLayoutProvider([this](const Control& target,
+                    const std::string_view value, const std::vector<text::TextFontRun>& runs,
+                    const int wrap) {
+                    const auto& style = m_theme.Resolve(target);
+                    std::vector<text::TextFontRun> resolved = runs;
+                    for (auto& run : resolved)
+                        if (run.fontPath.empty() || run.fontPath.front() == '|')
+                            run.fontPath = style.font + run.fontPath;
+                    return m_textRenderer->LayoutTextRuns(std::string(value), resolved, wrap);
+                });
             }
             if (m_motionAudioSinkConfigured) {
                 if (auto* motion = dynamic_cast<MotionRect*>(control))

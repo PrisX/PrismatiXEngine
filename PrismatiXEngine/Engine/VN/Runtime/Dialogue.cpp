@@ -21,11 +21,29 @@ void Dialogue::SetText(const std::string& speaker, const std::string& text, int 
     // Split into observable grapheme/rich-text tokens, consuming inline
     // {w=ms} pauses. Ruby markup is one atomic token so an incomplete tag is
     // never exposed by the typewriter and then interpreted as visible text.
+    // Style tags take no typewriter step: an opening tag rides on the next
+    // glyph and a closing tag on the previous one, so revealed text always
+    // carries its style and never shows a half-typed tag.
     m_glyphs.clear();
     m_extraDelayMs.clear();
     std::uint64_t carry = 0;
+    std::string pendingTags;
+    const auto push = [&](std::string glyph) {
+        m_glyphs.push_back(std::move(pendingTags) + std::move(glyph));
+        pendingTags.clear();
+        m_extraDelayMs.push_back(carry);
+        carry = 0;
+    };
     std::size_t i = 0;
     while (i < text.size()) {
+        if (const std::size_t tag = text::StyleTagLength(std::string_view(text).substr(i))) {
+            if (text[i + 1] == '/' && !m_glyphs.empty() && pendingTags.empty())
+                m_glyphs.back() += text.substr(i, tag);
+            else
+                pendingTags += text.substr(i, tag);
+            i += tag;
+            continue;
+        }
         if (text[i] == '{') {
             const std::size_t close = text.find('}', i);
             if (close != std::string::npos && close > i + 3 &&
@@ -44,27 +62,26 @@ void Dialogue::SetText(const std::string& speaker, const std::string& text, int 
                                           : text.find("[/ruby]", header + 1);
             if (close != std::string::npos) {
                 const std::size_t len = close + 7 - i;
-                m_glyphs.push_back(text.substr(i, len));
-                m_extraDelayMs.push_back(carry);
-                carry = 0;
+                push(text.substr(i, len));
                 i += len;
                 continue;
             }
         }
         if (text.compare(i, 4, "[br]") == 0) {
-            m_glyphs.emplace_back("[br]");
-            m_extraDelayMs.push_back(carry);
-            carry = 0;
+            push("[br]");
             i += 4;
             continue;
         }
         const std::string_view remaining(text.data() + i, text.size() - i);
         const auto boundaries = text::GraphemeBoundaries(remaining);
         const std::size_t len = boundaries.size() > 1 ? boundaries[1] : 1;
-        m_glyphs.push_back(text.substr(i, len));
-        m_extraDelayMs.push_back(carry);
-        carry = 0;
+        push(text.substr(i, len));
         i += len;
+    }
+    // Tags after the last glyph (or a line of tags only) still belong to it.
+    if (!pendingTags.empty()) {
+        if (m_glyphs.empty()) push({});
+        else m_glyphs.back() += pendingTags;
     }
 
     for (const std::string& glyph : m_glyphs) {
