@@ -1254,6 +1254,13 @@ std::optional<Stage::CharacterPlacement> Stage::FindCharacterPlacement(
     return CharacterPlacement{actor.slot, actor.offsetX, actor.offsetY, actor.scale};
 }
 
+std::optional<std::string> Stage::CharacterImage(const std::string& name) const {
+    const auto found = m_actors.find(name);
+    if (found == m_actors.end() || found->second.exiting || found->second.imagePath.empty())
+        return std::nullopt;
+    return found->second.imagePath;
+}
+
 void Stage::SetCharacterAuto(const std::string& name, const std::string& imagePath,
                              const int slot, const float offsetX, const float offsetY,
                              const float scale) {

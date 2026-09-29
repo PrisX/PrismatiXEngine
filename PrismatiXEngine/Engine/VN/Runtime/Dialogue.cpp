@@ -140,6 +140,7 @@ void Dialogue::Relocalize(const std::string& speaker, const std::string& text) {
     SetText(speaker, text, m_speedMs, previous.textColor,
             previous.outlineColor, previous.voice, previous.effect);
     m_state.effectProgress = previous.effectProgress;
+    SetFace(previous.faceCharacter, previous.faceExpression);
     const int visible = previous.finished
                             ? m_state.totalChars
                             : std::clamp(static_cast<int>(

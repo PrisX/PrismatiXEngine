@@ -26,6 +26,8 @@ struct CatalogCharacterExpression {
     std::string name;
     std::vector<std::string> aliases;
     ResourceRefValue image;
+    // Message-window face; empty when the expression has none.
+    std::string facePath;
 };
 struct CatalogCharacter {
     std::string id;

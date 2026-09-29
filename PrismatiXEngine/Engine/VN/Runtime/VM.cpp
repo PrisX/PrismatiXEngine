@@ -990,6 +990,7 @@ void VM::HandleSay(const Command& cmd, const bool recordPlayback) {
 
     m_dialogue.SetText(speaker, text, speed, m_textColor, m_outlineColor, voice,
                        cmd.Get("effect", m_textEffect));
+    m_dialogue.SetFace(character, cmd.Get("face"));
     if (recordPlayback && !m_skipBacklogOnce) {
         // Use the dialogue's cleaned text: inline tags like {w=300} are stripped.
         m_backlog.Push(speaker, m_dialogue.State().fullText, voice, false,

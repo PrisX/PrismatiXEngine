@@ -183,7 +183,7 @@ private:
     enum class OptionBinding {
         None, TextSpeed, AutoWait, SkipUnread, MessageWindowOpacity, DimReadText,
         UiEffects, Font, KeepSkipAfterChoice, KeepAutoAfterChoice, CursorHideDelay,
-        DialogCursorWarp, DockPinned,
+        DialogCursorWarp, DockPinned, MessageFace,
     };
     struct OptionSpec {
         int def = 0;
@@ -208,6 +208,10 @@ private:
     int m_cursorHideDelayMs = 0;
     bool m_dialogCursorWarp = false;
     bool m_dockPinned = true;
+    // Message-window face: 0 never, 1 always, 2 only while the speaker is
+    // off stage (Artemis `mwface`).
+    int m_messageFaceMode = 1;
+    [[nodiscard]] std::string MessageFacePath() const;
     [[nodiscard]] int OptionValue(std::string_view name) const;
     bool SetOption(std::string_view name, int value);
     void ApplyOption(std::string_view name, int value);

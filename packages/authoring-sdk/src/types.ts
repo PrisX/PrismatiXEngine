@@ -171,6 +171,8 @@ export interface CharacterExpression {
   readonly name: string;
   readonly aliases: readonly string[];
   readonly assetId: string;
+  /** Face shown in the message window while this expression speaks. */
+  readonly faceAssetId?: string;
 }
 
 export interface CharacterDocument {

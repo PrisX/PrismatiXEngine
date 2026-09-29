@@ -190,6 +190,8 @@ Json DialogueToJson(const vn::DialogueSnapshot& snapshot) {
             {"outlineColor", ColorToJson(state.outlineColor)},
             {"effect", state.effect},
             {"effectProgress", state.effectProgress},
+            {"faceCharacter", state.faceCharacter},
+            {"faceExpression", state.faceExpression},
             {"speedMs", snapshot.speedMs}};
 }
 
@@ -797,6 +799,8 @@ vn::DialogueSnapshot DialogueFromJson(const Json& json) {
         ColorFromJson(json.value("outlineColor", Json::array()), state.outlineColor);
     state.effect = json.value("effect", std::string{});
     state.effectProgress = json.value("effectProgress", 0.0f);
+    state.faceCharacter = json.value("faceCharacter", std::string{});
+    state.faceExpression = json.value("faceExpression", std::string{});
     snapshot.speedMs = json.value("speedMs", 30);
     if (state.currentChar < 0 || state.totalChars < 0 || state.currentChar > state.totalChars ||
         snapshot.speedMs < 0) {

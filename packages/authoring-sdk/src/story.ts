@@ -856,30 +856,34 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       let position: string | undefined;
       let voice: string | undefined;
       let act: string | undefined;
+      let face: string | undefined;
       let optionsValid = true;
       for (const option of node.options ?? []) {
         const value = stringValue(option);
         const slot = option.name ?? (characterPosition(value) === undefined ? "expression" : "position");
-        if (value === undefined || !["expression", "position", "voice", "act"].includes(slot)) {
+        if (value === undefined || !["expression", "position", "voice", "act", "face"].includes(slot)) {
           diagnostics.push(error("PXSTORY1017", `Unknown speaker option: ${option.name ?? option.raw}`, option.span));
           optionsValid = false;
         } else if ((slot === "expression" && expression !== undefined) ||
                    (slot === "position" && position !== undefined) ||
                    (slot === "voice" && voice !== undefined) ||
-                   (slot === "act" && act !== undefined)) {
+                   (slot === "act" && act !== undefined) ||
+                   (slot === "face" && face !== undefined)) {
           diagnostics.push(error("PXSTORY1016", `Duplicate speaker option: ${slot}`, option.span));
           optionsValid = false;
         } else if (slot === "expression") expression = value;
         else if (slot === "position") position = value;
         else if (slot === "act") act = value;
+        else if (slot === "face") face = value;
         else voice = value;
       }
       if (!optionsValid) continue;
       const sourceId = claimSourceId(node);
-      if (expression !== undefined || position !== undefined || act !== undefined) {
+      if (expression !== undefined || position !== undefined || act !== undefined ||
+          face !== undefined) {
         if (literal || node.name === undefined) {
           diagnostics.push(error("PXSTORY1162",
-            "Speaker expression, position, and act options require a character alias", node.span));
+            "Speaker expression, position, act, and face options require a character alias", node.span));
           continue;
         }
       }
@@ -899,9 +903,29 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       }
       const resolvedVoice = voice === undefined ? undefined : resolveResource(node, voice, "voice");
       if (voice !== undefined && resolvedVoice === undefined) continue;
+      // `face=` shows another expression's face for this line only; `none`
+      // hides the face. Without it the face follows the Stage expression.
+      let faceArgument: string | undefined;
+      if (face !== undefined) {
+        const faceExpression = face === "none" ? undefined
+          : character?.expressions.find((value) => value.id === face || value.aliases.includes(face));
+        if (face !== "none" && character !== undefined && faceExpression === undefined) {
+          diagnostics.push(error("PXSTORY1114", `Unknown expression ${face} for ${node.name ?? ""}`, node.span));
+          continue;
+        }
+        if (faceExpression !== undefined && faceExpression.faceAssetId === undefined &&
+            character !== undefined)
+          diagnostics.push({...error("PXSTORY1163",
+            `Expression ${face} of ${node.name ?? ""} has no faceAssetId; no face is shown`, node.span),
+            severity: "warning"});
+        if (faceExpression?.faceAssetId !== undefined && context.resourceAssets !== undefined)
+          resolveResource(node, `asset:${faceExpression.faceAssetId}`);
+        faceArgument = face === "none" ? "none" : faceExpression?.id ?? face;
+      }
       checkTextMarkup(node, node.text ?? "");
       emit(node, "dialogue", {speaker: localizedName ?? character?.displayName ?? node.name ?? "", character: literal ? "" : character?.id ?? node.name ?? "", text: node.text ?? "",
-        ...(resolvedVoice === undefined ? {} : {voice: resolvedVoice})}, node.text ?? "", sourceId);
+        ...(resolvedVoice === undefined ? {} : {voice: resolvedVoice}),
+        ...(faceArgument === undefined ? {} : {face: faceArgument})}, node.text ?? "", sourceId);
       continue;
     }
     if (node.kind === "narration") {

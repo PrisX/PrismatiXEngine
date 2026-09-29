@@ -422,6 +422,7 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             Add(command, "speed", Argument(operation, "speed"));
             Add(command, "effect", Argument(operation, "effect"));
             Add(command, "voice", Argument(operation, "voice"));
+            Add(command, "face", Argument(operation, "face"));
             Add(command, "textId", operation.sourceId);
         } else if (operation.kind == "choiceOption") {
             command.type = "choice";

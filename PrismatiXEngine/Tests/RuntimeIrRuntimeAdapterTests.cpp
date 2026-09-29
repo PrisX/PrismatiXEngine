@@ -825,6 +825,23 @@ int main() {
         assert(clearDialogue.State().speaker.empty() && clearDialogue.State().fullText == "Wind.");
     }
 
+    // A line's face= reaches the dialogue state with its speaker.
+    {
+        px::sdk::RuntimeIrDocument faceDocument;
+        faceDocument.documentId = "face";
+        faceDocument.operations = {
+            Operation("faced", "dialogue", {{"speaker", "Alice"}, {"character", "alice-id"},
+                {"text", "Hi"}, {"face", "smile-id"}}),
+        };
+        const px::vn::Program faceProgram = px::CompileRuntimeIr(faceDocument);
+        assert(faceProgram.errors.empty() && faceProgram.code[0].Get("face") == "smile-id");
+        assert(clearVm.LoadCompiledProgram(faceProgram, "memory://face"));
+        assert(clearDialogue.State().faceCharacter == "alice-id" &&
+               clearDialogue.State().faceExpression == "smile-id");
+        clearDialogue.Relocalize("Alice", "Bonjour");
+        assert(clearDialogue.State().faceExpression == "smile-id");
+    }
+
     // [nvl], [adv] and [nvl.clear] lower to the Player's NVL commands.
     {
         px::sdk::RuntimeIrDocument nvlDocument;

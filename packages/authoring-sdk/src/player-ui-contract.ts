@@ -47,7 +47,7 @@ export const confirmableOperations = ["quickSave", "quickLoad", "save", "overwri
 /** Player behaviours a `player.options` entry may bind with `binds`. */
 export const optionBindings = ["textSpeed", "autoWait", "skipUnread", "messageWindowOpacity",
   "dimReadText", "uiEffects", "font", "keepSkipAfterChoice", "keepAutoAfterChoice",
-  "cursorHideDelay", "dialogCursorWarp", "dockPinned"] as const;
+  "cursorHideDelay", "dialogCursorWarp", "dockPinned", "messageFace"] as const;
 
 /** Dialog kinds the project's confirmations show; each publishes `dialog.kind.<kind>`. */
 export function playerDialogKinds(settings: Readonly<Record<string, JsonValue>>): string[] {
@@ -102,7 +102,7 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
       `sceneUnlocked.scene${String(index + 1).padStart(2, "0")}`),
     ...stems.map((stem) => `musicUnlocked.${stem}`),
     ...(input.profileVariables ?? []).map((name) => `profileFlags.${name}`),
-    "dialogue.nvl", "dialog.visible", "dialog.skipNext",
+    "dialogue.nvl", "dialogue.face", "dialog.visible", "dialog.skipNext",
     ...playerDialogKinds(settings).map((kind) => `dialog.kind.${kind}`),
     ...["master", "bgm", "se", "voice"].map((bus) => `settings.muted.${bus}`),
     ...(Array.isArray(voiceProfiles) ? voiceProfiles : [])

@@ -241,6 +241,9 @@ export function validateProjectCharacterResources(
         checkAssetReference(expression.thumbnailAssetId, source, characterId, expressionId,
           "thumbnailAssetId", `/expressions/${expressionIndex}/thumbnailAssetId`);
       }
+      if (expression.faceAssetId !== undefined)
+        checkAssetReference(expression.faceAssetId, source, characterId, expressionId,
+          "faceAssetId", `/expressions/${expressionIndex}/faceAssetId`);
       // portraitAssetId is currently authoring metadata. It is intentionally
       // not treated as a Runtime-required CharacterResources reference until
       // the native Runtime exposes portrait semantics.

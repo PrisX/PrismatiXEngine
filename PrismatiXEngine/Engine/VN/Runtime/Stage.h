@@ -179,6 +179,8 @@ public:
     };
     [[nodiscard]] std::optional<CharacterPlacement> FindCharacterPlacement(
         const std::string& name) const;
+    // The image a visible (not exiting) character shows, if any.
+    [[nodiscard]] std::optional<std::string> CharacterImage(const std::string& name) const;
     // Prefetches a plain sprite or the image layers referenced by a portrait
     // descriptor. Descriptors themselves are not image textures.
     void PreloadCharacter(const std::string& imagePath);

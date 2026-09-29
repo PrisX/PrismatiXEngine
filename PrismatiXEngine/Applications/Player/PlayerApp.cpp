@@ -3220,6 +3220,7 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
     view.effectProgress = m_session->Dialogue().State().effectProgress;
     view.choices = m_choiceTexts;
     view.nvlMode = m_nvlMode;
+    view.face = MessageFacePath();
     view.autoMode = m_autoMode;
     view.skipMode = m_skipMode;
     view.textScale=m_settings.textScale;view.reducedMotion=m_settings.reducedMotion;
@@ -3231,6 +3232,37 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
         view.nvlLines.back() = NvlLineText(m_session->Dialogue().State().speaker,
                                            m_session->Dialogue().State().displayText);
     return view;
+}
+
+// The speaker's face follows the expression shown on stage, else the
+// character's default; a line's `face=` overrides both.
+std::string PlayerApp::MessageFacePath() const {
+    const auto& state = m_session->Dialogue().State();
+    if (m_messageFaceMode == 0 || state.faceCharacter.empty() || state.faceExpression == "none")
+        return {};
+    const auto& catalog = m_catalog;
+    const vn::CatalogCharacter* character = catalog.FindCharacter(state.faceCharacter);
+    if (!character) return {};
+    const auto onStage = m_session->Stage().CharacterImage(character->id);
+    if (m_messageFaceMode == 2 && onStage) return {};
+    const auto byId = [&](const std::string& id) -> const vn::CatalogCharacterExpression* {
+        for (const auto& expression : character->expressions)
+            if (expression.id == id) return &expression;
+        return nullptr;
+    };
+    const vn::CatalogCharacterExpression* expression =
+        state.faceExpression.empty() ? nullptr : byId(state.faceExpression);
+    if (!expression && state.faceExpression.empty() && onStage) {
+        for (const auto& candidate : character->expressions) {
+            const std::string& image = candidate.image.lastKnownPath;
+            if (!image.empty() && (*onStage == image || onStage->ends_with("/" + image))) {
+                expression = &candidate;
+                break;
+            }
+        }
+    }
+    if (!expression && state.faceExpression.empty()) expression = byId(character->defaultExpression);
+    return expression ? expression->facePath : std::string{};
 }
 
 Status PlayerApp::DefineDialogData() {
@@ -3406,6 +3438,7 @@ std::optional<PlayerApp::OptionBinding> PlayerApp::ParseOptionBinding(const std:
         {"cursorHideDelay", OptionBinding::CursorHideDelay},
         {"dialogCursorWarp", OptionBinding::DialogCursorWarp},
         {"dockPinned", OptionBinding::DockPinned},
+        {"messageFace", OptionBinding::MessageFace},
     };
     for (const auto& [key, binding] : kBindings)
         if (key == name) return binding;
@@ -3451,6 +3484,7 @@ void PlayerApp::ApplyOption(const std::string_view name, const int value) {
         break;
     case OptionBinding::DialogCursorWarp: m_dialogCursorWarp = on; break;
     case OptionBinding::DockPinned: m_dockPinned = on; break;
+    case OptionBinding::MessageFace: m_messageFaceMode = std::clamp(bound, 0, 2); break;
     case OptionBinding::None: break;
     }
 }

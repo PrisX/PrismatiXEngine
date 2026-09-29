@@ -486,6 +486,27 @@ CharacterResourcesLoadResult LoadCharacterResources(
                 }
                 value.thumbnailAssetPath = thumbnail->second.path;
             }
+            bool faceValid = false;
+            value.faceAssetId = NullableUuid(expression, "faceAssetId", faceValid);
+            if (!faceValid) {
+                Add(result, "PXCHAR1026", "faceAssetId must be a UUID", source, id, value.id);
+                characterValid = false;
+                continue;
+            }
+            if (value.faceAssetId) {
+                const auto face = assets.find(*value.faceAssetId);
+                if (face == assets.end() ||
+                    (face->second.kind != "character" && face->second.kind != "cg" &&
+                     face->second.kind != "uiImage") ||
+                    !exists || !exists(face->second.path)) {
+                    Add(result, "PXCHAR1027",
+                        "expression face asset is missing: " + *value.faceAssetId,
+                        source, id, value.id);
+                    characterValid = false;
+                    continue;
+                }
+                value.faceAssetPath = face->second.path;
+            }
             character.expressions.push_back(std::move(value));
         }
         if (!characterValid) continue;

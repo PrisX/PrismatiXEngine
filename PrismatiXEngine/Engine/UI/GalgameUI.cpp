@@ -189,6 +189,7 @@ GalgameUI::GalgameUI() {
     (void)m_viewModel.Define("gallery.items", Variant(VariantArray{}), true);
     (void)m_viewModel.Define("dialogue.choices", Variant(VariantArray{}), true);
     (void)m_viewModel.Define("dialogue.nvl", Variant(false), true);
+    (void)m_viewModel.Define("dialogue.face", Variant(std::string{}), true);
     (void)m_viewModel.Define("backlog.entries", Variant(VariantArray{}), true);
     for (const char* property : {"fullscreen", "windowed", "skipReadOnly", "skipAll"})
         (void)m_viewModel.Define(std::string("settings.") + property,
@@ -1030,6 +1031,12 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     m_lastChapterTitle=p.chapterTitle;m_lastMusicTitle=p.musicTitle;
     if (m_nvlText) SetPresentationText(m_nvlText, NvlPageMarkup(p.nvlLines));
     (void)m_viewModel.Write("dialogue.nvl", Variant(p.nvlMode));
+    (void)m_viewModel.Write("dialogue.face", Variant(p.face));
+    if (auto* face = FindNamed<TextureRect>(m_context.Root(), "Face")) {
+        if (!p.face.empty() && face->Path() != p.face) (void)face->SetPath(p.face);
+        face->SetVisibility(!p.face.empty() && !p.nvlMode ? Visibility::Visible
+                                                           : Visibility::Collapsed);
+    }
     // NVL shows the page and hides the message window. A HUD with NVLPanel
     // and ADVPanel groups (the built-in one) switches those; an authored HUD
     // with its text controls side by side switches the controls themselves.

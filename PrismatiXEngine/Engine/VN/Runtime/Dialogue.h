@@ -20,6 +20,10 @@ struct DialogueState {
     Color outlineColor{ 0, 0, 0, 255 };
     std::string effect;
     float effectProgress = 0.0f;
+    // Whose face the message window shows, and an expression that overrides
+    // the one on stage for this line ("none" hides the face).
+    std::string faceCharacter;
+    std::string faceExpression;
 };
 
 struct DialogueSnapshot {
@@ -31,6 +35,10 @@ class Dialogue {
 public:
     void SetText(const std::string& speaker, const std::string& text, int speedMs, Color textColor,
                  Color outlineColor, const std::string& voice = "", const std::string& effect = "");
+    void SetFace(std::string character, std::string expression) {
+        m_state.faceCharacter = std::move(character);
+        m_state.faceExpression = std::move(expression);
+    }
     void Update(std::uint64_t nowMs);
     void ShowAll();
     // Rebuilds shaping/typewriter input for another locale while retaining the

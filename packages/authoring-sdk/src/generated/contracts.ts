@@ -352,6 +352,9 @@ export const contractSchemas: Readonly<Record<string, object>> = {
               },
               "type": "object"
             },
+            "faceAssetId": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
+            },
             "id": {
               "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
             },
@@ -2810,7 +2813,8 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                     "keepAutoAfterChoice",
                     "cursorHideDelay",
                     "dialogCursorWarp",
-                    "dockPinned"
+                    "dockPinned",
+                    "messageFace"
                   ]
                 },
                 "choices": {
@@ -4952,7 +4956,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
 
 export const contractHashes: Readonly<Record<string, string>> = {
   "animation.schema.json": "350ac0431be758205b25b425155a920cbf626f918d3be410950e2717c69b8ec8",
-  "character.schema.json": "6ee4b099e738ac42a283b82891619e33c3bbad73f3cc53e83512fc4e3bf700ad",
+  "character.schema.json": "feebb524fbe2c39dc1e9566c0fb9aeaed62b7f5309dda981edf6f320577aa106",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
   "effect.schema.json": "631dd0bce555dcbb3f849049978c9b635dd79848ac497adf292ca6e02468eee7",
   "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",
@@ -4960,7 +4964,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
   "motion.schema.json": "300c1bbdeb16abf4faa8014afa81800e8d72a1e7f1f6d06d309cf53ba2980f01",
   "portrait.schema.json": "658421c74dacc9d8247b64c6a00389c069b7516f57f863f399160161a1207f16",
-  "project.schema.json": "d1beb16dce5e718d8386832c3188b2a5f7aa66e91a047dba446e991231b50e31",
+  "project.schema.json": "2b101bd06d5093ca8548fc1ffded554119fc3160dbfb361398c5075207947f34",
   "runtime-ir.schema.json": "5513f68208aeaa2b5858c8b4ad95d7f0cddb20276e058fbddedfb6210fae094e",
   "save-migration.schema.json": "b66062b76495dfec0ec9dc1a9c7f0bfc1c49967a5748b2a48f7e186c9cf8533e",
   "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",

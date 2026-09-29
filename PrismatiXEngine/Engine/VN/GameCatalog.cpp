@@ -264,7 +264,8 @@ Status GameCatalog::LoadCharacterResources(
                 {.id = expression.id,
                  .name = expression.name,
                  .aliases = expression.aliases,
-                 .image = ResourceRefValue{*assetId, expression.assetPath}});
+                 .image = ResourceRefValue{*assetId, expression.assetPath},
+                 .facePath = expression.faceAssetPath.value_or(std::string{})});
         }
         characters.push_back(std::move(character));
     }

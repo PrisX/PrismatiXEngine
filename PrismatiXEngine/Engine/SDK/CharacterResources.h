@@ -27,6 +27,9 @@ struct CharacterResourceExpression {
     std::string assetPath;
     std::optional<std::string> thumbnailAssetId;
     std::optional<std::string> thumbnailAssetPath;
+    // Message-window face for this expression.
+    std::optional<std::string> faceAssetId;
+    std::optional<std::string> faceAssetPath;
 };
 
 struct CharacterResource {

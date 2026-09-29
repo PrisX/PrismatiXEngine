@@ -14,6 +14,8 @@ export type CharacterSourceExpression = Omit<CharacterExpression, "id" | "assetI
   readonly id?: string;
   readonly thumbnailAssetId?: string | null;
   readonly portraitAssetId?: string;
+  /** Message-window face image; lowered to `faceAssetId`. */
+  readonly facePath?: string;
 } & ({readonly assetPath: string; readonly assetId?: string} |
   {readonly assetId: string; readonly assetPath?: never});
 
@@ -250,6 +252,26 @@ function normalizeCharacterAuthoring(runtimeSource: ObjectValue,
             }
           }
           delete nextExpression.assetPath;
+        }
+        // `facePath` lowers to `faceAssetId` the same way, reusing a cataloged image.
+        const facePath = expression.facePath;
+        if (facePath !== undefined) {
+          if (typeof facePath !== "string" || !isSafeResourcePath(facePath) || facePath.includes(":")) {
+            diagnostics.push(issue("PXBUILD1067",
+              "Character expression facePath must be a safe project-relative resource path",
+              source, `expressions[${index}].facePath`));
+          } else if (expression.faceAssetId === undefined) {
+            const matching = (assetsBySource.get(facePath) ?? []).filter((asset) =>
+              ["character", "cg", "uiImage"].includes(String(asset.kind)));
+            const faceAssetId = matching[0]?.id ??
+              stableUuid(`${projectId}:character-face:${facePath}`);
+            if (matching.length === 0) {
+              addAsset({id: faceAssetId, kind: "character", source: facePath});
+              generatedAsset = true;
+            }
+            nextExpression.faceAssetId = faceAssetId;
+          }
+          delete nextExpression.facePath;
         }
         if (nextExpression.id === undefined) {
           const seed = Array.isArray(expression.aliases) && typeof expression.aliases[0] === "string"

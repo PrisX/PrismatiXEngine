@@ -362,3 +362,20 @@ test("nvl, nvl.clear and adv switch the text mode", () => {
   ]);
   assert.ok(codes("[nvl clear=true]\n").includes("PXSTORY1017"));
 });
+
+test("face= picks the message-window face for one line", () => {
+  const faced: CharacterDocument = {...yuki, expressions: [
+    {...yuki.expressions[0]!, faceAssetId: "66666666-6666-4666-8666-666666666666"},
+    yuki.expressions[1]!,
+  ]};
+  const ops = operations("@yuki[face=smile] やあ。\n@yuki[face=none] ……。\n@yuki 普通。\n",
+    {characters: [faced]});
+  assert.deepEqual(ops.map(({arguments: args}) => args.face), [
+    "22222222-2222-4222-8222-222222222222", "none", undefined]);
+  const warned = compileStory(parseStory("@yuki[face=angry] むっ。\n", "Story/short.pxstory"),
+    {documentId: "short", characters: [faced]});
+  assert.deepEqual(warned.diagnostics.map(({code, severity}) => [code, severity]),
+    [["PXSTORY1163", "warning"]]);
+  assert.ok(codes("@yuki[face=sad] x\n", {characters: [faced]}).includes("PXSTORY1114"));
+  assert.ok(codes("@\"A\"[face=smile] x\n").includes("PXSTORY1162"));
+});

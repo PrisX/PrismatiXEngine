@@ -190,6 +190,40 @@ message window and discards the page.
 - Every line also goes to the backlog as usual. The page and the mode are
   saved, restored after loading and rolled back with the line they belong to.
 
+### Message-window face
+
+An expression may name a face image, shown inside the message window while
+that character speaks. Give it in the `.pxcharacter` as `facePath` (lowered
+to a cataloged `faceAssetId`, like `assetPath`):
+
+```json
+{"name": "微笑", "aliases": ["smile"], "assetPath": "Assets/guide.png",
+ "facePath": "Assets/Faces/guide-smile.png"}
+```
+
+The HUD shows it in an image control named `Face` (hidden when there is no
+face and in NVL mode); `dialogue.face` holds the path for other bindings.
+
+```pxstory
+@guide 立ち絵がないので、既定の表情の顔。
+[show guide sad center]
+@guide 顔は立ち絵に合わせて sad になる。
+@guide[face=smile] この一行だけ smile の顔。
+@guide[face=none] この一行は顔なし。
+```
+
+- Without `face=` the face follows the expression shown on stage (the one
+  whose image the character is showing), else the character's default
+  expression. Expressions that share one image resolve to the first of them.
+- `face=` takes an expression alias for that line only, or `none`. An unknown
+  expression is `PXSTORY1114`; one without a face is warned about
+  (`PXSTORY1163`) and shows none.
+- A `player.options` entry with `"binds": "messageFace"` chooses when faces
+  appear, as the Artemis `mwface` setting does: 0 never, 1 always (the default
+  without such an option), 2 only while the speaker is not on stage.
+- The face is part of the line's dialogue state, so saves, loads and rollback
+  show the same face.
+
 ## Characters, backgrounds and sound
 
 The starter registers `guide`, its `smile` expression and an original background. Reuse these without hand-writing another UUID:
@@ -460,6 +494,7 @@ adds a millisecond; auto-reading waits 600 ms at 100 and 6.6 s at 0.
 | `cursorHideDelay` | hide an idle cursor after this many milliseconds; 0 never hides it |
 | `dialogCursorWarp` | non-zero: move the cursor onto the control named `DialogYes` when a dialog opens |
 | `dockPinned` | 0: the HUD toolbar (`hud.dockShown`) shows only while the pointer is in `player.dockArea` or a choice is up |
+| `messageFace` | 0: never show message-window faces; 2: only while the speaker is off stage; otherwise always |
 
 Behaviours no option binds keep their defaults (the toolbar is pinned, the
 cursor never hides). Two options binding one behaviour is warned about

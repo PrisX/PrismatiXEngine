@@ -55,6 +55,8 @@ struct DialoguePresentation {
     std::vector<std::string> choices;
     std::vector<std::string> nvlLines;
     bool nvlMode = false;
+    // Message-window face image; empty hides the Face control.
+    std::string face;
     bool autoMode = false;
     bool skipMode = false;
     float textScale = 1.0f;
