@@ -264,6 +264,7 @@ ctx.stage.camera({x: 4, y: -2, zoom: 1.1});
 ctx.stage.screenEffect("fade", 0.3);
 ctx.stage.customEffect("dream-tone", 0.65, {amount: 0.8, tint: [1, 0.5, 0, 1]});
 if (!ctx.stage.animate("yuki", {x: 100, duration: 250, ease: "outQuad"})) throw new Error("stage animation facade is not wired");
+if (!ctx.stage.animate("yuki", {rotation: 8, duration: 1000, loop: -1, yoyo: true})) throw new Error("looping stage animation is not wired");
 const animation = ctx.animation.play(ctx.animation.load("Animations/yuki.pxanim"));
 if (!ctx.animation.pause(animation) || !ctx.animation.resume(animation) ||
     !ctx.animation.seek(animation, 0.25) || ctx.animation.status(animation) !== "playing" ||

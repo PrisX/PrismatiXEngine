@@ -2600,6 +2600,20 @@ public:
                 if (const auto value = NumberProperty(values[1], "y")) { spec.hasY = true; spec.y = static_cast<float>(*value); }
                 if (const auto value = NumberProperty(values[1], "scale")) { spec.hasScale = true; spec.scale = static_cast<float>(*value); }
                 if (const auto value = NumberProperty(values[1], "alpha")) { spec.hasAlpha = true; spec.alpha = static_cast<float>(*value); }
+                if (const auto value = NumberProperty(values[1], "rotation")) { spec.hasRotation = true; spec.rotation = static_cast<float>(*value); }
+                if (const auto value = NumberProperty(values[1], "loop")) {
+                    if (!std::isfinite(*value) || std::trunc(*value) != *value ||
+                        (*value < 1.0 && *value != -1.0) || *value > 1'000'000.0)
+                        return JS_ThrowRangeError(context, "Animate loop must be -1 or a positive integer");
+                    spec.loop = static_cast<int>(*value);
+                }
+                if (const auto yoyo = JS_GetPropertyStr(context, values[1], "yoyo"); !JS_IsUndefined(yoyo)) {
+                    const int flag = JS_ToBool(context, yoyo);
+                    JS_FreeValue(context, yoyo);
+                    spec.yoyo = flag > 0;
+                } else {
+                    JS_FreeValue(context, yoyo);
+                }
                 if (const auto value = NumberProperty(values[1], "duration")) spec.durationMs = static_cast<int>(*value);
                 if (const auto value = StringProperty(values[1], "ease")) spec.ease = *value;
                 return JS_NewBool(context, services.stage->Animate(first, spec));

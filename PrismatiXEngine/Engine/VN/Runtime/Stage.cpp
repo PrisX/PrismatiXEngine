@@ -1036,6 +1036,7 @@ bool Stage::Animate(const std::string& target, const TweenSpec& spec) {
         tween.fromX = layer.x;
         tween.fromY = layer.y;
         tween.fromScale = layer.scale;
+        tween.fromRotation = layer.rotation;
         tween.fromAlpha = static_cast<float>(layer.alpha);
     } else {
         return false;
@@ -1147,8 +1148,17 @@ void Stage::UpdateTweens(float dt) {
     for (auto it = m_tweens.begin(); it != m_tweens.end();) {
         Tween& tween = *it;
         tween.elapsed += dt;
+        // A looping tween starts its next pass instead of finishing; yoyo
+        // passes alternate direction.
+        bool lastPass = tween.spec.loop >= 0 && tween.passes + 1 >= std::max(1, tween.spec.loop);
+        while (!lastPass && tween.elapsed >= tween.duration) {
+            tween.elapsed -= tween.duration;
+            ++tween.passes;
+            lastPass = tween.spec.loop >= 0 && tween.passes + 1 >= tween.spec.loop;
+        }
         const float raw = std::clamp(tween.elapsed / tween.duration, 0.0f, 1.0f);
-        const float t = support::Ease(tween.spec.ease, raw);
+        const bool backwards = tween.spec.yoyo && tween.passes % 2 == 1;
+        const float t = support::Ease(tween.spec.ease, backwards ? 1.0f - raw : raw);
         const TweenSpec& spec = tween.spec;
 
         bool alive = true;
@@ -1191,6 +1201,8 @@ void Stage::UpdateTweens(float dt) {
                     layer.scale = support::Lerp(tween.fromScale, spec.scale, t);
                     layer.scaleY = layer.scale;
                 }
+                if (spec.hasRotation)
+                    layer.rotation = support::Lerp(tween.fromRotation, spec.rotation, t);
                 if (spec.hasAlpha) {
                     layer.alpha = static_cast<std::uint8_t>(
                         std::clamp(support::Lerp(tween.fromAlpha, spec.alpha, t), 0.0f, 255.0f));
@@ -1200,13 +1212,14 @@ void Stage::UpdateTweens(float dt) {
                     node->second.transform.y = layer.y;
                     node->second.transform.scaleX = layer.scale;
                     node->second.transform.scaleY = layer.scaleY;
+                    node->second.transform.rotation = layer.rotation;
                     node->second.transform.opacity =
                         static_cast<float>(layer.alpha) / 255.0f;
                 }
             }
         }
 
-        if (!alive || raw >= 1.0f) {
+        if (!alive || (lastPass && raw >= 1.0f)) {
             const bool remove = alive && tween.removeWhenDone;
             const std::string name = tween.name;
             it = m_tweens.erase(it);
@@ -2361,7 +2374,8 @@ Stage::RuntimeState Stage::CaptureState() const {
         state.tweens.push_back(SavedTween{tween.isLayer, tween.name, tween.spec,
                                           tween.fromX, tween.fromY, tween.fromScale,
                                           tween.fromAlpha, tween.elapsed, tween.duration,
-                                          tween.removeWhenDone, tween.fromRotation});
+                                          tween.removeWhenDone, tween.fromRotation,
+                                          tween.passes});
     }
     return state;
 }
@@ -2481,7 +2495,8 @@ Status Stage::RestoreState(const RuntimeState& state) {
         m_tweens.push_back(Tween{saved.layer, saved.target, saved.spec, saved.fromX,
                                   saved.fromY, saved.fromScale, saved.fromAlpha,
                                   saved.elapsed, saved.duration,
-                                  saved.removeWhenDone, saved.fromRotation});
+                                  saved.removeWhenDone, saved.fromRotation,
+                                  std::max(0, saved.passes)});
     }
     if (state.ruleActive) {
         m_bgPath = state.ruleOldBackground;

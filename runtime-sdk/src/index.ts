@@ -47,8 +47,14 @@ export interface StageTweenSpec {
   readonly y?: number;
   readonly scale?: number;
   readonly alpha?: number;
+  /** Degrees, for characters and image layers. */
+  readonly rotation?: number;
   readonly duration?: number;
   readonly ease?: string;
+  /** Passes to play; -1 repeats until replaced. Saved with the Stage. */
+  readonly loop?: number;
+  /** Every other pass runs back to the start. */
+  readonly yoyo?: boolean;
 }
 
 export interface RouteTransitionOptions {

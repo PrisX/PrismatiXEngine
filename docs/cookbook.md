@@ -635,6 +635,14 @@ The runtime has checkpoint state for VM/Stage, routes/UI, backlog and Timeline; 
 
 Checkpoint restore can re-enter command/Action code to reconstruct a suspended continuation. Engine operations are checked against the journal; divergent replay can fail. Keep persistent state in providers, and do not rely on external side effects being exactly-once across load/rollback. Provider capture/restore/migrate callbacks must be deterministic and must not call engine operations.
 
+`ctx.stage.animate(target, spec)` tweens a character, an image layer, `$bg`
+or `$camera` (`x`, `y`, `scale`, `alpha`; `rotation` in degrees for characters
+and image layers) over `duration` milliseconds with `ease`. `loop` plays that
+many passes (`-1` until another tween replaces it) and `yoyo: true` runs every
+other pass back, so `{rotation: 8, duration: 1000, loop: -1, yoyo: true}`
+rocks a layer. Running tweens, their pass and direction are Stage state:
+saves, loads and rollback resume them where they were.
+
 Full-screen transition playback is transient: loading cancels it and restores the incoming Stage/UI state. Timeline playback has serialized state and await handling; this is not a promise to serialize GPU frames. Audio/video decoder positions and voice replay require the native journey tests for the specific boundary; do not promise sample-exact restoration merely because an asset and logical state are present. Test the specific restore boundaries your game depends on with the native journey tests.
 
 Runtime extensions run in QuickJS, without Node filesystem/process/network modules or unrestricted time/random/eval APIs. Installing a Node package does not make it a runtime dependency. TSX authoring is evaluated during the build in Node and is a separate trust boundary: only build projects and dependencies you trust. Runtime sandbox limits do not make arbitrary build-time project code safe.

@@ -963,6 +963,7 @@ Json TweenSpecToJson(const vn::Stage::TweenSpec& spec) {
             {"hasScale", spec.hasScale}, {"scale", spec.scale},
             {"hasAlpha", spec.hasAlpha}, {"alpha", spec.alpha},
             {"hasRotation", spec.hasRotation}, {"rotation", spec.rotation},
+            {"loop", spec.loop}, {"yoyo", spec.yoyo},
             {"durationMs", spec.durationMs}, {"ease", spec.ease}};
 }
 
@@ -974,6 +975,9 @@ vn::Stage::TweenSpec TweenSpecFromJson(const Json& json) {
     spec.hasScale = json.value("hasScale", false); spec.scale = json.value("scale", 1.0f);
     spec.hasAlpha = json.value("hasAlpha", false); spec.alpha = json.value("alpha", 255.0f);
     spec.hasRotation = json.value("hasRotation", false); spec.rotation = json.value("rotation", 0.0f);
+    spec.loop = std::clamp(json.value("loop", 1), -1, 1'000'000);
+    if (spec.loop == 0) spec.loop = 1;
+    spec.yoyo = json.value("yoyo", false);
     spec.durationMs = json.value("durationMs", 600); spec.ease = json.value("ease", std::string("outCubic"));
     return spec;
 }

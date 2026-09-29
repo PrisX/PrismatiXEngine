@@ -153,8 +153,11 @@ public:
         bool hasAlpha = false;
         float alpha = 255.0f;
         bool hasRotation = false;
-        float rotation = 0.0f;  // degrees; characters only
+        float rotation = 0.0f;  // degrees; characters and image layers
         int durationMs = 600;
+        // Plays this many times (-1 forever); yoyo runs every other pass back.
+        int loop = 1;
+        bool yoyo = false;
         std::string ease = "outCubic";  // see px::support::Ease for names
     };
     bool Animate(const std::string& target, const TweenSpec& spec);
@@ -290,6 +293,7 @@ public:
         float duration = 0.6f;
         bool removeWhenDone = false;
         float fromRotation = 0.0f;
+        int passes = 0;  // completed passes of a looping tween
     };
 
     struct SavedMotion {
@@ -443,6 +447,7 @@ private:
         // A fade-out that removes its layer when it completes.
         bool removeWhenDone = false;
         float fromRotation = 0.0f;
+        int passes = 0;
     };
 
     struct MotionPlayback {

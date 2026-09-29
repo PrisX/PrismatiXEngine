@@ -938,6 +938,42 @@ int main() {
                turnProgram.code[1].Get("rotate") == "180");
     }
 
+    // Tweens loop and yoyo, turn image layers, and keep their pass in saves.
+    {
+        clearStage.SetLayer("spinner", "Assets/cg.webp", 0.0f, 0.0f, 1.0f, 255, 3);
+        px::vn::Stage::TweenSpec swing;
+        swing.hasRotation = true;
+        swing.rotation = 10.0f;
+        swing.durationMs = 1000;
+        swing.ease = "linear";
+        swing.loop = 3;
+        swing.yoyo = true;
+        assert(clearStage.Animate("spinner", swing));
+        const auto rotationOf = [&] {
+            const auto state = clearStage.CaptureState();
+            const auto found = std::ranges::find(state.layers, std::string("spinner"),
+                                                 &px::vn::Stage::SavedLayer::name);
+            return found->rotation;
+        };
+        clearStage.Update(0.5f);
+        assert(std::abs(rotationOf() - 5.0f) < 1e-3f);
+        clearStage.Update(0.75f);   // pass 2 runs back: 1.25 s -> 7.5
+        assert(std::abs(rotationOf() - 7.5f) < 1e-3f);
+        const auto saved = clearStage.CaptureState();
+        assert(saved.tweens.size() == 1 && saved.tweens.front().passes == 1 &&
+               saved.tweens.front().spec.loop == 3 && saved.tweens.front().spec.yoyo);
+        assert(static_cast<bool>(clearStage.RestoreState(saved)));
+        clearStage.Update(1.0f);    // 2.25 s: third pass forward -> 2.5
+        assert(std::abs(rotationOf() - 2.5f) < 1e-3f);
+        clearStage.Update(1.0f);    // done after three passes, at the end: 10
+        assert(std::abs(rotationOf() - 10.0f) < 1e-3f && clearStage.CaptureState().tweens.empty());
+        swing.loop = -1;
+        assert(clearStage.Animate("spinner", swing));
+        clearStage.Update(100.25f);
+        assert(clearStage.CaptureState().tweens.size() == 1);
+        clearStage.ClearLayer("spinner");
+    }
+
     // [nvl], [adv] and [nvl.clear] lower to the Player's NVL commands.
     {
         px::sdk::RuntimeIrDocument nvlDocument;
