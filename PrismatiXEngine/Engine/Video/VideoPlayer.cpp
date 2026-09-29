@@ -38,6 +38,10 @@ constexpr int kOutputChannels = 2;
 constexpr double kAudioQueueLeadSeconds = 0.75;
 constexpr double kVideoEarlyToleranceSeconds = 0.015;
 constexpr int kCorruptPacketLimit = 32;
+// Compressed video held back while the decoded-frame queue is full, so the
+// demuxer can reach audio a file stores well behind its video.
+constexpr std::size_t kPendingVideoPacketCapacity = 1024;
+constexpr std::size_t kPendingVideoByteCapacity = 64u * 1024u * 1024u;
 
 struct DecodedVideoFrame {
     double pts = 0.0;
@@ -475,25 +479,71 @@ void VideoPlayer::DecodeFfmpegLoop() {
         }
     };
 
+    const auto decodeVideo = [&](AVPacket* source) {
+        bool ok = true;
+        int sent = avcodec_send_packet(state.videoCodec, source);
+        if (sent == AVERROR(EAGAIN)) {
+            ok = drainVideo();
+            if (ok) sent = avcodec_send_packet(state.videoCodec, source);
+        }
+        if (sent == AVERROR_INVALIDDATA) return true;
+        if (sent < 0) {
+            fail("video packet submission failed: " + AvError(sent));
+            return false;
+        }
+        return ok && drainVideo();
+    };
+    const auto videoHasRoom = [&] {
+        std::scoped_lock lock(state.mutex);
+        return state.videoQueue.size() < kVideoQueueCapacity;
+    };
+    // Packets wait here instead of blocking the demuxer on a full frame queue;
+    // `force` decodes them anyway, waiting for room as before.
+    std::deque<AVPacket*> pendingVideo;
+    std::size_t pendingVideoBytes = 0;
+    const auto decodePending = [&](const bool force) {
+        while (!pendingVideo.empty() && !state.stopRequested.load() &&
+               (force || videoHasRoom())) {
+            AVPacket* next = pendingVideo.front();
+            pendingVideo.pop_front();
+            pendingVideoBytes -= static_cast<std::size_t>(next->size);
+            const bool ok = decodeVideo(next);
+            av_packet_free(&next);
+            if (!ok) return false;
+        }
+        return true;
+    };
+
     int corruptPackets = 0;
     while (!state.stopRequested.load()) {
+        if (!decodePending(false)) break;
         const int read = av_read_frame(state.format, packet);
         if (read >= 0) {
             corruptPackets = 0;
             bool ok = true;
             if (packet->stream_index == state.videoStream) {
-                int sent = avcodec_send_packet(state.videoCodec, packet);
-                if (sent == AVERROR(EAGAIN)) {
-                    ok = drainVideo();
-                    if (ok) sent = avcodec_send_packet(state.videoCodec, packet);
-                }
-                if (sent == AVERROR_INVALIDDATA) {
-                    ok = true;
-                } else if (sent < 0) {
-                    fail("video packet submission failed: " + AvError(sent));
-                    ok = false;
-                } else if (ok) {
-                    ok = drainVideo();
+                if (pendingVideo.empty() && videoHasRoom()) {
+                    ok = decodeVideo(packet);
+                } else {
+                    while (ok && !pendingVideo.empty() &&
+                           (pendingVideo.size() >= kPendingVideoPacketCapacity ||
+                            pendingVideoBytes + static_cast<std::size_t>(packet->size) >
+                                kPendingVideoByteCapacity)) {
+                        AVPacket* next = pendingVideo.front();
+                        pendingVideo.pop_front();
+                        pendingVideoBytes -= static_cast<std::size_t>(next->size);
+                        ok = decodeVideo(next);
+                        av_packet_free(&next);
+                    }
+                    AVPacket* held = ok ? av_packet_alloc() : nullptr;
+                    if (held) {
+                        av_packet_move_ref(held, packet);
+                        pendingVideoBytes += static_cast<std::size_t>(held->size);
+                        pendingVideo.push_back(held);
+                    } else if (ok) {
+                        fail("FFmpeg packet allocation failed");
+                        ok = false;
+                    }
                 }
             } else if (packet->stream_index == state.audioStream &&
                        state.audioCodec) {
@@ -523,6 +573,7 @@ void VideoPlayer::DecodeFfmpegLoop() {
             break;
         }
         if (read == AVERROR_EXIT || state.stopRequested.load()) break;
+        if (!decodePending(true)) break;
         (void)avcodec_send_packet(state.videoCodec, nullptr);
         if (!drainVideo()) break;
         if (state.audioCodec) {
@@ -531,6 +582,7 @@ void VideoPlayer::DecodeFfmpegLoop() {
         }
         break;
     }
+    for (AVPacket* held : pendingVideo) av_packet_free(&held);
     av_packet_free(&packet);
     state.decoderFinished.store(true);
     state.queueChanged.notify_all();
@@ -579,7 +631,13 @@ void VideoPlayer::UpdateFfmpeg(const float dt) {
         const double audioClock =
             state.audioSubmittedEndPts -
             static_cast<double>(queuedAudioBytes) / bytesPerSecond;
-        if (std::isfinite(audioClock)) masterClock = std::max(0.0, audioClock);
+        // The device is the clock while it has samples. When it runs dry,
+        // wall time carries on, so a picture never waits on audio that has
+        // not been decoded yet.
+        if (queuedAudioBytes > 0 && std::isfinite(audioClock)) {
+            masterClock = std::max(0.0, audioClock);
+            m_clock = masterClock;
+        }
     }
 
     std::vector<std::uint8_t> latestFrame;
