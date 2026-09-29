@@ -43,6 +43,26 @@ namespace px::player {
 PlayerApp::~PlayerApp() = default;
 
 namespace {
+// A window of the requested size, shrunk (keeping its shape) to fit the
+// monitor's usable area with room for the title bar, and centred. A window
+// as large as the monitor would read as borderless fullscreen.
+bool ShowWindowed(SDL_Window* window, int width, int height) {
+    width = std::max(320, width);
+    height = std::max(180, height);
+    SDL_Rect usable{};
+    if (const SDL_DisplayID display = SDL_GetDisplayForWindow(window);
+        display != 0 && SDL_GetDisplayUsableBounds(display, &usable) &&
+        usable.w > 0 && usable.h > 0) {
+        const double scale = std::min({1.0, usable.w * 0.9 / width, usable.h * 0.9 / height});
+        width = static_cast<int>(width * scale);
+        height = static_cast<int>(height * scale);
+    }
+    SDL_RestoreWindow(window);
+    SDL_SetWindowSize(window, width, height);
+    SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    return SDL_SyncWindow(window);
+}
+
 const std::string kSaveKey = "prismatix-demo-secret";
 constexpr int kAutoSaveSlot = -1;
 constexpr std::string_view kUIRouteE2ERoutes[] = {
@@ -885,11 +905,8 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             !SDL_SyncWindow(m_runtime.GetWindow().Handle()))
             PX_LOG_WARN("Player startup fullscreen request failed: {}", SDL_GetError());
     } else if (m_settings.windowWidth >= 320 && m_settings.windowHeight >= 180) {
-        SDL_SetWindowSize(m_runtime.GetWindow().Handle(), m_settings.windowWidth,
-                          m_settings.windowHeight);
-        SDL_SetWindowPosition(m_runtime.GetWindow().Handle(), SDL_WINDOWPOS_CENTERED,
-                              SDL_WINDOWPOS_CENTERED);
-        if (!SDL_SyncWindow(m_runtime.GetWindow().Handle()))
+        if (!ShowWindowed(m_runtime.GetWindow().Handle(), m_settings.windowWidth,
+                          m_settings.windowHeight))
             PX_LOG_WARN("Player startup windowed size request failed: {}", SDL_GetError());
     }
 
@@ -2392,11 +2409,7 @@ bool PlayerApp::ApplyFullscreenSetting(const bool fullscreen) {
         // SDL restores the size from before entering fullscreen. The Player is
         // initially created at the game's logical resolution, so that size can
         // itself cover the entire monitor. Restore the saved windowed size.
-        SDL_SetWindowSize(window, std::max(320, m_settings.windowWidth),
-                          std::max(180, m_settings.windowHeight));
-        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED,
-                              SDL_WINDOWPOS_CENTERED);
-        if (!SDL_SyncWindow(window)) {
+        if (!ShowWindowed(window, m_settings.windowWidth, m_settings.windowHeight)) {
             PX_LOG_WARN("Player windowed size change rejected: {}", SDL_GetError());
             return false;
         }
