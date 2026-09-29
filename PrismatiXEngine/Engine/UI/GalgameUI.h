@@ -265,6 +265,9 @@ private:
     // (declared in player.uiData) follows it, for tooltips.
     std::string m_hoverName;
     std::set<std::string, std::less<>> m_hoverDeclared;
+    // Paths the host added with DefineUiData. A checkpoint is validated in a
+    // detached copy of this UI, which needs them to bind its screens.
+    std::vector<std::string> m_hostData;
     void PublishHover();
     Control* m_choiceList = nullptr;
     ChoiceLayout m_choiceLayout;

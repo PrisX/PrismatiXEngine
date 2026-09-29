@@ -220,6 +220,8 @@ GalgameUI::GalgameUI() {
     for(const auto& command:commands)(void)RegisterActionCommand(command);
     (void)RegisterActionCommand("save.slot", "slot");
     (void)RegisterActionCommand("load.slot", "slot");
+    // An authored ChoiceList item passes its row as the index argument.
+    (void)RegisterActionCommand("choice.select", "index");
     (void)RegisterActionCommand("saveLoad.page", "argument");
     (void)RegisterActionCommand("cg.view", "resource");
     // Authored backlog entries pass their key as the index argument.
@@ -279,7 +281,9 @@ Status GalgameUI::SetDefaultFont(std::string path) {
 Status GalgameUI::DefineUiData(std::string path, Variant value) {
     constexpr std::string_view hover = "hover.";
     if (path.starts_with(hover)) m_hoverDeclared.insert(path.substr(hover.size()));
-    return m_viewModel.Define(std::move(path), std::move(value), true);
+    const Status defined = m_viewModel.Define(path, std::move(value), true);
+    if (defined) m_hostData.push_back(std::move(path));
+    return defined;
 }
 
 Status GalgameUI::UpdateUiData(const std::string_view path,
@@ -625,6 +629,9 @@ Status GalgameUI::ValidateRuntimeState(const UIRuntimeState& state) {
     candidate.m_studioAssetResolver = m_studioAssetResolver;
     candidate.m_studioComponentLoader = m_studioComponentLoader;
     candidate.m_studioMotionLoader = m_studioMotionLoader;
+    for (const auto& path : m_hostData)
+        if (auto value = m_viewModel.Read(path))
+            (void)candidate.DefineUiData(path, value.TakeValue());
     if (const Status installed = candidate.InstallCheckpointRoute(state.surfaceId);
         !installed)
         return installed;
