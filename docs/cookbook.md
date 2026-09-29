@@ -122,6 +122,46 @@ invalid size or colour is `PXSTORY1181` and a font path outside the project is
 `PXSTORY1183`. Styled lines wrap at Unicode line-break opportunities and are
 laid out left to right; right-to-left scripts keep to unstyled text.
 
+### Story macros
+
+A macro names a block of Story lines that repeats with small changes. It is
+expanded where it is called when the Story compiles, so it needs no
+JavaScript (use a `.pxextension` command when the Player itself must do
+something new):
+
+```pxstory
+[macro scream who line volume=150%]
+[se se9022]
+[shake 1320ms 6 target=window]
+@%who [size=%volume]%line[/size]
+[endmacro]
+
+[scream 直哉 「ぎゃああああ」]
+[scream who=藍 line=「うるさい！」 volume=200%]
+```
+
+- `[macro name ...]` lists parameters: a bare word is required, `name=value`
+  has a default. The body runs to the next line that is exactly
+  `[endmacro]`; a missing one is `PXSTORY1190`.
+- A call passes values in order or by name. In the body `%param` is replaced
+  by the value as written and `%%` by `%`; any other `%` is left alone. A value
+  used inside a command argument should be quoted there if it may contain
+  spaces (`[say speaker=%who text="%line"]`).
+- A macro may call other macros; a call cycle is `PXSTORY1194`. Its name may
+  not be a built-in command, an extension command or an inline text tag
+  (`PXSTORY1191`), parameters must be unique identifiers (`PXSTORY1192`), and
+  a call with a missing, extra or unknown value is `PXSTORY1195`. A body cannot
+  hold labels, `[id]` or `[macro]` (`PXSTORY1193`): every call would repeat
+  them.
+- Definitions are local to their Story file and may come after their calls.
+- Diagnostics and the source map point at the call; a syntax error inside the
+  expanded body names the macro and its body line in the diagnostic details.
+- Each expanded operation takes the call's identity plus its line in the body
+  (`<call>/m0`, `<call>/m1`, ...). An `[id]` before the call or the file's
+  `.pxids.json` entry for it pins the whole expansion, so saves and read-text
+  marks survive edits elsewhere. Changing a macro's body renumbers the lines
+  of every call, like editing those lines in place.
+
 ## Characters, backgrounds and sound
 
 The starter registers `guide`, its `smile` expression and an original background. Reuse these without hand-writing another UUID:

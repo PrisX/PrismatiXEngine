@@ -1,6 +1,7 @@
 import {canonicalJson} from "./canonical-json.js";
 import {fnv1a64 as stableId} from "./fnv1a64.js";
 import {assetIdFromReference, canonicalResourceReference} from "./resources.js";
+import {expandStoryMacros} from "./story-macros.js";
 import {inspectTextMarkup} from "./story-text-markup.js";
 import type {StoryAssetCategory} from "./story-assets.js";
 import {parseStoryExpression} from "./story-expression.js";
@@ -416,14 +417,30 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
         continue;
       }
       const [command, ...argumentTokens] = tokenized.tokens;
+      const parsedArguments = parseArguments(path, line, argumentTokens, diagnostics,
+        startColumn + 1 + leadingWhitespace, command!.raw !== "if");
+      if (command!.raw === "macro") {
+        // The body stays source text; each call parses it after substitution.
+        let end = lineIndex + 1;
+        while (end < lines.length && lines[end]!.text.trim() !== "[endmacro]") end += 1;
+        if (end >= lines.length)
+          diagnostics.push(error("PXSTORY1190", "macro is missing its [endmacro]", lineSpan));
+        const body = lines.slice(lineIndex + 1, end).map((bodyLine) => bodyLine.text).join("\n");
+        const last = lines[Math.min(end, lines.length - 1)]!;
+        nodes.push({id, kind: "command", raw, name: "macro", arguments: parsedArguments, text: body,
+          span: {path, start: lineSpan.start,
+            end: span(path, last, last.text.length + 1, last.text.length + 1).end}});
+        activeSpeaker = undefined;
+        lineIndex = end;
+        continue;
+      }
       nodes.push({
         id,
         kind: "command",
         span: lineSpan,
         raw,
         name: command!.raw,
-        arguments: parseArguments(path, line, argumentTokens, diagnostics,
-          startColumn + 1 + leadingWhitespace, command!.raw !== "if"),
+        arguments: parsedArguments,
       });
       continue;
     }
@@ -557,8 +574,18 @@ function normalizeExtensionArguments(node: StoryNode, descriptor: ExtensionComma
 
 export function compileStory(document: StoryDocument, context: StoryCompileContext): StoryCompileResult {
   const diagnostics = [...document.diagnostics];
+  const expansion = expandStoryMacros(document, {
+    documentId: context.documentId,
+    // Inline text tags too: a line opening with one is prose, not a call.
+    reserved: new Set([...builtinStoryCommands, ...Object.keys(builtinNamedArguments),
+      "b", "i", "br", "font", "size", "color", "ruby",
+      ...(context.extensions ?? []).flatMap((extension) => extension.commands.map((command) => command.id))]),
+    parse: parseStory,
+  });
+  diagnostics.push(...expansion.diagnostics);
+  const nodes = expansion.nodes;
   const labels = new Map<string, StoryNode>();
-  for (const node of document.nodes) {
+  for (const node of nodes) {
     if (node.kind !== "label" || node.name === undefined) continue;
     if (labels.has(node.name)) diagnostics.push(error("PXSTORY1101", `Duplicate label: ${node.name}`, node.span));
     else labels.set(node.name, node);
@@ -681,7 +708,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
 
   // Layers an [image] in this document shows; [act image=...] warns on others.
   const imageNames = new Set<string>();
-  for (const node of document.nodes) {
+  for (const node of nodes) {
     if (node.kind !== "command" || node.name !== "image") continue;
     const shown = argumentMap(node);
     const name = stringValue(shown.get("name") ?? shown.get("$0"));
@@ -803,7 +830,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     };
   };
 
-  for (const node of document.nodes) {
+  for (const node of nodes) {
     if (node.kind === "comment" || node.kind === "speaker") continue;
     if (node.kind === "label") {
       if (node.name !== undefined) emit(node, "label", {target: node.name});
@@ -1503,8 +1530,10 @@ export interface StoryCommandCompletion {
   readonly parameters: readonly {readonly name: string; readonly required: boolean; readonly values?: readonly JsonValue[]}[];
 }
 
+const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "macro", "endmacro"];
+
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
-  const builtins = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop"];
+  const builtins = builtinStoryCommands;
   const builtinParameters: Readonly<Record<string, StoryCommandCompletion["parameters"]>> = {
     id: [{name:"value", required:true}],
     chapter: [{name:"title", required:true}],

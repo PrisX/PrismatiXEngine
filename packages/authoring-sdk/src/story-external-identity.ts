@@ -72,7 +72,9 @@ export interface StoryIdentityRemovedOperation {
 
 function observable(node: StoryNode): boolean {
   if (node.kind === "comment" || node.kind === "speaker") return false;
-  return node.kind !== "command" || (node.name !== "id" && node.name !== "choice.wait");
+  // A [macro] definition emits nothing itself; its calls are the operations.
+  return node.kind !== "command" ||
+    (node.name !== "id" && node.name !== "choice.wait" && node.name !== "macro");
 }
 
 function fingerprint(node: StoryNode): string {

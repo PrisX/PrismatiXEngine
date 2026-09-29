@@ -265,3 +265,72 @@ test("inline text style mistakes are reported on their line", () => {
   assert.deepEqual(diagnostics("@a [font=../x.otf]x[/font]\n"), [["PXSTORY1183", "error"]]);
   assert.deepEqual(diagnostics("@a [b]x[/b][br][size=40]y[/size]\n"), []);
 });
+
+test("macros expand at the call with parameters and defaults", () => {
+  const source = [
+    "[macro scream who line volume=150%]",
+    "[shake 300ms 6 target=window]",
+    "@%who [size=%volume]%line[/size]",
+    "[endmacro]",
+    "*top",
+    "[scream 直哉 「ぎゃあ」]",
+    "[scream who=藍 line=「100%本気」 volume=200%]",
+    "",
+  ].join("\n");
+  const document = parseStory(source, "Story/short.pxstory");
+  const result = compileStory(document, {documentId: "short"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const ops = result.runtimeIr!.operations;
+  assert.deepEqual(ops.map(({kind, arguments: args}) => [kind, args.speaker ?? "", args.text ?? ""]), [
+    ["label", "", ""],
+    ["shake", "", ""],
+    ["dialogue", "直哉", "[size=150%]「ぎゃあ」[/size]"],
+    ["shake", "", ""],
+    ["dialogue", "藍", "[size=200%]「100%本気」[/size]"],
+  ]);
+  // Source maps point at the call; ids derive from the call and the body line.
+  const call = document.nodes.find((node) => node.name === "scream")!;
+  assert.equal(result.sourceMap!.mappings[2]!.startLine, 6);
+  assert.equal(ops[1]!.sourceId, `${call.id}/m0`);
+  assert.equal(ops[2]!.sourceId, `${call.id}/m1`);
+  assert.equal(new Set(ops.map(({sourceId}) => sourceId)).size, ops.length);
+});
+
+test("an [id] before a macro call pins its whole expansion", () => {
+  const source = "[macro pair]\n一行目\n二行目\n[endmacro]\n[id intro]\n[pair]\n";
+  const ops = operations(source);
+  assert.deepEqual(ops.map(({kind}) => kind), ["narration", "narration"]);
+  assert.match(ops[0]!.sourceId, /^story-[0-9a-f]+\/m0$/u);
+  // Editing prose outside the macro keeps the pinned ids.
+  const moved = operations(`前置き。\n${source}`);
+  assert.deepEqual(moved.slice(1).map(({sourceId}) => sourceId), ops.map(({sourceId}) => sourceId));
+});
+
+test("macro mistakes are reported at the definition or the call", () => {
+  assert.ok(codes("[macro a]\nx\n").includes("PXSTORY1190"));
+  assert.ok(codes("[endmacro]\n").includes("PXSTORY1190"));
+  assert.ok(codes("[macro bg]\nx\n[endmacro]\n").includes("PXSTORY1191"));
+  assert.ok(codes("[macro a]\nx\n[endmacro]\n[macro a]\ny\n[endmacro]\n").includes("PXSTORY1191"));
+  assert.ok(codes("[macro a b b]\nx\n[endmacro]\n").includes("PXSTORY1192"));
+  assert.ok(codes("[macro a]\n*here\n[endmacro]\n").includes("PXSTORY1193"));
+  assert.ok(codes("[macro a]\n[a]\n[endmacro]\n[a]\n").includes("PXSTORY1194"));
+  assert.ok(codes("[macro ping]\n[pong]\n[endmacro]\n[macro pong]\n[ping]\n[endmacro]\n[ping]\n")
+    .includes("PXSTORY1194"));
+  assert.ok(codes("[macro b]\nx\n[endmacro]\n").includes("PXSTORY1191"));
+  assert.ok(codes("[macro a who]\n@%who hi\n[endmacro]\n[a]\n").includes("PXSTORY1195"));
+  assert.ok(codes("[macro a]\nx\n[endmacro]\n[a extra]\n").includes("PXSTORY1195"));
+  assert.ok(codes("[macro a]\nx\n[endmacro]\n[a who=x]\n").includes("PXSTORY1195"));
+  // Errors inside the expanded body land on the call.
+  const result = compileStory(parseStory("[macro a who]\n[act %who moonwalk]\n[endmacro]\n\n[a yuki]\n",
+    "Story/short.pxstory"), {documentId: "short"});
+  const bad = result.diagnostics.find(({severity}) => severity === "error")!;
+  assert.equal(bad.span?.start.line, 5);
+});
+
+test("nested macros expand with distinct ids and are not identity map entries", () => {
+  const source = "[macro inner x]\n%x\n[endmacro]\n[macro outer]\n[inner 一]\n[inner 二]\n[endmacro]\n[outer]\n[outer]\n";
+  const ops = operations(source);
+  assert.deepEqual(ops.map(({text}) => text), ["一", "二", "一", "二"]);
+  assert.equal(new Set(ops.map(({sourceId}) => sourceId)).size, 4);
+  assert.match(ops[1]!.sourceId, /\/m1\/m0$/u);
+});
