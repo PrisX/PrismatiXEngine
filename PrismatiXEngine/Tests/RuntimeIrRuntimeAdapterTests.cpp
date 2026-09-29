@@ -880,6 +880,22 @@ int main() {
                quakeProgram.code[0].Get("count") == "10" && quakeProgram.code[0].Get("ms") == "630");
     }
 
+    // wiggle stretches x and y in anti-phase (ウゴウゴ: x 100->95, y 100->105).
+    {
+        const auto wiggle = px::vn::ExpandActorAction({"wiggle", 0.0f, 100, 1, ""});
+        assert(wiggle && !wiggle->keys.empty());
+        const auto& first = wiggle->keys.front().to;
+        assert(std::abs(first.scale - 0.95f) < 1e-5f &&
+               std::abs(first.scale * first.scaleY - 1.05f) < 1e-5f);
+        const auto& rest = wiggle->keys.back().to;
+        assert(rest.scale == 1.0f && rest.scaleY == 1.0f);
+        bool finished = false;
+        const auto mid = px::vn::SampleActorAction(*wiggle, 0.05, finished);
+        assert(mid.scale < 1.0f && mid.scale * mid.scaleY > 1.0f);
+        const auto nod = px::vn::ExpandActorAction({"nod", 0.0f, 0, 1, ""});
+        assert(nod && nod->keys.front().to.scaleY == 1.0f);
+    }
+
     // [nvl], [adv] and [nvl.clear] lower to the Player's NVL commands.
     {
         px::sdk::RuntimeIrDocument nvlDocument;

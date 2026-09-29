@@ -261,6 +261,8 @@ for `startle`/`wiggle`, degrees for `sway`), `time` is one segment (at most
 600s), `loop=-1` repeats until `[act alias stop]`, and `ease` is `linear`,
 `in`, `out` or `inout`. A looping action is saved and resumes after loading.
 The same presets play on the background and image layers (see below).
+`wiggle` stretches in anti-phase like Artemis ウゴウゴ: while the width
+shrinks by `size` percent the height grows by the same amount, and back.
 
 `[se.stop fade=500ms]` stops every playing sound effect, `[se.stop channel=2]`
 only channel 2 (see below), and `[voice.stop]` stops the current voice.

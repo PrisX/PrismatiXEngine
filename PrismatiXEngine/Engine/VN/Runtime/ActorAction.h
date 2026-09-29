@@ -47,6 +47,9 @@ struct ActorPose {
     float y = 0.0f;
     float scale = 1.0f;
     float rotation = 0.0f;
+    // Vertical scale relative to `scale` (`wiggle` stretches x and y in
+    // anti-phase); 1 keeps the pose uniform.
+    float scaleY = 1.0f;
 };
 
 struct ActorActionKey {

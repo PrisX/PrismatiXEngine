@@ -334,10 +334,13 @@ namespace {
 graphics::AffineTransform2D ActionTransform(const ActorPose& pose, const float pivotX,
                                             const float pivotY) {
     const float radians = pose.rotation * 0.017453292519943295f;
+    const float scaleY = pose.scale * pose.scaleY;
     const float a = std::cos(radians) * pose.scale;
     const float b = std::sin(radians) * pose.scale;
-    return {a, b, -b, a, pivotX + pose.x - (a * pivotX - b * pivotY),
-            pivotY + pose.y - (b * pivotX + a * pivotY)};
+    const float c = -std::sin(radians) * scaleY;
+    const float d = std::cos(radians) * scaleY;
+    return {a, b, c, d, pivotX + pose.x - (a * pivotX + c * pivotY),
+            pivotY + pose.y - (b * pivotX + d * pivotY)};
 }
 
 }  // namespace
@@ -1923,7 +1926,7 @@ void Stage::Render() {
             {world.a, world.b, world.c, world.d, world.tx, world.ty});
         // Action rotation pivots at the sprite's feet, like a swaying body.
         m_renderer.PushTransform({local.x + local.w * 0.5f, local.y + local.h},
-                                 {1.0f, 1.0f}, actor.action.pose.rotation);
+                                 {1.0f, actor.action.pose.scaleY}, actor.action.pose.rotation);
         const float combinedAlpha=std::clamp(
             alpha*actor.effectAlpha*world.opacity,0.0f,255.0f);
         if(portrait){

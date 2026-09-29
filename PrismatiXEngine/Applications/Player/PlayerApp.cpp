@@ -4374,7 +4374,8 @@ void PlayerApp::RenderUIWithScripts(const float opacity) {
         }
     }
     const bool shaking = shakeX != 0.0f || shakeY != 0.0f || pose.x != 0.0f ||
-                         pose.y != 0.0f || pose.scale != 1.0f || pose.rotation != 0.0f;
+                         pose.y != 0.0f || pose.scale != 1.0f || pose.rotation != 0.0f ||
+                         pose.scaleY != 1.0f;
     if (shaking) {
         // Actions scale and rotate about the bottom centre, where the message
         // window sits.
@@ -4385,9 +4386,11 @@ void PlayerApp::RenderUIWithScripts(const float opacity) {
         const float radians = pose.rotation * 0.017453292519943295f;
         const float a = std::cos(radians) * pose.scale;
         const float b = std::sin(radians) * pose.scale;
+        const float c = -std::sin(radians) * pose.scale * pose.scaleY;
+        const float d = std::cos(radians) * pose.scale * pose.scaleY;
         m_runtime.Renderer().PushAffineTransform(
-            {a, b, -b, a, pivotX - (a * pivotX - b * pivotY) + pose.x + shakeX,
-             pivotY - (b * pivotX + a * pivotY) + pose.y + shakeY});
+            {a, b, c, d, pivotX - (a * pivotX + c * pivotY) + pose.x + shakeX,
+             pivotY - (b * pivotX + d * pivotY) + pose.y + shakeY});
     }
     const bool faded = opacity < 0.999f;
     if (faded) {

@@ -8,7 +8,8 @@
 namespace px::vn {
 namespace {
 
-enum class Channel { X, Y, Scale, Rotation };
+// ScaleXY: x scales by the value and y by its mirror about 1 (ウゴウゴ s1/s2).
+enum class Channel { X, Y, Scale, ScaleXY, Rotation };
 
 struct Preset {
     std::string_view name;
@@ -50,7 +51,7 @@ const std::vector<Preset>& Presets() {
         {"shake-head", Channel::X, 12.0f, 120, "out", S::Swing},
         {"sway", Channel::Rotation, 2.0f, 1500, "inout", S::Swing},
         {"float", Channel::Y, 10.0f, 2000, "inout", S::Swing},
-        {"wiggle", Channel::Scale, 5.0f, 100, "linear", S::Swing},
+        {"wiggle", Channel::ScaleXY, 5.0f, 100, "linear", S::Swing},
         {"dip", Channel::Y, 20.0f, 500, "", S::Dip},
         {"lift", Channel::Y, -20.0f, 500, "", S::Dip},
         {"nudge-right", Channel::X, 20.0f, 500, "", S::Dip},
@@ -75,6 +76,10 @@ ActorPose PoseFor(const Channel channel, const float value) {
         case Channel::X: pose.x = value; break;
         case Channel::Y: pose.y = value; break;
         case Channel::Scale: pose.scale = value; break;
+        case Channel::ScaleXY:
+            pose.scale = value;
+            pose.scaleY = value > 0.0f ? (2.0f - value) / value : 1.0f;
+            break;
         case Channel::Rotation: pose.rotation = value; break;
     }
     return pose;
@@ -112,7 +117,7 @@ std::optional<ActorActionTrack> ExpandActorAction(const ActorActionRequest& requ
     const float seconds = static_cast<float>(request.timeMs > 0 ? request.timeMs
                                                                 : preset.timeMs) / 1000.0f;
     const std::string ease = EngineEase(request.ease.empty() ? preset.ease : request.ease);
-    const bool scale = preset.channel == Channel::Scale;
+    const bool scale = preset.channel == Channel::Scale || preset.channel == Channel::ScaleXY;
     const float rest = scale ? 1.0f : 0.0f;
     const auto value = [&](const float multiple) {
         if (!scale) return size * multiple;
@@ -231,7 +236,8 @@ ActorPose SampleActorAction(const ActorActionTrack& track, double elapsed,
             const float eased = support::Ease(key.ease, std::clamp(t, 0.0f, 1.0f));
             const auto lerp = [eased](const float a, const float b) { return a + (b - a) * eased; };
             return {lerp(from.x, key.to.x), lerp(from.y, key.to.y),
-                    lerp(from.scale, key.to.scale), lerp(from.rotation, key.to.rotation)};
+                    lerp(from.scale, key.to.scale), lerp(from.rotation, key.to.rotation),
+                    lerp(from.scaleY, key.to.scaleY)};
         }
         cursor += key.duration;
         from = key.to;
