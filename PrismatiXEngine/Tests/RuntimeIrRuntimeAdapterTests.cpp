@@ -846,6 +846,40 @@ int main() {
         assert(clearDialogue.State().faceExpression == "smile-id");
     }
 
+    // Artemis quake: -6 at once, then +6, -6*0.85 (rounded up), ... and 0,
+    // each swing 60 ms with the first half as long; dir=r moves x twice as fast.
+    {
+        const px::vn::QuakeCurve curve{'h', 6.0f, 0.06, 10};
+        assert(std::abs(px::vn::QuakeDuration(curve) - 0.63) < 1e-9);
+        const auto at = [&](const double t) { return px::vn::SampleQuake(curve, t); };
+        assert(at(0.0).first == -6.0f && at(0.0).second == 0.0f);
+        assert(at(0.03).first == 6.0f);                   // end of the half swing
+        assert(std::abs(at(0.09).first - -5.0f) < 1e-4);  // ceil(-5.1) = -5
+        assert(std::abs(at(0.15).first - 5.0f) < 1e-4);   // ceil(4.335) = 5
+        assert(at(0.63).first == 0.0f && at(1.0).first == 0.0f);
+        const px::vn::QuakeCurve vertical{'v', 6.0f, 0.06, 10};
+        assert(px::vn::SampleQuake(vertical, 0.03).first == 0.0f &&
+               px::vn::SampleQuake(vertical, 0.03).second == 6.0f);
+        const px::vn::QuakeCurve both{'r', 6.0f, 0.06, 10};
+        assert(px::vn::SampleQuake(both, 0.015).first == 6.0f &&   // x: quarter swing
+               px::vn::SampleQuake(both, 0.03).second == 6.0f);
+        // Saved with the Stage and resumed on the same curve.
+        clearStage.Quake(630, 6.0f, 'r', 10);
+        clearStage.Update(0.1f);
+        const auto shaking = clearStage.CaptureState();
+        assert(shaking.shakeAxis == 'r' && shaking.shakeCount == 10);
+        assert(static_cast<bool>(clearStage.RestoreState(shaking)));
+        assert(clearStage.CaptureState().shakeAxis == 'r');
+        clearStage.Shake(0, 0.0f);
+        px::sdk::RuntimeIrDocument quakeDocument;
+        quakeDocument.documentId = "quake";
+        quakeDocument.operations = {Operation("q", "shake", {{"duration", "630ms"},
+            {"amplitude", "6"}, {"dir", "r"}, {"count", "10"}, {"target", "window"}})};
+        const px::vn::Program quakeProgram = px::CompileRuntimeIr(quakeDocument);
+        assert(quakeProgram.errors.empty() && quakeProgram.code[0].Get("dir") == "r" &&
+               quakeProgram.code[0].Get("count") == "10" && quakeProgram.code[0].Get("ms") == "630");
+    }
+
     // [nvl], [adv] and [nvl.clear] lower to the Player's NVL commands.
     {
         px::sdk::RuntimeIrDocument nvlDocument;

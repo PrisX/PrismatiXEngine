@@ -284,6 +284,8 @@ private:
     std::chrono::steady_clock::time_point m_windowShakeStart{};
     float m_windowShakeDuration = 0.0f;
     float m_windowShakeAmplitude = 0.0f;
+    // Set for `[shake target=window dir=...]`: the Artemis quake curve.
+    std::optional<vn::QuakeCurve> m_windowQuake;
     // [act window ...]: a character action preset played on the HUD layer.
     std::optional<vn::ActorActionTrack> m_windowAction;
     std::chrono::steady_clock::time_point m_windowActionStart{};

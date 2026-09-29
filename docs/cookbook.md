@@ -267,6 +267,22 @@ only channel 2 (see below), and `[voice.stop]` stops the current voice.
 `[shake 300ms 5 target=window]` shakes only the message window layer instead
 of the Stage.
 
+With `dir=` a shake follows the Artemis `quake` curve instead: the view jumps
+`amplitude` pixels one way, then swings across `count` times (default 10),
+each swing 0.85 times the last and rounded up to whole pixels, and settles.
+`dir=h` moves horizontally, `dir=v` vertically, and `dir=r` vertically on that
+curve and horizontally at twice its rate. Each swing lasts
+`duration / (count + 0.5)`, the first half as long, so the Artemis default
+(size 6, 60 ms per swing, 10 swings) is:
+
+```pxstory
+[shake 630ms 6 dir=r]
+[shake 330ms 4 dir=h count=5 target=window]
+```
+
+A running shake of either kind is saved with the Stage. A bad `dir` or a
+`count` outside 1–100 (or without `dir`) is `PXSTORY1154`.
+
 `[hud visible=false]` hides the message window and HUD until the next line
 shows them again; `[hud visible=true]` shows them at once. Both fade over
 200 ms unless `time=` says otherwise (`[hud visible=false time=1s]`, at most

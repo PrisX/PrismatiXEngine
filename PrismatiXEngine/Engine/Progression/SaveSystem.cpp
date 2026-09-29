@@ -1278,7 +1278,9 @@ Json StageToJson(const vn::Stage::RuntimeState& state) {
                                 {"vague", state.ruleVague}}},
             {"camera", {{"x", state.cameraX}, {"y", state.cameraY}, {"zoom", state.cameraZoom}}},
             {"shake", {{"remaining", state.shakeRemaining}, {"duration", state.shakeDuration},
-                        {"amplitude", state.shakeAmplitude}, {"phase", state.shakePhase}}},
+                        {"amplitude", state.shakeAmplitude}, {"phase", state.shakePhase},
+                        {"axis", std::string(state.shakeAxis ? 1 : 0, state.shakeAxis)},
+                        {"count", state.shakeCount}}},
             {"customEffect", {{"id", state.customEffect},
                               {"progress", state.customEffectProgress},
                               {"seed", state.customEffectSeed},
@@ -1336,6 +1338,11 @@ vn::Stage::RuntimeState StageFromJson(const Json& json) {
     state.shakeDuration = shake.value("duration", 0.0f);
     state.shakeAmplitude = shake.value("amplitude", 0.0f);
     state.shakePhase = shake.value("phase", 0.0f);
+    if (const std::string axis = shake.value("axis", std::string{});
+        axis == "h" || axis == "v" || axis == "r") {
+        state.shakeAxis = axis.front();
+        state.shakeCount = std::clamp(shake.value("count", 10), 1, 100);
+    }
     if (const auto custom = json.find("customEffect"); custom != json.end()) {
         if (!custom->is_object())
             throw std::invalid_argument("stage customEffect must be an object");

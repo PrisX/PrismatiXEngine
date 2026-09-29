@@ -1382,6 +1382,14 @@ void Stage::Shake(int durationMs, float amplitude) {
     m_shakeDuration = m_shakeRemaining = std::max(0.0f, durationMs / 1000.0f);
     m_shakeAmplitude = amplitude;
     m_shakePhase = 0.0f;
+    m_shakeAxis = 0;
+    m_shakeCount = 0;
+}
+
+void Stage::Quake(const int durationMs, const float amplitude, const char axis, const int count) {
+    Shake(durationMs, amplitude);
+    m_shakeAxis = axis == 'h' || axis == 'v' ? axis : 'r';
+    m_shakeCount = std::clamp(count, 1, 100);
 }
 
 bool Stage::SetCamera(const float x, const float y, const float zoom) {
@@ -1491,6 +1499,10 @@ void Stage::Update(float dt) {
         m_shakeRemaining = std::max(0.0f, m_shakeRemaining - dt);
         m_shakePhase += dt * 55.0f;
         if (m_shakeRemaining <= 0.0f) {
+        } else if (m_shakeAxis != 0) {
+            const QuakeCurve curve{m_shakeAxis, m_shakeAmplitude,
+                                   m_shakeDuration / (m_shakeCount + 0.5), m_shakeCount};
+            std::tie(shakeX, shakeY) = SampleQuake(curve, m_shakeDuration - m_shakeRemaining);
         } else {
             const float falloff = m_shakeDuration > 0.0f ? m_shakeRemaining / m_shakeDuration : 0.0f;
             const float amp = m_shakeAmplitude * falloff;
@@ -2291,6 +2303,8 @@ Stage::RuntimeState Stage::CaptureState() const {
     state.shakeDuration = m_shakeDuration;
     state.shakeAmplitude = m_shakeAmplitude;
     state.shakePhase = m_shakePhase;
+    state.shakeAxis = m_shakeAxis;
+    state.shakeCount = m_shakeCount;
     state.screenEffects = m_screenEffects;
     state.customEffect = m_customEffect;
     state.customEffectProgress = m_customEffectProgress;
@@ -2377,6 +2391,9 @@ Status Stage::RestoreState(const RuntimeState& state) {
     m_shakeDuration = std::max(0.0f, state.shakeDuration);
     m_shakeAmplitude = state.shakeAmplitude;
     m_shakePhase = state.shakePhase;
+    m_shakeAxis = state.shakeAxis == 'h' || state.shakeAxis == 'v' || state.shakeAxis == 'r'
+        ? state.shakeAxis : 0;
+    m_shakeCount = m_shakeAxis ? std::clamp(state.shakeCount, 1, 100) : 0;
     m_screenEffects = state.screenEffects;
     m_customEffect = state.customEffect;
     m_customEffectProgress = state.customEffectProgress;

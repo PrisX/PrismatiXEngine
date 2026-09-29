@@ -387,3 +387,15 @@ test("hud time sets the open and close fade", () => {
   assert.ok(codes("[hud visible=false time=soon]\n").includes("PXSTORY1153"));
   assert.ok(codes("[hud visible=false time=11s]\n").includes("PXSTORY1153"));
 });
+
+test("shake dir= and count= select the Artemis quake", () => {
+  const ops = operations("[shake 630ms 6 dir=r]\n[shake 330ms 4 dir=h count=5 target=window]\n[shake 300ms 5]\n");
+  assert.deepEqual(ops.map(({arguments: args}) => args), [
+    {duration: "630ms", amplitude: "6", dir: "r"},
+    {duration: "330ms", amplitude: "4", target: "window", dir: "h", count: "5"},
+    {duration: "300ms", amplitude: "5"},
+  ]);
+  assert.ok(codes("[shake 300ms dir=x]\n").includes("PXSTORY1154"));
+  assert.ok(codes("[shake 300ms count=3]\n").includes("PXSTORY1154"));
+  assert.ok(codes("[shake 300ms dir=v count=0]\n").includes("PXSTORY1154"));
+});

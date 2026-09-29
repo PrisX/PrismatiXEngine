@@ -1760,6 +1760,12 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             m_windowShakeDuration = std::max(0, std::atoi(cmd.Get("ms", "400").c_str())) / 1000.0f;
             m_windowShakeAmplitude = static_cast<float>(std::atof(cmd.Get("amp", "12").c_str()));
             m_windowShakeStart = std::chrono::steady_clock::now();
+            m_windowQuake.reset();
+            if (const std::string dir = cmd.Get("dir"); !dir.empty()) {
+                const int count = std::clamp(std::atoi(cmd.Get("count", "10").c_str()), 1, 100);
+                m_windowQuake = vn::QuakeCurve{dir.front() == 'h' || dir.front() == 'v' ? dir.front() : 'r',
+                    m_windowShakeAmplitude, m_windowShakeDuration / (count + 0.5), count};
+            }
             return true;
         }
         if (t == "nvl") {
@@ -4343,6 +4349,8 @@ void PlayerApp::RenderUIWithScripts(const float opacity) {
             std::chrono::steady_clock::now() - m_windowShakeStart).count();
         if (elapsed >= m_windowShakeDuration) {
             m_windowShakeDuration = 0.0f;
+        } else if (m_windowQuake) {
+            std::tie(shakeX, shakeY) = vn::SampleQuake(*m_windowQuake, elapsed);
         } else {
             const float amplitude = m_windowShakeAmplitude *
                 (1.0f - elapsed / m_windowShakeDuration);

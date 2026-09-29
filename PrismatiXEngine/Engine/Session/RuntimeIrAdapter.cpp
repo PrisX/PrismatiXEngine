@@ -627,6 +627,8 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             Add(command, "ms", DurationMilliseconds(Argument(operation, "duration")));
             Add(command, "amp", Argument(operation, "amplitude"));
             Add(command, "target", Argument(operation, "target"));
+            Add(command, "dir", Argument(operation, "dir"));
+            Add(command, "count", Argument(operation, "count"));
         } else if (operation.kind == "actorAction") {
             command.type = "actor_action";
             // An image layer name, or $bg, instead of a character.

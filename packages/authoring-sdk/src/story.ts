@@ -61,7 +61,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   hud: ["visible", "time"],
   nvl: [], adv: [], "nvl.clear": [],
   unlock: ["kind", "id"],
-  effect: ["value"], shake: ["duration", "amplitude", "target"],
+  effect: ["value"], shake: ["duration", "amplitude", "target", "dir", "count"],
   flash: ["color", "alpha", "duration", "loop"], tone: ["mode"],
   camera: ["value", "x", "y", "zoom", "duration", "ease", "wait"],
   else: [], endif: [],
@@ -1488,13 +1488,22 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         const duration = named("duration") ?? positional(0);
         const amplitude = named("amplitude") ?? positional(1);
         const target = named("target");
+        // dir= switches to the Artemis quake: `count` swings, each 0.85x the last.
+        const dir = named("dir");
+        const count = named("count");
         if (duration === undefined) diagnostics.push(error("PXSTORY1138", "shake requires a duration", node.span));
         else if (target !== undefined && target !== "stage" && target !== "window")
           diagnostics.push(error("PXSTORY1139", "shake target must be stage or window", node.span));
+        else if (dir !== undefined && dir !== "h" && dir !== "v" && dir !== "r")
+          diagnostics.push(error("PXSTORY1154", "shake dir must be h, v or r", node.span));
+        else if (count !== undefined && (dir === undefined || !/^[1-9][0-9]?$|^100$/u.test(count)))
+          diagnostics.push(error("PXSTORY1154", "shake count needs dir= and must be 1 to 100", node.span));
         else emit(node, "shake", {
           duration,
           ...(amplitude === undefined ? {} : {amplitude}),
           ...(target === undefined || target === "stage" ? {} : {target}),
+          ...(dir === undefined ? {} : {dir}),
+          ...(count === undefined ? {} : {count}),
         });
         break;
       }
@@ -1641,7 +1650,8 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
     motion: [{name:"asset", required:true},
       {name:"await", required:false, values:[true, false]}, {name:"speed", required:false}],
     shake: [{name:"duration", required:true}, {name:"amplitude", required:false},
-      {name:"target", required:false, values:["stage", "window"]}],
+      {name:"target", required:false, values:["stage", "window"]},
+      {name:"dir", required:false, values:["h", "v", "r"]}, {name:"count", required:false}],
     act: [{name:"character", required:true},
       {name:"preset", required:true, values:[...storyActorActions]},
       {name:"size", required:false}, {name:"time", required:false},

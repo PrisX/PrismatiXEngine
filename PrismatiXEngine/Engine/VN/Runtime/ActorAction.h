@@ -4,9 +4,25 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace px::vn {
+
+// Artemis quake() (image_act.lua): the offset jumps to -amplitude, then swings
+// across `count` times, each swing 0.85x the last (rounded up to whole
+// pixels), and settles at 0. A swing lasts swingSeconds, the first half as
+// long. Axis 'h' moves x, 'v' moves y; 'r' moves y on that curve and x at
+// twice its rate, as quake dir="r" does.
+struct QuakeCurve {
+    char axis = 'r';
+    float amplitude = 6.0f;
+    double swingSeconds = 0.06;
+    int count = 10;
+};
+[[nodiscard]] double QuakeDuration(const QuakeCurve& curve);
+// Offset {x, y} in pixels `elapsed` seconds in; {0, 0} once finished.
+[[nodiscard]] std::pair<float, float> SampleQuake(const QuakeCurve& curve, double elapsed);
 
 // A named, relative action such as a nod or a hop, played on a character, an
 // image layer or the background. The target's placement never changes: the

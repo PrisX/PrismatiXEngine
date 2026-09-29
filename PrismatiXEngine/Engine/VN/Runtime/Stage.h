@@ -205,6 +205,8 @@ public:
     [[nodiscard]] bool MotionPlaying() const;
     // Camera shake (KAG [quake]-style): durationMs of decaying jitter.
     void Shake(int durationMs, float amplitude);
+    // Artemis quake along 'h', 'v' or 'r' with `count` decaying swings.
+    void Quake(int durationMs, float amplitude, char axis, int count);
     // Washes the whole screen with `color`: it rises to `peak` (0..1) and back
     // `cycles` times, each half taking `halfMs`. Artemis `flash`.
     void Flash(Color color, float peak, int halfMs, int cycles);
@@ -317,6 +319,9 @@ public:
         float shakeDuration = 0.0f;
         float shakeAmplitude = 0.0f;
         float shakePhase = 0.0f;
+        // 0 for the plain shake; 'h', 'v' or 'r' for a quake.
+        char shakeAxis = 0;
+        int shakeCount = 0;
         std::unordered_map<std::string, float> screenEffects;
         std::string customEffect;
         float customEffectProgress = 0.0f;
@@ -553,6 +558,8 @@ private:
     float m_shakeDuration = 0.0f;
     float m_shakeAmplitude = 0.0f;
     float m_shakePhase = 0.0f;
+    char m_shakeAxis = 0;
+    int m_shakeCount = 0;
     float m_cameraX = 0.0f;
     float m_cameraY = 0.0f;
     float m_cameraZoom = 1.0f;

@@ -239,6 +239,57 @@ ActorPose SampleActorAction(const ActorActionTrack& track, double elapsed,
     return track.keys.back().to;
 }
 
+namespace {
+// Keys of one quake track: `doubled` interleaves each swing with its mirror
+// (the x track of dir="r").
+std::vector<float> QuakeKeys(const QuakeCurve& curve, const bool doubled) {
+    std::vector<float> keys{-curve.amplitude};
+    double size = curve.amplitude;
+    float sign = 1.0f;
+    for (int swing = 0; swing < curve.count; ++swing) {
+        float value = static_cast<float>(std::ceil(size * sign));
+        if (value == 0.0f) value = 1.0f;
+        keys.push_back(value);
+        if (doubled) keys.push_back(-value);
+        sign = -sign;
+        size *= 0.85;
+    }
+    keys.push_back(0.0f);
+    return keys;
+}
+
+float SampleQuakeKeys(const std::vector<float>& keys, const double first, const double rest,
+                      const double elapsed) {
+    double start = 0.0;
+    for (std::size_t index = 0; index + 1 < keys.size(); ++index) {
+        const double length = index == 0 ? first : rest;
+        if (elapsed < start + length && length > 0.0) {
+            const double t = (elapsed - start) / length;
+            // Artemis ease "inout".
+            const double eased = t < 0.5 ? 2.0 * t * t : 1.0 - 2.0 * (1.0 - t) * (1.0 - t);
+            return static_cast<float>(keys[index] + (keys[index + 1] - keys[index]) * eased);
+        }
+        start += length;
+    }
+    return 0.0f;
+}
+}  // namespace
+
+double QuakeDuration(const QuakeCurve& curve) {
+    return curve.swingSeconds * (static_cast<double>(std::max(0, curve.count)) + 0.5);
+}
+
+std::pair<float, float> SampleQuake(const QuakeCurve& curve, const double elapsed) {
+    if (curve.count <= 0 || curve.swingSeconds <= 0.0 || elapsed < 0.0 ||
+        elapsed >= QuakeDuration(curve))
+        return {0.0f, 0.0f};
+    const double swing = curve.swingSeconds;
+    const float single = SampleQuakeKeys(QuakeKeys(curve, false), swing / 2.0, swing, elapsed);
+    if (curve.axis == 'h') return {single, 0.0f};
+    if (curve.axis == 'v') return {0.0f, single};
+    return {SampleQuakeKeys(QuakeKeys(curve, true), swing / 4.0, swing / 2.0, elapsed), single};
+}
+
 bool StartActorAction(ActorActionState& state, const ActorActionRequest& request) {
     if (request.preset == "stop") {
         if (!state.Active()) return true;

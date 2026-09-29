@@ -237,6 +237,11 @@ void TestSaveValidation() {
     snapshot.stage.cameraX = 16.0f;
     snapshot.stage.cameraY = -9.0f;
     snapshot.stage.cameraZoom = 1.15f;
+    snapshot.stage.shakeRemaining = 0.2f;
+    snapshot.stage.shakeDuration = 0.63f;
+    snapshot.stage.shakeAmplitude = 6.0f;
+    snapshot.stage.shakeAxis = 'v';
+    snapshot.stage.shakeCount = 10;
     snapshot.stage.screenEffects["vignette"] = 0.3f;
     snapshot.stage.actors.push_back({ "alice", "Content/Characters/alice.png", 2, 4.0f, -2.0f, 1.0f, {}, 180.0f, 255.0f, 0.0f, 640.0f, 640.0f, false });
     snapshot.stage.layers.push_back({
@@ -424,6 +429,7 @@ void TestSaveValidation() {
         loaded && loaded->vm.state == px::vn::VMState::WaitingChoice && loaded->vm.callStack.size() == 1 && loaded->vm.choices.size() == 1 && loaded->dialogue.state.displayText == "[size=150%]He[/size]l" &&
         loaded->dialogue.state.fullText == "[size=150%]He[/size]llo" &&
         loaded->dialogue.state.faceCharacter == "alice" &&
+        loaded->stage.shakeAxis == 'v' && loaded->stage.shakeCount == 10 &&
         loaded->dialogue.state.faceExpression == "none" &&
             loaded->dialogue.speedMs == 42 && loaded->typedVariables.at("route").TryGet<std::string>() && loaded->typedVariables.at("flags").AsObject() && loaded->routes.stack.size() == 2 && loaded->routes.modals.size() == 1 &&
             loaded->timelines.size() == 1 && loaded->timelines.front().awaiting && loaded->animationClips.size() == 1 && loaded->animationClips.front().name == "Custom/Save" && loaded->stage.backgroundFade == 0.45f && loaded->stage.ruleActive && loaded->stage.ruleMask == "Content/Transitions/clouds.png" && loaded->stage.ruleProgress == 0.35f && loaded->stage.ruleVague == 48 && loaded->stage.cameraX == 16.0f && loaded->stage.cameraY == -9.0f && loaded->stage.cameraZoom == 1.15f && loaded->stage.actors.size() == 1 && loaded->stage.layers.size() == 1 && loaded->stage.layers.front().scaleY == 0.75f && loaded->stage.layers.front().rotation == 17.0f &&

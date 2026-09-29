@@ -893,7 +893,10 @@ void VM::ExecuteSimple(const Command& cmd) {
         }
         const int ms = ParseInt(cmd.Get("ms", cmd.Get("time")), 400);
         const int amp = ParseInt(cmd.Get("amp", cmd.Get("power")), 12);
-        m_stage.Shake(ms, static_cast<float>(amp));
+        if (const std::string dir = cmd.Get("dir"); !dir.empty())
+            m_stage.Quake(ms, static_cast<float>(amp), dir.front(), ParseInt(cmd.Get("count"), 10));
+        else
+            m_stage.Shake(ms, static_cast<float>(amp));
         return;
     }
     if (t == "actor_action") {
