@@ -71,6 +71,17 @@ PersistLoadStatus GameSettings::LoadWithFallback(
                 candidate.voiceProfileMuted[it.key()] = it.value().get<bool>();
             }
         }
+        candidate.options.clear();
+        if (j.contains("options")) {
+            const auto& stored = j.at("options");
+            if (!stored.is_object() || stored.size() > 256)
+                throw Json::type_error::create(302, "options must be a bounded object", &stored);
+            for (auto it = stored.begin(); it != stored.end(); ++it) {
+                if (it.key().empty() || it.key().size() > 64 || !it.value().is_number_integer())
+                    throw Json::type_error::create(302, "option is invalid", &it.value());
+                candidate.options[it.key()] = std::clamp(it.value().get<int>(), -1'000'000, 1'000'000);
+            }
+        }
         candidate.textSpeedMs = j.value("textSpeedMs", candidate.textSpeedMs);
         candidate.autoWaitMs = j.value("autoWaitMs", candidate.autoWaitMs);
         candidate.skipReadOnly = j.value("skipReadOnly", candidate.skipReadOnly);
@@ -166,6 +177,7 @@ bool GameSettings::Save(const std::string& path, const crypto::Key* key) const {
     j["continueVoiceOnAdvance"] = continueVoiceOnAdvance;
     if (!voiceProfileVolumes.empty()) j["voiceProfileVolumes"] = voiceProfileVolumes;
     if (!voiceProfileMuted.empty()) j["voiceProfileMuted"] = voiceProfileMuted;
+    if (!options.empty()) j["options"] = options;
     j["textSpeedMs"] = textSpeedMs;
     j["autoWaitMs"] = autoWaitMs;
     j["skipReadOnly"] = skipReadOnly;

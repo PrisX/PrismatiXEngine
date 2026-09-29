@@ -435,6 +435,10 @@ public:
     void SetRailHeight(float value){m_railHeight=std::max(1.0f,value);}
     void SetKnobSize(float value){m_knobSize=std::max(1.0f,value);}
     void SetFillRailToValue(bool value){m_fillRailToValue=value;}
+    // Names a Player option (`player.options`) this slider edits. The host
+    // sets its range and value and writes every change back.
+    void SetOptionKey(std::string value){m_optionKey=std::move(value);}
+    [[nodiscard]] const std::string& OptionKey() const{return m_optionKey;}
     [[nodiscard]] float RailHeight() const{return m_railHeight;}
     [[nodiscard]] float KnobSize() const{return m_knobSize;}
     [[nodiscard]] bool FillRailToValue() const{return m_fillRailToValue;}
@@ -448,6 +452,7 @@ private:void SetFromPosition(float x);double m_min=0,m_max=1,m_step=0,m_value=0;
     std::string m_knobPath,m_knobHoverPath,m_knobPressedPath;
     float m_railHeight=6.0f,m_knobSize=14.0f;
     bool m_fillRailToValue=false;
+    std::string m_optionKey;
 };
 
 class LineEdit : public Control {

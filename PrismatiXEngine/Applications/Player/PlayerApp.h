@@ -137,7 +137,11 @@ private:
     void GameFrame(float dt, std::uint64_t now);
     void ScreensFrame(float dt);
     void RenderStageWithScripts();
-    void RenderUIWithScripts();
+    void RenderUIWithScripts(float opacity = 1.0f);
+    // The message window fades in and out over 200 ms (mw_time / mw_hidetime)
+    // when text is hidden by `msgoff`, a right click or a script.
+    float m_hudFade = 0.0f;
+    bool m_hudFadeSnap = true;
     void UpdateScriptScheduler(float dt);
     void ProcessScriptSafePoint();
     // Returns true when it consumed the frame (a movie is on screen).
@@ -168,6 +172,59 @@ private:
     progress::GlobalProfile m_profile;
     progress::GameSettings m_settings;
     progress::SaveSystem m_saves;
+
+    // Project-declared integer options (`player.options`) and the ones the
+    // Player itself acts on: message speed, auto speed, message window
+    // opacity, read-text colour, UI animation and the text font.
+    struct OptionSpec {
+        int def = 0;
+        int min = 0;
+        int max = 100;
+        std::vector<int> choices;
+    };
+    std::map<std::string, OptionSpec, std::less<>> m_optionSpecs;
+    std::vector<std::string> m_fontChoices;
+    float m_messageWindowOpacity = 1.0f;
+    bool m_dimReadText = false;
+    bool m_uiEffects = true;
+    [[nodiscard]] int OptionValue(std::string_view name) const;
+    bool SetOption(std::string_view name, int value);
+    void ApplyOption(std::string_view name, int value);
+    void ApplyAllOptions();
+    void PublishOption(std::string_view name);
+    Status DefineOptionData();
+    // settings.muted.<bus> and settings.profileMuted.<voice> for the MUTE boxes.
+    void PublishMuteData();
+    // Cursor auto-hide (option `cursor`, milliseconds; 0 = never) and the
+    // dialog warp (option `mouse`).
+    float m_lastMouseX = -1.0f;
+    float m_lastMouseY = -1.0f;
+    std::uint64_t m_cursorActiveAt = 0;
+    bool m_cursorHidden = false;
+    bool m_choiceWasPending = false;
+    bool m_resumeSkipAfterChoice = false;
+    bool m_resumeAutoAfterChoice = false;
+    void UpdateCursorVisibility(std::uint64_t now);
+    // `hud.dockShown`: the HUD toolbar (original mw dock) is visible while it
+    // is pinned (option `dock`), a choice is up or the pointer is in its area.
+    struct DockArea { float x = 0, y = 0, width = 0, height = 0; bool valid = false; } m_dockArea;
+    bool m_dockShown = true;
+    void PublishDock();
+    void WarpCursorTo(float logicalX, float logicalY);
+
+    // Confirmation dialogs: the original asks before saving, loading,
+    // leaving and jumping unless the player ticked "do not ask again"
+    // (option `dlg_<kind>`). The dialog itself is authored UI, a control
+    // named ConfirmDialog driven by `dialog.*` data and actions.
+    struct PendingDialog {
+        std::string kind;
+        std::function<void()> accept;
+    };
+    std::optional<PendingDialog> m_dialog;
+    bool m_dialogSkipNext = false;
+    void RequestConfirm(std::string_view kind, std::function<void()> accept);
+    void PublishDialog();
+    Status DefineDialogData();
 
     std::unique_ptr<RuntimeSession> m_session;
     std::unique_ptr<script::ScriptHost> m_scriptHost;

@@ -187,6 +187,7 @@ GalgameUI::GalgameUI() {
     }
     (void)m_viewModel.Define("saveLoad.slots", Variant(std::move(initialSlots)), true);
     (void)m_viewModel.Define("gallery.items", Variant(VariantArray{}), true);
+    (void)m_viewModel.Define("dialogue.choices", Variant(VariantArray{}), true);
     (void)m_viewModel.Define("backlog.entries", Variant(VariantArray{}), true);
     for (const char* property : {"fullscreen", "windowed", "skipReadOnly", "skipAll"})
         (void)m_viewModel.Define(std::string("settings.") + property,
@@ -274,6 +275,8 @@ Status GalgameUI::SetDefaultFont(std::string path) {
 }
 
 Status GalgameUI::DefineUiData(std::string path, Variant value) {
+    constexpr std::string_view hover = "hover.";
+    if (path.starts_with(hover)) m_hoverDeclared.insert(path.substr(hover.size()));
     return m_viewModel.Define(std::move(path), std::move(value), true);
 }
 
@@ -741,11 +744,31 @@ Status GalgameUI::InstallRouteTemplate(const std::string_view route){
         }
         m_screen=screen;
         m_route=route;
+        BindOptionSliders(m_context.Root());
     }else{
         return GalgameFailure("PXUI2805","Registered UI template has no document");
     }
-    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_presentedChoices.clear();m_mode=FindNamed<Label>(m_context.Root(),"ModeState");m_noticePanel=FindNamed<EdgeRevealContainer>(m_context.Root(),"NoticePanel");m_chapterNotice=FindNamed<Label>(m_context.Root(),"ChapterNotice");m_musicNotice=FindNamed<Label>(m_context.Root(),"MusicNotice");m_lastChapterTitle.clear();m_lastMusicTitle.clear();m_activeDialogueEffect.clear();m_dialogueEffectFinished=false;if(m_dialogue)m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;}
+    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_presentedChoices.clear();m_mode=FindNamed<Label>(m_context.Root(),"ModeState");m_noticePanel=FindNamed<EdgeRevealContainer>(m_context.Root(),"NoticePanel");m_chapterNotice=FindNamed<Label>(m_context.Root(),"ChapterNotice");m_musicNotice=FindNamed<Label>(m_context.Root(),"MusicNotice");m_messageWindow=FindNamed<Control>(m_context.Root(),"MessageWindow");m_choiceList=FindNamed<Control>(m_context.Root(),"ChoiceList");m_lastChapterTitle.clear();m_lastMusicTitle.clear();m_activeDialogueEffect.clear();m_dialogueEffectFinished=false;m_dialogueDimmed=false;if(m_dialogue){m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;m_dialogueBaseColor=m_dialogue->GetColor();}}
     return Status::Ok();
+}
+
+bool GalgameUI::HasControlNamed(const std::string_view name) const {
+    return FindNamed<Control>(const_cast<Control*>(m_context.Root()), name) != nullptr;
+}
+
+void GalgameUI::BindOptionSliders(Control* root) {
+    if (!root || !m_optionSource) return;
+    if (auto* slider = dynamic_cast<Slider*>(root); slider && !slider->OptionKey().empty()) {
+        if (const auto range = m_optionSource(slider->OptionKey())) {
+            slider->SetRange(range->minimum, range->maximum, 1);
+            slider->SetValueSilently(range->value);
+            slider->SetOnChanged([this, key = slider->OptionKey()](double changed) {
+                Emit("option.set", key + "=" + std::to_string(static_cast<int>(std::lround(changed))));
+            });
+        }
+    }
+    for (const auto& child : root->Children())
+        if (auto* control = dynamic_cast<Control*>(child.get())) BindOptionSliders(control);
 }
 
 Status GalgameUI::InstallCheckpointSurface(const Screen screen) {
@@ -925,6 +948,12 @@ Status GalgameUI::ShowHUD(const DialoguePresentation& p) {
 Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     if (m_screen != Screen::HUD || !m_context.Root()) return ShowHUD(p);
     if (m_speaker) m_speaker->SetText(p.speaker);
+    if (m_messageWindow) m_messageWindow->SetOpacity(p.windowOpacity);
+    if (m_dialogue && p.dimReadText != m_dialogueDimmed) {
+        m_dialogueDimmed = p.dimReadText;
+        // textaread_color in the original message table.
+        m_dialogue->SetColor(m_dialogueDimmed ? Color{0x50, 0x50, 0x50, 255} : m_dialogueBaseColor);
+    }
     if (m_dialogue) {
         SetPresentationText(m_dialogue, p.text);
         const int requested = static_cast<int>(std::lround(
@@ -991,7 +1020,27 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     if (m_mode) m_mode->SetText(std::string(p.autoMode ? "● AUTO  " : "") + (p.skipMode ? "▶▶ SKIP" : ""));
     if (auto* toolbar = FindNamed<EdgeRevealContainer>(m_context.Root(), "EdgeToolbar"))
         toolbar->SetReducedMotion(p.reducedMotion);
-    if (m_choices && p.choices != m_presentedChoices) {
+    if (m_choiceList && p.choices != m_presentedChoices) {
+        // An authored ChoiceList draws the buttons from this data.
+        VariantArray items;
+        const auto count = p.choices.size();
+        const auto row = m_choiceLayout.offsets.find(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            double offset = static_cast<double>(i) - (static_cast<double>(count) - 1.0) / 2.0;
+            if (row != m_choiceLayout.offsets.end() && i < row->second.size()) offset = row->second[i];
+            items.emplace_back(VariantObject{
+                {"key", Variant(static_cast<std::int64_t>(i))},
+                {"text", Variant(p.choices[i])},
+                {"rect", Variant(VariantObject{
+                    {"x", Variant(static_cast<double>(m_choiceLayout.x))},
+                    {"y", Variant(static_cast<double>(m_choiceLayout.y) +
+                                  std::floor(static_cast<double>(m_choiceLayout.halfPitch) * offset))},
+                    {"width", Variant(static_cast<double>(m_choiceLayout.width))},
+                    {"height", Variant(static_cast<double>(m_choiceLayout.height))}})}});
+        }
+        (void)m_viewModel.Write("dialogue.choices", Variant(std::move(items)));
+        m_presentedChoices = p.choices;
+    } else if (m_choices && !m_choiceList && p.choices != m_presentedChoices) {
         for (std::size_t i = 0; i < p.choices.size(); ++i) {
             Button* button = i < m_choices->Children().size()
                                  ? dynamic_cast<Button*>(m_choices->Children()[i].get())
@@ -1284,7 +1333,23 @@ Status GalgameUI::ShowVideoOverlay(bool skippable) {
     return Status::Ok();
 }
 
-bool GalgameUI::Update(const Input& input, int width, int height,float deltaSeconds) { const diag::ScopedFramePhase profiled(diag::FramePhase::UiUpdate); const bool consumed=m_context.Update(input,width,height,deltaSeconds);auto actions=std::move(m_pendingActions);m_pendingActions.clear();for(const auto& action:actions)if(m_sink)m_sink(action);return consumed; }
+void GalgameUI::PublishHover() {
+    const auto* router = m_context.InputRouting();
+    const Control* hovered = router ? router->Hovered() : nullptr;
+    const std::string name = hovered ? std::string(hovered->Name()) : std::string{};
+    if (name == m_hoverName) return;
+    // Only names the author declared have data; writing another would fail.
+    const auto declared = [this](const std::string& control) {
+        return m_hoverDeclared.contains(control);
+    };
+    if (declared(m_hoverName))
+        (void)m_viewModel.Write("hover." + m_hoverName, Variant(false));
+    m_hoverName = name;
+    if (declared(m_hoverName))
+        (void)m_viewModel.Write("hover." + m_hoverName, Variant(true));
+}
+
+bool GalgameUI::Update(const Input& input, int width, int height,float deltaSeconds) { const diag::ScopedFramePhase profiled(diag::FramePhase::UiUpdate); const bool consumed=m_context.Update(input,width,height,deltaSeconds);PublishHover();auto actions=std::move(m_pendingActions);m_pendingActions.clear();for(const auto& action:actions)if(m_sink)m_sink(action);return consumed; }
 void GalgameUI::Render(graphics::Renderer2D& renderer) { m_context.Render(renderer); }
 
 }  // namespace px::ui

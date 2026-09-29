@@ -28,6 +28,9 @@ struct GameSettings {
     int textSpeedMs = 28;
     int autoWaitMs = 1400;
     bool skipReadOnly = true;
+    // Project-declared integer options (`player.options`), by name. Only
+    // values that differ from the declared default need an entry.
+    std::map<std::string, int, std::less<>> options;
 
     bool fullscreen = false;
     int windowWidth = 1280;

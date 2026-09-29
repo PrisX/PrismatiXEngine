@@ -33,10 +33,20 @@ const itemFields: Readonly<Record<string, readonly string[]>> = {
   "saveLoad.slots": ["key", "number", "argument", "image", "occupied", "title", "subtitle", "enabled"],
   "gallery.items": ["key", "title", "image", "enabled", "locked"],
   "backlog.entries": ["key", "speaker", "text", "voice", "choice"],
+  "dialogue.choices": ["key", "text", "rect"],
 };
 
 const reservedRoots = new Set(["dialogue", "chapter", "music", "saveLoad", "gallery", "backlog",
-  "settings", "title", "system", "replay", "profileFlags", "musicUnlocked", "sceneUnlocked"]);
+  "settings", "title", "system", "replay", "profileFlags", "musicUnlocked", "sceneUnlocked",
+  "dialog", "options"]);
+
+/** Character voice groups of the original sound settings page. */
+const voiceProfiles = ["rnd", "szd", "mkd", "rna", "yum", "aid", "ked", "wtd", "tmd",
+  "sud", "knd", "skd", "mzd", "kid", "frd", "man", "fem"] as const;
+
+/** Confirmation prompts the Player can ask; each publishes `dialog.kind.<name>`. */
+const dialogKinds = ["qsave", "qload", "save", "save2", "load", "del",
+  "title", "exit", "jump", "next", "back", "reset"] as const;
 
 export interface PlayerUiContractInput {
   readonly uiEntryPoints: Readonly<Record<string, string>>;
@@ -63,7 +73,7 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
   const stems = tracks.filter((track): track is string => typeof track === "string")
     .map((track) => track.slice(track.lastIndexOf("/") + 1).replace(/\.[^.]+$/u, ""));
   return new Set([
-    "dialogue.speaker", "dialogue.text", "chapter.title", "music.title",
+    "dialogue.speaker", "dialogue.text", "dialogue.choices", "chapter.title", "music.title",
     "saveLoad.slots", "gallery.items", "backlog.entries", "title.confirm.visible",
     ...Array.from({length: 12}, (_, slot) => ["image", "title", "subtitle", "enabled"]
       .map((field) => `saveLoad.slot${slot}.${field}`)).flat(),
@@ -81,6 +91,15 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
       `sceneUnlocked.scene${String(index + 1).padStart(2, "0")}`),
     ...stems.map((stem) => `musicUnlocked.${stem}`),
     ...(input.profileVariables ?? []).map((name) => `profileFlags.${name}`),
+    "dialog.visible", "dialog.skipNext", ...dialogKinds.map((kind) => `dialog.kind.${kind}`),
+    ...["master", "bgm", "se", "voice"].map((bus) => `settings.muted.${bus}`),
+    ...voiceProfiles.map((id) => `settings.profileMuted.${id}`),
+    ...Object.entries(object(settings["player.options"]) ?? {}).flatMap(([name, spec]) => {
+      const choices = object(spec)?.choices;
+      return [`options.${name}`, ...(Array.isArray(choices) ? choices : [])
+        .filter((choice): choice is number => Number.isInteger(choice))
+        .map((choice) => `options.${name}.is${choice}`)];
+    }),
   ]);
 }
 

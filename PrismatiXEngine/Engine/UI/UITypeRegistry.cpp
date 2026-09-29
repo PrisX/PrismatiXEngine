@@ -315,6 +315,53 @@ Status RegisterBuiltinUITypes() {
     showTransition.editor.maximum = 2;
     showTransition.editor.step = 0.01;
     control.properties.push_back(std::move(showTransition));
+    auto hideTransition = NumberProperty("hideTransitionSeconds", "Display", [](const Object& o) {
+        return As<Control>(o)->HideTransitionSeconds();
+    }, [](Object& o, double v) {
+        if (!std::isfinite(v) || v < 0.0 || v > 2.0)
+            return TypeError("hideTransitionSeconds must be between 0 and 2");
+        As<Control>(o)->SetHideTransitionSeconds(static_cast<float>(v));
+        return Status::Ok();
+    });
+    hideTransition.editor.hasRange = true;
+    hideTransition.editor.minimum = 0;
+    hideTransition.editor.maximum = 2;
+    hideTransition.editor.step = 0.01;
+    hideTransition.editor.description = "Keeps drawing the control while it fades out after it is hidden.";
+    control.properties.push_back(std::move(hideTransition));
+    for (const bool vertical : {true, false}) {
+        for (const bool showing : {true, false}) {
+            const std::string name = std::string(showing ? "show" : "hide") +
+                                     (vertical ? "OffsetY" : "OffsetX");
+            auto offset = NumberProperty(name, "Display",
+                [showing, vertical](const Object& o) {
+                    const auto* control = As<Control>(o);
+                    return static_cast<double>(vertical
+                        ? (showing ? control->ShowOffsetY() : control->HideOffsetY())
+                        : (showing ? control->ShowOffsetX() : control->HideOffsetX()));
+                }, [showing, vertical](Object& o, double v) {
+                    if (!std::isfinite(v) || v < -2000.0 || v > 2000.0)
+                        return TypeError("transition offsets must be between -2000 and 2000");
+                    auto* control = As<Control>(o);
+                    const float value = static_cast<float>(v);
+                    if (vertical) {
+                        if (showing) control->SetShowOffsetY(value); else control->SetHideOffsetY(value);
+                    } else {
+                        if (showing) control->SetShowOffsetX(value); else control->SetHideOffsetX(value);
+                    }
+                    return Status::Ok();
+                });
+            offset.editor.description = showing
+                ? "Distance the control starts from its place while it appears."
+                : "Distance the control travels while it disappears.";
+            control.properties.push_back(std::move(offset));
+        }
+    }
+    auto linearTransition = BoolProperty("linearTransition", "Display", [](const Object& o) {
+        return As<Control>(o)->LinearTransition();
+    }, [](Object& o, bool v) { As<Control>(o)->SetLinearTransition(v); return Status::Ok(); });
+    linearTransition.editor.description = "Use linear instead of squared progress for show and hide transitions.";
+    control.properties.push_back(std::move(linearTransition));
     auto visibilityProperty=StringProperty("visibility", "Behavior", [](const Object& o) {
         switch (As<Control>(o)->GetVisibility()) { case Visibility::Visible: return std::string("Visible"); case Visibility::Hidden: return std::string("Hidden"); default: return std::string("Collapsed"); }
     }, [](Object& o, std::string v) {
@@ -815,6 +862,9 @@ Status RegisterBuiltinUITypes() {
     auto railHeight=NumberProperty("railHeight","Skin",[](const Object& o){return As<Slider>(o)->RailHeight();},[](Object& o,double v){As<Slider>(o)->SetRailHeight(static_cast<float>(v));return Status::Ok();});railHeight.editor.hasRange=true;railHeight.editor.minimum=1;railHeight.editor.maximum=128;railHeight.editor.step=1;slider.properties.push_back(std::move(railHeight));
     auto knobSize=NumberProperty("knobSize","Skin",[](const Object& o){return As<Slider>(o)->KnobSize();},[](Object& o,double v){As<Slider>(o)->SetKnobSize(static_cast<float>(v));return Status::Ok();});knobSize.editor.hasRange=true;knobSize.editor.minimum=1;knobSize.editor.maximum=256;knobSize.editor.step=1;slider.properties.push_back(std::move(knobSize));
     slider.properties.push_back(BoolProperty("fillRailToValue", "Skin", [](const Object& o){return As<Slider>(o)->FillRailToValue();}, [](Object& o,bool v){As<Slider>(o)->SetFillRailToValue(v);return Status::Ok();}));
+    auto optionKey=StringProperty("optionKey","Value",[](const Object& o){return As<Slider>(o)->OptionKey();},[](Object& o,std::string v){As<Slider>(o)->SetOptionKey(std::move(v));return Status::Ok();});
+    optionKey.editor.description="Name of the Player option (player.options) this slider edits.";
+    slider.properties.push_back(std::move(optionKey));
     slider.signals.push_back({"valueChanged", "數值變更", "Slider value changed.", {{"value", VariantType::Number}}});add(std::move(slider));
     TypeInfo lineEdit{"LineEdit","Control","UI/Input",[]{return std::make_unique<LineEdit>();}};
     lineEdit.properties.push_back(StringProperty("text","Content",[](const Object& o){return As<LineEdit>(o)->Text();},[](Object& o,std::string v){As<LineEdit>(o)->SetText(std::move(v));return Status::Ok();}));

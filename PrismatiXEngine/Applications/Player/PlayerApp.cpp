@@ -1079,6 +1079,72 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                         }
                     }
                 }
+                if (const auto dock = settings->find("player.dockArea");
+                    dock != settings->end() && dock->is_object()) {
+                    m_dockArea = {dock->value("x", 0.0f), dock->value("y", 0.0f),
+                                  dock->value("width", 0.0f), dock->value("height", 0.0f), true};
+                }
+                if (const auto layout = settings->find("player.choiceLayout");
+                    layout != settings->end() && layout->is_object()) {
+                    // Rows of offsets, one per choice count, in half-pitch units.
+                    ui::GalgameUI::ChoiceLayout choices;
+                    choices.x = layout->value("x", 0.0f);
+                    choices.y = layout->value("y", 0.0f);
+                    choices.width = layout->value("width", 0.0f);
+                    choices.height = layout->value("height", 0.0f);
+                    choices.halfPitch = layout->value("halfPitch", 0.0f);
+                    if (const auto rows = layout->find("offsets");
+                        rows != layout->end() && rows->is_object()) {
+                        for (auto it = rows->begin(); it != rows->end(); ++it) {
+                            if (!it.value().is_array()) continue;
+                            const auto count = static_cast<std::size_t>(std::strtoul(it.key().c_str(), nullptr, 10));
+                            std::vector<double> offsets;
+                            for (const auto& offset : it.value())
+                                if (offset.is_number()) offsets.push_back(offset.get<double>());
+                            if (count > 0 && count <= 64 && offsets.size() == count)
+                                choices.offsets[count] = std::move(offsets);
+                        }
+                    }
+                    m_ui.SetChoiceLayout(std::move(choices));
+                }
+                if (const auto fonts = settings->find("player.fonts");
+                    fonts != settings->end() && fonts->is_array()) {
+                    for (const auto& font : *fonts) {
+                        if (!font.is_string()) continue;
+                        const auto safe = SafeVfsRelativePath(font.get<std::string>());
+                        if (safe && m_runtime.VFS().Exists(*safe)) {
+                            m_runtime.Assets().PrefetchFontFile(*safe);
+                            m_fontChoices.push_back(*safe);
+                        }
+                    }
+                }
+                if (const auto options = settings->find("player.options");
+                    options != settings->end() && options->is_object()) {
+                    for (auto it = options->begin(); it != options->end(); ++it) {
+                        const std::string& key = it.key();
+                        if (key.empty() || key.size() > 48 || !it.value().is_object() ||
+                            !std::ranges::all_of(key, [](const unsigned char c) {
+                                return std::isalnum(c) || c == '_'; }))
+                            continue;
+                        OptionSpec spec;
+                        spec.def = it.value().value("default", 0);
+                        spec.min = it.value().value("min", 0);
+                        spec.max = it.value().value("max", 100);
+                        if (const auto choices = it.value().find("choices");
+                            choices != it.value().end() && choices->is_array()) {
+                            for (const auto& choice : *choices)
+                                if (choice.is_number_integer())
+                                    spec.choices.push_back(choice.get<int>());
+                            if (!spec.choices.empty()) {
+                                spec.min = *std::ranges::min_element(spec.choices);
+                                spec.max = *std::ranges::max_element(spec.choices);
+                            }
+                        }
+                        if (spec.min > spec.max) continue;
+                        spec.def = std::clamp(spec.def, spec.min, spec.max);
+                        m_optionSpecs.insert_or_assign(key, std::move(spec));
+                    }
+                }
                 const auto transitionDuration = [](const nlohmann::json& owner,
                                                     const char* key)
                     -> std::optional<float> {
@@ -1693,6 +1759,13 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     });
 
     m_ui.SetActionSink([this](const ui::GalgameAction& action) { HandleUIAction(action); });
+    m_ui.SetOptionSource([this](const std::string_view name)
+                             -> std::optional<ui::GalgameUI::OptionRange> {
+        const auto found = m_optionSpecs.find(name);
+        if (found == m_optionSpecs.end()) return std::nullopt;
+        return ui::GalgameUI::OptionRange{OptionValue(name), found->second.min,
+                                          found->second.max};
+    });
     m_ui.SetImagePreloadSink([this](const std::string_view path) {
         m_runtime.Assets().PreloadTexture(
             std::string(path), graphics::AssetPreloadPriority::Normal);
@@ -1721,8 +1794,14 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             return false;
         }
     }
+    for (const char* command : {"dialog.accept", "dialog.cancel", "dialog.toggleSkip"}) {
+        if (const Status registered = m_ui.RegisterActionCommand(command); !registered) {
+            for (const auto& diagnostic : registered.Diagnostics()) diag::Emit(diagnostic);
+            return false;
+        }
+    }
     for (const char* command : {"set.voiceProfile.mute", "voiceProfile.test",
-                                "audio.test.se"}) {
+                                "audio.test.se", "option.set"}) {
         if (const Status registered = m_ui.RegisterActionCommand(command, "argument");
             !registered) {
             for (const auto& diagnostic : registered.Diagnostics()) diag::Emit(diagnostic);
@@ -1888,6 +1967,16 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             return false;
         }
     }
+    if (const Status defined = DefineOptionData(); !defined) {
+        for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
+        return false;
+    }
+    if (const Status defined = DefineDialogData(); !defined) {
+        for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
+        return false;
+    }
+    ApplyAllOptions();
+    PublishMuteData();
     for (int page = 1; page <= m_savePages; ++page) {
         if (const Status defined = m_ui.DefineUiData(
                 "saveLoad.page" + std::to_string(page), Variant(page == 1)); !defined) {
@@ -2269,7 +2358,7 @@ void PlayerApp::FinishBootPresentation() {
 
 void PlayerApp::BeginPresentationTransition(
     const PresentationTransition& transition) {
-    if (m_uiTransitionStartedThisFrame) return;
+    if (m_uiTransitionStartedThisFrame || !m_uiEffects) return;
     const auto handle = m_runtime.Renderer().PlayScreenEffect(
         transition.preset, transition.duration);
     if (handle) m_uiTransitionStartedThisFrame = true;
@@ -2353,6 +2442,7 @@ bool PlayerApp::CommitStartGame() {
     }
     m_session->Backlog().Clear();
     m_autoMode = m_skipMode = m_hudHidden = false;
+    m_hudFadeSnap = true;
     m_storyHudVisible = false;
     m_nvlMode = false;
     m_nvlLines.clear();
@@ -2396,8 +2486,17 @@ bool PlayerApp::CommitStartGame() {
     } else {
         m_session->VM().LoadScript(m_script);
     }
+    // QA hook: begin at a Story label without playing through the game.
+    if (m_pendingStoryEntry.empty())
+        if (const char* label = SDL_getenv("PRISMATIX_E2E_START_LABEL"); label && *label)
+            m_pendingStoryEntry = label;
     if (!m_pendingStoryEntry.empty()) {
-        const std::string entry = std::exchange(m_pendingStoryEntry, {});
+        std::string entry = std::exchange(m_pendingStoryEntry, {});
+        // A Story project keeps each scene's `*top` label as `<scene>:top`;
+        // let authors and the replay screens name a scene by its id.
+        if (m_session->VM().CurrentProgram().LabelIndex(entry) < 0 &&
+            m_session->VM().CurrentProgram().LabelIndex(entry + ":top") >= 0)
+            entry += ":top";
         if (m_session->VM().CurrentProgram().LabelIndex(entry) >= 0) {
             m_session->Stage().ClearAll();
             m_session->Dialogue().Clear();
@@ -2487,6 +2586,7 @@ bool PlayerApp::LoadSlot(int slot) {
     if (!snap) {
         return false;
     }
+    m_hudFadeSnap = true;
     if (snap->gameId != m_boot.gameId) {
         diag::Emit(diag::Diagnostic{
             .severity = diag::Severity::Error,
@@ -3004,10 +3104,202 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
     view.autoMode = m_autoMode;
     view.skipMode = m_skipMode;
     view.textScale=m_settings.textScale;view.reducedMotion=m_settings.reducedMotion;
+    view.windowOpacity = m_messageWindowOpacity;
+    view.dimReadText = m_dimReadText && m_session->VM().CurrentLineSeen();
     for (const auto& line : m_nvlLines) view.nvlLines.push_back(line.speaker.empty() ? line.text : "【" + line.speaker + "】" + line.text);
     if (!view.nvlLines.empty() && m_session->Dialogue().State().fullText == m_nvlLines.back().text)
         view.nvlLines.back() = m_session->Dialogue().State().speaker.empty() ? m_session->Dialogue().State().displayText : "【" + m_session->Dialogue().State().speaker + "】" + m_session->Dialogue().State().displayText;
     return view;
+}
+
+namespace {
+constexpr std::string_view kDialogKinds[] = {
+    "qsave", "qload", "save", "save2", "load", "del",
+    "title", "exit", "jump", "next", "back", "reset"};
+}
+
+Status PlayerApp::DefineDialogData() {
+    if (const Status defined = m_ui.DefineUiData("dialog.visible", Variant(false)); !defined)
+        return defined;
+    if (const Status defined = m_ui.DefineUiData("dialog.skipNext", Variant(false)); !defined)
+        return defined;
+    for (const std::string_view kind : kDialogKinds)
+        if (const Status defined = m_ui.DefineUiData(
+                "dialog.kind." + std::string(kind), Variant(false)); !defined)
+            return defined;
+    return Status::Ok();
+}
+
+void PlayerApp::PublishDialog() {
+    for (const std::string_view kind : kDialogKinds)
+        (void)m_ui.UpdateUiData("dialog.kind." + std::string(kind),
+                                Variant(m_dialog && m_dialog->kind == kind));
+    (void)m_ui.UpdateUiData("dialog.skipNext", Variant(m_dialogSkipNext));
+    (void)m_ui.UpdateUiData("dialog.visible", Variant(m_dialog.has_value()));
+}
+
+// Runs `accept` now when the player chose not to be asked (option
+// `dlg_<kind>` = 1) or the mounted route has no dialog to ask with;
+// otherwise shows the dialog and runs it on "yes".
+void PlayerApp::RequestConfirm(const std::string_view kind, std::function<void()> accept) {
+    if (m_dialog) return;
+    if (OptionValue("dlg_" + std::string(kind)) == 1 ||
+        !m_ui.HasControlNamed("ConfirmDialog")) {
+        accept();
+        return;
+    }
+    m_dialog = PendingDialog{std::string(kind), std::move(accept)};
+    m_dialogSkipNext = false;
+    PublishDialog();
+    // "Move the cursor automatically": land it on the yes button (dialogact 0).
+    if (OptionValue("mouse") == 1) WarpCursorTo(838.0f, 619.0f);
+}
+
+int PlayerApp::OptionValue(const std::string_view name) const {
+    const auto spec = m_optionSpecs.find(name);
+    if (spec == m_optionSpecs.end()) return 0;
+    const auto stored = m_settings.options.find(name);
+    return stored == m_settings.options.end()
+        ? spec->second.def : std::clamp(stored->second, spec->second.min, spec->second.max);
+}
+
+namespace {
+constexpr std::string_view kVoiceProfileIds[] = {
+    "rnd", "szd", "mkd", "rna", "yum", "aid", "ked", "wtd", "tmd",
+    "sud", "knd", "skd", "mzd", "kid", "frd", "man", "fem"};
+}
+
+void PlayerApp::PublishMuteData() {
+    (void)m_ui.UpdateUiData("settings.muted.master", Variant(m_settings.masterMuted));
+    (void)m_ui.UpdateUiData("settings.muted.bgm", Variant(m_settings.bgmMuted));
+    (void)m_ui.UpdateUiData("settings.muted.se", Variant(m_settings.seMuted));
+    (void)m_ui.UpdateUiData("settings.muted.voice", Variant(m_settings.voiceMuted));
+    for (const std::string_view id : kVoiceProfileIds) {
+        const auto found = m_settings.voiceProfileMuted.find(id);
+        (void)m_ui.UpdateUiData("settings.profileMuted." + std::string(id),
+            Variant(found != m_settings.voiceProfileMuted.end() && found->second));
+    }
+}
+
+void PlayerApp::UpdateCursorVisibility(const std::uint64_t now) {
+    auto& input = m_runtime.GetInput();
+    if (input.MouseX() != m_lastMouseX || input.MouseY() != m_lastMouseY ||
+        input.LeftClick() || input.RightClick()) {
+        m_lastMouseX = input.MouseX();
+        m_lastMouseY = input.MouseY();
+        m_cursorActiveAt = now;
+    }
+    const int hideAfter = OptionValue("cursor");
+    const bool hide = hideAfter > 0 && now - m_cursorActiveAt >= static_cast<std::uint64_t>(hideAfter);
+    if (hide != m_cursorHidden) {
+        m_cursorHidden = hide;
+        if (hide) SDL_HideCursor(); else SDL_ShowCursor();
+    }
+}
+
+void PlayerApp::WarpCursorTo(const float logicalX, const float logicalY) {
+    int logicalW = 0, logicalH = 0, windowW = 0, windowH = 0;
+    m_runtime.Renderer().GetLogicalSize(logicalW, logicalH);
+    SDL_Window* window = m_runtime.GetWindow().Handle();
+    if (logicalW <= 0 || logicalH <= 0 || !SDL_GetWindowSize(window, &windowW, &windowH)) return;
+    SDL_WarpMouseInWindow(window, logicalX * static_cast<float>(windowW) / static_cast<float>(logicalW),
+                          logicalY * static_cast<float>(windowH) / static_cast<float>(logicalH));
+}
+
+void PlayerApp::PublishDock() {
+    const auto& input = m_runtime.GetInput();
+    const bool inside = m_dockArea.valid &&
+        input.MouseX() >= m_dockArea.x && input.MouseX() < m_dockArea.x + m_dockArea.width &&
+        input.MouseY() >= m_dockArea.y && input.MouseY() < m_dockArea.y + m_dockArea.height;
+    const bool shown = OptionValue("dock") != 0 || !m_choiceTexts.empty() || inside;
+    if (shown == m_dockShown) return;
+    m_dockShown = shown;
+    (void)m_ui.UpdateUiData("hud.dockShown", Variant(shown));
+}
+
+Status PlayerApp::DefineOptionData() {
+    if (const Status defined = m_ui.DefineUiData("hud.dockShown", Variant(true)); !defined)
+        return defined;
+    for (const std::string_view bus : {"master", "bgm", "se", "voice"})
+        if (const Status defined = m_ui.DefineUiData(
+                "settings.muted." + std::string(bus), Variant(false)); !defined)
+            return defined;
+    for (const std::string_view id : kVoiceProfileIds)
+        if (const Status defined = m_ui.DefineUiData(
+                "settings.profileMuted." + std::string(id), Variant(false)); !defined)
+            return defined;
+    for (const auto& [name, spec] : m_optionSpecs) {
+        const std::string path = "options." + name;
+        const int value = OptionValue(name);
+        if (const Status defined = m_ui.DefineUiData(path, Variant(std::to_string(value))); !defined)
+            return defined;
+        for (const int choice : spec.choices)
+            if (const Status defined = m_ui.DefineUiData(
+                    path + ".is" + std::to_string(choice), Variant(choice == value)); !defined)
+                return defined;
+    }
+    return Status::Ok();
+}
+
+void PlayerApp::PublishOption(const std::string_view name) {
+    const auto spec = m_optionSpecs.find(name);
+    if (spec == m_optionSpecs.end()) return;
+    const std::string path = "options." + std::string(name);
+    const int value = OptionValue(name);
+    (void)m_ui.UpdateUiData(path, Variant(std::to_string(value)));
+    for (const int choice : spec->second.choices)
+        (void)m_ui.UpdateUiData(path + ".is" + std::to_string(choice), Variant(choice == value));
+}
+
+bool PlayerApp::SetOption(const std::string_view name, int value) {
+    const auto spec = m_optionSpecs.find(name);
+    if (spec == m_optionSpecs.end()) return false;
+    value = std::clamp(value, spec->second.min, spec->second.max);
+    if (!spec->second.choices.empty() &&
+        std::ranges::find(spec->second.choices, value) == spec->second.choices.end())
+        return false;
+    if (value == spec->second.def) {
+        if (const auto stored = m_settings.options.find(name); stored != m_settings.options.end())
+            m_settings.options.erase(stored);
+    } else {
+        m_settings.options[std::string(name)] = value;
+    }
+    PublishOption(name);
+    ApplyOption(name, value);
+    return true;
+}
+
+// The options the original Config screen exposes and the Player acts on.
+void PlayerApp::ApplyOption(const std::string_view name, const int value) {
+    if (name == "mspeed") {
+        // 100 shows text at once; each point below adds a millisecond per character.
+        m_settings.textSpeedMs = std::clamp(100 - value, 0, 100);
+        if (m_session) m_session->VM().SetDefaultTextSpeed(m_settings.textSpeedMs);
+    } else if (name == "aspeed") {
+        // getASpeed(): (100 - aspeed) * automode_magni + automode_speed.
+        m_settings.autoWaitMs = (100 - value) * 60 + 600;
+    } else if (name == "messkip") {
+        // 0 skips only text already read, 1 skips everything.
+        m_settings.skipReadOnly = value == 0;
+        (void)m_ui.UpdateUiData("settings.skipReadOnly", Variant(value == 0));
+        (void)m_ui.UpdateUiData("settings.skipAll", Variant(value != 0));
+    } else if (name == "mw_alpha") {
+        m_messageWindowOpacity = std::clamp(value, 0, 100) / 100.0f;
+    } else if (name == "mw_aread") {
+        m_dimReadText = value != 0;
+    } else if (name == "effect") {
+        m_uiEffects = value != 0;
+    } else if (name == "font") {
+        if (value >= 1 && static_cast<std::size_t>(value) <= m_fontChoices.size())
+            (void)m_ui.SetDefaultFont(m_fontChoices[static_cast<std::size_t>(value) - 1]);
+    }
+}
+
+void PlayerApp::ApplyAllOptions() {
+    for (const auto& [name, spec] : m_optionSpecs) {
+        PublishOption(name);
+        ApplyOption(name, OptionValue(name));
+    }
 }
 
 ui::SettingsPresentation PlayerApp::SettingsUI() const {
@@ -3253,6 +3545,13 @@ void PlayerApp::PresentRoute(const std::string& route,
 void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     const std::string& t = action.command;
     auto& audio = m_runtime.Audio();
+    // Settings actions keep the MUTE checkboxes' data in step with the model.
+    struct MuteSync {
+        PlayerApp* app;
+        bool active;
+        ~MuteSync() { if (active) app->PublishMuteData(); }
+    } muteSync{this, t.starts_with("set.") || t.starts_with("settings.") ||
+                      t == "system.reset.apply"};
     const auto musicUnlocked = [this](const std::size_t index) {
         return index < m_musicTracks.size() && m_profile.MusicUnlocked(
             std::filesystem::path(m_musicTracks[index]).stem().string());
@@ -3296,7 +3595,28 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         (void)m_ui.ShowSaveLoad(saveMode, SaveItems(saveMode));
     } else if (t == "load.slot" || t == "save.slot") {
         const bool saveMode = t == "save.slot";
-        if (m_ui.SupportsSaveLoadConfirmation()) {
+        if (m_ui.HasControlNamed("ConfirmDialog")) {
+            char* end = nullptr;
+            const long slot = std::strtol(action.argument.c_str(), &end, 10);
+            if (end == action.argument.c_str() || *end != '\0' ||
+                slot < m_saveFirstSlot ||
+                slot >= m_saveFirstSlot + m_savePages * m_saveSlotsPerPage ||
+                (!saveMode && !m_saves.Peek(static_cast<int>(slot)).exists))
+                return;
+            const int number = static_cast<int>(slot);
+            const std::string_view kind = !saveMode ? "load"
+                : m_saves.Peek(number).exists ? "save2" : "save";
+            RequestConfirm(kind, [this, number, saveMode] {
+                if (saveMode) {
+                    if (SaveSlot(number, m_menuThumb))
+                        (void)m_ui.ShowSaveLoad(true, SaveItems(true));
+                } else if (LoadSlot(number)) {
+                    BeginPresentationTransition(m_routeTransition);
+                } else {
+                    (void)m_ui.UpdateUiData("saveLoad.error.visible", Variant(true));
+                }
+            });
+        } else if (m_ui.SupportsSaveLoadConfirmation()) {
             char* end = nullptr;
             const long slot = std::strtol(action.argument.c_str(), &end, 10);
             if (end == action.argument.c_str() || *end != '\0' ||
@@ -3478,6 +3798,8 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             m_pendingSaveScreen = true;
     } else if (t == "settings.open") {
         OpenScreen("settings");
+    } else if (t == "settings.reset" && m_ui.HasControlNamed("ConfirmDialog")) {
+        RequestConfirm("reset", [this] { HandleUIAction({"system.reset.apply", {}}); });
     } else if (t == "settings.reset" &&
                m_ui.SupportsSystemConfirmation()) {
         m_pendingSystemPrompt = ui::GalgameUI::SystemPrompt::Reset;
@@ -3495,6 +3817,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         audio.SetSEVolume(m_settings.seVolume);
         audio.SetVoiceVolume(m_settings.voiceVolume);
         m_session->VM().SetDefaultTextSpeed(m_settings.textSpeedMs);
+        ApplyAllOptions();
         (void)m_ui.ShowSettings(SettingsUI());
     } else if (t.starts_with("settings.page")) {
         const std::string page = t.substr(std::string("settings.page").size());
@@ -3660,6 +3983,9 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     } else if (t == "title.confirm.cancel") {
         (void)m_ui.SetTitleConfirmation(false);
     } else if (t == "title.open" && m_appState == AppState::Game &&
+               m_ui.HasControlNamed("ConfirmDialog")) {
+        RequestConfirm("title", [this] { HandleUIAction({"title.confirm.accept", {}}); });
+    } else if (t == "title.open" && m_appState == AppState::Game &&
                m_ui.SupportsTitleConfirmation()) {
         (void)m_ui.SetTitleConfirmation(true);
     } else if (t == "title.open" || t == "title.confirm.accept") {
@@ -3679,9 +4005,11 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         OpenScreen("backlog");
     } else if (t == "save.quick") {
         // Written after the Stage renders, so the thumbnail has no HUD.
-        m_saveRequested = true;
+        RequestConfirm("qsave", [this] { m_saveRequested = true; });
     } else if (t == "load.quick") {
-        if (m_saves.Peek(0).exists) (void)LoadSlot(0);
+        RequestConfirm("qload", [this] {
+            if (m_saves.Peek(0).exists) (void)LoadSlot(0);
+        });
     } else if (t == "voice.replay") {
         const auto& lines = m_session->Backlog().Entries();
         const auto voiced = std::find_if(lines.rbegin(), lines.rend(), [](const auto& entry) {
@@ -3692,12 +4020,16 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
                 ? voiced->voice : m_session->VM().Config().voiceDir + voiced->voice);
     } else if (t == "choice.previous") {
         // The choice autosave is the state at the most recent choice prompt.
-        if (m_saves.Peek(kAutoSaveSlot).exists) (void)LoadSlot(kAutoSaveSlot);
+        RequestConfirm("back", [this] {
+            if (m_saves.Peek(kAutoSaveSlot).exists) (void)LoadSlot(kAutoSaveSlot);
+        });
     } else if (t == "choice.next") {
         // Skip stops at the next choice, and at unread text unless the
         // player allowed skipping it.
-        m_skipMode = true;
-        m_autoMode = false;
+        RequestConfirm("next", [this] {
+            m_skipMode = true;
+            m_autoMode = false;
+        });
     } else if (t == "backlog.voice" || t == "backlog.rollback") {
         std::uint64_t sequence = 0;
         try {
@@ -3708,9 +4040,15 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         if (const auto* entry = m_session->Backlog().Find(sequence)) {
             if (t == "backlog.voice" && !entry->voice.empty())
                 m_runtime.Audio().PlayVoice(entry->voice.find('/') != std::string::npos ? entry->voice : m_session->VM().Config().voiceDir + entry->voice);
-            else RollbackToBacklogSequence(entry->sequence);
+            else RequestConfirm("jump", [this, sequence = entry->sequence] {
+                RollbackToBacklogSequence(sequence);
+            });
         }
     } else if (t == "overlay.close") {
+        if (m_dialog) {
+            HandleUIAction({"dialog.cancel", {}});
+            return;
+        }
         if (m_pendingSystemPrompt != ui::GalgameUI::SystemPrompt::None) {
             m_pendingSystemPrompt = ui::GalgameUI::SystemPrompt::None;
             (void)m_ui.SetSystemConfirmation(m_pendingSystemPrompt);
@@ -3746,6 +4084,33 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             HandleUIAction({"system.reset.apply", {}});
         else if (prompt == ui::GalgameUI::SystemPrompt::Exit)
             m_quitRequested = true;
+    } else if (t == "dialog.accept") {
+        if (!m_dialog) return;
+        auto dialog = std::move(*m_dialog);
+        m_dialog.reset();
+        if (m_dialogSkipNext) (void)SetOption("dlg_" + dialog.kind, 1);
+        m_dialogSkipNext = false;
+        PublishDialog();
+        dialog.accept();
+    } else if (t == "dialog.cancel") {
+        m_dialog.reset();
+        m_dialogSkipNext = false;
+        PublishDialog();
+    } else if (t == "dialog.toggleSkip") {
+        if (!m_dialog) return;
+        m_dialogSkipNext = !m_dialogSkipNext;
+        PublishDialog();
+    } else if (t == "option.set") {
+        const auto split = action.argument.find('=');
+        if (split != std::string::npos) {
+            char* end = nullptr;
+            const long value = std::strtol(action.argument.c_str() + split + 1, &end, 10);
+            if (end != action.argument.c_str() + split + 1 && *end == '\0')
+                (void)SetOption(std::string_view(action.argument).substr(0, split),
+                                static_cast<int>(value));
+        }
+    } else if (t == "app.quit" && m_ui.HasControlNamed("ConfirmDialog")) {
+        RequestConfirm("exit", [this] { m_quitRequested = true; });
     } else if (t == "app.quit") {
         if (m_ui.SupportsSystemConfirmation()) {
             m_pendingSystemPrompt = ui::GalgameUI::SystemPrompt::Exit;
@@ -3771,7 +4136,7 @@ void PlayerApp::RenderStageWithScripts() {
         m_scriptHost->RenderRetained(script::RenderPhase::AfterStage);
 }
 
-void PlayerApp::RenderUIWithScripts() {
+void PlayerApp::RenderUIWithScripts(const float opacity) {
     const diag::ScopedFramePhase profiled(diag::FramePhase::UiRender);
     if (m_scriptHost)
         m_scriptHost->RenderRetained(script::RenderPhase::BeforeUI);
@@ -3821,7 +4186,14 @@ void PlayerApp::RenderUIWithScripts() {
             {a, b, -b, a, pivotX - (a * pivotX - b * pivotY) + pose.x + shakeX,
              pivotY - (b * pivotX + a * pivotY) + pose.y + shakeY});
     }
+    const bool faded = opacity < 0.999f;
+    if (faded) {
+        const auto alpha = static_cast<std::uint8_t>(std::clamp(opacity, 0.0f, 1.0f) * 255.0f);
+        m_runtime.Renderer().PushTransform({0.0f, 0.0f}, {1.0f, 1.0f}, 0.0f,
+                                           Color{255, 255, 255, alpha});
+    }
     m_ui.Render(m_runtime.Renderer());
+    if (faded) m_runtime.Renderer().PopTransform();
     if (shaking) m_runtime.Renderer().PopTransform();
     if (m_scriptHost)
         m_scriptHost->RenderRetained(script::RenderPhase::AfterUI);
@@ -4973,8 +5345,27 @@ void PlayerApp::UpdateScriptScheduler(const float dt) {
 void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     px::Input& input = m_runtime.GetInput();
 
-    if (input.ActionPressed(InputAction::QuickLoad)) LoadSlot(0);
-    if (input.ActionPressed(InputAction::QuickSave)) m_saveRequested = true;
+    if (m_dialog && m_session->Routes().CurrentModalRoute().empty()) {
+        // A confirmation is modal: only its own buttons, Escape and a right
+        // click answer it, and the story waits behind it.
+        if (input.RightClick() || input.KeyPressed(SDL_SCANCODE_ESCAPE))
+            HandleUIAction({"dialog.cancel", {}});
+        if (m_ui.CurrentScreen() == ui::GalgameUI::Screen::HUD)
+            m_ui.RefreshHUD(DialogueUI());
+        int dialogW = 0, dialogH = 0;
+        m_runtime.Renderer().GetLogicalSize(dialogW, dialogH);
+        (void)m_ui.Update(input, dialogW, dialogH, dt);
+        RenderStageWithScripts();
+        RenderUIWithScripts();
+        return;
+    }
+
+    if (m_dialog == std::nullopt) {
+        if (input.ActionPressed(InputAction::QuickLoad))
+            RequestConfirm("qload", [this] { LoadSlot(0); });
+        else if (input.ActionPressed(InputAction::QuickSave))
+            RequestConfirm("qsave", [this] { m_saveRequested = true; });
+    }
     if (input.ActionPressed(InputAction::OpenSave)) m_pendingSaveScreen = true;
 
     // Mode toggles (KAG conventions: A=auto, S=skip toggle, Ctrl=skip held).
@@ -5003,7 +5394,22 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         if (m_session->VM().State() == vn::VMState::WaitingChoice) {
             for (const auto& choice : m_session->VM().Choices())
                 m_choiceTexts.push_back(choice.text);
+            // Choices live on the message window, so they bring it back.
+            m_storyHudVisible = true;
+            m_hudHidden = false;
+            if (!m_choiceWasPending) {
+                // Config: keep skipping/auto-reading after the choice is made.
+                m_resumeSkipAfterChoice = m_skipMode && OptionValue("skip") == 1;
+                m_resumeAutoAfterChoice = m_autoMode && OptionValue("auto") == 1;
+            }
+            m_choiceWasPending = true;
             m_skipMode = false;  // Skip always stops at choices.
+            m_autoMode = false;
+        } else if (m_choiceWasPending) {
+            m_choiceWasPending = false;
+            if (m_resumeSkipAfterChoice) m_skipMode = true;
+            else if (m_resumeAutoAfterChoice) m_autoMode = true;
+            m_resumeSkipAfterChoice = m_resumeAutoAfterChoice = false;
         }
     };
     syncChoiceTexts();
@@ -5176,14 +5582,26 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         m_pendingSaveScreen = false;
     }
 
-    if ((m_storyHudVisible && !m_hudHidden) ||
-        !m_session->Routes().CurrentModalRoute().empty()) {
+    PublishDock();
+    const bool hudWanted = (m_storyHudVisible && !m_hudHidden) ||
+                           !m_session->Routes().CurrentModalRoute().empty();
+    {
+        const float target = hudWanted ? 1.0f : 0.0f;
+        if (m_hudFadeSnap || !m_uiEffects) {
+            m_hudFade = target;
+            m_hudFadeSnap = false;
+        } else {
+            const float step = dt / 0.2f;
+            m_hudFade += std::clamp(target - m_hudFade, -step, step);
+        }
+    }
+    if (hudWanted || m_hudFade > 0.001f) {
         // Opening Save above changes the active surface during this frame.
         // RefreshHUD installs HUD when another screen is active, so doing it
         // unconditionally immediately erased the menu the player just opened.
         if (m_ui.CurrentScreen() == ui::GalgameUI::Screen::HUD)
             m_ui.RefreshHUD(DialogueUI());
-        RenderUIWithScripts();
+        RenderUIWithScripts(m_hudFade);
     }
 
     if (m_saveRequested) {
@@ -5225,6 +5643,7 @@ void PlayerApp::MainLoop() {
         px::Input& input = m_runtime.GetInput();
         const float dt = m_runtime.GetClock().DeltaSeconds();
         const std::uint64_t now = m_runtime.GetClock().NowMs();
+        UpdateCursorVisibility(now);
         const std::string_view inputRoute = m_session->Routes().CurrentRoute();
         const bool gameInputContext = m_appState == AppState::Game &&
             !m_gameStartTransitionActive && m_viewingCG.empty() &&

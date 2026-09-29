@@ -178,6 +178,25 @@ public:
         m_showTransitionSeconds = std::clamp(value, 0.0f, 2.0f);
     }
     [[nodiscard]] float ShowTransitionSeconds() const { return m_showTransitionSeconds; }
+    // Leaving Visible keeps drawing the control for this long, fading it out
+    // and sliding it by HideOffsetY pixels. Zero hides it at once.
+    void SetHideTransitionSeconds(float value) {
+        m_hideTransitionSeconds = std::clamp(value, 0.0f, 2.0f);
+    }
+    [[nodiscard]] float HideTransitionSeconds() const { return m_hideTransitionSeconds; }
+    // Vertical distance the control travels while it appears (it starts that
+    // far from its place) or disappears (it ends that far from it).
+    void SetShowOffsetY(float value) { m_showOffsetY = std::clamp(value, -2000.0f, 2000.0f); }
+    [[nodiscard]] float ShowOffsetY() const { return m_showOffsetY; }
+    void SetHideOffsetY(float value) { m_hideOffsetY = std::clamp(value, -2000.0f, 2000.0f); }
+    [[nodiscard]] float HideOffsetY() const { return m_hideOffsetY; }
+    void SetShowOffsetX(float value) { m_showOffsetX = std::clamp(value, -2000.0f, 2000.0f); }
+    [[nodiscard]] float ShowOffsetX() const { return m_showOffsetX; }
+    void SetHideOffsetX(float value) { m_hideOffsetX = std::clamp(value, -2000.0f, 2000.0f); }
+    [[nodiscard]] float HideOffsetX() const { return m_hideOffsetX; }
+    // Linear progress instead of the default squared ease-out.
+    void SetLinearTransition(bool value) { m_linearTransition = value; }
+    [[nodiscard]] bool LinearTransition() const { return m_linearTransition; }
     void SetModulate(Color value) { m_modulate = value; }
     [[nodiscard]] Color Modulate() const { return m_modulate; }
     void SetClipContent(bool value) { m_clipContent = value; }
@@ -272,6 +291,14 @@ private:
     float m_opacity = 1.0f;
     float m_showTransitionSeconds = 0.0f;
     float m_showElapsed = 0.0f;
+    float m_hideTransitionSeconds = 0.0f;
+    float m_hideElapsed = 0.0f;
+    bool m_hiding = false;
+    float m_showOffsetY = 8.0f;
+    float m_hideOffsetY = 0.0f;
+    float m_showOffsetX = 0.0f;
+    float m_hideOffsetX = 0.0f;
+    bool m_linearTransition = false;
     Color m_modulate{255,255,255,255};
     bool m_clipContent = false;
     std::string m_accessibilityLabel;

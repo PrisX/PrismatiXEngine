@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <memory>
 #include <map>
+#include <set>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -58,6 +59,10 @@ struct DialoguePresentation {
     bool skipMode = false;
     float textScale = 1.0f;
     bool reducedMotion = false;
+    // Opacity of the control named "MessageWindow", 0..1.
+    float windowOpacity = 1.0f;
+    // Draw the line in the read-text colour (already-read prose).
+    bool dimReadText = false;
 };
 struct SettingsPresentation {
     int master = 128;
@@ -116,6 +121,27 @@ public:
         m_studioMotionLoader = std::move(loader);
     }
     void SetActionSink(ActionSink sink) { m_sink = std::move(sink); }
+    /**
+     * Where choices sit when the HUD has a control named ChoiceList (an
+     * `ItemsPlaced` over `dialogue.choices`): the row for N choices holds one
+     * offset per choice, in units of `halfPitch` pixels from `y`.
+     */
+    struct ChoiceLayout {
+        float x = 0.0f;
+        float y = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        float halfPitch = 0.0f;
+        std::map<std::size_t, std::vector<double>> offsets;
+    };
+    void SetChoiceLayout(ChoiceLayout layout) { m_choiceLayout = std::move(layout); }
+    /** True when the mounted route contains a control with this name. */
+    [[nodiscard]] bool HasControlNamed(std::string_view name) const;
+    /** Current value and range of a Player option, or nullopt when undeclared. */
+    struct OptionRange { int value = 0; int minimum = 0; int maximum = 100; };
+    using OptionSource = std::function<std::optional<OptionRange>(std::string_view)>;
+    /** Sliders naming an option (`optionKey`) follow it and emit `option.set`. */
+    void SetOptionSource(OptionSource source) { m_optionSource = std::move(source); }
     /** Define an authored UI ViewModel value before its route is mounted. */
     Status DefineUiData(std::string path, Variant value);
     /** Update host data after boot; declared UI values are checked before commit. */
@@ -227,6 +253,18 @@ public:
 private:
     class ItemSource;
     void Emit(std::string command, std::string argument = {});
+    void BindOptionSliders(Control* root);
+    Control* m_messageWindow = nullptr;
+    // Name of the control under the pointer; authored `hover.<name>` data
+    // (declared in player.uiData) follows it, for tooltips.
+    std::string m_hoverName;
+    std::set<std::string, std::less<>> m_hoverDeclared;
+    void PublishHover();
+    Control* m_choiceList = nullptr;
+    ChoiceLayout m_choiceLayout;
+    Color m_dialogueBaseColor{0, 0, 0, 255};
+    bool m_dialogueDimmed = false;
+    OptionSource m_optionSource;
     Status Install(std::unique_ptr<Control> root, Screen screen,
                    std::string route = {});
     Status InstallTemplate(Screen screen);

@@ -128,6 +128,20 @@ for `startle`/`wiggle`, degrees for `sway`), `time` is one segment,
 stops the current voice. `[shake 300ms 5 target=window]` shakes only the
 message window layer instead of the Stage.
 
+`bgm`, `ambience`, `se` and `voice` accept `volume=0..100`, the level of that
+one cue in percent of its bus (the Config volume stays in charge). A looping
+sound that must survive saving belongs on the ambience bus:
+
+```pxstory
+[ambience wind loop=true fade=500ms volume=40]
+[se door volume=60]
+[ambience.stop fade=1s]
+```
+
+`[flash color=af4154 alpha=0.6 duration=300ms loop=2]` washes the screen with
+a colour: it rises to `alpha` and falls back, `loop` times, each taking
+`duration`. It is skipped while fast-forwarding.
+
 ### Framing, image layers and whole-screen transitions
 
 A background can be framed instead of filling the screen. `x`/`y` place the
@@ -269,6 +283,41 @@ A registered `.pxtimeline` can be played using its resource reference:
 ```
 
 Create the actual clip with typed authoring contracts or adapt the existing sample's Timeline. Story's `timeline` accepts the clip reference; it does not expose every runtime playback option. For image-layer animations in UI, see [`.pxmotion` authoring](motion-authoring.md); for image-based lettering without a node per possible character, see [SpriteText](sprite-text-authoring.md). For keyboard shortcuts, see [named input actions](input-actions.md). See also [the React-free TSX example](examples/jsx-ui-authoring.tsx), [custom effects](custom-effects.md), and [the runtime SDK](../runtime-sdk/README.md) for richer authored UI and presentation APIs.
+
+### Player options and confirmation dialogs
+
+`player.options` in `prismatix.json` declares small integer settings the Player
+stores with the player's preferences. Each entry has a `default` and either
+`min`/`max` or a list of `choices`:
+
+```json
+"player.options": {
+  "aspeed": {"default": 50, "min": 0, "max": 100},
+  "font": {"default": 1, "choices": [1, 2, 3]},
+  "dlg_qsave": {"default": 0, "choices": [0, 1]}
+}
+```
+
+A `Slider` with `runtimeProperties={{optionKey: "aspeed"}}` edits an option and
+needs no host code. `{id: "option.set", arguments: {argument: "font=2"}}`
+sets one, and `options.<name>` (text) and `options.<name>.is<value>` (boolean)
+are bindable UI data. The Player itself acts on `mspeed` (text speed, 100 is
+instant), `aspeed` (auto-reading wait), `mw_alpha` (message window opacity),
+`mw_aread` (grey already-read text), `messkip`, `effect` (0 shows screens
+without transitions), `font` (index into `player.fonts`), `skip`/`auto`
+(resume after a choice), `cursor` (auto-hide after N ms) and `mouse` (move
+the cursor onto a dialog's yes button).
+
+A route that contains a control named `ConfirmDialog` gets confirmation
+prompts: quick save/load, saving, loading, returning to the title, backlog
+jumps, choice back/next, exit and reset ask first unless the player set the
+option `dlg_<kind>` to 1. The dialog reads `dialog.visible`,
+`dialog.skipNext` and `dialog.kind.<kind>` and answers with `dialog.accept`,
+`dialog.cancel` and `dialog.toggleSkip`. Kinds: `qsave`, `qload`, `save`,
+`save2`, `load`, `del`, `title`, `exit`, `jump`, `next`, `back`, `reset`.
+Any control can fade out when hidden instead of vanishing:
+`showTransitionSeconds`, `hideTransitionSeconds`, `showOffsetY`,
+`hideOffsetY` and `linearTransition` are ordinary runtime properties.
 
 ## Localization, voice and release updates
 

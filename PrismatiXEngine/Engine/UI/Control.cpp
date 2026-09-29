@@ -69,10 +69,15 @@ void Control::SetMaximumSize(Vec2 value) { m_maximum = value; InvalidateLayout()
 void Control::SetSizeFlags(SizeFlag h, SizeFlag v) { m_horizontalFlags = h; m_verticalFlags = v; InvalidateLayout(); }
 void Control::SetStretchRatio(float value) { m_stretchRatio = std::max(0.001f, value); InvalidateLayout(); }
 void Control::SetVisibility(Visibility value) {
-    if (m_visibility != Visibility::Visible && value == Visibility::Visible)
+    const bool wasVisible = m_visibility == Visibility::Visible;
+    if (!wasVisible && value == Visibility::Visible) {
         m_showElapsed = 0.0f;
-    else if (value != Visibility::Visible)
+        m_hiding = false;
+    } else if (value != Visibility::Visible) {
         m_showElapsed = m_showTransitionSeconds;
+        m_hiding = wasVisible && m_hideTransitionSeconds > 0.0f;
+        m_hideElapsed = 0.0f;
+    }
     m_visibility = value;
     InvalidateLayout();
 }
@@ -275,17 +280,36 @@ void Control::Update(float deltaSeconds) {
     if (m_visibility == Visibility::Visible && m_showElapsed < m_showTransitionSeconds &&
         std::isfinite(deltaSeconds) && deltaSeconds > 0.0f)
         m_showElapsed = std::min(m_showTransitionSeconds, m_showElapsed + deltaSeconds);
+    if (m_hiding && std::isfinite(deltaSeconds) && deltaSeconds > 0.0f) {
+        m_hideElapsed += deltaSeconds;
+        if (m_hideElapsed >= m_hideTransitionSeconds) m_hiding = false;
+    }
     for (const auto& child : Children())
         if (auto* control = dynamic_cast<Control*>(child.get())) control->Update(deltaSeconds);
 }
 
 void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
-    if (m_visibility != Visibility::Visible) return;
-    const float progress = m_showTransitionSeconds > 0.0f
-        ? std::clamp(m_showElapsed / m_showTransitionSeconds, 0.0f, 1.0f) : 1.0f;
-    const float remaining = 1.0f - progress;
-    Color tint=m_modulate;tint.a=static_cast<std::uint8_t>(static_cast<float>(tint.a)*m_opacity*(1.0f-remaining*remaining));
-    renderer.PushTransform({m_layoutRect.x+m_pivot.x*m_layoutRect.w+m_translation.x,m_layoutRect.y+m_pivot.y*m_layoutRect.h+m_translation.y+8.0f*remaining*remaining},m_scale,m_rotation,tint);
+    if (m_visibility != Visibility::Visible && !m_hiding) return;
+    // `visible` is the fraction of the way to fully shown (1 when settled) and
+    // `slide` the vertical offset left to travel.
+    float visible = 1.0f;
+    float slide = 0.0f;
+    float slideX = 0.0f;
+    if (m_hiding) {
+        const float gone = std::clamp(m_hideElapsed / m_hideTransitionSeconds, 0.0f, 1.0f);
+        visible = m_linearTransition ? 1.0f - gone : 1.0f - gone * gone;
+        slide = m_hideOffsetY * (m_linearTransition ? gone : gone * gone);
+        slideX = m_hideOffsetX * (m_linearTransition ? gone : gone * gone);
+    } else {
+        const float progress = m_showTransitionSeconds > 0.0f
+            ? std::clamp(m_showElapsed / m_showTransitionSeconds, 0.0f, 1.0f) : 1.0f;
+        const float remaining = 1.0f - progress;
+        visible = m_linearTransition ? progress : 1.0f - remaining * remaining;
+        slide = m_showOffsetY * (m_linearTransition ? remaining : remaining * remaining);
+        slideX = m_showOffsetX * (m_linearTransition ? remaining : remaining * remaining);
+    }
+    Color tint=m_modulate;tint.a=static_cast<std::uint8_t>(static_cast<float>(tint.a)*m_opacity*visible);
+    renderer.PushTransform({m_layoutRect.x+m_pivot.x*m_layoutRect.w+m_translation.x+slideX,m_layoutRect.y+m_pivot.y*m_layoutRect.h+m_translation.y+slide},m_scale,m_rotation,tint);
     if(m_clipContent)renderer.PushClip(m_layoutRect);
     DrawSelf(renderer, theme);
     for(const auto& child:Children())if(auto* control=dynamic_cast<Control*>(child.get()))control->Draw(renderer,theme);
