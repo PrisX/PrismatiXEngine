@@ -663,6 +663,7 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
         } else if (operation.kind == "hudVisibility") {
             command.type = "hud_visibility";
             Add(command, "visible", Argument(operation, "visible"));
+            Add(command, "time", DurationMilliseconds(Argument(operation, "time")));
         } else if (operation.kind == "unlock") {
             command.type = "unlock";
             Add(command, "kind", Argument(operation, "kind"));

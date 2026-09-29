@@ -465,7 +465,7 @@ int main() {
         Operation("all-effect", "effect", {{"value", "fade"}}),
         Operation("all-shake", "shake", {{"duration", "250ms"}, {"amplitude", "15"}}),
         Operation("all-ui", "ui", {{"route", "title"}, {"operation", "replace"}}),
-        Operation("all-hud", "hudVisibility", {{"visible", "false"}}),
+        Operation("all-hud", "hudVisibility", {{"visible", "false"}, {"time", "0.5s"}}),
         Operation("all-act", "actorAction", {{"character", "hero"}, {"preset", "nod"},
             {"size", "8"}, {"time", "150ms"}, {"loop", "2"}, {"ease", "out"}}),
         Operation("all-stop-se", "stopSoundEffect", {{"fade", "200ms"}}),
@@ -489,6 +489,10 @@ int main() {
         px::CompileRuntimeIr(allKindsDocument);
     for (const auto& error : allKindsProgram.errors) std::cerr << error << '\n';
     assert(allKindsProgram.errors.empty());
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "hud_visibility" && command.Get("visible") == "false" &&
+               command.Get("time") == "500";
+    }));
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "bgm" && command.Get("intro") == "music-intro.ogg" &&
                command.Get("fade") == "150";

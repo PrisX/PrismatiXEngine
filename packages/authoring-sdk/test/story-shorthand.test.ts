@@ -379,3 +379,11 @@ test("face= picks the message-window face for one line", () => {
   assert.ok(codes("@yuki[face=sad] x\n", {characters: [faced]}).includes("PXSTORY1114"));
   assert.ok(codes("@\"A\"[face=smile] x\n").includes("PXSTORY1162"));
 });
+
+test("hud time sets the open and close fade", () => {
+  const ops = operations("[hud visible=false time=500ms]\n[hud true 0]\n[hud visible=true]\n");
+  assert.deepEqual(ops.map(({arguments: args}) => args), [
+    {visible: "false", time: "500ms"}, {visible: "true", time: "0"}, {visible: "true"}]);
+  assert.ok(codes("[hud visible=false time=soon]\n").includes("PXSTORY1153"));
+  assert.ok(codes("[hud visible=false time=11s]\n").includes("PXSTORY1153"));
+});

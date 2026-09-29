@@ -142,6 +142,10 @@ private:
     // when text is hidden by `msgoff`, a right click or a script.
     float m_hudFade = 0.0f;
     bool m_hudFadeSnap = true;
+    // `[hud time=]` sets the fade of that one show or hide; later automatic
+    // fades (the next line, a right click) use the default again.
+    static constexpr float kHudFadeSeconds = 0.2f;
+    float m_hudFadeSeconds = kHudFadeSeconds;
     void UpdateScriptScheduler(float dt);
     void ProcessScriptSafePoint();
     // Returns true when it consumed the frame (a movie is on screen).

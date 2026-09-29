@@ -58,7 +58,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   timeline: ["timeline", "await", "speed"],
   motion: ["asset", "await", "speed"], "motion.stop": [],
   ui: ["route", "operation"],
-  hud: ["visible"],
+  hud: ["visible", "time"],
   nvl: [], adv: [], "nvl.clear": [],
   unlock: ["kind", "id"],
   effect: ["value"], shake: ["duration", "amplitude", "target"],
@@ -1430,9 +1430,14 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       case "ui": emit(node, "ui", {route: named("route") ?? positional(0) ?? "", operation: named("operation") ?? "push"}); break;
       case "hud": {
         const visible = named("visible") ?? positional(0);
+        // time= is the open/close fade (Artemis msgon/msgoff time).
+        const time = named("time") ?? positional(1);
         if (visible !== "true" && visible !== "false")
           diagnostics.push(error("PXSTORY1152", "hud visible must be true or false", node.span));
-        else emit(node, "hudVisibility", {visible});
+        else if (time !== undefined && (!validAudioDuration(time) ||
+                 (durationMilliseconds(time) ?? 0) > 10_000))
+          diagnostics.push(error("PXSTORY1153", "hud time must be a duration of at most 10s", node.span));
+        else emit(node, "hudVisibility", {visible, ...(time === undefined ? {} : {time})});
         break;
       }
       case "unlock": {

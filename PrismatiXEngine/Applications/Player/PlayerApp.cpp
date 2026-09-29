@@ -1738,6 +1738,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         const std::string& t = cmd.type;
         if (t == "hud_visibility") {
             m_storyHudVisible = cmd.Get("visible") == "true";
+            m_hudFadeSeconds = cmd.Has("time")
+                ? std::clamp(std::atoi(cmd.Get("time").c_str()), 0, 10'000) / 1000.0f
+                : kHudFadeSeconds;
             return true;
         }
         if (t == "actor_action" && cmd.Get("id") == "$window") {
@@ -5798,13 +5801,14 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
                            !m_session->Routes().CurrentModalRoute().empty();
     {
         const float target = hudWanted ? 1.0f : 0.0f;
-        if (m_hudFadeSnap || !m_uiEffects) {
+        if (m_hudFadeSnap || !m_uiEffects || m_hudFadeSeconds <= 0.0f) {
             m_hudFade = target;
             m_hudFadeSnap = false;
         } else {
-            const float step = dt / 0.2f;
+            const float step = dt / m_hudFadeSeconds;
             m_hudFade += std::clamp(target - m_hudFade, -step, step);
         }
+        if (m_hudFade == target) m_hudFadeSeconds = kHudFadeSeconds;
     }
     if (hudWanted || m_hudFade > 0.001f) {
         // Opening Save above changes the active surface during this frame.

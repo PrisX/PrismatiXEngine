@@ -263,8 +263,15 @@ for `startle`/`wiggle`, degrees for `sway`), `time` is one segment (at most
 The same presets play on the background and image layers (see below).
 
 `[se.stop fade=500ms]` stops every playing sound effect, `[se.stop channel=2]`
-only channel 2 (see below), and `[voice.stop]` stops the current voice. `[shake 300ms 5 target=window]` shakes only the
-message window layer instead of the Stage.
+only channel 2 (see below), and `[voice.stop]` stops the current voice.
+`[shake 300ms 5 target=window]` shakes only the message window layer instead
+of the Stage.
+
+`[hud visible=false]` hides the message window and HUD until the next line
+shows them again; `[hud visible=true]` shows them at once. Both fade over
+200 ms unless `time=` says otherwise (`[hud visible=false time=1s]`, at most
+10 s, `time=0` switches instantly, as Artemis `msgoff`/`msgon time=`). The
+Story does not wait for the fade, and later automatic fades use 200 ms again.
 
 `bgm`, `ambience`, `se` and `voice` accept `volume=0..100`, the level of that
 one cue in percent of its bus (the Config volume stays in charge).
