@@ -97,6 +97,7 @@ void AudioEngine::Shutdown() {
     }
     m_seTracks.clear();
     m_seTrackAudio.clear();
+    m_seTrackGain.clear();
     for (auto& [path, entry] : m_audio) {
         if (entry.audio) {
             MIX_DestroyAudio(entry.audio);
@@ -229,6 +230,7 @@ MIX_Track* AudioEngine::AcquireSeTrack(MIX_Audio* audio) {
         if (t) {
             m_seTracks.push_back(t);
             m_seTrackAudio.push_back(audio);
+            m_seTrackGain.push_back(1.0f);
         }
         return t;
     }
@@ -310,7 +312,7 @@ void AudioEngine::FinishTrackPlayback(MIX_Track* track,
 }
 
 bool AudioEngine::StartMusic(const std::string& path, const bool loop,
-                             const int fadeMs) {
+                             const int fadeMs, const float gain) {
     if (!m_initialized) return false;
     MIX_Track* current = m_bgmTracks[m_bgmActive];
     const bool crossfade = fadeMs > 0 && current && MIX_TrackPlaying(current);
@@ -322,6 +324,7 @@ bool AudioEngine::StartMusic(const std::string& path, const bool loop,
     MIX_Audio* audio = AcquireAudio(path, /*predecode=*/false);
     if (!audio || !MIX_SetTrackAudio(track, audio)) return false;
     m_bgmAudio[next] = audio;
+    m_bgmCueGain[static_cast<std::size_t>(next)] = std::clamp(gain, 0.0f, 1.0f);
     ApplyMixGains();
 
     SDL_PropertiesID props = SDL_CreateProperties();
@@ -342,12 +345,14 @@ bool AudioEngine::StartMusic(const std::string& path, const bool loop,
     return true;
 }
 
-MIX_Track* AudioEngine::StartSoundEffect(const std::string& path) {
+MIX_Track* AudioEngine::StartSoundEffect(const std::string& path, const float gain) {
     if (!m_initialized) return nullptr;
     MIX_Audio* audio = AcquireAudio(path, /*predecode=*/true);
     if (!audio) return nullptr;
     MIX_Track* track = AcquireSeTrack(audio);
     if (!track) return nullptr;
+    for (std::size_t i = 0; i < m_seTracks.size(); ++i)
+        if (m_seTracks[i] == track) m_seTrackGain[i] = std::clamp(gain, 0.0f, 1.0f);
     const bool wasPlaying = MIX_TrackPlaying(track);
     FinishTrackPlayback(track, wasPlaying ? PlaybackStatus::Stopped
                                           : PlaybackStatus::Completed);
@@ -398,11 +403,12 @@ bool AudioEngine::StartVoice(const std::string& path) {
 }
 
 bool AudioEngine::StartAmbience(const std::string& path, const bool loop,
-                                const int fadeMs) {
+                                const int fadeMs, const float gain) {
     if (!m_initialized || !m_ambienceTrack) return false;
     MIX_Audio* audio = AcquireAudio(path, false);
     if (!audio || !MIX_SetTrackAudio(m_ambienceTrack, audio)) return false;
     m_ambienceAudio = audio;
+    m_ambienceCueGain = std::clamp(gain, 0.0f, 1.0f);
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetNumberProperty(props, MIX_PROP_PLAY_LOOPS_NUMBER, loop ? -1 : 0);
     if (fadeMs > 0)
@@ -488,14 +494,14 @@ AudioEngine::AudioHandle AudioEngine::PlayWithHandle(
             if (m_musicHandle) Finish(m_musicHandle, PlaybackStatus::Stopped);
             m_pendingLoop.clear();
             if (StartMusic(request.path, request.loopPath.empty() && request.loop,
-                           std::max(0, request.fadeMs))) {
+                           std::max(0, request.fadeMs), request.gain)) {
                 track = m_bgmTracks[m_bgmActive];
                 m_musicHandle = handle;
                 m_pendingLoop = request.loopPath;
             }
             break;
         case Bus::SoundEffect:
-            track = StartSoundEffect(request.path);
+            track = StartSoundEffect(request.path, request.gain);
             break;
         case Bus::Voice:
             if (m_voiceHandle) Finish(m_voiceHandle, PlaybackStatus::Stopped);
@@ -508,7 +514,7 @@ AudioEngine::AudioHandle AudioEngine::PlayWithHandle(
             if (m_ambienceHandle)
                 Finish(m_ambienceHandle, PlaybackStatus::Stopped);
             if (StartAmbience(request.path, request.loop,
-                              std::max(0, request.fadeMs))) {
+                              std::max(0, request.fadeMs), request.gain)) {
                 track = m_ambienceTrack;
                 m_ambienceHandle = handle;
             }
@@ -529,12 +535,13 @@ AudioEngine::AudioHandle AudioEngine::PlayWithHandle(
 
 AudioEngine::AudioHandle AudioEngine::PlayIntroLoop(
     const Bus bus, const std::string& introPath, const std::string& loopPath,
-    const int fadeMs) {
+    const int fadeMs, const float gain) {
     return Play({.bus=bus,
                  .path=introPath,
                  .loop=false,
                  .fadeMs=fadeMs,
-                 .loopPath=loopPath});
+                 .loopPath=loopPath,
+                 .gain=gain});
 }
 
 std::optional<AudioEngine::PlaybackState> AudioEngine::Playback(
@@ -641,21 +648,23 @@ std::vector<AudioEngine::AudioHandle> AudioEngine::TakeCompletions() {
 
 AudioEngine::AudioHandle AudioEngine::PlayBGM(const std::string& path,
                                               const bool loop,
-                                              const int fadeMs) {
+                                              const int fadeMs,
+                                              const float gain) {
     return Play({.bus=Bus::Music,
                  .path=path,
                  .loop=loop,
-                 .fadeMs=fadeMs});
+                 .fadeMs=fadeMs,
+                 .gain=gain});
 }
 
 void AudioEngine::PlayBGMWithIntro(const std::string& introPath,
                                    const std::string& loopPath,
-                                   const int fadeMs) {
-    (void)PlayIntroLoop(Bus::Music, introPath, loopPath, fadeMs);
+                                   const int fadeMs, const float gain) {
+    (void)PlayIntroLoop(Bus::Music, introPath, loopPath, fadeMs, gain);
 }
 
-void AudioEngine::PlaySE(const std::string& path) {
-    (void)Play({.bus=Bus::SoundEffect, .path=path});
+void AudioEngine::PlaySE(const std::string& path, const float gain) {
+    (void)Play({.bus=Bus::SoundEffect, .path=path, .gain=gain});
 }
 
 void AudioEngine::StopSE(const int fadeMs) {
@@ -673,11 +682,12 @@ void AudioEngine::PlayVoice(const std::string& path) {
 }
 
 void AudioEngine::PlayAmbience(const std::string& path, const bool loop,
-                               const int fadeMs) {
+                               const int fadeMs, const float gain) {
     (void)Play({.bus=Bus::Ambience,
                 .path=path,
                 .loop=loop,
-                .fadeMs=fadeMs});
+                .fadeMs=fadeMs,
+                .gain=gain});
 }
 
 void AudioEngine::StopBGM(const int fadeMs) {
@@ -710,7 +720,8 @@ void AudioEngine::Update() {
             !MIX_TrackPlaying(track) && !MIX_TrackPaused(track)) {
             const std::string loop = m_pendingLoop;
             m_pendingLoop.clear();
-            if (StartMusic(loop, /*loop=*/true, 0)) {
+            const float cueGain = m_bgmCueGain[static_cast<std::size_t>(m_bgmActive)];
+            if (StartMusic(loop, /*loop=*/true, 0, cueGain)) {
                 m_trackPlaybacks.erase(music->track);
                 music->track = m_bgmTracks[m_bgmActive];
                 music->state.path = loop;
@@ -741,8 +752,10 @@ void AudioEngine::Update() {
 
 AudioEngine::RuntimeState AudioEngine::CaptureState() const {
     const auto trackState = [](MIX_Track* track, const std::string& path,
-                               const bool loop, const AudioHandle handle) {
+                               const bool loop, const AudioHandle handle,
+                               const float gain) {
         TrackState state{.path=path,.loop=loop};
+        state.gain = gain;
         if (track && !path.empty()) {
             state.paused = MIX_TrackPaused(track);
             state.playing = state.paused || MIX_TrackPlaying(track);
@@ -753,10 +766,11 @@ AudioEngine::RuntimeState AudioEngine::CaptureState() const {
     };
     RuntimeState state;
     state.music = trackState(m_bgmTracks[m_bgmActive], m_bgmPath, m_bgmLoop,
-                             m_musicHandle);
-    state.voice = trackState(m_voiceTrack, m_voicePath, false, m_voiceHandle);
+                             m_musicHandle,
+                             m_bgmCueGain[static_cast<std::size_t>(m_bgmActive)]);
+    state.voice = trackState(m_voiceTrack, m_voicePath, false, m_voiceHandle, 1.0f);
     state.ambience = trackState(m_ambienceTrack, m_ambiencePath,
-                                m_ambienceLoop, m_ambienceHandle);
+                                m_ambienceLoop, m_ambienceHandle, m_ambienceCueGain);
     state.pendingMusicLoop = m_pendingLoop;
     state.mainVolume = m_mainVolume;
     state.musicVolume = m_bgmVolume;
@@ -866,7 +880,7 @@ bool AudioEngine::RestoreMusicTrack(const TrackState& state, const int volume) {
     if (!state.playing || state.path.empty()) return true;
     if (!m_initialized) return false;
     const AudioHandle handle = PlayWithHandle(
-        {.bus=Bus::Music,.path=state.path,.loop=state.loop},
+        {.bus=Bus::Music,.path=state.path,.loop=state.loop,.gain=state.gain},
         AudioHandle{state.handle});
     if (!Active(handle) || !Seek(handle, state.playbackFrame)) return false;
     return !state.paused || SetMusicPaused(true);
@@ -892,7 +906,7 @@ bool AudioEngine::RestoreAmbienceTrack(const TrackState& state,
     if (!state.playing || state.path.empty()) return true;
     if (!m_initialized) return false;
     const AudioHandle handle = PlayWithHandle(
-        {.bus=Bus::Ambience,.path=state.path,.loop=state.loop},
+        {.bus=Bus::Ambience,.path=state.path,.loop=state.loop,.gain=state.gain},
         AudioHandle{state.handle});
     if (!Active(handle) || !Seek(handle, state.playbackFrame)) return false;
     return !state.paused || SetAmbiencePaused(true);
@@ -948,8 +962,8 @@ void AudioEngine::SetVoiceDuckingEnabled(bool enabled) {
 
 void AudioEngine::ApplyMixGains(){
     const float main=ToGain(m_mainVolume),duck=(m_voiceDuckingEnabled&&m_voiceDucking)?0.45f:1.0f;
-    for(auto* track:m_bgmTracks)if(track)MIX_SetTrackGain(track,ToGain(m_bgmVolume)*main*duck);
-    for(auto* track:m_seTracks)if(track)MIX_SetTrackGain(track,ToGain(m_seVolume)*main);
+    for(std::size_t i=0;i<m_bgmTracks.size();++i)if(m_bgmTracks[i])MIX_SetTrackGain(m_bgmTracks[i],ToGain(m_bgmVolume)*main*duck*m_bgmCueGain[i]);
+    for(std::size_t i=0;i<m_seTracks.size();++i)if(m_seTracks[i])MIX_SetTrackGain(m_seTracks[i],ToGain(m_seVolume)*main*m_seTrackGain[i]);
     int profileVolume = 128;
     if (!m_voicePath.empty()) {
         const auto slash = m_voicePath.find_last_of("/\\");
@@ -969,7 +983,7 @@ void AudioEngine::ApplyMixGains(){
         }
     }
     if(m_voiceTrack)MIX_SetTrackGain(m_voiceTrack,ToGain(m_voiceVolume)*ToGain(profileVolume)*main);
-    if(m_ambienceTrack)MIX_SetTrackGain(m_ambienceTrack,ToGain(m_ambienceVolume)*main*duck);
+    if(m_ambienceTrack)MIX_SetTrackGain(m_ambienceTrack,ToGain(m_ambienceVolume)*main*duck*m_ambienceCueGain);
 }
 void AudioEngine::SetAmbienceVolume(int volume){m_ambienceVolume=std::clamp(volume,0,128);ApplyMixGains();}
 void AudioEngine::SetMainVolume(int volume){m_mainVolume=std::clamp(volume,0,128);ApplyMixGains();}

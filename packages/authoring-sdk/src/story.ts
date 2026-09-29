@@ -46,10 +46,10 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   call: ["goto", "target", "scene"],
   return: [], end: [], wait: ["duration"],
   add: ["name", "amount"],
-  voice: ["asset", "fade", "loop", "intro"],
-  bgm: ["asset", "fade", "loop", "intro"],
-  ambience: ["asset", "fade", "loop", "intro"],
-  se: ["asset", "fade", "loop", "intro"],
+  voice: ["asset", "fade", "loop", "intro", "volume"],
+  bgm: ["asset", "fade", "loop", "intro", "volume"],
+  ambience: ["asset", "fade", "loop", "intro", "volume"],
+  se: ["asset", "fade", "loop", "intro", "volume"],
   "bgm.stop": ["fade"], "ambience.stop": ["fade"], "se.stop": ["fade"], "voice.stop": [],
   act: ["character", "preset", "size", "time", "loop", "ease"],
   video: ["asset", "skippable"],
@@ -59,6 +59,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   hud: ["visible"],
   unlock: ["kind", "id"],
   effect: ["value"], shake: ["duration", "amplitude", "target"],
+  flash: ["color", "alpha", "duration", "loop"], tone: ["mode"],
   camera: ["value", "x", "y", "zoom", "duration", "ease", "wait"],
   else: [], endif: [],
 };
@@ -69,6 +70,13 @@ function durationMilliseconds(value: string): number | undefined {
   const milliseconds = Number(value.replace(/(?:ms|s)$/u, "")) * (seconds ? 1000 : 1);
   return Number.isFinite(milliseconds) && milliseconds >= 0 && milliseconds <= 2_147_483_647
     ? milliseconds : undefined;
+}
+
+/** Per-play gain in percent of the bus volume; 100 leaves the bus level unchanged. */
+function validPlaybackVolume(value: string): boolean {
+  if (!/^\d+(?:\.\d+)?$/u.test(value)) return false;
+  const percent = Number(value);
+  return Number.isFinite(percent) && percent >= 0 && percent <= 100;
 }
 
 function validAudioDuration(value: string): boolean {
@@ -1157,8 +1165,11 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         const fade = named("fade");
         const loop = named("loop");
         const intro = named("intro");
+        const volume = named("volume");
         const durable = node.name === "bgm" || node.name === "ambience";
         if (asset === undefined) diagnostics.push(error("PXSTORY1124", `${node.name} requires a resource`, node.span));
+        else if (volume !== undefined && !validPlaybackVolume(volume))
+          diagnostics.push(error("PXSTORY1140", `${node.name} volume must be a number from 0 to 100`, node.span));
         else if (fade !== undefined && (!durable || !validAudioDuration(fade)))
           diagnostics.push(error("PXSTORY1146", `${node.name} fade must be a nonnegative duration of at most 2147483647ms; voice and se do not support fade`, node.span));
         else if (loop !== undefined && (!durable || (loop !== "true" && loop !== "false")))
@@ -1176,6 +1187,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
               ...(fade === undefined ? {} : {fade}),
               ...(loop === undefined ? {} : {loop}),
               ...(resolvedIntro === undefined ? {} : {intro: resolvedIntro}),
+              ...(volume === undefined ? {} : {volume}),
             });
           }
         }
@@ -1309,6 +1321,31 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         else emit(node, "effect", {value});
         break;
       }
+      case "tone": {
+        // A whole-screen tone (Artemis colortone), lowered to the effect operation.
+        const mode = named("mode") ?? positional(0);
+        if (mode !== "gray" && mode !== "sepia" && mode !== "none")
+          diagnostics.push(error("PXSTORY1142", "tone mode must be gray, sepia or none", node.span));
+        else emit(node, "effect", {value: "tone", mode});
+        break;
+      }
+      case "flash": {
+        // A coloured screen flash (Artemis `flash`), lowered to the effect operation.
+        const color = named("color") ?? "ffffff";
+        const alpha = named("alpha") ?? "1";
+        const duration = named("duration") ?? positional(0) ?? "200ms";
+        const loop = named("loop") ?? "1";
+        if (!/^#?[0-9a-fA-F]{6}$/u.test(color))
+          diagnostics.push(error("PXSTORY1141", "flash color must be six hex digits", node.span));
+        else if (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/u.test(alpha))
+          diagnostics.push(error("PXSTORY1141", "flash alpha must be a number from 0 to 1", node.span));
+        else if (!validAudioDuration(duration))
+          diagnostics.push(error("PXSTORY1141", "flash duration must be a nonnegative duration", node.span));
+        else if (!/^[1-9]\d?$/u.test(loop))
+          diagnostics.push(error("PXSTORY1141", "flash loop must be a whole number from 1 to 99", node.span));
+        else emit(node, "effect", {value: "flash", color: color.replace(/^#/u, ""), alpha, duration, loop});
+        break;
+      }
       case "shake": {
         const duration = named("duration") ?? positional(0);
         const amplitude = named("amplitude") ?? positional(1);
@@ -1407,7 +1444,7 @@ export interface StoryCommandCompletion {
 }
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
-  const builtins = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "shake", "camera", "act", "se.stop", "voice.stop"];
+  const builtins = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop"];
   const builtinParameters: Readonly<Record<string, StoryCommandCompletion["parameters"]>> = {
     id: [{name:"value", required:true}],
     chapter: [{name:"title", required:true}],

@@ -24,6 +24,7 @@ struct StagePostEffects {
     float blur = 0.0f;
     float vignette = 0.0f;
     float colorGrade = 0.0f;
+    float grayscale = 0.0f;
     float randomSeed = 0.0f;
     std::string customEffect;
     float customProgress = 0.0f;

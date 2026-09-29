@@ -4,7 +4,8 @@ cbuffer CompositorContext : register(b0, space3) {
     float vignetteAmount;
     float colorGradeAmount;
     float randomSeed;
-    float2 padding;
+    float grayscaleAmount;
+    float padding;
 };
 
 Texture2D stageTexture : register(t0, space2);
@@ -41,6 +42,8 @@ FragmentOutput main(FragmentInput input) {
         dot(stage.rgb, float3(0.349, 0.686, 0.168)),
         dot(stage.rgb, float3(0.272, 0.534, 0.131)));
     stage.rgb = lerp(stage.rgb, saturate(graded), colorGradeAmount);
+    const float luma = dot(stage.rgb, float3(0.299, 0.587, 0.114));
+    stage.rgb = lerp(stage.rgb, float3(luma, luma, luma), grayscaleAmount);
 
     const float2 centered = input.uv * 2.0 - 1.0;
     const float radial = dot(centered, centered);

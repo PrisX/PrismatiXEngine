@@ -425,14 +425,16 @@ void Compositor2D::EndStage(const StagePostEffects& effects) {
         float vignette;
         float colorGrade;
         float randomSeed;
-        float padding[2];
+        float grayscale;
+        float padding;
     } uniforms{{1.0f / static_cast<float>(m_width),
                 1.0f / static_cast<float>(m_height)},
                std::clamp(effects.blur, 0.0f, 1.0f),
                std::clamp(effects.vignette, 0.0f, 1.0f),
                std::clamp(effects.colorGrade, 0.0f, 1.0f),
                effects.randomSeed,
-               {0.0f, 0.0f}};
+               std::clamp(effects.grayscale, 0.0f, 1.0f),
+               0.0f};
     const auto custom = m_customEffects.find(effects.customEffect);
     if (custom == m_customEffects.end() ||
         custom->second.descriptor.targetLayer != "stage") {
@@ -442,7 +444,8 @@ void Compositor2D::EndStage(const StagePostEffects& effects) {
     }
     const bool builtInActive = uniforms.blur > 0.0f ||
                                uniforms.vignette > 0.0f ||
-                               uniforms.colorGrade > 0.0f;
+                               uniforms.colorGrade > 0.0f ||
+                               uniforms.grayscale > 0.0f;
     SDL_Texture* customSource = m_stage;
     if (builtInActive) {
         if (!ApplyRenderState(m_renderState, m_stage, m_intermediate,

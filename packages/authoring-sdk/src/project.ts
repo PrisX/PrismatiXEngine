@@ -268,6 +268,11 @@ const builtInScreenEffects = new Set([
   "color-grade", "rule-dissolve",
 ]);
 const gpuOnlyScreenEffects = new Set(["blur", "vignette", "color-grade"]);
+// `[tone gray|sepia]` grades through the GPU compositor; `[tone none]` only clears it.
+function needsGpuEffects(operation: {readonly arguments: Readonly<Record<string, string>>}, preset: string): boolean {
+  return gpuOnlyScreenEffects.has(preset) ||
+    (preset === "tone" && operation.arguments.mode !== "none");
+}
 
 function validateStoryEffects(
   runtimeIr: RuntimeIrDocument,
@@ -283,14 +288,14 @@ function validateStoryEffects(
     const preset = operation.arguments.value ?? "";
     const mapping = mappings.get(operation.operationId);
     const path = mapping?.sourceUri;
-    if (!builtInScreenEffects.has(preset) && !customEffects.has(preset)) {
+    if (!builtInScreenEffects.has(preset) && preset !== "tone" && !customEffects.has(preset)) {
       diagnostics.push({
         ...issue("PXBUILD1024", "Story references an unknown screen effect preset", path, preset),
         documentId: runtimeIr.documentId,
         sourceId: operation.sourceId,
         hint: "Use a built-in Screen preset or declare a validated project effect.",
       });
-    } else if ((gpuOnlyScreenEffects.has(preset) || customEffects.has(preset)) &&
+    } else if ((needsGpuEffects(operation, preset) || customEffects.has(preset)) &&
                graphicsTier !== "gpu-effects") {
       diagnostics.push({
         ...issue("PXBUILD1025", "Story effect requires graphicsTier gpu-effects", path, preset),

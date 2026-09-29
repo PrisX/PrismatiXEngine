@@ -1352,9 +1352,12 @@ vn::Stage::RuntimeState StageFromJson(const Json& json) {
 }
 
 Json AudioTrackToJson(const audio::AudioEngine::TrackState& state) {
-    return {{"path", state.path}, {"loop", state.loop}, {"playing", state.playing},
-            {"playbackFrame", state.playbackFrame}, {"paused", state.paused},
-            {"handle", state.handle}};
+    Json json = {{"path", state.path}, {"loop", state.loop}, {"playing", state.playing},
+                 {"playbackFrame", state.playbackFrame}, {"paused", state.paused},
+                 {"handle", state.handle}};
+    // Older saves never carry a cue level; leave the common case unchanged.
+    if (state.gain != 1.0f) json["gain"] = state.gain;
+    return json;
 }
 
 audio::AudioEngine::TrackState AudioTrackFromJson(const Json& json) {
@@ -1364,7 +1367,8 @@ audio::AudioEngine::TrackState AudioTrackFromJson(const Json& json) {
             .playing = json.at("playing").get<bool>(),
             .playbackFrame = json.at("playbackFrame").get<std::int64_t>(),
             .paused = json.value("paused", false),
-            .handle = json.value("handle", std::uint64_t{0})};
+            .handle = json.value("handle", std::uint64_t{0}),
+            .gain = json.value("gain", 1.0f)};
 }
 
 Json AudioToJson(const audio::AudioEngine::RuntimeState& state) {

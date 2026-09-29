@@ -1030,7 +1030,7 @@ bool Stage::ApplyAnimationProperty(const std::string& target, const std::string&
         else if(property=="shake"){m_screenEffects[property]=*number;if(*number>0)Shake(120,*number*18.0f);}
         else if(property=="pan")m_cameraX=*number*120.0f;
         else if(property=="flash"||property=="fade")m_screenEffects[property]=std::clamp(*number,0.0f,1.0f);
-        else if(property=="blur"||property=="vignette"||property=="color-grade"){
+        else if(property=="blur"||property=="vignette"||property=="color-grade"||property=="grayscale"){
             if(!m_renderer.SupportsStagePostEffects())return false;
             m_screenEffects[property]=std::clamp(*number,0.0f,1.0f);
         }
@@ -1337,6 +1337,7 @@ void Stage::ClearAll() {
     m_bgInstant = false;
     m_bgWait = 0.0f;
     m_shakeRemaining = 0.0f;
+    m_flash = {};
     m_cameraX = m_cameraY = 0.0f;
     m_cameraZoom = 1.0f;
     m_screenEffects.clear();
@@ -1370,10 +1371,10 @@ bool Stage::SetCamera(const float x, const float y, const float zoom) {
 bool Stage::SetScreenEffect(const std::string_view effect, const float amount) {
     if (!std::isfinite(amount)) return false;
     if (effect != "flash" && effect != "fade" && effect != "blur" &&
-        effect != "vignette" && effect != "color-grade")
+        effect != "vignette" && effect != "color-grade" && effect != "grayscale")
         return false;
     if ((effect == "blur" || effect == "vignette" ||
-         effect == "color-grade") &&
+         effect == "color-grade" || effect == "grayscale") &&
         !m_renderer.SupportsStagePostEffects())
         return false;
     m_screenEffects[std::string(effect)] = std::clamp(amount, 0.0f, 1.0f);
@@ -1432,7 +1433,23 @@ void Stage::HarvestPortraitReads() {
     for(const auto& path:ready)(void)ResolveLayeredPortrait(path);
 }
 
+void Stage::Flash(const Color color, const float peak, const int halfMs, const int cycles) {
+    if (halfMs <= 0 || cycles <= 0 || peak <= 0.0f) {
+        m_flash = {};
+        return;
+    }
+    m_flash.color = color;
+    m_flash.peak = std::clamp(peak, 0.0f, 1.0f);
+    m_flash.halfSeconds = static_cast<float>(halfMs) / 1000.0f;
+    m_flash.elapsed = 0.0f;
+    m_flash.total = m_flash.halfSeconds * 2.0f * static_cast<float>(std::min(cycles, 50));
+}
+
 void Stage::Update(float dt) {
+    if (m_flash.total > 0.0f) {
+        m_flash.elapsed += dt;
+        if (m_flash.elapsed >= m_flash.total) m_flash = {};
+    }
     HarvestPortraitReads();
     if (m_fastForward) {
         // Large enough to finish any authored tween, fade, or shake.
@@ -2011,6 +2028,7 @@ void Stage::Render() {
         effects.blur = effect("blur");
         effects.vignette = effect("vignette");
         effects.colorGrade = effect("color-grade");
+        effects.grayscale = effect("grayscale");
         effects.randomSeed = static_cast<float>(m_customEffectSeed);
         effects.customEffect = m_customEffect;
         effects.customProgress = m_customEffectProgress;
@@ -2019,7 +2037,15 @@ void Stage::Render() {
     }
 }
 
-void Stage::RenderScreenEffects(){int width=0,height=0;m_renderer.GetLogicalSize(width,height);const auto effect=[this](const char* name){const auto found=m_screenEffects.find(name);return found==m_screenEffects.end()?0.0f:found->second;};const float fade=effect("fade"),flash=effect("flash");if(fade>0)m_renderer.DrawRect({0,0,static_cast<float>(width),static_cast<float>(height)},{0,0,0,static_cast<std::uint8_t>(fade*255)});if(flash>0)m_renderer.DrawRect({0,0,static_cast<float>(width),static_cast<float>(height)},{255,255,255,static_cast<std::uint8_t>(flash*230)});}
+void Stage::RenderScreenEffects(){int width=0,height=0;m_renderer.GetLogicalSize(width,height);
+    if(m_flash.total>0.0f){
+        // Triangle wave: 0 -> peak over one half, peak -> 0 over the next.
+        const float phase=std::fmod(m_flash.elapsed,m_flash.halfSeconds*2.0f)/m_flash.halfSeconds;
+        const float level=phase<1.0f?phase:2.0f-phase;
+        Color wash=m_flash.color;
+        wash.a=static_cast<std::uint8_t>(std::clamp(level*m_flash.peak,0.0f,1.0f)*255.0f);
+        if(wash.a>0)m_renderer.DrawRect({0,0,static_cast<float>(width),static_cast<float>(height)},wash);
+    }const auto effect=[this](const char* name){const auto found=m_screenEffects.find(name);return found==m_screenEffects.end()?0.0f:found->second;};const float fade=effect("fade"),flash=effect("flash");if(fade>0)m_renderer.DrawRect({0,0,static_cast<float>(width),static_cast<float>(height)},{0,0,0,static_cast<std::uint8_t>(fade*255)});if(flash>0)m_renderer.DrawRect({0,0,static_cast<float>(width),static_cast<float>(height)},{255,255,255,static_cast<std::uint8_t>(flash*230)});}
 
 std::vector<Stage::SavedActor> Stage::Snapshot() const {
     std::vector<SavedActor> out;

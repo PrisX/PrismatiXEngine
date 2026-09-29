@@ -482,6 +482,7 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = operation.kind == "soundEffect" ? "se" : operation.kind;
             Add(command, "file", Argument(operation, "asset"));
             Add(command, "fade", DurationMilliseconds(Argument(operation, "fade")));
+            Add(command, "volume", Argument(operation, "volume"));
             if (operation.kind == "bgm") Add(command, "intro", Argument(operation, "intro"));
             if (operation.kind == "bgm" || operation.kind == "ambience")
                 Add(command, "loop", Argument(operation, "loop"));
@@ -611,6 +612,9 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
         } else if (operation.kind == "effect") {
             command.type = "screen_effect";
             Add(command, "preset", Argument(operation, "value"));
+            for (const char* name : {"color", "alpha", "loop", "mode"})
+                Add(command, name, Argument(operation, name));
+            Add(command, "duration", DurationMilliseconds(Argument(operation, "duration")));
         } else if (operation.kind == "shake") {
             command.type = "shake";
             Add(command, "ms", DurationMilliseconds(Argument(operation, "duration")));

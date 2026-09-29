@@ -35,6 +35,11 @@ float ParseFloat(const std::string& s, float fallback = 0.0f) {
     }
 }
 
+// A cue's own level in 0..1, from the story's `volume` percentage.
+float CueGain(const Command& cmd) {
+    return std::clamp(ParseFloat(cmd.Get("volume"), 100.0f), 0.0f, 100.0f) / 100.0f;
+}
+
 Color ParseColor(const std::string& s, Color fallback) {
     if (s.empty()) return fallback;
     Color c = fallback;
@@ -790,13 +795,14 @@ void VM::ExecuteSimple(const Command& cmd) {
     if (t == "bgm") {
         m_currentBgm = Resolve(m_config.bgmDir, cmd.Get("file", cmd.Get("value")));
         const int fade = ParseInt(cmd.Get("fade"), 0);
+        const float gain = CueGain(cmd);
         if (cmd.Has("intro")) {
             // Intro plays once, then the body loops (saves store the body).
             m_audio.PlayBGMWithIntro(Resolve(m_config.bgmDir, cmd.Get("intro")), m_currentBgm,
-                                     fade);
+                                     fade, gain);
         } else {
             const std::string loop = cmd.Get("loop", "true");
-            m_audio.PlayBGM(m_currentBgm, loop != "false" && loop != "0", fade);
+            m_audio.PlayBGM(m_currentBgm, loop != "false" && loop != "0", fade, gain);
         }
         return;
     }
@@ -807,7 +813,8 @@ void VM::ExecuteSimple(const Command& cmd) {
     }
     if (t == "se") {
         if (!m_fastForward)
-            m_audio.PlaySE(Resolve(m_config.seDir, cmd.Get("file", cmd.Get("value"))));
+            m_audio.PlaySE(Resolve(m_config.seDir, cmd.Get("file", cmd.Get("value"))),
+                           CueGain(cmd));
         return;
     }
     if (t == "stopse") {

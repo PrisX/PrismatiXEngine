@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <optional>
 
@@ -324,7 +325,8 @@ bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
         const std::string path = ResourcePath(command, "file");
         if (!path.empty()) {
             m_services.audio.PlayAmbience(path, CommandBool(command, "loop", true),
-                static_cast<int>(CommandNumber(command, "fade", 0.0)));
+                static_cast<int>(CommandNumber(command, "fade", 0.0)),
+                static_cast<float>(std::clamp(CommandNumber(command, "volume", 100.0), 0.0, 100.0) / 100.0));
         }
         return true;
     }
@@ -373,6 +375,35 @@ bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
                          [&renderer = m_services.renderer, handle] {
                              return handle != 0 && renderer.ScreenEffectPlaying(handle);
                          });
+        return true;
+    }
+    if (command.type == "screen_effect" && command.Get("preset") == "tone") {
+        // Whole-screen tone: gray, sepia or none (Artemis colortone).
+        const std::string mode = command.Get("mode", "none");
+        m_stage.ClearScreenEffect("grayscale");
+        m_stage.ClearScreenEffect("color-grade");
+        if (mode == "gray") (void)m_stage.SetScreenEffect("grayscale", 1.0f);
+        else if (mode == "sepia") (void)m_stage.SetScreenEffect("color-grade", 1.0f);
+        return true;
+    }
+    if (command.type == "screen_effect" && command.Get("preset") == "flash" &&
+        command.Has("color")) {
+        // A coloured flash: `color` is RRGGBB, `alpha` the peak 0..1, `duration`
+        // the whole rise-and-fall in milliseconds and `loop` the repeat count.
+        if (m_vm.FastForward()) return true;
+        const std::string hex = command.Get("color");
+        Color color{255, 255, 255, 255};
+        if (hex.size() == 6 || (hex.size() == 7 && hex[0] == '#')) {
+            const std::size_t offset = hex.size() - 6;
+            const auto channel = [&](const std::size_t index) {
+                return static_cast<std::uint8_t>(std::strtoul(
+                    hex.substr(offset + index * 2, 2).c_str(), nullptr, 16));
+            };
+            color = {channel(0), channel(1), channel(2), 255};
+        }
+        const int halfMs = std::max(1, static_cast<int>(CommandNumber(command, "duration", 200.0)) / 2);
+        m_stage.Flash(color, static_cast<float>(CommandNumber(command, "alpha", 1.0)), halfMs,
+                      static_cast<int>(CommandNumber(command, "loop", 1.0)));
         return true;
     }
     if (command.type == "screen_effect") {

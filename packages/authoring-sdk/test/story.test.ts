@@ -326,6 +326,28 @@ test("durable audio Story commands lower to typed Runtime IR operations", () => 
   ]);
 });
 
+test("Story audio commands carry a per-cue volume", () => {
+  const compiled = compileStory(
+    parseStory([
+      "[se Assets/Audio/click.ogg volume=35]",
+      "[bgm Assets/Audio/theme.ogg volume=62.5]",
+      "[ambience Assets/Audio/rain.ogg loop=true fade=500ms volume=40]",
+    ].join("\n"), "Story/volume.pxstory"),
+    {documentId: "volume"},
+  );
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => [operation.kind, operation.arguments.volume]), [
+    ["soundEffect", "35"], ["bgm", "62.5"], ["ambience", "40"],
+  ]);
+  for (const volume of ["loud", "-5", "101", "50%"]) {
+    const invalid = compileStory(
+      parseStory(`[se Assets/Audio/click.ogg volume=${volume}]`, "Story/volume-invalid.pxstory"),
+      {documentId: "volume-invalid"});
+    assert.equal(invalid.valid, false, volume);
+    assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1140"), volume);
+  }
+});
+
 test("Story audio options reject unsupported or invalid playback requests", () => {
   const invalid = [
     ["[bgm Assets/Audio/theme.ogg intro=../escape.ogg]", "PXSTORY1111"],

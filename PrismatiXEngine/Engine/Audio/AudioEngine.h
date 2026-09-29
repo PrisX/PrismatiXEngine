@@ -66,6 +66,8 @@ public:
         // When non-empty, path is a one-shot intro and loopPath becomes the
         // indefinitely looping body without changing the handle identity.
         std::string loopPath;
+        // Level of this cue alone, 0..1, multiplied with its bus volume.
+        float gain = 1.0f;
     };
 
     struct PlaybackState {
@@ -99,6 +101,8 @@ public:
         // restore so an outstanding wait token continues observing the same
         // playback rather than a replacement handle.
         std::uint64_t handle = 0;
+        // Cue level restored with the track; see PlaybackRequest::gain.
+        float gain = 1.0f;
     };
     struct RuntimeState {
         TrackState music;
@@ -124,7 +128,7 @@ public:
     [[nodiscard]] AudioHandle PlayIntroLoop(Bus bus,
                                             const std::string& introPath,
                                             const std::string& loopPath,
-                                            int fadeMs = 0);
+                                            int fadeMs = 0, float gain = 1.0f);
     [[nodiscard]] std::optional<PlaybackState> Playback(AudioHandle handle) const;
     [[nodiscard]] PlaybackStatus Status(AudioHandle handle) const;
     [[nodiscard]] std::optional<PlaybackStatus> GetStatus(
@@ -156,16 +160,17 @@ public:
 
     // With fadeMs > 0 while another BGM is playing this crossfades: the old
     // track fades out while the new one fades in on a second track.
-    AudioHandle PlayBGM(const std::string& path, bool loop = true, int fadeMs = 0);
+    AudioHandle PlayBGM(const std::string& path, bool loop = true, int fadeMs = 0,
+                        float gain = 1.0f);
     // Plays `introPath` once, then switches to `loopPath` looping forever
     // (handoff is polled in Update()).
     void PlayBGMWithIntro(const std::string& introPath, const std::string& loopPath,
-                          int fadeMs = 0);
+                          int fadeMs = 0, float gain = 1.0f);
     void StopBGM(int fadeMs = 0);
     // Per-frame upkeep (intro -> loop handoff). Cheap.
     void Update();
 
-    void PlaySE(const std::string& path);
+    void PlaySE(const std::string& path, float gain = 1.0f);
     // Stops every playing sound effect, optionally fading it out.
     void StopSE(int fadeMs = 0);
     void PlayVoice(const std::string& path);
@@ -173,7 +178,8 @@ public:
     // Reads a voice or sound effect on a worker thread so the line that
     // plays it does not wait for the disk. Holds the last few requests.
     void Prefetch(const std::string& path);
-    void PlayAmbience(const std::string& path,bool loop=true,int fadeMs=0);
+    void PlayAmbience(const std::string& path,bool loop=true,int fadeMs=0,
+                      float gain=1.0f);
     void StopAmbience(int fadeMs=0);
 
     void SetBGMVolume(int volume);
@@ -226,10 +232,10 @@ private:
     void EvictAudio();
     void ApplyMixGains();
     static bool SetTrackPaused(MIX_Track* track, bool paused);
-    bool StartMusic(const std::string& path, bool loop, int fadeMs);
-    MIX_Track* StartSoundEffect(const std::string& path);
+    bool StartMusic(const std::string& path, bool loop, int fadeMs, float gain);
+    MIX_Track* StartSoundEffect(const std::string& path, float gain);
     bool StartVoice(const std::string& path);
-    bool StartAmbience(const std::string& path, bool loop, int fadeMs);
+    bool StartAmbience(const std::string& path, bool loop, int fadeMs, float gain);
     void StopMusicTracks(int fadeMs);
     void StopVoiceTrack();
     void StopAmbienceTrack(int fadeMs);
@@ -257,6 +263,9 @@ private:
     MIX_Audio* m_ambienceAudio = nullptr;
     std::vector<MIX_Track*> m_seTracks;
     std::vector<MIX_Audio*> m_seTrackAudio;  // parallel to m_seTracks
+    std::vector<float> m_seTrackGain;        // parallel to m_seTracks
+    std::array<float, 2> m_bgmCueGain{1.0f, 1.0f};
+    float m_ambienceCueGain = 1.0f;
     std::unordered_map<std::string, AudioEntry> m_audio;
     std::string m_pendingLoop;  // body that follows a one-shot intro
     std::string m_bgmPath;

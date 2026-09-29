@@ -196,6 +196,9 @@ public:
     [[nodiscard]] bool MotionPlaying() const;
     // Camera shake (KAG [quake]-style): durationMs of decaying jitter.
     void Shake(int durationMs, float amplitude);
+    // Washes the whole screen with `color`: it rises to `peak` (0..1) and back
+    // `cycles` times, each half taking `halfMs`. Artemis `flash`.
+    void Flash(Color color, float peak, int halfMs, int cycles);
     bool SetCamera(float x, float y, float zoom);
     bool SetScreenEffect(std::string_view effect, float amount);
     void ClearScreenEffect(std::string_view effect);
@@ -527,6 +530,13 @@ private:
     std::optional<Placement> m_prevBgPlacement;
 
     float m_shakeRemaining = 0.0f;
+    struct FlashState {
+        Color color{255, 255, 255, 255};
+        float peak = 0.0f;
+        float halfSeconds = 0.0f;
+        float elapsed = 0.0f;
+        float total = 0.0f;
+    } m_flash;
     float m_shakeDuration = 0.0f;
     float m_shakeAmplitude = 0.0f;
     float m_shakePhase = 0.0f;

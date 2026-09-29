@@ -178,12 +178,15 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("bgm","Audio",{
         Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),
         Param("intro",VariantType::ResourceRef,false,{},CommandEditorWidget::Resource),
-        Param("fade",VariantType::Integer),Param("loop",VariantType::Bool)}));
+        Param("fade",VariantType::Integer),Param("loop",VariantType::Bool),
+        Param("volume",VariantType::Number)}));
     add(Descriptor("ambience","Audio",{
         Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),
-        Param("fade",VariantType::Integer),Param("loop",VariantType::Bool)}));
+        Param("fade",VariantType::Integer),Param("loop",VariantType::Bool),
+        Param("volume",VariantType::Number)}));
     for(const char* id:{"se","voice"})add(Descriptor(id,"Audio",{
-        Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource)}));
+        Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),
+        Param("volume",VariantType::Number)}));
     add(Descriptor("stopbgm","Audio",{Param("fade",VariantType::Integer)}));
     add(Descriptor("stopambience","Audio",{Param("fade",VariantType::Integer)}));
     add(Descriptor("stopse","Audio",{Param("fade",VariantType::Integer)}));
