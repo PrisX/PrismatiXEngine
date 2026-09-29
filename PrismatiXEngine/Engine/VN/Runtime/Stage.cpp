@@ -279,6 +279,7 @@ void Stage::SetBackground(const std::string& path, bool transition,
     m_bgPath = path;
     m_prevBgPlacement = m_bgPlacement;
     m_bgPlacement.reset();
+    m_bgAction = {};
     std::erase_if(m_tweens, [](const Tween& tween) { return tween.name == "$bg"; });
     m_bgFadeSpeed = fadeMs > 0 ? 1000.0f / static_cast<float>(fadeMs) : kBgFadeSpeed;
     m_bgWait = 0.0f;
@@ -326,11 +327,36 @@ void Stage::PlaceBackground(std::optional<Placement> placement,
     m_tweens.push_back(std::move(tween));
 }
 
+namespace {
+
+// A relative action pose as an affine transform in the target's own space:
+// it moves by the pose offset and scales and turns about `pivot`.
+graphics::AffineTransform2D ActionTransform(const ActorPose& pose, const float pivotX,
+                                            const float pivotY) {
+    const float radians = pose.rotation * 0.017453292519943295f;
+    const float a = std::cos(radians) * pose.scale;
+    const float b = std::sin(radians) * pose.scale;
+    return {a, b, -b, a, pivotX + pose.x - (a * pivotX - b * pivotY),
+            pivotY + pose.y - (b * pivotX + a * pivotY)};
+}
+
+}  // namespace
+
 void Stage::DrawBackgroundImage(const std::string& path,
                                 const std::optional<Placement>& placement,
-                                const std::uint8_t alpha) {
+                                const std::uint8_t alpha, const ActorPose* action) {
     if (!placement) {
+        // A fitted background covers the stage, so its action turns about
+        // the stage centre.
+        if (action) {
+            int width = 0;
+            int height = 0;
+            m_renderer.GetLogicalSize(width, height);
+            m_renderer.PushAffineTransform(
+                ActionTransform(*action, width * 0.5f, height * 0.5f));
+        }
         m_renderer.DrawImageAuto(path, graphics::DisplayMode::Fill, alpha);
+        if (action) m_renderer.PopTransform();
         return;
     }
     const graphics::TextureHandle texture = ReadyTexture(path);
@@ -348,8 +374,10 @@ void Stage::DrawBackgroundImage(const std::string& path,
     m_renderer.PushAffineTransform(
         {a, b, c, d, placement->x + pivotX - (a * pivotX + c * pivotY),
          placement->y + pivotY - (b * pivotX + d * pivotY)});
+    if (action) m_renderer.PushAffineTransform(ActionTransform(*action, pivotX, pivotY));
     m_renderer.DrawImage(path, Rect{0.0f, 0.0f, static_cast<float>(width),
                                     static_cast<float>(height)}, alpha);
+    if (action) m_renderer.PopTransform();
     m_renderer.PopTransform();
 }
 
@@ -440,6 +468,7 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
     if (newBgPath == m_bgPath) {
         return;
     }
+    m_bgAction = {};
     if (m_fastForward) {
         SetBackground(newBgPath, false);
         return;
@@ -614,6 +643,7 @@ void Stage::SetLayerTransform(const std::string& name, const std::string& imageP
         return;
     }
     Layer& layer = m_layers[name];
+    if (layer.imagePath != imagePath) layer.action = {};
     layer.imagePath = imagePath;
     layer.x = x;
     layer.y = y;
@@ -1261,22 +1291,13 @@ void Stage::SetCharacterAuto(const std::string& name, const std::string& imagePa
 bool Stage::PlayActorAction(const std::string& name, const ActorActionRequest& request) {
     const auto found = m_actors.find(name);
     if (found == m_actors.end() || found->second.exiting) return false;
-    Actor& actor = found->second;
-    if (request.preset == "stop") {
-        if (actor.actionTrack.keys.empty()) return true;
-        actor.actionTrack = ActorActionReturn(actor.actionPose, 0.15f);
-        actor.actionRequest.reset();
-        actor.actionElapsed = 0.0;
-        return true;
-    }
-    auto track = ExpandActorAction(request);
-    if (!track) return false;
-    // Start from the current pose so replacing an action never jumps.
-    track->start = actor.actionPose;
-    actor.actionTrack = std::move(*track);
-    actor.actionRequest = request;
-    actor.actionElapsed = 0.0;
-    return true;
+    return StartActorAction(found->second.action, request);
+}
+
+bool Stage::PlayImageAction(const std::string& name, const ActorActionRequest& request) {
+    if (name == "$bg") return !m_bgPath.empty() && StartActorAction(m_bgAction, request);
+    const auto found = m_layers.find(name);
+    return found != m_layers.end() && StartActorAction(found->second.action, request);
 }
 
 void Stage::ClearCharacter(const std::string& name, bool transition) {
@@ -1334,6 +1355,7 @@ void Stage::ClearAll() {
     m_bgFadeSpeed = kBgFadeSpeed;
     m_bgPlacement.reset();
     m_prevBgPlacement.reset();
+    m_bgAction = {};
     m_bgInstant = false;
     m_bgWait = 0.0f;
     m_shakeRemaining = 0.0f;
@@ -1501,20 +1523,12 @@ void Stage::Update(float dt) {
         }
     }
 
+    AdvanceActorAction(m_bgAction, dt);
+    for (auto& [_, layer] : m_layers) AdvanceActorAction(layer.action, dt);
     std::vector<std::string> expiredActors;
     for (auto it = m_actors.begin(); it != m_actors.end();) {
         Actor& a = it->second;
-        if (!a.actionTrack.keys.empty()) {
-            a.actionElapsed += dt;
-            bool finished = false;
-            a.actionPose = SampleActorAction(a.actionTrack, a.actionElapsed, finished);
-            if (finished) {
-                a.actionTrack = {};
-                a.actionRequest.reset();
-                a.actionElapsed = 0.0;
-                a.actionPose = {};
-            }
-        }
+        AdvanceActorAction(a.action, dt);
         a.alpha = Approach(a.alpha, a.targetAlpha, kAlphaSpeed, dt);
         a.x = Approach(a.x, a.targetX, kSlideSpeed, dt);
         if (!a.prevImagePath.empty()) {
@@ -1622,7 +1636,8 @@ void Stage::Render() {
     }
     if (!m_bgPath.empty()) {
         const auto alpha = static_cast<std::uint8_t>(std::clamp(m_bgFade, 0.0f, 1.0f) * 255.0f);
-        DrawBackgroundImage(m_bgPath, m_bgPlacement, alpha);
+        DrawBackgroundImage(m_bgPath, m_bgPlacement, alpha,
+                            m_bgAction.Active() ? &m_bgAction.pose : nullptr);
     }
     RenderRuleOverlay(compositing);
 
@@ -1693,15 +1708,25 @@ void Stage::Render() {
         drawable.localBounds =
             {0.0f, 0.0f, static_cast<float>(textureWidth),
              static_cast<float>(textureHeight)};
+        const float pivotX = layer.anchored ? layer.anchorX : textureWidth * 0.5f;
+        const float pivotY = layer.anchored ? layer.anchorY : textureHeight * 0.5f;
+        drawable.world = ResolveNodeTransform(name, {pivotX, pivotY});
         if (layer.anchored) {
             // Zoom about the anchor: the node pivot only centres rotation,
             // so shift by the part of the anchor the scale moved.
-            drawable.world = ResolveNodeTransform(name, {layer.anchorX, layer.anchorY});
             drawable.world.tx += (1.0f - layer.scale) * layer.anchorX;
             drawable.world.ty += (1.0f - layer.scaleY) * layer.anchorY;
-        } else {
-            drawable.world = ResolveNodeTransform(
-                name, {textureWidth * 0.5f, textureHeight * 0.5f});
+        }
+        if (layer.action.Active()) {
+            // The action applies in image space, inside the layer's framing.
+            const auto action = ActionTransform(layer.action.pose, pivotX, pivotY);
+            const WorldNodeTransform world = drawable.world;
+            drawable.world.a = world.a * action.a + world.c * action.b;
+            drawable.world.b = world.b * action.a + world.d * action.b;
+            drawable.world.c = world.a * action.c + world.c * action.d;
+            drawable.world.d = world.b * action.c + world.d * action.d;
+            drawable.world.tx = world.a * action.tx + world.c * action.ty + world.tx;
+            drawable.world.ty = world.b * action.tx + world.d * action.ty + world.ty;
         }
         if (!drawable.world.visible || drawable.world.opacity <= 0.0f)
             continue;
@@ -1727,13 +1752,13 @@ void Stage::Render() {
             sourceWidth=static_cast<float>(textureWidth);
             sourceHeight=static_cast<float>(textureHeight);
         }
-        const float effectScale = std::max(0.01f, actor.effectScale * actor.actionPose.scale);
+        const float effectScale = std::max(0.01f, actor.effectScale * actor.action.pose.scale);
         const float width = sourceWidth * actor.scale * effectScale;
         const float height = sourceHeight * actor.scale * effectScale;
         const Rect local{
-            actor.x - width * 0.5f + actor.offsetX + actor.effectOffsetX + actor.actionPose.x,
+            actor.x - width * 0.5f + actor.offsetX + actor.effectOffsetX + actor.action.pose.x,
             static_cast<float>(logicalH) - height + actor.offsetY +
-                actor.effectOffsetY + actor.actionPose.y,
+                actor.effectOffsetY + actor.action.pose.y,
             width, height};
         const auto world = ResolveNodeTransform(
             name, {local.x + local.w * 0.5f,
@@ -1862,14 +1887,14 @@ void Stage::Render() {
             sourceWidth=static_cast<float>(textureWidth);
             sourceHeight=static_cast<float>(textureHeight);
         }
-        const float effectScale = std::max(0.01f, actor.effectScale * actor.actionPose.scale);
+        const float effectScale = std::max(0.01f, actor.effectScale * actor.action.pose.scale);
         const float spriteScale=actor.scale*effectScale;
         const float width=sourceWidth*spriteScale;
         const float height=sourceHeight*spriteScale;
         const Rect local{
-            actor.x - width * 0.5f + actor.offsetX + actor.effectOffsetX + actor.actionPose.x,
+            actor.x - width * 0.5f + actor.offsetX + actor.effectOffsetX + actor.action.pose.x,
             static_cast<float>(logicalH) - height + actor.offsetY +
-                actor.effectOffsetY + actor.actionPose.y,
+                actor.effectOffsetY + actor.action.pose.y,
             width, height};
         const auto world = ResolveNodeTransform(
             name, {local.x + local.w * 0.5f,
@@ -1879,7 +1904,7 @@ void Stage::Render() {
             {world.a, world.b, world.c, world.d, world.tx, world.ty});
         // Action rotation pivots at the sprite's feet, like a swaying body.
         m_renderer.PushTransform({local.x + local.w * 0.5f, local.y + local.h},
-                                 {1.0f, 1.0f}, actor.actionPose.rotation);
+                                 {1.0f, 1.0f}, actor.action.pose.rotation);
         const float combinedAlpha=std::clamp(
             alpha*actor.effectAlpha*world.opacity,0.0f,255.0f);
         if(portrait){
@@ -2058,7 +2083,7 @@ std::vector<Stage::SavedActor> Stage::Snapshot() const {
                                       actor.x, actor.targetX, actor.exiting,
                                       actor.effectOffsetX, actor.effectOffsetY,
                                       actor.effectScale, actor.effectAlpha,
-                                      actor.actionRequest, actor.actionElapsed });
+                                      actor.action.request, actor.action.elapsed });
         }
     }
     return out;
@@ -2084,12 +2109,8 @@ void Stage::Restore(const std::vector<SavedActor>& actors) {
         restored->second.effectOffsetY = s.effectOffsetY;
         restored->second.effectScale = s.effectScale;
         restored->second.effectAlpha = s.effectAlpha;
-        if (s.action && PlayActorAction(s.name, *s.action)) {
-            Actor& actor = restored->second;
-            actor.actionElapsed = std::max(0.0, s.actionElapsed);
-            bool finished = false;
-            actor.actionPose = SampleActorAction(actor.actionTrack, actor.actionElapsed, finished);
-        }
+        if (s.action) (void)ResumeActorAction(restored->second.action, *s.action,
+                                              s.actionElapsed);
     }
 }
 
@@ -2099,7 +2120,8 @@ std::vector<Stage::SavedLayer> Stage::SnapshotLayers() const {
     for (const auto& [name, layer] : m_layers) {
         out.push_back(SavedLayer{ name, layer.imagePath, layer.x, layer.y, layer.scale,
                                   layer.alpha, layer.z, layer.scaleY, layer.rotation,
-                                  layer.anchored, layer.anchorX, layer.anchorY });
+                                  layer.anchored, layer.anchorX, layer.anchorY,
+                                  layer.action.request, layer.action.elapsed });
     }
     return out;
 }
@@ -2121,6 +2143,8 @@ void Stage::RestoreLayers(const std::vector<SavedLayer>& layers) {
                           static_cast<std::uint8_t>(std::clamp(s.alpha, 0, 255)),
                           s.z);
         SetLayerAnchor(s.name, s.anchored, s.anchorX, s.anchorY);
+        if (const auto layer = m_layers.find(s.name); layer != m_layers.end() && s.action)
+            (void)ResumeActorAction(layer->second.action, *s.action, s.actionElapsed);
     }
 }
 
@@ -2244,6 +2268,8 @@ Stage::RuntimeState Stage::CaptureState() const {
     state.backgroundFadeSpeed = m_bgFadeSpeed;
     state.backgroundPlacement = m_bgPlacement;
     state.previousBackgroundPlacement = m_prevBgPlacement;
+    state.backgroundAction = m_bgAction.request;
+    state.backgroundActionElapsed = m_bgAction.elapsed;
     state.ruleActive = m_ruleState.active;
     state.ruleOldBackground = m_ruleState.oldBackgroundPath;
     state.ruleNewBackground = m_ruleState.newBackgroundPath;
@@ -2384,6 +2410,8 @@ Status Stage::RestoreState(const RuntimeState& state) {
         actor.effectScale = saved.effectScale;
         actor.effectAlpha = saved.effectAlpha;
         actor.exiting = saved.exiting;
+        if (saved.action) (void)ResumeActorAction(actor.action, *saved.action,
+                                                  saved.actionElapsed);
         m_actors.emplace(saved.name, std::move(actor));
         Node& node = EnsureNode(saved.name, NodeKind::Character);
         node.z = saved.slot;
@@ -2418,6 +2446,9 @@ Status Stage::RestoreState(const RuntimeState& state) {
         }
         m_ruleState.progress = state.ruleProgress;
     }
+    if (state.backgroundAction && !m_bgPath.empty())
+        (void)ResumeActorAction(m_bgAction, *state.backgroundAction,
+                                state.backgroundActionElapsed);
     if (state.motion) {
         const auto& saved = *state.motion;
         if (!std::isfinite(saved.position) || saved.position < 0.0 ||

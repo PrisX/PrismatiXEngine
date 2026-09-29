@@ -245,7 +245,11 @@ void TestSaveValidation() {
         .alpha = 220,
         .z = 3,
         .scaleY = 0.75f,
-        .rotation = 17.0f});
+        .rotation = 17.0f,
+        .action = px::vn::ActorActionRequest{"shake-head", 10.0f, 100, -1, ""},
+        .actionElapsed = 1.5});
+    snapshot.stage.backgroundAction = px::vn::ActorActionRequest{"float", 0.0f, 0, -1, "linear"};
+    snapshot.stage.backgroundActionElapsed = 2.25;
     px::vn::Stage::SavedNode sceneRoot;
     sceneRoot.name = "scene-root";
     sceneRoot.kind = px::vn::Stage::NodeKind::Group;
@@ -394,6 +398,16 @@ void TestSaveValidation() {
     Check(saves.Save(0, snapshot), "valid save should be written");
     const auto loaded = saves.Load(0);
     Check(loaded && loaded->pc == 7 && loaded->variables.at("affection") == 3, "valid save should round-trip");
+    Check(loaded && loaded->stage.layers.size() == 1 && loaded->stage.layers.front().action &&
+              loaded->stage.layers.front().action->preset == "shake-head" &&
+              loaded->stage.layers.front().action->size == 10.0f &&
+              loaded->stage.layers.front().action->loop == -1 &&
+              loaded->stage.layers.front().actionElapsed == 1.5 &&
+              loaded->stage.backgroundAction &&
+              loaded->stage.backgroundAction->preset == "float" &&
+              loaded->stage.backgroundAction->ease == "linear" &&
+              loaded->stage.backgroundActionElapsed == 2.25,
+          "Image layer and background actions survive save serialization");
     Check(loaded && loaded->stage.motion &&
               loaded->stage.motion->path == "Content/Motion/intro.pxmotion" &&
               loaded->stage.motion->position == 0.4 &&

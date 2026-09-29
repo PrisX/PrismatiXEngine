@@ -899,6 +899,18 @@ void VM::ExecuteSimple(const Command& cmd) {
             if (m_commandHook) (void)m_commandHook(cmd);
             return;
         }
+        // target=image addresses an image layer, or the background as $bg.
+        if (cmd.Get("target") == "image") {
+            if (!m_stage.PlayImageAction(name, request)) {
+                diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,
+                    .code="PXVN6111",.category="VN.Stage",
+                    .message="Image action needs a shown image or background and a known preset",
+                    .details=name+" / "+request.preset};
+                ApplyDiagnosticSource(diagnostic, cmd);
+                diag::Emit(std::move(diagnostic));
+            }
+            return;
+        }
         if (!m_stage.PlayActorAction(name, request)) {
             diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,
                 .code="PXVN6110",.category="VN.Character",

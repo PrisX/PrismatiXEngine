@@ -102,7 +102,7 @@ std::optional<ActorActionTrack> ExpandActorAction(const ActorActionRequest& requ
         [&request](const Preset& preset) { return preset.name == request.preset; });
     if (found == Presets().end() || request.loop == 0 || request.loop < -1 ||
         request.loop > 1000 || !std::isfinite(request.size) || request.timeMs < 0 ||
-        request.timeMs > 60'000)
+        request.timeMs > 600'000)
         return std::nullopt;
     const Preset& preset = *found;
     // Authored size keeps the preset's direction; startle/wiggle sizes are
@@ -237,6 +237,39 @@ ActorPose SampleActorAction(const ActorActionTrack& track, double elapsed,
         from = key.to;
     }
     return track.keys.back().to;
+}
+
+bool StartActorAction(ActorActionState& state, const ActorActionRequest& request) {
+    if (request.preset == "stop") {
+        if (!state.Active()) return true;
+        state.track = ActorActionReturn(state.pose, 0.15f);
+        state.request.reset();
+        state.elapsed = 0.0;
+        return true;
+    }
+    auto track = ExpandActorAction(request);
+    if (!track) return false;
+    track->start = state.pose;
+    state.track = std::move(*track);
+    state.request = request;
+    state.elapsed = 0.0;
+    return true;
+}
+
+void AdvanceActorAction(ActorActionState& state, const double seconds) {
+    if (!state.Active()) return;
+    state.elapsed += seconds;
+    bool finished = false;
+    state.pose = SampleActorAction(state.track, state.elapsed, finished);
+    if (finished) state = {};
+}
+
+bool ResumeActorAction(ActorActionState& state, const ActorActionRequest& request,
+                       const double elapsed) {
+    state = {};
+    if (request.preset == "stop" || !StartActorAction(state, request)) return false;
+    AdvanceActorAction(state, std::isfinite(elapsed) ? std::max(0.0, elapsed) : 0.0);
+    return true;
 }
 
 }  // namespace px::vn

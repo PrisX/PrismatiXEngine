@@ -622,7 +622,13 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             Add(command, "target", Argument(operation, "target"));
         } else if (operation.kind == "actorAction") {
             command.type = "actor_action";
-            Add(command, "id", Argument(operation, "character"));
+            // An image layer name, or $bg, instead of a character.
+            if (const std::string& image = Argument(operation, "image"); !image.empty()) {
+                Add(command, "id", image);
+                Add(command, "target", "image");
+            } else {
+                Add(command, "id", Argument(operation, "character"));
+            }
             Add(command, "preset", Argument(operation, "preset"));
             Add(command, "size", Argument(operation, "size"));
             Add(command, "time", DurationMilliseconds(Argument(operation, "time")));

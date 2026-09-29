@@ -15,6 +15,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <set>
 
 #include <nlohmann/json.hpp>
@@ -634,6 +635,76 @@ int main() {
         clearStage.Update(1.0f);
         assert(!clearStage.Snapshot().front().action);
         clearStage.ClearCharacters(false);
+    }
+
+    // Image layers and the background play the same actions. Saved state
+    // resumes every running action; a new image or background ends one.
+    {
+        using SavedLayer = px::vn::Stage::SavedLayer;
+        const auto layerAction = [](const px::vn::Stage::RuntimeState& state) {
+            const auto found = std::ranges::find(state.layers, std::string("cg4"),
+                                                 &SavedLayer::name);
+            return found == state.layers.end() ? std::optional<SavedLayer>{}
+                                               : std::optional<SavedLayer>{*found};
+        };
+        clearStage.SetLayer("cg4", "Assets/cg.webp", 0.0f, 0.0f, 0.5f, 255, 4);
+        px::sdk::RuntimeIrDocument actDocument;
+        actDocument.documentId = "image-action-runtime";
+        actDocument.operations = {
+            Operation("bg-act", "actorAction", {{"image", "$bg"}, {"preset", "shake-head"},
+                {"size", "10"}, {"time", "100ms"}, {"loop", "-1"}}),
+            Operation("cg-act", "actorAction", {{"image", "cg4"}, {"preset", "float"},
+                {"loop", "-1"}}),
+            Operation("missing-act", "actorAction", {{"image", "cg9"}, {"preset", "float"}}),
+            Operation("act-end", "endStory"),
+        };
+        const px::vn::Program actProgram = px::CompileRuntimeIr(actDocument);
+        assert(actProgram.errors.empty());
+        assert(std::ranges::any_of(actProgram.code, [](const auto& command) {
+            return command.type == "actor_action" && command.Get("id") == "$bg" &&
+                   command.Get("target") == "image" && command.Get("time") == "100";
+        }));
+        assert(clearVm.LoadCompiledProgram(actProgram, "memory://image-action-runtime"));
+        assert(!clearStage.PlayImageAction("cg9", {"float", 0.0f, 0, 1, ""}));
+        assert(!clearStage.PlayImageAction("cg4", {"moonwalk", 0.0f, 0, 1, ""}));
+        clearStage.SetCharacter("hero", "Assets/hero.webp", 2, false);
+        assert(clearStage.PlayActorAction("hero", {"nod", 0.0f, 0, -1, ""}));
+        clearStage.Update(0.25f);
+
+        const auto saved = clearStage.CaptureState();
+        assert(saved.backgroundAction && saved.backgroundAction->preset == "shake-head" &&
+               saved.backgroundAction->size == 10.0f && saved.backgroundAction->timeMs == 100 &&
+               saved.backgroundActionElapsed > 0.2);
+        const auto savedLayer = layerAction(saved);
+        assert(savedLayer && savedLayer->action && savedLayer->action->preset == "float" &&
+               savedLayer->actionElapsed > 0.2);
+        assert(saved.actors.size() == 1 && saved.actors.front().action);
+        assert(static_cast<bool>(clearStage.RestoreState(saved)));
+        const auto restored = clearStage.CaptureState();
+        assert(restored.backgroundAction &&
+               restored.backgroundActionElapsed == saved.backgroundActionElapsed);
+        const auto restoredLayer = layerAction(restored);
+        assert(restoredLayer && restoredLayer->action &&
+               restoredLayer->actionElapsed == savedLayer->actionElapsed);
+        assert(restored.actors.size() == 1 && restored.actors.front().action &&
+               restored.actors.front().action->preset == "nod");
+
+        // Reframing the same image keeps its action; another image ends it.
+        clearStage.SetLayerTransform("cg4", "Assets/cg.webp", 40.0f, 0.0f, 0.5f, 0.5f,
+                                     0.0f, 255, 4);
+        assert(layerAction(clearStage.CaptureState())->action);
+        clearStage.SetLayer("cg4", "Assets/cg-night.webp", 0.0f, 0.0f, 0.5f, 255, 4);
+        assert(!layerAction(clearStage.CaptureState())->action);
+        assert(clearStage.PlayImageAction("cg4", {"sway", 0.0f, 0, 1, ""}));
+        assert(clearStage.PlayImageAction("cg4", {"stop", 0.0f, 0, 1, ""}));
+        clearStage.Update(1.0f);
+        assert(!layerAction(clearStage.CaptureState())->action);
+        clearStage.SetBackground("Assets/night.webp", false);
+        assert(!clearStage.CaptureState().backgroundAction);
+
+        clearStage.ClearLayer("cg4");
+        clearStage.ClearCharacters(false);
+        clearStage.SetBackground("Assets/background.webp", false);
     }
 
     px::vn::GameCatalog localizedCatalog;

@@ -51,7 +51,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   ambience: ["asset", "fade", "loop", "intro", "volume"],
   se: ["asset", "fade", "loop", "intro", "volume"],
   "bgm.stop": ["fade"], "ambience.stop": ["fade"], "se.stop": ["fade"], "voice.stop": [],
-  act: ["character", "preset", "size", "time", "loop", "ease"],
+  act: ["character", "image", "preset", "size", "time", "loop", "ease"],
   video: ["asset", "skippable"],
   timeline: ["timeline", "await", "speed"],
   motion: ["asset", "await", "speed"], "motion.stop": [],
@@ -452,7 +452,7 @@ function stringValue(argument: StoryArgument | undefined): string | undefined {
   return String(argument.value);
 }
 
-/** Relative character actions implemented by the native Stage. */
+/** Relative actions the native Stage plays on characters, images, and the background. */
 export const storyActorActions = [
   "hop", "jump", "startle", "yawn", "bow", "nod", "nods", "tremble",
   "shake-head", "sway", "float", "wiggle", "dip", "lift", "nudge-right",
@@ -659,14 +659,27 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     mappings.push({operationId, sourceId, sourceUri: document.path, startLine: node.span.start.line, startColumn: node.span.start.column, endLine: node.span.end.line, endColumn: node.span.end.column});
   };
 
-  // Shared by [act] and inline `@alias[act=nod]` dialogue.
-  const actionArguments = (node: StoryNode, alias: string, preset: string | undefined,
+  // Layers an [image] in this document shows; [act image=...] warns on others.
+  const imageNames = new Set<string>();
+  for (const node of document.nodes) {
+    if (node.kind !== "command" || node.name !== "image") continue;
+    const shown = argumentMap(node);
+    const name = stringValue(shown.get("name") ?? shown.get("$0"));
+    if (name !== undefined) imageNames.add(name);
+  }
+
+  // Shared by [act] and inline `@alias[act=nod]` dialogue. The target is a
+  // character alias, or an image layer name ($bg for the background).
+  const actionArguments = (node: StoryNode,
+    target: {readonly character: string} | {readonly image: string}, preset: string | undefined,
     options: {readonly size?: string; readonly time?: string; readonly loop?: string;
       readonly ease?: string}): Record<string, string> | undefined => {
+    const alias = "character" in target ? target.character : undefined;
     // `window` addresses the message window instead of a character.
     const messageWindow = alias === "window";
-    const character = messageWindow ? undefined : characters.get(alias);
-    if (!messageWindow && (context.characters?.length ?? 0) > 0 && character === undefined) {
+    const character = alias === undefined || messageWindow ? undefined : characters.get(alias);
+    if (alias !== undefined && !messageWindow && (context.characters?.length ?? 0) > 0 &&
+        character === undefined) {
       diagnostics.push(error("PXSTORY1113", `Unknown character alias: ${alias}`, node.span));
       return undefined;
     }
@@ -680,8 +693,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       diagnostics.push(error("PXSTORY1171", "act size must be a number of at most 4096", node.span));
       return undefined;
     }
-    if (options.time !== undefined && (durationMilliseconds(options.time) ?? Infinity) > 60_000) {
-      diagnostics.push(error("PXSTORY1172", "act time must be a duration of at most 60s", node.span));
+    if (options.time !== undefined && (durationMilliseconds(options.time) ?? Infinity) > 600_000) {
+      diagnostics.push(error("PXSTORY1172", "act time must be a duration of at most 600s", node.span));
       return undefined;
     }
     if (options.loop !== undefined && (!/^(?:-1|[1-9]\d{0,2}|1000)$/u.test(options.loop))) {
@@ -689,7 +702,9 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       return undefined;
     }
     return {
-      character: messageWindow ? "$window" : character?.id ?? alias, preset,
+      ...("image" in target ? {image: target.image}
+        : {character: messageWindow ? "$window" : character?.id ?? target.character}),
+      preset,
       ...(options.size === undefined ? {} : {size: options.size}),
       ...(options.time === undefined ? {} : {time: options.time}),
       ...(options.loop === undefined ? {} : {loop: options.loop}),
@@ -826,7 +841,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         emit(node, "showCharacter", shown, node.raw.trim(), `${sourceId}/showCharacter`);
       }
       if (act !== undefined && node.name !== undefined) {
-        const action = actionArguments(node, node.name, act, {});
+        const action = actionArguments(node, {character: node.name}, act, {});
         if (action === undefined) continue;
         emit(node, "actorAction", action, node.raw.trim(), `${sourceId}/actorAction`);
       }
@@ -1194,19 +1209,41 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         break;
       }
       case "act": {
-        const alias = named("character") ?? positional(0);
-        const preset = named("preset") ?? positional(named("character") === undefined ? 1 : 0);
-        if (alias === undefined) {
-          diagnostics.push(error("PXSTORY1112", "act requires a character alias", node.span));
+        // [act kei nod], [act window hop], [act bg shake-head loop=-1], and
+        // [act image=cg1 float]: `bg` is the background, image= an [image]
+        // layer. [act character=bg ...] still reaches a character aliased bg.
+        const image = named("image");
+        const alias = named("character") ?? (image === undefined ? positional(0) : undefined);
+        const preset = named("preset") ??
+          positional(named("character") === undefined && image === undefined ? 1 : 0);
+        if (image !== undefined && named("character") !== undefined) {
+          diagnostics.push(error("PXSTORY1175", "act takes a character or image=, not both", node.span));
           break;
         }
-        const action = actionArguments(node, alias, preset, {
+        if (image !== undefined && !identifierPattern.test(image)) {
+          diagnostics.push(error("PXSTORY1174", "act image must be an [image] name", node.span));
+          break;
+        }
+        if (alias === undefined && image === undefined) {
+          diagnostics.push(error("PXSTORY1112",
+            "act requires a character alias, window, bg, or image=<name>", node.span));
+          break;
+        }
+        const background = image === undefined && alias === "bg" && named("character") === undefined;
+        const action = actionArguments(node,
+          image !== undefined ? {image} : background ? {image: "$bg"} : {character: alias!}, preset, {
           ...(named("size") === undefined ? {} : {size: named("size")!}),
           ...(named("time") === undefined ? {} : {time: named("time")!}),
           ...(named("loop") === undefined ? {} : {loop: named("loop")!}),
           ...(named("ease") === undefined ? {} : {ease: named("ease")!}),
         });
-        if (action !== undefined) emit(node, "actorAction", action);
+        if (action === undefined) break;
+        if (image !== undefined && !imageNames.has(image)) diagnostics.push({
+          ...error("PXSTORY1176", `act image=${image} names no [image] in this Story; ` +
+            "it plays only if another Story has shown that layer", node.span),
+          severity: "warning",
+        });
+        emit(node, "actorAction", action);
         break;
       }
       case "se.stop": {

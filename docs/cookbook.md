@@ -120,9 +120,10 @@ always return it to rest, so they never change its slot or saved placement:
 Presets are `hop`, `jump`, `startle`, `yawn`, `bow`, `nod`, `nods`,
 `tremble`, `shake-head`, `sway`, `float`, `wiggle`, `dip`, `lift`,
 `nudge-right`, `nudge-left`, `bob` and `waver`. `size` is pixels (percent
-for `startle`/`wiggle`, degrees for `sway`), `time` is one segment,
-`loop=-1` repeats until `[act alias stop]`, and `ease` is `linear`, `in`,
-`out` or `inout`. A looping action is saved and resumes after loading.
+for `startle`/`wiggle`, degrees for `sway`), `time` is one segment (at most
+600s), `loop=-1` repeats until `[act alias stop]`, and `ease` is `linear`,
+`in`, `out` or `inout`. A looping action is saved and resumes after loading.
+The same presets play on the background and image layers (see below).
 
 `[se.stop fade=500ms]` stops every playing sound effect and `[voice.stop]`
 stops the current voice. `[shake 300ms 5 target=window]` shakes only the
@@ -164,6 +165,27 @@ removes it:
 [image cg1 ev_park_01 x=-300 y=-616 zoom=0.35 anchor=960,947 z=10 duration=400ms]
 [image.hide cg1 400ms]
 ```
+
+`[act]` plays the character presets on the background and on image layers
+too: `bg` is the background and `image=` names a layer placed by `[image]`:
+
+```pxstory
+[act bg shake-head size=10 time=100ms loop=-1]
+[image smoke fog x=-768 zoom=1.5 anchor=1728,540 z=11]
+[act image=smoke float size=100 time=5s loop=-1]
+[act image=smoke stop]
+```
+
+The image keeps its framing. Movement is in image pixels, so it follows the
+image's `zoom`; `sway`, `startle` and `wiggle` turn and scale about the
+image's `anchor` (its centre when unanchored), and a background that fills the
+screen turns about the screen centre. Another image in the layer, or a new
+background, ends the action; reframing the same image keeps it running. A
+looping action is saved with its layer and resumes after loading. Only one
+action runs per target: a new `[act]` replaces the running one from its
+current pose. `[act character=bg nod]` still reaches a character aliased
+`bg`. An `image=` name that no `[image]` in the same Story shows is a warning
+(PXSTORY1176), since another Story may have placed that layer.
 
 `[transition]` reveals every Stage change since the last displayed frame at
 once, as a crossfade or through a grayscale rule image. Stage the changes

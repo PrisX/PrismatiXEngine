@@ -187,10 +187,35 @@ test("act, se.stop, voice.stop, and window shake lower to typed operations", () 
   assert.equal(ops[3]!.sourceId, `${ops[4]!.sourceId}/actorAction`);
 });
 
+test("act targets the background and image layers", () => {
+  const ops = operations(
+    "[bg school]\n[image cg4 ev01 zoom=0.5]\n[act bg shake-head size=10 time=100ms loop=-1]\n" +
+    "[act image=cg4 float time=120s loop=-1]\n[act image=cg4 stop]\n[act character=yuki nod]\n",
+    {characters: [yuki], storyAssets: assets});
+  assert.deepEqual(ops.filter(({kind}) => kind === "actorAction").map(({arguments: args}) => args), [
+    {image: "$bg", preset: "shake-head", size: "10", time: "100ms", loop: "-1"},
+    {image: "cg4", preset: "float", time: "120s", loop: "-1"},
+    {image: "cg4", preset: "stop"},
+    {character: yuki.id, preset: "nod"},
+  ]);
+});
+
+test("image actions name a layer and warn when no [image] shows it", () => {
+  const result = compileStory(parseStory("[act image=cg9 float]\n", "Story/short.pxstory"),
+    {documentId: "short"});
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.diagnostics.map(({code, severity}) => [code, severity]),
+    [["PXSTORY1176", "warning"]]);
+  assert.ok(codes("[act image=\"cg 9\" float]\n").includes("PXSTORY1174"));
+  assert.ok(codes("[act character=yuki image=cg1 nod]\n", {characters: [yuki]}).includes("PXSTORY1175"));
+  assert.ok(codes("[act preset=nod]\n").includes("PXSTORY1112"));
+  assert.ok(codes("[act bg moonwalk]\n").includes("PXSTORY1170"));
+});
+
 test("act rejects unknown presets and out-of-range parameters", () => {
   const context = {characters: [yuki]};
   assert.ok(codes("[act yuki moonwalk]\n", context).includes("PXSTORY1170"));
-  assert.ok(codes("[act yuki nod time=90s]\n", context).includes("PXSTORY1172"));
+  assert.ok(codes("[act yuki nod time=601s]\n", context).includes("PXSTORY1172"));
   assert.ok(codes("[act yuki nod loop=0]\n", context).includes("PXSTORY1173"));
   assert.ok(codes("[act kei nod]\n", context).includes("PXSTORY1113"));
   assert.ok(codes("@直哉[act=nod] hi\n").includes("PXSTORY1162"));

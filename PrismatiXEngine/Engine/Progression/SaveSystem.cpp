@@ -805,14 +805,30 @@ vn::DialogueSnapshot DialogueFromJson(const Json& json) {
     return snapshot;
 }
 
+// A running relative action, replayed from its request on load.
+Json ActionToJson(const std::optional<vn::ActorActionRequest>& action, const double elapsed) {
+    if (!action) return nullptr;
+    return { { "preset", action->preset }, { "size", action->size },
+             { "time", action->timeMs }, { "loop", action->loop },
+             { "ease", action->ease }, { "elapsed", elapsed } };
+}
+
+std::optional<vn::ActorActionRequest> ActionFromJson(const Json& json, const char* owner,
+                                                     double& elapsed) {
+    elapsed = 0.0;
+    if (json.is_null()) return std::nullopt;
+    if (!json.is_object())
+        throw std::invalid_argument(std::string(owner) + " action must be an object");
+    elapsed = json.value("elapsed", 0.0);
+    return vn::ActorActionRequest{json.value("preset", std::string{}),
+                                  json.value("size", 0.0f), json.value("time", 0),
+                                  json.value("loop", 1), json.value("ease", std::string{})};
+}
+
 Json ActorsToJson(const std::vector<vn::Stage::SavedActor>& actors) {
     Json arr = Json::array();
     for (const auto& a : actors) {
-        Json action = nullptr;
-        if (a.action)
-            action = { { "preset", a.action->preset }, { "size", a.action->size },
-                       { "time", a.action->timeMs }, { "loop", a.action->loop },
-                       { "ease", a.action->ease }, { "elapsed", a.actionElapsed } };
+        Json action = ActionToJson(a.action, a.actionElapsed);
         arr.push_back({ { "name", a.name },
                         { "image", a.imagePath },
                         { "slot", a.slot },
@@ -843,16 +859,8 @@ std::vector<vn::Stage::SavedActor> ActorsFromJson(const Json& arr) {
         if (!j.is_object()) throw std::invalid_argument("stage actor must be an object");
         std::optional<vn::ActorActionRequest> action;
         double actionElapsed = 0.0;
-        if (const auto saved = j.find("action"); saved != j.end() && !saved->is_null()) {
-            if (!saved->is_object())
-                throw std::invalid_argument("stage actor action must be an object");
-            action = vn::ActorActionRequest{saved->value("preset", std::string{}),
-                                            saved->value("size", 0.0f),
-                                            saved->value("time", 0),
-                                            saved->value("loop", 1),
-                                            saved->value("ease", std::string{})};
-            actionElapsed = saved->value("elapsed", 0.0);
-        }
+        if (const auto saved = j.find("action"); saved != j.end())
+            action = ActionFromJson(*saved, "stage actor", actionElapsed);
         out.push_back(vn::Stage::SavedActor{ j.value("name", std::string{}),
                                              j.value("image", std::string{}), j.value("slot", 2),
                                              j.value("ox", 0.0f), j.value("oy", 0.0f),
@@ -886,6 +894,7 @@ Json LayersToJson(const std::vector<vn::Stage::SavedLayer>& layers) {
                         { "z", l.z } });
         if (l.anchored)
             arr.back()["anchor"] = Json::array({l.anchorX, l.anchorY});
+        if (l.action) arr.back()["action"] = ActionToJson(l.action, l.actionElapsed);
     }
     return arr;
 }
@@ -936,6 +945,9 @@ std::vector<vn::Stage::SavedLayer> LayersFromJson(const Json& arr) {
             out.back().anchorX = anchor->at(0).get<float>();
             out.back().anchorY = anchor->at(1).get<float>();
         }
+        if (const auto action = j.find("action"); action != j.end())
+            out.back().action = ActionFromJson(*action, "stage layer",
+                                               out.back().actionElapsed);
     }
     return out;
 }
@@ -1251,6 +1263,8 @@ Json StageToJson(const vn::Stage::RuntimeState& state) {
             {"backgroundFadeSpeed", state.backgroundFadeSpeed},
             {"backgroundFraming", PlacementToJson(state.backgroundPlacement)},
             {"previousBackgroundFraming", PlacementToJson(state.previousBackgroundPlacement)},
+            {"backgroundAction", ActionToJson(state.backgroundAction,
+                                              state.backgroundActionElapsed)},
             {"ruleTransition", {{"active", state.ruleActive},
                                 {"oldBackground", state.ruleOldBackground},
                                 {"newBackground", state.ruleNewBackground},
@@ -1284,6 +1298,9 @@ vn::Stage::RuntimeState StageFromJson(const Json& json) {
         state.backgroundPlacement = PlacementFromJson(*framing);
     if (const auto framing = json.find("previousBackgroundFraming"); framing != json.end())
         state.previousBackgroundPlacement = PlacementFromJson(*framing);
+    if (const auto action = json.find("backgroundAction"); action != json.end())
+        state.backgroundAction = ActionFromJson(*action, "stage background",
+                                                state.backgroundActionElapsed);
     if (const auto motion = json.find("motion");
         motion != json.end() && !motion->is_null()) {
         if (!motion->is_object() || !motion->contains("path") ||

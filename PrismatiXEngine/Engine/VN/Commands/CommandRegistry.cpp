@@ -172,7 +172,7 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("tween","Animation",registry.Find("anim")->parameters,CommandWaitPolicy::Async));
     add(Descriptor("camera","Animation",{Param("x",VariantType::Number),Param("y",VariantType::Number),Param("zoom",VariantType::Number),Param("duration",VariantType::Integer),Param("ease",VariantType::String),Param("wait",VariantType::Bool)},CommandWaitPolicy::Async));
     add(Descriptor("shake","Animation",{Param("ms",VariantType::Integer),Param("amp",VariantType::Number),Param("target",VariantType::String,false,Variant("stage"),CommandEditorWidget::Default,{"stage","window"})}));
-    add(Descriptor("actor_action","Stage",{Param("id",VariantType::String,true),Param("preset",VariantType::String,true),Param("size",VariantType::Number),Param("time",VariantType::Integer),Param("loop",VariantType::Integer),Param("ease",VariantType::String)}));
+    add(Descriptor("actor_action","Stage",{Param("id",VariantType::String,true),Param("preset",VariantType::String,true),Param("size",VariantType::Number),Param("time",VariantType::Integer),Param("loop",VariantType::Integer),Param("ease",VariantType::String),Param("target",VariantType::String)}));
     add(Descriptor("quake","Animation",{Param("time",VariantType::Integer),Param("power",VariantType::Number)}));
     add(Descriptor("wait","Flow",{Param("ms",VariantType::Integer,true)},CommandWaitPolicy::Timer));
     add(Descriptor("bgm","Audio",{

@@ -86,6 +86,13 @@ public:
     [[nodiscard]] bool HasLayer(const std::string& name) const {
         return m_layers.contains(name);
     }
+    // Plays a relative action preset (float, shake-head, ...) on an image
+    // layer, or on the background when `name` is "$bg". Movement is in image
+    // pixels, so it follows the image's zoom; scale and rotation turn about
+    // its anchor, or its centre when unanchored. A new image in the layer, or
+    // a new background, ends the action. False for a missing image, an
+    // unknown preset, or out-of-range parameters.
+    bool PlayImageAction(const std::string& name, const ActorActionRequest& request);
 
     enum class NodeKind : std::uint8_t { Group, Image, Character };
     struct NodeTransform {
@@ -254,6 +261,9 @@ public:
         bool anchored = false;
         float anchorX = 0.0f;
         float anchorY = 0.0f;
+        // Active action, restored by replaying the request to this time.
+        std::optional<ActorActionRequest> action;
+        double actionElapsed = 0.0;
     };
     [[nodiscard]] std::vector<SavedLayer> SnapshotLayers() const;
     void RestoreLayers(const std::vector<SavedLayer>& layers);
@@ -289,6 +299,8 @@ public:
         float backgroundFadeSpeed = 2.5f;
         std::optional<Placement> backgroundPlacement;
         std::optional<Placement> previousBackgroundPlacement;
+        std::optional<ActorActionRequest> backgroundAction;
+        double backgroundActionElapsed = 0.0;
         bool ruleActive = false;
         std::string ruleOldBackground;
         std::string ruleNewBackground;
@@ -344,10 +356,7 @@ private:
         float effectScale = 1.0f;
         float effectAlpha = 1.0f;
         bool exiting = false;
-        std::optional<ActorActionRequest> actionRequest;
-        ActorActionTrack actionTrack;
-        double actionElapsed = 0.0;
-        ActorPose actionPose;
+        ActorActionState action;
     };
 
     struct Layer {
@@ -362,6 +371,7 @@ private:
         bool anchored = false;
         float anchorX = 0.0f;
         float anchorY = 0.0f;
+        ActorActionState action;
     };
 
     // Grayscale rule image resampled to the stage size. Row extrema let a
@@ -467,7 +477,7 @@ private:
     [[nodiscard]] float SlotCenterX(int slot) const;
     void DrawBackgroundImage(const std::string& path,
                              const std::optional<Placement>& placement,
-                             std::uint8_t alpha);
+                             std::uint8_t alpha, const ActorPose* action = nullptr);
     void RenderRuleOverlay(bool compositing);
     void RenderScreenEffects();
     void EndRuleTransition();
@@ -528,6 +538,7 @@ private:
     float m_bgFadeSpeed = 2.5f;
     std::optional<Placement> m_bgPlacement;
     std::optional<Placement> m_prevBgPlacement;
+    ActorActionState m_bgAction;
 
     float m_shakeRemaining = 0.0f;
     struct FlashState {
