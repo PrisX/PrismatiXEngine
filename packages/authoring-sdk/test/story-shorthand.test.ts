@@ -334,3 +334,22 @@ test("nested macros expand with distinct ids and are not identity map entries", 
   assert.equal(new Set(ops.map(({sourceId}) => sourceId)).size, 4);
   assert.match(ops[1]!.sourceId, /\/m1\/m0$/u);
 });
+
+test("sound effects play and stop per channel", () => {
+  const ops = operations(
+    "[se se001]\n[se se002 channel=2 loop=true fade=500ms volume=40]\n[se se003 channel=3]\n" +
+    "[se.stop channel=2 fade=300ms]\n[se.stop]\n", {storyAssets: createStoryAssetIndex({se: ["Assets/se"]},
+      ["Assets/se/se001.ogg", "Assets/se/se002.ogg", "Assets/se/se003.ogg"])});
+  assert.deepEqual(ops.map(({kind, arguments: args}) => [kind, args]), [
+    ["soundEffect", {asset: "Assets/se/se001.ogg"}],
+    ["soundEffect", {asset: "Assets/se/se002.ogg", fade: "500ms", loop: "true", volume: "40", channel: "2"}],
+    ["soundEffect", {asset: "Assets/se/se003.ogg", channel: "3"}],
+    ["stopSoundEffect", {fade: "300ms", channel: "2"}],
+    ["stopSoundEffect", {}],
+  ]);
+  assert.ok(codes("[se Assets/a.ogg loop=true]\n").includes("PXSTORY1147"));
+  assert.ok(codes("[se Assets/a.ogg fade=1s]\n").includes("PXSTORY1146"));
+  assert.ok(codes("[se Assets/a.ogg channel=0]\n").includes("PXSTORY1177"));
+  assert.ok(codes("[se Assets/a.ogg channel=65]\n").includes("PXSTORY1177"));
+  assert.ok(codes("[se.stop channel=x]\n").includes("PXSTORY1177"));
+});

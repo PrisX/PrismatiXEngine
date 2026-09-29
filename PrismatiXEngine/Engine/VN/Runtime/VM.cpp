@@ -812,13 +812,23 @@ void VM::ExecuteSimple(const Command& cmd) {
         return;
     }
     if (t == "se") {
-        if (!m_fastForward)
-            m_audio.PlaySE(Resolve(m_config.seDir, cmd.Get("file", cmd.Get("value"))),
-                           CueGain(cmd));
+        // A numbered channel replaces its own cue (Artemis `se id=`); a loop
+        // starts even while skipping, since it outlasts the skipped lines.
+        const int channel = ParseInt(cmd.Get("channel"), 0);
+        const std::string loopText = cmd.Get("loop", "false");
+        const bool loop = channel > 0 && loopText != "false" && loopText != "0";
+        const std::string file = Resolve(m_config.seDir, cmd.Get("file", cmd.Get("value")));
+        if (channel > 0 && (loop || !m_fastForward))
+            m_audio.PlaySEChannel(channel, file, CueGain(cmd), loop, ParseInt(cmd.Get("fade"), 0));
+        else if (channel > 0)
+            m_audio.StopSE(0, channel);
+        else if (!m_fastForward)
+            m_audio.PlaySE(file, CueGain(cmd));
         return;
     }
     if (t == "stopse") {
-        m_audio.StopSE(ParseInt(cmd.Get("fade"), 0));
+        m_audio.StopSE(ParseInt(cmd.Get("fade"), 0),
+                       cmd.Has("channel") ? ParseInt(cmd.Get("channel"), -1) : -1);
         return;
     }
     if (t == "stopvoice") {

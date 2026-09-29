@@ -7,6 +7,7 @@
 #include <SDL3_mixer/SDL_mixer.h>
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <limits>
 
@@ -98,6 +99,9 @@ void AudioEngine::Shutdown() {
     m_seTracks.clear();
     m_seTrackAudio.clear();
     m_seTrackGain.clear();
+    for (auto& [id, channel] : m_seChannels)
+        if (channel.track) MIX_DestroyTrack(channel.track);
+    m_seChannels.clear();
     for (auto& [path, entry] : m_audio) {
         if (entry.audio) {
             MIX_DestroyAudio(entry.audio);
@@ -194,6 +198,9 @@ void AudioEngine::EvictAudio() {
         if (audio && (audio == m_bgmAudio[0] || audio == m_bgmAudio[1] || audio==m_ambienceAudio)) {
             continue;  // a BGM track may still reference it
         }
+        if (audio && std::ranges::any_of(m_seChannels, [audio](const auto& entry) {
+                return entry.second.audio == audio; }))
+            continue;  // a sound effect channel holds it
         bool busy = false;
         if (audio) {
             for (std::size_t i = 0; i < m_seTracks.size(); ++i) {
@@ -451,6 +458,7 @@ void AudioEngine::StopTransientSoundEffects() {
         MIX_StopTrack(track, 0);
         FinishTrackPlayback(track, PlaybackStatus::Stopped);
     }
+    for (auto& [id, channel] : m_seChannels) StopSeChannel(channel, 0);
 }
 
 AudioEngine::AudioHandle AudioEngine::Play(PlaybackRequest request) {
@@ -667,14 +675,72 @@ void AudioEngine::PlaySE(const std::string& path, const float gain) {
     (void)Play({.bus=Bus::SoundEffect, .path=path, .gain=gain});
 }
 
-void AudioEngine::StopSE(const int fadeMs) {
+void AudioEngine::PlaySEChannel(const int channel, const std::string& path, const float gain,
+                                const bool loop, const int fadeMs) {
+    if (channel <= 0) {
+        PlaySE(path, gain);
+        return;
+    }
+    if (channel > kMaxSeChannel) return;
+    (void)StartSeChannel(channel, path, gain, loop, fadeMs);
+}
+
+bool AudioEngine::StartSeChannel(const int channel, const std::string& path, const float gain,
+                                 const bool loop, const int fadeMs,
+                                 const std::int64_t seekFrame) {
+    if (!m_initialized) return false;
+    SeChannel& entry = m_seChannels[channel];
+    if (!entry.track) entry.track = MIX_CreateTrack(m_mixer);
+    if (!entry.track) return false;
+    MIX_StopTrack(entry.track, 0);
+    entry.path.clear();
+    MIX_Audio* audio = AcquireAudio(path, /*predecode=*/!loop);
+    if (!audio || !MIX_SetTrackAudio(entry.track, audio)) return false;
+    entry.audio = audio;
+    entry.gain = std::clamp(gain, 0.0f, 1.0f);
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetNumberProperty(props, MIX_PROP_PLAY_LOOPS_NUMBER, loop ? -1 : 0);
+    if (fadeMs > 0)
+        SDL_SetNumberProperty(props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER, fadeMs);
+    if (seekFrame > 0)
+        SDL_SetNumberProperty(props, MIX_PROP_PLAY_START_FRAME_NUMBER, seekFrame);
+    ApplyMixGains();
+    const bool started = MIX_PlayTrack(entry.track, props);
+    SDL_DestroyProperties(props);
+    if (!started) return false;
+    entry.path = path;
+    entry.loop = loop;
+    return true;
+}
+
+void AudioEngine::StopSeChannel(SeChannel& channel, const int fadeMs) {
+    if (m_initialized && channel.track)
+        MIX_StopTrack(channel.track, fadeMs > 0 ? MIX_MSToFrames(m_sampleRate, fadeMs) : 0);
+    channel.path.clear();
+    channel.loop = false;
+}
+
+bool AudioEngine::SEChannelPlaying(const int channel) const {
+    const auto found = m_seChannels.find(channel);
+    return found != m_seChannels.end() && found->second.track && !found->second.path.empty() &&
+           MIX_TrackPlaying(found->second.track);
+}
+
+void AudioEngine::StopSE(const int fadeMs, const int channel) {
     if (!m_initialized) return;
+    if (channel > 0) {
+        if (const auto found = m_seChannels.find(channel); found != m_seChannels.end())
+            StopSeChannel(found->second, fadeMs);
+        return;
+    }
     const auto frames = fadeMs > 0 ? MIX_MSToFrames(m_sampleRate, fadeMs) : 0;
     for (MIX_Track* track : m_seTracks) {
         if (!track) continue;
         MIX_StopTrack(track, frames);
         FinishTrackPlayback(track, PlaybackStatus::Stopped);
     }
+    if (channel < 0)
+        for (auto& [id, entry] : m_seChannels) StopSeChannel(entry, fadeMs);
 }
 
 void AudioEngine::PlayVoice(const std::string& path) {
@@ -777,6 +843,11 @@ AudioEngine::RuntimeState AudioEngine::CaptureState() const {
     state.voiceVolume = m_voiceVolume;
     state.sfxVolume = m_seVolume;
     state.ambienceVolume = m_ambienceVolume;
+    for (const auto& [channel, entry] : m_seChannels) {
+        if (!entry.loop || entry.path.empty() || !entry.track) continue;
+        TrackState track = trackState(entry.track, entry.path, true, {}, entry.gain);
+        if (track.playing) state.seChannels.push_back({channel, std::move(track)});
+    }
     return state;
 }
 
@@ -800,11 +871,24 @@ bool AudioEngine::ValidateState(const RuntimeState& state,
           state.music.handle == state.ambience.handle)) ||
         (state.voice.handle != 0 &&
          state.voice.handle == state.ambience.handle)) return false;
+    for (std::size_t index = 0; index < state.seChannels.size(); ++index) {
+        const auto& channel = state.seChannels[index];
+        if (channel.channel <= 0 || channel.channel > kMaxSeChannel ||
+            channel.track.playbackFrame < 0 || !std::isfinite(channel.track.gain) ||
+            channel.track.gain < 0.0f || channel.track.gain > 1.0f ||
+            std::any_of(state.seChannels.begin(), state.seChannels.begin() +
+                            static_cast<std::ptrdiff_t>(index),
+                        [&](const SeChannelState& other) { return other.channel == channel.channel; }))
+            return false;
+    }
     if (!requireResources) return true;
     for (const auto* track : {&state.music, &state.voice, &state.ambience}) {
         if (track->playing &&
             (track->path.empty() || !m_vfs.Exists(track->path))) return false;
     }
+    for (const auto& channel : state.seChannels)
+        if (channel.track.playing &&
+            (channel.track.path.empty() || !m_vfs.Exists(channel.track.path))) return false;
     if (!state.pendingMusicLoop.empty() &&
         !m_vfs.Exists(state.pendingMusicLoop)) return false;
     return true;
@@ -824,6 +908,9 @@ bool AudioEngine::PrepareRestoreState(const RuntimeState& state) {
     }
     if (!state.pendingMusicLoop.empty() &&
         !AcquireAudio(state.pendingMusicLoop, /*predecode=*/true)) return false;
+    for (const auto& channel : state.seChannels)
+        if (channel.track.playing && !AcquireAudio(channel.track.path, /*predecode=*/false))
+            return false;
     return true;
 }
 
@@ -869,6 +956,15 @@ bool AudioEngine::RestoreState(const RuntimeState& state) {
         if (!Active(handle) || !Seek(handle, state.ambience.playbackFrame))
             return false;
         if (state.ambience.paused && !SetAmbiencePaused(true)) return false;
+    }
+    // Looping channel effects resume where they were (Artemis sesys_resume).
+    for (const auto& channel : state.seChannels) {
+        if (!channel.track.playing || channel.track.path.empty()) continue;
+        if (!StartSeChannel(channel.channel, channel.track.path, channel.track.gain, true, 0,
+                            channel.track.playbackFrame))
+            return false;
+        auto& entry = m_seChannels[channel.channel];
+        if (channel.track.paused && entry.track) (void)MIX_PauseTrack(entry.track);
     }
     return true;
 }
@@ -970,6 +1066,7 @@ void AudioEngine::ApplyMixGains(){
     const float main=ToGain(m_mainVolume),duck=(m_voiceDuckingEnabled&&m_voiceDucking)?0.45f:1.0f;
     for(std::size_t i=0;i<m_bgmTracks.size();++i)if(m_bgmTracks[i])MIX_SetTrackGain(m_bgmTracks[i],ToGain(m_bgmVolume)*main*duck*m_bgmCueGain[i]);
     for(std::size_t i=0;i<m_seTracks.size();++i)if(m_seTracks[i])MIX_SetTrackGain(m_seTracks[i],ToGain(m_seVolume)*main*m_seTrackGain[i]);
+    for(const auto& [id,channel]:m_seChannels)if(channel.track)MIX_SetTrackGain(channel.track,ToGain(m_seVolume)*main*channel.gain);
     int profileVolume = 128;
     if (!m_voicePath.empty()) {
         const auto slash = m_voicePath.find_last_of("/\\");

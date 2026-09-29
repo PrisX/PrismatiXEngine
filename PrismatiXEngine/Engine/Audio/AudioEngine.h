@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <future>
 #include <memory>
 #include <optional>
@@ -104,6 +105,11 @@ public:
         // Cue level restored with the track; see PlaybackRequest::gain.
         float gain = 1.0f;
     };
+    // A looping sound effect on a numbered channel, kept by saves.
+    struct SeChannelState {
+        int channel = 0;
+        TrackState track;
+    };
     struct RuntimeState {
         TrackState music;
         TrackState voice;
@@ -114,7 +120,11 @@ public:
         int voiceVolume = 128;
         int sfxVolume = 110;
         int ambienceVolume = 96;
+        // Channels playing a loop, by channel. One-shot cues are transient.
+        std::vector<SeChannelState> seChannels;
     };
+    // Sound effect channels 1..kMaxSeChannel; 0 is the shared one-shot pool.
+    static constexpr int kMaxSeChannel = 64;
     explicit AudioEngine(io::VFS& vfs);
     ~AudioEngine();
 
@@ -171,8 +181,15 @@ public:
     void Update();
 
     void PlaySE(const std::string& path, float gain = 1.0f);
-    // Stops every playing sound effect, optionally fading it out.
-    void StopSE(int fadeMs = 0);
+    // Plays on a numbered channel (Artemis `se id=`): the channel's current
+    // cue stops first, a loop repeats until stopped and is saved, and the
+    // cue's gain applies to this channel only. Channel 0 is PlaySE.
+    void PlaySEChannel(int channel, const std::string& path, float gain = 1.0f,
+                       bool loop = false, int fadeMs = 0);
+    // Stops every playing sound effect, or only `channel` when it is >= 0
+    // (0 is the one-shot pool), optionally fading out.
+    void StopSE(int fadeMs = 0, int channel = -1);
+    [[nodiscard]] bool SEChannelPlaying(int channel) const;
     void PlayVoice(const std::string& path);
     void StopVoice();
     // Reads a voice or sound effect on a worker thread so the line that
@@ -243,6 +260,16 @@ private:
     void StopVoiceTrack();
     void StopAmbienceTrack(int fadeMs);
     void StopTransientSoundEffects();
+    struct SeChannel {
+        MIX_Track* track = nullptr;
+        MIX_Audio* audio = nullptr;
+        std::string path;
+        bool loop = false;
+        float gain = 1.0f;
+    };
+    bool StartSeChannel(int channel, const std::string& path, float gain, bool loop,
+                        int fadeMs, std::int64_t seekFrame = 0);
+    void StopSeChannel(SeChannel& channel, int fadeMs);
     [[nodiscard]] AudioHandle NextHandle();
     [[nodiscard]] AudioHandle PlayWithHandle(PlaybackRequest request,
                                              AudioHandle restoredHandle);
@@ -267,6 +294,7 @@ private:
     std::vector<MIX_Track*> m_seTracks;
     std::vector<MIX_Audio*> m_seTrackAudio;  // parallel to m_seTracks
     std::vector<float> m_seTrackGain;        // parallel to m_seTracks
+    std::map<int, SeChannel> m_seChannels;
     std::array<float, 2> m_bgmCueGain{1.0f, 1.0f};
     float m_ambienceCueGain = 1.0f;
     std::unordered_map<std::string, AudioEntry> m_audio;

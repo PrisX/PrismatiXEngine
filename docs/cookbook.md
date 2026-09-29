@@ -200,19 +200,34 @@ for `startle`/`wiggle`, degrees for `sway`), `time` is one segment (at most
 `in`, `out` or `inout`. A looping action is saved and resumes after loading.
 The same presets play on the background and image layers (see below).
 
-`[se.stop fade=500ms]` stops every playing sound effect and `[voice.stop]`
-stops the current voice. `[shake 300ms 5 target=window]` shakes only the
+`[se.stop fade=500ms]` stops every playing sound effect, `[se.stop channel=2]`
+only channel 2 (see below), and `[voice.stop]` stops the current voice. `[shake 300ms 5 target=window]` shakes only the
 message window layer instead of the Stage.
 
 `bgm`, `ambience`, `se` and `voice` accept `volume=0..100`, the level of that
-one cue in percent of its bus (the Config volume stays in charge). A looping
-sound that must survive saving belongs on the ambience bus:
+one cue in percent of its bus (the Config volume stays in charge).
+
+Sound effects without a channel overlap freely and are forgotten by saves.
+`channel=1..64` gives a cue its own channel, as Artemis `se id=` does: a new
+cue on a channel replaces the one playing there, the cue's `volume` applies to
+that channel only, and a channel may `loop=true` and `fade` in. A looping
+channel is saved with its position and resumes after loading or rollback;
+one-shot channel cues are transient like any sound effect. While skipping,
+one-shot cues are dropped but loops still start.
 
 ```pxstory
-[ambience wind loop=true fade=500ms volume=40]
-[se door volume=60]
-[ambience.stop fade=1s]
+[se rain channel=2 loop=true fade=500ms volume=40]
+[se door channel=1 volume=60]
+; the knock cuts the door off
+[se knock channel=1]
+; the rain only, then everything (pool and channels)
+[se.stop channel=2 fade=1s]
+[se.stop]
 ```
+
+A channel outside 1–64 is `PXSTORY1177`; `loop` and `fade` on an `se` without
+a channel stay errors (`PXSTORY1147`, `PXSTORY1146`). The ambience bus remains
+for a single background loop that follows the ambience volume setting.
 
 `[flash color=af4154 alpha=0.6 duration=300ms loop=2]` washes the screen with
 a colour: it rises to `alpha` and falls back, `loop` times, each taking
@@ -303,7 +318,7 @@ After registering suitable decodable media, the compiler accepts:
 suffix) and `loop=true|false`. `bgm intro=...` plays the intro once, then
 loops its main asset; it cannot be combined with `loop=false`. Both BGM files
 are collected for packaging. `bgm.stop` and `ambience.stop` also accept `fade`.
-Unsupported options on `voice` and `se`, invalid timing, and unsafe paths are
+Unsupported options on `voice` and on `se` without `channel=`, invalid timing, and unsafe paths are
 authoring errors instead of silently changing playback. Use the typed runtime
 API in an extension for volume and multi-track control. A missing reference is
 a build diagnostic, while decode/device failures need native testing with real

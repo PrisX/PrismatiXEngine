@@ -330,6 +330,9 @@ void TestSaveValidation() {
                             .playbackFrame = 24000,
                             .paused = true,
                             .handle = 4242};
+    // A looping sound effect channel is saved; one-shot cues are not.
+    snapshot.audio.seChannels.push_back({3, {.path = "Content/Audio/rain.ogg", .loop = true,
+        .playing = true, .playbackFrame = 9600, .gain = 0.4f}});
     px::script::PendingCommandState pending;
     pending.command.type = "demo.await";
     pending.command.args.push_back({ "duration", "0.5" });
@@ -421,7 +424,11 @@ void TestSaveValidation() {
             loaded->dialogue.speedMs == 42 && loaded->typedVariables.at("route").TryGet<std::string>() && loaded->typedVariables.at("flags").AsObject() && loaded->routes.stack.size() == 2 && loaded->routes.modals.size() == 1 &&
             loaded->timelines.size() == 1 && loaded->timelines.front().awaiting && loaded->animationClips.size() == 1 && loaded->animationClips.front().name == "Custom/Save" && loaded->stage.backgroundFade == 0.45f && loaded->stage.ruleActive && loaded->stage.ruleMask == "Content/Transitions/clouds.png" && loaded->stage.ruleProgress == 0.35f && loaded->stage.ruleVague == 48 && loaded->stage.cameraX == 16.0f && loaded->stage.cameraY == -9.0f && loaded->stage.cameraZoom == 1.15f && loaded->stage.actors.size() == 1 && loaded->stage.layers.size() == 1 && loaded->stage.layers.front().scaleY == 0.75f && loaded->stage.layers.front().rotation == 17.0f &&
             loaded->stage.nodes.size() == 3 && loaded->stage.nodes.front().name == "scene-root" && loaded->stage.nodes.front().children.size() == 2 && loaded->stage.particleEmitters.size() == 1 && loaded->stage.particleEmitters.front().spec.preset == px::vn::ParticlePreset::Snow && loaded->stage.particleEmitters.front().spec.advanced && loaded->stage.particleEmitters.front().spec.texture == "Content/Particles/snow-atlas.png" && loaded->stage.particleEmitters.front().spec.atlasFrameCount == 8 && loaded->stage.particleEmitters.front().spec.burst == 32 && loaded->stage.particleEmitters.front().spec.colorOverLifetime.size() == 2 && loaded->stage.particleEmitters.front().ticks == 901 && loaded->stage.particleEmitters.front().tickRemainder == 0.25 &&
-            loaded->stage.tweens.size() == 1 && loaded->audio.music.playbackFrame == 24000 && loaded->audio.music.paused && loaded->audio.music.handle == 4242 && loaded->scriptPending.size() == 2 && loaded->scriptPending.front().yieldIndex == 1 && loaded->scriptPending.back().waitKind == "screen-effect" && loaded->scriptPending.back().handle == 91 && loaded->scriptActions.size() == 1 && loaded->scriptActions.front().yieldIndex == 2 &&
+            loaded->stage.tweens.size() == 1 && loaded->audio.music.playbackFrame == 24000 && loaded->audio.music.paused && loaded->audio.music.handle == 4242 &&
+        loaded->audio.seChannels.size() == 1 && loaded->audio.seChannels.front().channel == 3 &&
+        loaded->audio.seChannels.front().track.path == "Content/Audio/rain.ogg" &&
+        loaded->audio.seChannels.front().track.playbackFrame == 9600 &&
+        loaded->audio.seChannels.front().track.gain == 0.4f && loaded->scriptPending.size() == 2 && loaded->scriptPending.front().yieldIndex == 1 && loaded->scriptPending.back().waitKind == "screen-effect" && loaded->scriptPending.back().handle == 91 && loaded->scriptActions.size() == 1 && loaded->scriptActions.front().yieldIndex == 2 &&
             loaded->ui.behavior.fibers.size() == 1 && loaded->ui.behavior.fibers.front().current == behaviorDelay && loaded->ui.behavior.fibers.front().signalArguments.at("position").TryGet<px::Vec2>() && loaded->ui.behavior.actions.size() == 1 &&
             loaded->ui.behavior.actions.front().providerHandle == 73 &&
             loaded->ui.animation && loaded->ui.animation->position == 0.42f &&

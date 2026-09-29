@@ -51,8 +51,8 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   voice: ["asset", "fade", "loop", "intro", "volume"],
   bgm: ["asset", "fade", "loop", "intro", "volume"],
   ambience: ["asset", "fade", "loop", "intro", "volume"],
-  se: ["asset", "fade", "loop", "intro", "volume"],
-  "bgm.stop": ["fade"], "ambience.stop": ["fade"], "se.stop": ["fade"], "voice.stop": [],
+  se: ["asset", "fade", "loop", "intro", "volume", "channel"],
+  "bgm.stop": ["fade"], "ambience.stop": ["fade"], "se.stop": ["fade", "channel"], "voice.stop": [],
   act: ["character", "image", "preset", "size", "time", "loop", "ease"],
   video: ["asset", "skippable"],
   timeline: ["timeline", "await", "speed"],
@@ -79,6 +79,10 @@ function validPlaybackVolume(value: string): boolean {
   if (!/^\d+(?:\.\d+)?$/u.test(value)) return false;
   const percent = Number(value);
   return Number.isFinite(percent) && percent >= 0 && percent <= 100;
+}
+
+function validSoundChannel(value: string): boolean {
+  return /^[1-9][0-9]?$/u.test(value) && Number(value) <= 64;
 }
 
 function validAudioDuration(value: string): boolean {
@@ -1231,14 +1235,19 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         const loop = named("loop");
         const intro = named("intro");
         const volume = named("volume");
-        const durable = node.name === "bgm" || node.name === "ambience";
+        const channel = named("channel");
+        // A numbered sound effect channel may loop and fade in like ambience.
+        const durable = node.name === "bgm" || node.name === "ambience" ||
+          (node.name === "se" && channel !== undefined);
         if (asset === undefined) diagnostics.push(error("PXSTORY1124", `${node.name} requires a resource`, node.span));
+        else if (channel !== undefined && !validSoundChannel(channel))
+          diagnostics.push(error("PXSTORY1177", "se channel must be an integer from 1 to 64", node.span));
         else if (volume !== undefined && !validPlaybackVolume(volume))
           diagnostics.push(error("PXSTORY1140", `${node.name} volume must be a number from 0 to 100`, node.span));
         else if (fade !== undefined && (!durable || !validAudioDuration(fade)))
-          diagnostics.push(error("PXSTORY1146", `${node.name} fade must be a nonnegative duration of at most 2147483647ms; voice and se do not support fade`, node.span));
+          diagnostics.push(error("PXSTORY1146", `${node.name} fade must be a nonnegative duration of at most 2147483647ms; voice and se without channel= do not support fade`, node.span));
         else if (loop !== undefined && (!durable || (loop !== "true" && loop !== "false")))
-          diagnostics.push(error("PXSTORY1147", `${node.name} loop must be true or false; voice and se do not support loop`, node.span));
+          diagnostics.push(error("PXSTORY1147", `${node.name} loop must be true or false; voice and se without channel= do not support loop`, node.span));
         else if (intro !== undefined && (node.name !== "bgm" || intro.length === 0 || loop === "false"))
           diagnostics.push(error("PXSTORY1148", "intro requires bgm with a looping body", node.span));
         else {
@@ -1253,6 +1262,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
               ...(loop === undefined ? {} : {loop}),
               ...(resolvedIntro === undefined ? {} : {intro: resolvedIntro}),
               ...(volume === undefined ? {} : {volume}),
+              ...(channel === undefined ? {} : {channel}),
             });
           }
         }
@@ -1298,9 +1308,15 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       }
       case "se.stop": {
         const fade = named("fade") ?? positional(0);
+        const channel = named("channel");
         if (fade !== undefined && !validAudioDuration(fade))
           diagnostics.push(error("PXSTORY1146", "se.stop fade must be a nonnegative duration of at most 2147483647ms", node.span));
-        else emit(node, "stopSoundEffect", fade === undefined ? {} : {fade});
+        else if (channel !== undefined && !validSoundChannel(channel))
+          diagnostics.push(error("PXSTORY1177", "se.stop channel must be an integer from 1 to 64", node.span));
+        else emit(node, "stopSoundEffect", {
+          ...(fade === undefined ? {} : {fade}),
+          ...(channel === undefined ? {} : {channel}),
+        });
         break;
       }
       case "voice.stop": emit(node, "stopVoice", {}); break;
@@ -1575,7 +1591,9 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
       {name:"target", required:false}, {name:"scene", required:false}],
     wait: [{name:"duration", required:true}],
     voice: [{name:"asset", required:true}],
-    se: [{name:"asset", required:true}],
+    se: [{name:"asset", required:true}, {name:"channel", required:false},
+      {name:"loop", required:false, values:[true, false]}, {name:"fade", required:false},
+      {name:"volume", required:false}],
     bgm: [{name:"asset", required:true}, {name:"fade", required:false},
       {name:"loop", required:false, values:[true, false]}, {name:"intro", required:false}],
     "bgm.stop": [{name:"fade", required:false}],
@@ -1594,7 +1612,7 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
       {name:"size", required:false}, {name:"time", required:false},
       {name:"loop", required:false}, {name:"ease", required:false,
         values:["linear", "in", "out", "inout"]}],
-    "se.stop": [{name:"fade", required:false}],
+    "se.stop": [{name:"fade", required:false}, {name:"channel", required:false}],
     unlock: [{name:"kind", required:true}, {name:"id", required:true}],
     effect: [{name:"value", required:true}],
     camera: [{name:"value", required:false}, {name:"x", required:false},

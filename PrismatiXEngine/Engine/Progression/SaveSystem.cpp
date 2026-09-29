@@ -1389,11 +1389,20 @@ audio::AudioEngine::TrackState AudioTrackFromJson(const Json& json) {
 }
 
 Json AudioToJson(const audio::AudioEngine::RuntimeState& state) {
-    return {{"music", AudioTrackToJson(state.music)}, {"voice", AudioTrackToJson(state.voice)},
+    Json json = {{"music", AudioTrackToJson(state.music)}, {"voice", AudioTrackToJson(state.voice)},
             {"ambience", AudioTrackToJson(state.ambience)},
             {"pendingMusicLoop", state.pendingMusicLoop}, {"mainVolume", state.mainVolume},
             {"musicVolume", state.musicVolume}, {"voiceVolume", state.voiceVolume},
             {"sfxVolume", state.sfxVolume}, {"ambienceVolume", state.ambienceVolume}};
+    // Looping sound effect channels; absent in saves without any.
+    if (!state.seChannels.empty()) {
+        Json channels = Json::array();
+        for (const auto& channel : state.seChannels)
+            channels.push_back({{"channel", channel.channel},
+                                {"track", AudioTrackToJson(channel.track)}});
+        json["seChannels"] = std::move(channels);
+    }
+    return json;
 }
 
 audio::AudioEngine::RuntimeState AudioFromJson(const Json& json) {
@@ -1408,6 +1417,14 @@ audio::AudioEngine::RuntimeState AudioFromJson(const Json& json) {
     state.voiceVolume = json.at("voiceVolume").get<int>();
     state.sfxVolume = json.at("sfxVolume").get<int>();
     state.ambienceVolume = json.at("ambienceVolume").get<int>();
+    if (const auto channels = json.find("seChannels"); channels != json.end()) {
+        if (!channels->is_array()) throw std::invalid_argument("seChannels must be an array");
+        for (const auto& channel : *channels) {
+            if (!channel.is_object()) throw std::invalid_argument("seChannels entry must be an object");
+            state.seChannels.push_back({channel.at("channel").get<int>(),
+                                        AudioTrackFromJson(channel.at("track"))});
+        }
+    }
     return state;
 }
 

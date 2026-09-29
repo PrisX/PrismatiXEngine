@@ -484,8 +484,11 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             Add(command, "fade", DurationMilliseconds(Argument(operation, "fade")));
             Add(command, "volume", Argument(operation, "volume"));
             if (operation.kind == "bgm") Add(command, "intro", Argument(operation, "intro"));
-            if (operation.kind == "bgm" || operation.kind == "ambience")
+            if (operation.kind == "bgm" || operation.kind == "ambience" ||
+                operation.kind == "soundEffect")
                 Add(command, "loop", Argument(operation, "loop"));
+            if (operation.kind == "soundEffect")
+                Add(command, "channel", Argument(operation, "channel"));
         } else if (operation.kind == "stopBgm" || operation.kind == "stopAmbience") {
             command.type = operation.kind == "stopBgm" ? "stopbgm" : "stopambience";
             Add(command, "fade", DurationMilliseconds(Argument(operation, "fade")));
@@ -637,6 +640,7 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
         } else if (operation.kind == "stopSoundEffect") {
             command.type = "stopse";
             Add(command, "fade", DurationMilliseconds(Argument(operation, "fade")));
+            Add(command, "channel", Argument(operation, "channel"));
         } else if (operation.kind == "stopVoice") {
             command.type = "stopvoice";
         } else if (operation.kind == "ui") {

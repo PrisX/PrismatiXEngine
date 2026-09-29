@@ -774,6 +774,36 @@ int main() {
                clearBacklog.Entries().back().text == clearDialogue.State().fullText);
     }
 
+    // Sound effect channels reach the VM with their loop and fade.
+    {
+        px::sdk::RuntimeIrDocument seDocument;
+        seDocument.documentId = "se-channels";
+        seDocument.operations = {
+            Operation("rain", "soundEffect", {{"asset", "Assets/rain.ogg"}, {"channel", "2"},
+                {"loop", "true"}, {"fade", "500ms"}, {"volume", "40"}}),
+            Operation("rain-stop", "stopSoundEffect", {{"channel", "2"}, {"fade", "300ms"}}),
+            Operation("all-stop", "stopSoundEffect"),
+        };
+        const px::vn::Program seProgram = px::CompileRuntimeIr(seDocument);
+        assert(seProgram.errors.empty());
+        assert(seProgram.code.size() == 3);
+        assert(seProgram.code[0].type == "se" && seProgram.code[0].Get("channel") == "2" &&
+               seProgram.code[0].Get("loop") == "true" && seProgram.code[0].Get("fade") == "500");
+        assert(seProgram.code[1].type == "stopse" && seProgram.code[1].Get("channel") == "2" &&
+               seProgram.code[1].Get("fade") == "300");
+        assert(seProgram.code[2].type == "stopse" && !seProgram.code[2].Has("channel"));
+        // Headless audio accepts the calls and keeps no channel state.
+        assert(clearVm.LoadCompiledProgram(seProgram, "memory://se-channels"));
+        assert(clearAudio.CaptureState().seChannels.empty());
+        px::audio::AudioEngine::RuntimeState invalid;
+        invalid.seChannels.push_back({0, {}});
+        assert(!clearAudio.ValidateState(invalid, false));
+        invalid.seChannels = {{2, {}}, {2, {}}};
+        assert(!clearAudio.ValidateState(invalid, false));
+        invalid.seChannels = {{2, {.gain = 0.5f}}};
+        assert(clearAudio.ValidateState(invalid, false));
+    }
+
     px::vn::GameCatalog localizedCatalog;
     bool charactersDeclared = false;
     constexpr std::string_view localizedCharacterId =

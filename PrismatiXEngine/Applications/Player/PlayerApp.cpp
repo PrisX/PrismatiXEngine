@@ -188,6 +188,11 @@ bool RelocalizeRuntimeState(
             const std::string newPath = after.Get("file", oldPath);
             replacePath(state.audio.music.path, oldPath, newPath);
             replacePath(state.audio.pendingMusicLoop, oldPath, newPath);
+        } else if (before.type == "se") {
+            const std::string oldPath = before.Get("file");
+            const std::string newPath = after.Get("file", oldPath);
+            for (auto& channel : state.audio.seChannels)
+                replacePath(channel.track.path, oldPath, newPath);
         } else if (before.type == "voice") {
             const std::string oldPath = before.Get("file");
             const std::string newPath = after.Get("file", oldPath);

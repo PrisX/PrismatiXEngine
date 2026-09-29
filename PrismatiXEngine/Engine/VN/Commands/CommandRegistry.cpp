@@ -184,12 +184,16 @@ CommandRegistry MakeBuiltins() {
         Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),
         Param("fade",VariantType::Integer),Param("loop",VariantType::Bool),
         Param("volume",VariantType::Number)}));
-    for(const char* id:{"se","voice"})add(Descriptor(id,"Audio",{
+    add(Descriptor("se","Audio",{
+        Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),
+        Param("volume",VariantType::Number),Param("channel",VariantType::Integer),
+        Param("loop",VariantType::Bool),Param("fade",VariantType::Integer)}));
+    add(Descriptor("voice","Audio",{
         Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),
         Param("volume",VariantType::Number)}));
     add(Descriptor("stopbgm","Audio",{Param("fade",VariantType::Integer)}));
     add(Descriptor("stopambience","Audio",{Param("fade",VariantType::Integer)}));
-    add(Descriptor("stopse","Audio",{Param("fade",VariantType::Integer)}));
+    add(Descriptor("stopse","Audio",{Param("fade",VariantType::Integer),Param("channel",VariantType::Integer)}));
     add(Descriptor("stopvoice","Audio"));
     add(Descriptor("video","Video",{Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),Param("skippable",VariantType::Bool)},CommandWaitPolicy::Async,RollbackPolicy::Boundary));
     add(Descriptor("movie","Video",registry.Find("video")->parameters,CommandWaitPolicy::Async,RollbackPolicy::Boundary));
