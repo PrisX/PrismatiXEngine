@@ -850,6 +850,7 @@ Json ActorsToJson(const std::vector<vn::Stage::SavedActor>& actors) {
                         { "effectOffsetY", a.effectOffsetY },
                         { "effectScale", a.effectScale },
                         { "effectAlpha", a.effectAlpha },
+                        { "rotation", a.rotation },
                         { "action", std::move(action) } });
     }
     return arr;
@@ -880,6 +881,7 @@ std::vector<vn::Stage::SavedActor> ActorsFromJson(const Json& arr) {
                                              j.value("effectScale", 1.0f),
                                              j.value("effectAlpha", 1.0f),
                                              std::move(action), actionElapsed });
+        out.back().rotation = j.value("rotation", 0.0f);
     }
     return out;
 }
@@ -960,6 +962,7 @@ Json TweenSpecToJson(const vn::Stage::TweenSpec& spec) {
     return {{"hasX", spec.hasX}, {"x", spec.x}, {"hasY", spec.hasY}, {"y", spec.y},
             {"hasScale", spec.hasScale}, {"scale", spec.scale},
             {"hasAlpha", spec.hasAlpha}, {"alpha", spec.alpha},
+            {"hasRotation", spec.hasRotation}, {"rotation", spec.rotation},
             {"durationMs", spec.durationMs}, {"ease", spec.ease}};
 }
 
@@ -970,6 +973,7 @@ vn::Stage::TweenSpec TweenSpecFromJson(const Json& json) {
     spec.hasY = json.value("hasY", false); spec.y = json.value("y", 0.0f);
     spec.hasScale = json.value("hasScale", false); spec.scale = json.value("scale", 1.0f);
     spec.hasAlpha = json.value("hasAlpha", false); spec.alpha = json.value("alpha", 255.0f);
+    spec.hasRotation = json.value("hasRotation", false); spec.rotation = json.value("rotation", 0.0f);
     spec.durationMs = json.value("durationMs", 600); spec.ease = json.value("ease", std::string("outCubic"));
     return spec;
 }

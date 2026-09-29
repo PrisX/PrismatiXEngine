@@ -471,6 +471,7 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             Add(command, "x", Argument(operation, "x"));
             Add(command, "y", Argument(operation, "y"));
             Add(command, "scale", Argument(operation, "scale"));
+            Add(command, "rotate", Argument(operation, "rotate"));
             const auto transition = Argument(operation, "transition");
             if (transition == "auto") Add(command, "transitionMode", transition);
             else Add(command, "transition", transition);
@@ -600,7 +601,7 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
                 command.type = "char_move";
                 Add(command, "id", Argument(operation, "target"));
                 Add(command, "pos", Argument(operation, "position"));
-                for (const char* name : {"x", "y", "scale", "ease", "wait"}) {
+                for (const char* name : {"x", "y", "scale", "rotate", "ease", "wait"}) {
                     Add(command, name, Argument(operation, name));
                 }
                 Add(command, "duration", DurationMilliseconds(Argument(operation, "duration")));

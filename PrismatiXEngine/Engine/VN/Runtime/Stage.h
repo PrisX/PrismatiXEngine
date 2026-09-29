@@ -152,6 +152,8 @@ public:
         float scale = 1.0f;
         bool hasAlpha = false;
         float alpha = 255.0f;
+        bool hasRotation = false;
+        float rotation = 0.0f;  // degrees; characters only
         int durationMs = 600;
         std::string ease = "outCubic";  // see px::support::Ease for names
     };
@@ -176,7 +178,10 @@ public:
         float offsetX = 0.0f;
         float offsetY = 0.0f;
         float scale = 1.0f;
+        float rotation = 0.0f;
     };
+    // Turns a shown character about its centre (Artemis fg rotate=).
+    bool SetCharacterRotation(const std::string& name, float degrees);
     [[nodiscard]] std::optional<CharacterPlacement> FindCharacterPlacement(
         const std::string& name) const;
     // The image a visible (not exiting) character shows, if any.
@@ -248,6 +253,7 @@ public:
         // Active action, restored by replaying the request to this time.
         std::optional<ActorActionRequest> action;
         double actionElapsed = 0.0;
+        float rotation = 0.0f;
     };
     [[nodiscard]] std::vector<SavedActor> Snapshot() const;
     void Restore(const std::vector<SavedActor>& actors);
@@ -283,6 +289,7 @@ public:
         float elapsed = 0.0f;
         float duration = 0.6f;
         bool removeWhenDone = false;
+        float fromRotation = 0.0f;
     };
 
     struct SavedMotion {
@@ -364,6 +371,7 @@ private:
         float effectAlpha = 1.0f;
         bool exiting = false;
         ActorActionState action;
+        float rotation = 0.0f;  // placement turn about the sprite centre
     };
 
     struct Layer {
@@ -434,6 +442,7 @@ private:
         float duration = 0.6f;
         // A fade-out that removes its layer when it completes.
         bool removeWhenDone = false;
+        float fromRotation = 0.0f;
     };
 
     struct MotionPlayback {

@@ -57,7 +57,12 @@ save identities and the Runtime IR do not depend on which spelling you use.
   position in either order. Showing a visible character again without a
   position keeps its slot, offset and scale, so expression changes no longer
   snap it back to the center. Giving a position starts a fresh placement:
-  omitted `x`, `y` and `scale` return to their defaults.
+  omitted `x`, `y`, `scale` and `rotate` return to their defaults.
+- `rotate=` turns a character about its centre in degrees (`[show aka z2
+  left rotate=-90]` lays it down, as Artemis `fg rotate=` does); an expression
+  change keeps the turn. `[move alias rotate=0 duration=1s]` animates it. The
+  turn and a turn in progress are saved. A non-numeric value is
+  `PXSTORY1155`.
 
 Short resource names come from author-only search roots in `prismatix.json`:
 

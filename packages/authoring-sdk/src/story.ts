@@ -40,8 +40,8 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
     "ease", "from-x", "from-y", "from-zoom", "from-alpha"],
   "image.hide": ["name", "duration"],
   transition: ["duration", "rule", "vague", "wait"],
-  show: ["character", "expression", "asset", "sprite", "position", "x", "y", "scale", "transition"],
-  move: ["character", "position", "x", "y", "scale", "duration", "ease", "wait"],
+  show: ["character", "expression", "asset", "sprite", "position", "x", "y", "scale", "rotate", "transition"],
+  move: ["character", "position", "x", "y", "scale", "rotate", "duration", "ease", "wait"],
   hide: ["character", "transition"],
   choice: ["text", "goto", "target", "scene"],
   jump: ["goto", "target", "scene"],
@@ -1115,6 +1115,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         if (alias === undefined) diagnostics.push(error("PXSTORY1112", "show requires a character alias", node.span));
         else if (transition !== undefined && transition !== "true" && transition !== "false" && transition !== "auto")
           diagnostics.push(error("PXSTORY1145", "show transition must be true, false, or auto", node.span));
+        else if (named("rotate") !== undefined && !signedNumberPattern.test(named("rotate")!))
+          diagnostics.push(error("PXSTORY1155", "show rotate must be a number of degrees", node.span));
         else if (extrasValid) {
           const shown = showArguments(node, alias, {
             ...(expressionAlias === undefined ? {} : {expression: expressionAlias}),
@@ -1126,6 +1128,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
             ...(named("x") === undefined ? {} : {x: named("x")!}),
             ...(named("y") === undefined ? {} : {y: named("y")!}),
             ...(named("scale") === undefined ? {} : {scale: named("scale")!}),
+            ...(named("rotate") === undefined ? {} : {rotate: named("rotate")!}),
             ...(transition === undefined ? {} : {transition}),
           });
         }
@@ -1139,7 +1142,9 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         if (alias === undefined) diagnostics.push(error("PXSTORY1129", "move requires a character alias", node.span));
         else if ((context.characters?.length ?? 0) > 0 && character === undefined) diagnostics.push(error("PXSTORY1130", `Unknown character alias: ${alias}`, node.span));
         else if (authoredPosition !== undefined && position === undefined) diagnostics.push(error("PXSTORY1131", `Unknown character position: ${authoredPosition}; expected left, center, right, 1, 2, or 3`, node.span));
-        else if ([authoredPosition, named("x"), named("y"), named("scale")].every((value) => value === undefined)) diagnostics.push(error("PXSTORY1132", "move requires position, x, y, or scale", node.span));
+        else if ([authoredPosition, named("x"), named("y"), named("scale"), named("rotate")].every((value) => value === undefined)) diagnostics.push(error("PXSTORY1132", "move requires position, x, y, scale, or rotate", node.span));
+        else if (named("rotate") !== undefined && !signedNumberPattern.test(named("rotate")!))
+          diagnostics.push(error("PXSTORY1155", "move rotate must be a number of degrees", node.span));
         else emit(node, "timeline", {
           mode: "move",
           target: character?.id ?? alias,
@@ -1147,6 +1152,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
           ...(named("x") === undefined ? {} : {x: named("x")!}),
           ...(named("y") === undefined ? {} : {y: named("y")!}),
           ...(named("scale") === undefined ? {} : {scale: named("scale")!}),
+          ...(named("rotate") === undefined ? {} : {rotate: named("rotate")!}),
           ...(named("duration") === undefined ? {} : {duration: named("duration")!}),
           ...(named("ease") === undefined ? {} : {ease: named("ease")!}),
           ...(named("wait") === undefined ? {} : {wait: named("wait")!}),

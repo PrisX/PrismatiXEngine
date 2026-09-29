@@ -544,10 +544,14 @@ VMRunResult VM::RunSlice(const std::size_t maxInstructions) {
                 spec.hasScale = true;
                 spec.scale = ParseFloat(cmd.Get("scale"), 1.0f);
             }
+            if (cmd.Has("rotate")) {
+                spec.hasRotation = true;
+                spec.rotation = ParseFloat(cmd.Get("rotate"));
+            }
             spec.durationMs =
                 ParseInt(cmd.Get("duration", cmd.Get("time", cmd.Get("ms"))), 600);
             spec.ease = cmd.Get("ease", "outCubic");
-            if ((spec.hasX || spec.hasY || spec.hasScale) &&
+            if ((spec.hasX || spec.hasY || spec.hasScale || spec.hasRotation) &&
                 !m_stage.Animate(target, spec)) {
                 PX_LOG_WARN("VM: [move] target '{}' not found (line {})", target, cmd.line);
             }
@@ -777,11 +781,14 @@ void VM::ExecuteSimple(const Command& cmd) {
         const float ox = ParseFloat(cmd.Get("x"), keep.offsetX);
         const float oy = ParseFloat(cmd.Get("y"), keep.offsetY);
         const float scale = ParseFloat(cmd.Get("scale", cmd.Get("zoom")), keep.scale);
+        const float rotation = ParseFloat(cmd.Get("rotate"), keep.rotation);
         const auto imagePath=Resolve(m_config.charDir, file);
         if(cmd.Get("transitionMode")=="auto")
             m_stage.SetCharacterAuto(name,imagePath,slot,ox,oy,scale);
         else
             m_stage.SetCharacter(name,imagePath,slot,TruthyFlag(cmd),ox,oy,scale);
+        // An expression change keeps a turn (and any turn in progress).
+        if (placed || cmd.Has("rotate")) (void)m_stage.SetCharacterRotation(name, rotation);
         return;
     }
     if (t == "char_clear") {

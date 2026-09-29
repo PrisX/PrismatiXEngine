@@ -896,6 +896,37 @@ int main() {
         assert(nod && nod->keys.front().to.scaleY == 1.0f);
     }
 
+    // Characters turn about their centre; the turn is saved and tweens.
+    {
+        clearStage.SetCharacter("turner", "Assets/hero.webp", 2, false);
+        assert(clearStage.SetCharacterRotation("turner", -90.0f));
+        assert(clearStage.FindCharacterPlacement("turner")->rotation == -90.0f);
+        px::vn::Stage::TweenSpec spin;
+        spin.hasRotation = true;
+        spin.rotation = 0.0f;
+        spin.durationMs = 1000;
+        spin.ease = "linear";
+        assert(clearStage.Animate("turner", spin));
+        clearStage.Update(0.5f);
+        const float halfway = clearStage.FindCharacterPlacement("turner")->rotation;
+        assert(halfway > -60.0f && halfway < -30.0f);
+        const auto saved = clearStage.CaptureState();
+        assert(static_cast<bool>(clearStage.RestoreState(saved)));
+        assert(clearStage.FindCharacterPlacement("turner")->rotation == halfway);
+        clearStage.Update(1.0f);
+        assert(clearStage.FindCharacterPlacement("turner")->rotation == 0.0f);
+        clearStage.ClearCharacters(false);
+        px::sdk::RuntimeIrDocument turnDocument;
+        turnDocument.documentId = "turn";
+        turnDocument.operations = {
+            Operation("t1", "showCharacter", {{"character", "hero"}, {"sprite", "hero.webp"}, {"rotate", "-90"}}),
+            Operation("t2", "timeline", {{"mode", "move"}, {"target", "hero"}, {"rotate", "180"}}),
+        };
+        const px::vn::Program turnProgram = px::CompileRuntimeIr(turnDocument);
+        assert(turnProgram.errors.empty() && turnProgram.code[0].Get("rotate") == "-90" &&
+               turnProgram.code[1].Get("rotate") == "180");
+    }
+
     // [nvl], [adv] and [nvl.clear] lower to the Player's NVL commands.
     {
         px::sdk::RuntimeIrDocument nvlDocument;

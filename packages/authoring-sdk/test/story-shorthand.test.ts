@@ -399,3 +399,12 @@ test("shake dir= and count= select the Artemis quake", () => {
   assert.ok(codes("[shake 300ms count=3]\n").includes("PXSTORY1154"));
   assert.ok(codes("[shake 300ms dir=v count=0]\n").includes("PXSTORY1154"));
 });
+
+test("show and move turn a character with rotate", () => {
+  const ops = operations("[show yuki smile center rotate=-90]\n[move yuki rotate=0 duration=1s]\n",
+    {characters: [yuki]});
+  assert.equal(ops[0]!.arguments.rotate, "-90");
+  assert.deepEqual(ops[1]!.arguments, {mode: "move", target: yuki.id, rotate: "0", duration: "1s"});
+  assert.ok(codes("[show yuki rotate=left]\n", {characters: [yuki]}).includes("PXSTORY1155"));
+  assert.ok(codes("[move yuki rotate=x]\n", {characters: [yuki]}).includes("PXSTORY1155"));
+});

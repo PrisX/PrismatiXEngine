@@ -1024,6 +1024,7 @@ bool Stage::Animate(const std::string& target, const TweenSpec& spec) {
         tween.fromY = actor.offsetY;
         tween.fromScale = actor.scale;
         tween.fromAlpha = actor.alpha;
+        tween.fromRotation = actor.rotation;
         if (spec.hasAlpha) {
             // Keep the per-frame Approach in agreement so nothing snaps back
             // once the tween finishes.
@@ -1174,6 +1175,8 @@ void Stage::UpdateTweens(float dt) {
                 if (spec.hasY) actor.offsetY = support::Lerp(tween.fromY, spec.y, t);
                 if (spec.hasScale) actor.scale = support::Lerp(tween.fromScale, spec.scale, t);
                 if (spec.hasAlpha) actor.alpha = support::Lerp(tween.fromAlpha, spec.alpha, t);
+                if (spec.hasRotation)
+                    actor.rotation = support::Lerp(tween.fromRotation, spec.rotation, t);
             }
         } else {
             auto lit = m_layers.find(tween.name);
@@ -1254,7 +1257,18 @@ std::optional<Stage::CharacterPlacement> Stage::FindCharacterPlacement(
         found->second.imagePath.empty())
         return std::nullopt;
     const Actor& actor = found->second;
-    return CharacterPlacement{actor.slot, actor.offsetX, actor.offsetY, actor.scale};
+    return CharacterPlacement{actor.slot, actor.offsetX, actor.offsetY, actor.scale,
+                              actor.rotation};
+}
+
+bool Stage::SetCharacterRotation(const std::string& name, const float degrees) {
+    const auto found = m_actors.find(name);
+    if (found == m_actors.end() || !std::isfinite(degrees)) return false;
+    found->second.rotation = degrees;
+    std::erase_if(m_tweens, [&](const Tween& tween) {
+        return !tween.isLayer && tween.name == name && tween.spec.hasRotation;
+    });
+    return true;
 }
 
 std::optional<std::string> Stage::CharacterImage(const std::string& name) const {
@@ -1925,6 +1939,9 @@ void Stage::Render() {
         m_renderer.PushAffineTransform(
             {world.a, world.b, world.c, world.d, world.tx, world.ty});
         // Action rotation pivots at the sprite's feet, like a swaying body.
+        if (actor.rotation != 0.0f)
+            m_renderer.PushTransform({local.x + local.w * 0.5f, local.y + local.h * 0.5f},
+                                     {1.0f, 1.0f}, actor.rotation);
         m_renderer.PushTransform({local.x + local.w * 0.5f, local.y + local.h},
                                  {1.0f, actor.action.pose.scaleY}, actor.action.pose.rotation);
         const float combinedAlpha=std::clamp(
@@ -1948,6 +1965,7 @@ void Stage::Render() {
                 static_cast<std::uint8_t>(combinedAlpha));
         }
         m_renderer.PopTransform();
+        if (actor.rotation != 0.0f) m_renderer.PopTransform();
         m_renderer.PopTransform();
     };
 
@@ -2106,6 +2124,7 @@ std::vector<Stage::SavedActor> Stage::Snapshot() const {
                                       actor.effectOffsetX, actor.effectOffsetY,
                                       actor.effectScale, actor.effectAlpha,
                                       actor.action.request, actor.action.elapsed });
+            out.back().rotation = actor.rotation;
         }
     }
     return out;
@@ -2131,6 +2150,7 @@ void Stage::Restore(const std::vector<SavedActor>& actors) {
         restored->second.effectOffsetY = s.effectOffsetY;
         restored->second.effectScale = s.effectScale;
         restored->second.effectAlpha = s.effectAlpha;
+        restored->second.rotation = std::isfinite(s.rotation) ? s.rotation : 0.0f;
         if (s.action) (void)ResumeActorAction(restored->second.action, *s.action,
                                               s.actionElapsed);
     }
@@ -2325,6 +2345,7 @@ Stage::RuntimeState Stage::CaptureState() const {
                                            actor.x, actor.targetX, true,
                                            actor.effectOffsetX, actor.effectOffsetY,
                                            actor.effectScale, actor.effectAlpha});
+        state.actors.back().rotation = actor.rotation;
     }
     state.layers = SnapshotLayers();
     state.nodes = SnapshotNodes();
@@ -2340,7 +2361,7 @@ Stage::RuntimeState Stage::CaptureState() const {
         state.tweens.push_back(SavedTween{tween.isLayer, tween.name, tween.spec,
                                           tween.fromX, tween.fromY, tween.fromScale,
                                           tween.fromAlpha, tween.elapsed, tween.duration,
-                                          tween.removeWhenDone});
+                                          tween.removeWhenDone, tween.fromRotation});
     }
     return state;
 }
@@ -2436,6 +2457,7 @@ Status Stage::RestoreState(const RuntimeState& state) {
         actor.effectOffsetY = saved.effectOffsetY;
         actor.effectScale = saved.effectScale;
         actor.effectAlpha = saved.effectAlpha;
+        actor.rotation = std::isfinite(saved.rotation) ? saved.rotation : 0.0f;
         actor.exiting = saved.exiting;
         if (saved.action) (void)ResumeActorAction(actor.action, *saved.action,
                                                   saved.actionElapsed);
@@ -2459,7 +2481,7 @@ Status Stage::RestoreState(const RuntimeState& state) {
         m_tweens.push_back(Tween{saved.layer, saved.target, saved.spec, saved.fromX,
                                   saved.fromY, saved.fromScale, saved.fromAlpha,
                                   saved.elapsed, saved.duration,
-                                  saved.removeWhenDone});
+                                  saved.removeWhenDone, saved.fromRotation});
     }
     if (state.ruleActive) {
         m_bgPath = state.ruleOldBackground;
