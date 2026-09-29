@@ -60,6 +60,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   ui: ["route", "operation"],
   hud: ["visible", "time"],
   nvl: [], adv: [], "nvl.clear": [],
+  auto: ["mode", "speed", "wait", "lock"], "skip.stop": [], "skip.disable": [], "skip.enable": [],
   unlock: ["kind", "id"],
   effect: ["value"], shake: ["duration", "amplitude", "target", "dir", "count"],
   flash: ["color", "alpha", "duration", "loop"], tone: ["mode"],
@@ -1356,6 +1357,31 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       case "nvl": emit(node, "textMode", {mode: "nvl"}); break;
       case "adv": emit(node, "textMode", {mode: "adv"}); break;
       case "nvl.clear": emit(node, "textMode", {mode: "clear"}); break;
+      // [auto on speed=20 wait=2500ms lock=true] plays by itself until
+      // [auto off]; lock=true also ignores the player (Artemis autoplay).
+      case "auto": {
+        const mode = named("mode") ?? positional(0);
+        const speed = named("speed");
+        const wait = named("wait");
+        const lock = named("lock");
+        if (mode !== "on" && mode !== "off")
+          diagnostics.push(error("PXSTORY1156", "auto must be on or off", node.span));
+        else if (mode === "off" && (speed ?? wait ?? lock) !== undefined)
+          diagnostics.push(error("PXSTORY1156", "auto off takes no speed, wait or lock", node.span));
+        else if (speed !== undefined && !(/^\d+$/u.test(speed) && Number(speed) <= 1000))
+          diagnostics.push(error("PXSTORY1156", "auto speed must be 0 to 1000 ms per character", node.span));
+        else if (wait !== undefined && (!validAudioDuration(wait) || (durationMilliseconds(wait) ?? 0) > 60_000))
+          diagnostics.push(error("PXSTORY1156", "auto wait must be a duration of at most 60s", node.span));
+        else if (lock !== undefined && lock !== "true" && lock !== "false")
+          diagnostics.push(error("PXSTORY1156", "auto lock must be true or false", node.span));
+        else emit(node, "autoMode", {mode,
+          ...(speed === undefined ? {} : {speed}), ...(wait === undefined ? {} : {wait}),
+          ...(lock === undefined ? {} : {lock})});
+        break;
+      }
+      case "skip.stop": emit(node, "skipControl", {op: "stop"}); break;
+      case "skip.disable": emit(node, "skipControl", {op: "disable"}); break;
+      case "skip.enable": emit(node, "skipControl", {op: "enable"}); break;
       case "bgm.stop":
       case "ambience.stop": {
         const fade = named("fade") ?? positional(0);
@@ -1596,7 +1622,7 @@ export interface StoryCommandCompletion {
   readonly parameters: readonly {readonly name: string; readonly required: boolean; readonly values?: readonly JsonValue[]}[];
 }
 
-const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "macro", "endmacro"];
+const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "auto", "skip.stop", "skip.disable", "skip.enable", "macro", "endmacro"];
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
   const builtins = builtinStoryCommands;

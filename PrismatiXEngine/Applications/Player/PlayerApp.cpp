@@ -1768,6 +1768,24 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             }
             return true;
         }
+        if (t == "auto_mode") {
+            if (cmd.Get("mode") == "off") SetStoryAuto(std::nullopt);
+            else {
+                const auto number = [&](const char* key, const int high) {
+                    return cmd.Has(key) ? std::clamp(std::atoi(cmd.Get(key).c_str()), 0, high) : -1;
+                };
+                SetStoryAuto(StoryAuto{number("speed", 1000), number("wait", 60'000),
+                                       cmd.Get("lock") == "true"});
+            }
+            return true;
+        }
+        if (t == "skip_control") {
+            const std::string op = cmd.Get("op");
+            if (op == "disable") m_skipDisabled = true;
+            else if (op == "enable") m_skipDisabled = false;
+            if (op != "enable") m_skipMode = false;
+            return true;
+        }
         if (t == "nvl") {
             m_nvlMode = true;
             if (cmd.Has("clear")) m_nvlLines.clear();
@@ -2570,6 +2588,8 @@ bool PlayerApp::CommitStartGame() {
     }
     m_session->Backlog().Clear();
     m_autoMode = m_skipMode = m_hudHidden = false;
+    SetStoryAuto(std::nullopt);
+    m_skipDisabled = false;
     m_hudFadeSnap = true;
     m_storyHudVisible = false;
     m_nvlMode = false;
@@ -2884,6 +2904,9 @@ bool PlayerApp::LoadSlot(int slot) {
     m_script = candidateScript;
     m_appState = AppState::Game;
     m_autoMode = m_skipMode = m_hudHidden = false;
+    m_skipDisabled = snap->skipDisabled;
+    SetStoryAuto(snap->storyAuto ? std::optional<StoryAuto>(StoryAuto{
+        snap->storyAutoSpeedMs, snap->storyAutoWaitMs, snap->storyAutoLocked}) : std::nullopt);
     m_storyHudVisible = true;
     if (m_ui.CurrentRoute() == "hud" || m_ui.CurrentRoute() == "game")
         (void)m_ui.RefreshHUD(DialogueUI());
@@ -2943,6 +2966,13 @@ std::optional<progress::SaveSnapshot> PlayerApp::MakeSnapshot(
     if (includeBacklog) snap.backlog = state.backlog;
     snap.nvlMode = m_nvlMode;
     snap.nvlLines = m_nvlLines;
+    snap.storyAuto = m_storyAuto.has_value();
+    if (m_storyAuto) {
+        snap.storyAutoSpeedMs = m_storyAuto->textSpeedMs;
+        snap.storyAutoWaitMs = m_storyAuto->waitMs;
+        snap.storyAutoLocked = m_storyAuto->locked;
+    }
+    snap.skipDisabled = m_skipDisabled;
     snap.timestamp = static_cast<std::uint64_t>(std::time(nullptr));
     return snap;
 }
@@ -3056,6 +3086,9 @@ bool PlayerApp::ApplyRollback(const RollbackEntry& entry) {
     m_nvlLines = s.nvlLines;
     m_lastBacklogSequence = m_session->Backlog().LastSequence();
     m_autoMode = m_skipMode = false;
+    m_skipDisabled = s.skipDisabled;
+    SetStoryAuto(s.storyAuto ? std::optional<StoryAuto>(StoryAuto{
+        s.storyAutoSpeedMs, s.storyAutoWaitMs, s.storyAutoLocked}) : std::nullopt);
     if (m_ui.CurrentRoute() == "hud" || m_ui.CurrentRoute() == "game")
         (void)m_ui.RefreshHUD(DialogueUI());
     return true;
@@ -3241,6 +3274,17 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
         view.nvlLines.back() = NvlLineText(m_session->Dialogue().State().speaker,
                                            m_session->Dialogue().State().displayText);
     return view;
+}
+
+void PlayerApp::SetStoryAuto(std::optional<StoryAuto> value) {
+    m_storyAuto = std::move(value);
+    m_autoMode = m_storyAuto.has_value();
+    if (m_storyAuto) m_skipMode = false;
+    m_autoTimerStart = 0;
+    if (m_session)
+        m_session->VM().SetDefaultTextSpeed(m_storyAuto && m_storyAuto->textSpeedMs >= 0
+                                                ? m_storyAuto->textSpeedMs
+                                                : m_settings.textSpeedMs);
 }
 
 // The speaker's face follows the expression shown on stage, else the
@@ -5578,31 +5622,33 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         return;
     }
 
-    if (m_dialog == std::nullopt) {
+    // A locked [auto on lock=true] section plays by itself: no input, no menus.
+    const bool locked = m_storyAuto && m_storyAuto->locked;
+    if (m_dialog == std::nullopt && !locked) {
         if (input.ActionPressed(InputAction::QuickLoad))
             RequestConfirm("quickLoad", [this] { LoadSlot(0); });
         else if (input.ActionPressed(InputAction::QuickSave))
             RequestConfirm("quickSave", [this] { m_saveRequested = true; });
     }
-    if (input.ActionPressed(InputAction::OpenSave)) m_pendingSaveScreen = true;
+    if (!locked && input.ActionPressed(InputAction::OpenSave)) m_pendingSaveScreen = true;
 
     // Mode toggles (KAG conventions: A=auto, S=skip toggle, Ctrl=skip held).
-    if (input.ActionPressed(InputAction::ToggleAuto)) {
+    if (!locked && !m_storyAuto && input.ActionPressed(InputAction::ToggleAuto)) {
         m_autoMode = !m_autoMode;
         if (m_autoMode) m_skipMode = false;
     }
-    if (input.ActionPressed(InputAction::ToggleSkip)) {
+    if (!locked && !m_skipDisabled && input.ActionPressed(InputAction::ToggleSkip)) {
         m_skipMode = !m_skipMode;
-        if (m_skipMode) m_autoMode = false;
+        if (m_skipMode) m_autoMode = m_storyAuto.has_value();
     }
-    if (input.ActionPressed(InputAction::Backlog)) {
+    if (!locked && input.ActionPressed(InputAction::Backlog)) {
         OpenScreen("backlog");
         return;
     }
-    if (input.ActionPressed(InputAction::Rollback)) {
+    if (!locked && input.ActionPressed(InputAction::Rollback)) {
         RollbackOneLine();
     }
-    if (m_storyHudVisible &&
+    if (!locked && m_storyHudVisible &&
         (input.RightClick() || input.ActionPressed(InputAction::ToggleUi))) {
         m_hudHidden = !m_hudHidden;
     }
@@ -5621,6 +5667,9 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
                 m_resumeAutoAfterChoice = m_autoMode && m_keepAutoAfterChoice;
             }
             m_choiceWasPending = true;
+            // A choice ends a Story auto section (Artemis autoskip_stop), so a
+            // locked one can never leave the choice unanswerable.
+            if (m_storyAuto) SetStoryAuto(std::nullopt);
             m_skipMode = false;  // Skip always stops at choices.
             m_autoMode = false;
         } else if (m_choiceWasPending) {
@@ -5653,12 +5702,17 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     };
 
     bool advancedByClick = false;
-    if (!m_storyHudVisible && m_session->Routes().CurrentModalRoute().empty()) {
+    if (locked) {
+        // Keep the presentation current; the section advances by itself.
+        if (m_ui.CurrentScreen() == ui::GalgameUI::Screen::HUD)
+            m_ui.RefreshHUD(DialogueUI());
+    } else if (!m_storyHudVisible && m_session->Routes().CurrentModalRoute().empty()) {
         if ((input.LeftClick() || advanceKey || nonKeyboardAdvance) &&
             m_session->VM().State() != vn::VMState::WaitingChoice) {
             advanceDialogue();
             advancedByClick = true;
-            m_autoMode = false;
+            // A Story-driven auto section keeps reading after a click.
+            m_autoMode = m_storyAuto.has_value();
             m_skipMode = false;
         }
     } else if (m_hudHidden) {
@@ -5683,7 +5737,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
                m_session->VM().State() != vn::VMState::WaitingChoice) {
             advanceDialogue();
             advancedByClick = true;
-            m_autoMode = false;
+            m_autoMode = m_storyAuto.has_value();
             m_skipMode = false;
         }
     }
@@ -5694,7 +5748,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     if (m_skipMode && m_settings.skipReadOnly && !m_session->VM().CurrentLineSeen()) {
         m_skipMode = false;
     }
-    const bool skipping = m_skipMode || ctrlSkip;
+    const bool skipping = !locked && !m_skipDisabled && (m_skipMode || ctrlSkip);
     m_session->VM().SetFastForward(skipping);
     const auto skippableWait = [this] {
         return m_session->VM().State() == vn::VMState::WaitingClick ||
@@ -5727,8 +5781,9 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
                m_session->Dialogue().Finished()) {
         if (m_autoTimerStart == 0) {
             m_autoTimerStart = now;
-        } else if (now - m_autoTimerStart >=
-                   static_cast<std::uint64_t>(std::max(0, m_settings.autoWaitMs))) {
+        } else if (now - m_autoTimerStart >= static_cast<std::uint64_t>(std::max(0,
+                       m_storyAuto && m_storyAuto->waitMs >= 0 ? m_storyAuto->waitMs
+                                                               : m_settings.autoWaitMs))) {
             advanceDialogue();
             m_autoTimerStart = 0;
         }

@@ -1548,6 +1548,10 @@ bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
     state["ui"] = UIRuntimeStateToJson(s.ui);
     state["backlog"] = BacklogToJson(s.backlog);
     state["nvlMode"] = s.nvlMode;
+    if (s.storyAuto)
+        state["storyAuto"] = {{"speedMs", s.storyAutoSpeedMs}, {"waitMs", s.storyAutoWaitMs},
+                              {"locked", s.storyAutoLocked}};
+    if (s.skipDisabled) state["skipDisabled"] = true;
     state["nvlLines"] = BacklogToJson(s.nvlLines);
     state["timestamp"] = s.timestamp;
     state["playtimeMs"] = s.playtimeMs;
@@ -1616,6 +1620,14 @@ std::optional<SaveSnapshot> ParseSaveEnvelope(
         s.chapter = payload.value("chapter", std::string{});
         s.bgmPath = payload.value("bgmPath", std::string{});
         s.nvlMode = payload.value("nvlMode", false);
+        if (const auto story = payload.find("storyAuto");
+            story != payload.end() && story->is_object()) {
+            s.storyAuto = true;
+            s.storyAutoSpeedMs = std::clamp(story->value("speedMs", -1), -1, 1000);
+            s.storyAutoWaitMs = std::clamp(story->value("waitMs", -1), -1, 60'000);
+            s.storyAutoLocked = story->value("locked", false);
+        }
+        s.skipDisabled = payload.value("skipDisabled", false);
         s.nvlLines = BacklogFromJson(payload.value("nvlLines", Json::array()));
         if (payload.contains("variables")) {
             if(!payload["variables"].is_object()){SaveLoadError(path,"Save variables field must be an object");return std::nullopt;}

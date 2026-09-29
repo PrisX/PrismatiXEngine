@@ -408,3 +408,17 @@ test("show and move turn a character with rotate", () => {
   assert.ok(codes("[show yuki rotate=left]\n", {characters: [yuki]}).includes("PXSTORY1155"));
   assert.ok(codes("[move yuki rotate=x]\n", {characters: [yuki]}).includes("PXSTORY1155"));
 });
+
+test("auto and skip controls lower to typed operations", () => {
+  const ops = operations("[auto on speed=20 wait=2500ms lock=true]\n[auto off]\n[auto on]\n" +
+    "[skip.stop]\n[skip.disable]\n[skip.enable]\n");
+  assert.deepEqual(ops.map(({kind, arguments: args}) => [kind, args]), [
+    ["autoMode", {mode: "on", speed: "20", wait: "2500ms", lock: "true"}],
+    ["autoMode", {mode: "off"}],
+    ["autoMode", {mode: "on"}],
+    ["skipControl", {op: "stop"}], ["skipControl", {op: "disable"}], ["skipControl", {op: "enable"}],
+  ]);
+  for (const bad of ["[auto]\n", "[auto off lock=true]\n", "[auto on speed=1500]\n",
+    "[auto on wait=2m]\n", "[auto on lock=yes]\n"])
+    assert.ok(codes(bad).includes("PXSTORY1156"), bad);
+});

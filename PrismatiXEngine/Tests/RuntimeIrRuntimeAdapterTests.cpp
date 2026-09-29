@@ -418,6 +418,7 @@ int main() {
         "hudVisibility",  "unlock",         "customNode",   "camera",
         "actorAction",    "stopSoundEffect", "stopVoice",
         "image",          "hideImage",      "transition",  "textMode",
+        "autoMode",       "skipControl",
     };
     assert(schemaKinds == exercisedKinds);
 
@@ -474,6 +475,9 @@ int main() {
         Operation("all-custom", "customNode", {{"type", "nvl"}, {"value", "{}"}}),
         Operation("all-camera", "camera", {{"value", "pan"}}),
         Operation("all-text-mode", "textMode", {{"mode", "nvl"}}),
+        Operation("all-auto-mode", "autoMode", {{"mode", "on"}, {"speed", "20"},
+            {"wait", "2.5s"}, {"lock", "true"}}),
+        Operation("all-skip-control", "skipControl", {{"op", "disable"}}),
         Operation("all-image", "image", {{"name", "cg"}, {"asset", "cg.png"},
             {"x", "-10"}, {"zoom", "0.5"}, {"anchor", "10,20"}, {"alpha", "128"},
             {"z", "9"}, {"duration", "300ms"}, {"fromAlpha", "0"}}),
@@ -489,6 +493,13 @@ int main() {
         px::CompileRuntimeIr(allKindsDocument);
     for (const auto& error : allKindsProgram.errors) std::cerr << error << '\n';
     assert(allKindsProgram.errors.empty());
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "auto_mode" && command.Get("wait") == "2500" &&
+               command.Get("lock") == "true" && command.Get("speed") == "20";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "skip_control" && command.Get("op") == "disable";
+    }));
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "hud_visibility" && command.Get("visible") == "false" &&
                command.Get("time") == "500";

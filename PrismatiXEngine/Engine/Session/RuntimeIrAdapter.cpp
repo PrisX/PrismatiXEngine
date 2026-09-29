@@ -648,6 +648,16 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = "stopse";
             Add(command, "fade", DurationMilliseconds(Argument(operation, "fade")));
             Add(command, "channel", Argument(operation, "channel"));
+        } else if (operation.kind == "autoMode") {
+            // [auto on speed= wait= lock=] / [auto off]; the Player drives it.
+            command.type = "auto_mode";
+            Add(command, "mode", Argument(operation, "mode"));
+            Add(command, "speed", Argument(operation, "speed"));
+            Add(command, "wait", DurationMilliseconds(Argument(operation, "wait")));
+            Add(command, "lock", Argument(operation, "lock"));
+        } else if (operation.kind == "skipControl") {
+            command.type = "skip_control";
+            Add(command, "op", Argument(operation, "op"));
         } else if (operation.kind == "textMode") {
             // [nvl], [adv] and [nvl.clear]: the Player keeps the NVL page.
             const std::string& mode = Argument(operation, "mode");

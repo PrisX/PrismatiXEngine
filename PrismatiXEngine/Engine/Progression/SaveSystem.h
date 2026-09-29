@@ -60,6 +60,12 @@ struct SaveSnapshot {
     ui::UIRuntimeState ui;
     std::vector<vn::BacklogEntry> backlog;
     bool nvlMode = false;
+    // Story-forced auto-reading ([auto on]) and [skip.disable], kept by saves.
+    bool storyAuto = false;
+    int storyAutoSpeedMs = -1;
+    int storyAutoWaitMs = -1;
+    bool storyAutoLocked = false;
+    bool skipDisabled = false;
     std::vector<vn::BacklogEntry> nvlLines;
     std::uint64_t timestamp = 0;
     std::uint64_t playtimeMs = 0;

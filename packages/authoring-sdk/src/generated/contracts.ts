@@ -3221,7 +3221,9 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                 "unlock",
                 "customNode",
                 "camera",
-                "textMode"
+                "textMode",
+                "autoMode",
+                "skipControl"
               ]
             },
             "operationId": {
@@ -4965,7 +4967,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "motion.schema.json": "300c1bbdeb16abf4faa8014afa81800e8d72a1e7f1f6d06d309cf53ba2980f01",
   "portrait.schema.json": "658421c74dacc9d8247b64c6a00389c069b7516f57f863f399160161a1207f16",
   "project.schema.json": "2b101bd06d5093ca8548fc1ffded554119fc3160dbfb361398c5075207947f34",
-  "runtime-ir.schema.json": "5513f68208aeaa2b5858c8b4ad95d7f0cddb20276e058fbddedfb6210fae094e",
+  "runtime-ir.schema.json": "9ba844df82d20eee89b8d4fb178c03b4e386170bc251f2a7c2509ca2b0f948ee",
   "save-migration.schema.json": "b66062b76495dfec0ec9dc1a9c7f0bfc1c49967a5748b2a48f7e186c9cf8533e",
   "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",
   "story-index.schema.json": "abc3cf730c81d25c45c5a11632268e16334d5a189ff419bdfb2da940e6292b82",

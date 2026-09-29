@@ -290,6 +290,24 @@ curve and horizontally at twice its rate. Each swing lasts
 A running shake of either kind is saved with the Stage. A bad `dir` or a
 `count` outside 1–100 (or without `dir`) is `PXSTORY1154`.
 
+`[auto on]` makes the Story read itself until `[auto off]`, like Artemis
+`autoplay`: `speed=` sets milliseconds per character (0–1000) and `wait=` the
+pause after each line (at most 60 s); either left out keeps the player's
+setting. `lock=true` also ignores the player: clicks, keys, the HUD menus,
+backlog, rollback and skip do nothing until `[auto off]`. Without a lock a
+click advances at once and reading continues. `[skip.stop]` ends skipping,
+and `[skip.disable]` refuses skip (Ctrl included) until `[skip.enable]`.
+A choice ends an auto section, as it would otherwise wait for a click the
+lock refuses.
+The auto section and the skip lock are saved with the game. Invalid values
+are `PXSTORY1156`.
+
+```pxstory
+[auto on speed=20 wait=2500ms lock=true]
+……静かな夜だった。
+[auto off]
+```
+
 `[hud visible=false]` hides the message window and HUD until the next line
 shows them again; `[hud visible=true]` shows them at once. Both fade over
 200 ms unless `time=` says otherwise (`[hud visible=false time=1s]`, at most

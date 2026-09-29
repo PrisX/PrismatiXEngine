@@ -198,6 +198,8 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("video","Video",{Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),Param("skippable",VariantType::Bool)},CommandWaitPolicy::Async,RollbackPolicy::Boundary));
     add(Descriptor("movie","Video",registry.Find("video")->parameters,CommandWaitPolicy::Async,RollbackPolicy::Boundary));
     add(Descriptor("route","UI",{Param("route",VariantType::String,true),Param("operation",VariantType::String,false,Variant("replace"),CommandEditorWidget::Default, {"push","replace","modal","back"})},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,false));
+    add(Descriptor("auto_mode","UI",{Param("mode",VariantType::String,true,{},CommandEditorWidget::Default,{"on","off"}),Param("speed",VariantType::Integer),Param("wait",VariantType::Integer),Param("lock",VariantType::Bool)}));
+    add(Descriptor("skip_control","UI",{Param("op",VariantType::String,true,{},CommandEditorWidget::Default,{"stop","disable","enable"})}));
     add(Descriptor("hud_visibility","UI",{Param("visible",VariantType::Bool,true),Param("time",VariantType::Integer)}));
     add(Descriptor("screen_transition","Stage",{Param("time",VariantType::Integer),Param("rule",VariantType::ResourceRef,false,{},CommandEditorWidget::Resource),Param("vague",VariantType::Integer),Param("wait",VariantType::Bool)},CommandWaitPolicy::Async));
     add(Descriptor("animation","Animation",{Param("clip",VariantType::ResourceRef,true,{},CommandEditorWidget::Preset),Param("await",VariantType::Bool),Param("speed",VariantType::Number)},CommandWaitPolicy::Async));

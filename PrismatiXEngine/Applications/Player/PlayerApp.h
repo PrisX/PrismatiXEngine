@@ -212,6 +212,17 @@ private:
     int m_cursorHideDelayMs = 0;
     bool m_dialogCursorWarp = false;
     bool m_dockPinned = true;
+    // `[auto on speed= wait= lock=]`: the Story drives auto-reading at its own
+    // pace (-1 keeps the player's setting); a locked section ignores player
+    // input and menus, like Artemis `autoplay`. `[skip.disable]` refuses skip.
+    struct StoryAuto {
+        int textSpeedMs = -1;
+        int waitMs = -1;
+        bool locked = false;
+    };
+    std::optional<StoryAuto> m_storyAuto;
+    bool m_skipDisabled = false;
+    void SetStoryAuto(std::optional<StoryAuto> value);
     // Message-window face: 0 never, 1 always, 2 only while the speaker is
     // off stage (Artemis `mwface`).
     int m_messageFaceMode = 1;
