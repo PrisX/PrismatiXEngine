@@ -806,6 +806,25 @@ int main() {
         assert(clearAudio.ValidateState(invalid, false));
     }
 
+    // Narration after dialogue shows no speaker.
+    {
+        px::sdk::RuntimeIrDocument lines;
+        lines.documentId = "narration-speaker";
+        lines.operations = {
+            Operation("said", "dialogue", {{"speaker", "Alice"}, {"text", "Hi"}}),
+            Operation("narrated", "narration", {{"text", "Wind."}}),
+        };
+        const px::vn::Program program = px::CompileRuntimeIr(lines);
+        assert(program.errors.empty() && program.code.size() == 2);
+        assert(program.code[1].Has("speaker") && program.code[1].Get("speaker").empty());
+        assert(clearVm.LoadCompiledProgram(program, "memory://narration-speaker"));
+        assert(clearDialogue.State().speaker == "Alice");
+        clearDialogue.ShowAll();
+        clearVm.OnAdvance();
+        (void)clearVm.RunSlice(64);
+        assert(clearDialogue.State().speaker.empty() && clearDialogue.State().fullText == "Wind.");
+    }
+
     // [nvl], [adv] and [nvl.clear] lower to the Player's NVL commands.
     {
         px::sdk::RuntimeIrDocument nvlDocument;

@@ -411,7 +411,10 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             Add(command, "target", "@document-end");
         } else if (operation.kind == "dialogue" || operation.kind == "narration") {
             command.type = "say";
-            Add(command, "speaker", Argument(operation, "speaker"));
+            // Narration has no speaker. Say it explicitly: a say without one
+            // keeps the previous line's speaker (legacy scenario scripts).
+            if (operation.kind == "narration") command.args.push_back({"speaker", ""});
+            else Add(command, "speaker", Argument(operation, "speaker"));
             Add(command, "char", Argument(operation, "character"));
             Add(command, "value", Argument(operation, "text"));
             Add(command, "color", Argument(operation, "color"));
