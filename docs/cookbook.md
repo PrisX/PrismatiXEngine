@@ -306,7 +306,7 @@ instant), `aspeed` (auto-reading wait), `mw_alpha` (message window opacity),
 `mw_aread` (grey already-read text), `messkip`, `effect` (0 shows screens
 without transitions), `font` (index into `player.fonts`), `skip`/`auto`
 (resume after a choice), `cursor` (auto-hide after N ms) and `mouse` (move
-the cursor onto a dialog's yes button).
+the cursor onto the control named `DialogYes` when a dialog opens).
 
 A route that contains a control named `ConfirmDialog` gets confirmation
 prompts: quick save/load, saving, loading, returning to the title, backlog
@@ -318,6 +318,42 @@ option `dlg_<kind>` to 1. The dialog reads `dialog.visible`,
 Any control can fade out when hidden instead of vanishing:
 `showTransitionSeconds`, `hideTransitionSeconds`, `showOffsetY`,
 `hideOffsetY` and `linearTransition` are ordinary runtime properties.
+
+### Audio defaults and per-character voice volume
+
+A fresh install (and `settings.reset`) starts from the engine's volumes unless
+the project sets its own, as percentages the settings screen shows:
+
+```json
+"player.defaultVolumes": {"master": 100, "bgm": 80, "se": 100, "voice": 100},
+"player.voiceProfiles": {
+  "ids": ["hikari", "guide", "other"],
+  "fallbackByFilePrefix": {"npc_": "other"}
+}
+```
+
+A voice file belongs to the profile named by its folder
+(`Assets/Voice/hikari/001.ogg`); files in other folders use the first matching
+file-name prefix. A settings screen binds `settings.profileMuted.<id>` and uses
+`Slider`s named `VoiceProfile_<id>` with `VoiceProfileValue_<id>` labels; a
+muted bus or profile keeps its level and its number reads `mute`.
+
+`Text` accepts `font="Assets/Fonts/Number.otf"` for a label that must not use
+the theme font, such as the digits beside a slider.
+
+### Executable name and icon
+
+`prismatix pack` names the game's executable after `distribution`, which is
+read only when packaging and never shipped as content:
+
+```json
+"distribution": {"executableName": "hikari", "icon": "Assets/Branding/hikari.ico"}
+```
+
+The platform extension is kept (`hikari.exe` on Windows). On Windows the
+`.ico` becomes the executable's only icon, which Explorer, the taskbar and the
+game window use. Changing either value rebuilds the package; the in-place
+runtime refresh is skipped for branded executables.
 
 ## Localization, voice and release updates
 

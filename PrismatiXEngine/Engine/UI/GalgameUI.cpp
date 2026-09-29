@@ -1257,10 +1257,11 @@ Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
     const auto percent=[](double value,double maximum){
         return std::to_string(static_cast<int>(value*100.0/maximum+0.5));
     };
+    // A muted bus keeps its level; its number reads "mute" until unmuted.
     (void)m_viewModel.Write("settings.masterValue", Variant(s.masterMuted ? "mute" : percent(s.master,128)));
-    (void)m_viewModel.Write("settings.bgmValue", Variant(percent(s.bgm,128)));
-    (void)m_viewModel.Write("settings.seValue", Variant(percent(s.se,128)));
-    (void)m_viewModel.Write("settings.voiceValue", Variant(percent(s.voice,128)));
+    (void)m_viewModel.Write("settings.bgmValue", Variant(s.bgmMuted ? "mute" : percent(s.bgm,128)));
+    (void)m_viewModel.Write("settings.seValue", Variant(s.seMuted ? "mute" : percent(s.se,128)));
+    (void)m_viewModel.Write("settings.voiceValue", Variant(s.voiceMuted ? "mute" : percent(s.voice,128)));
     (void)m_viewModel.Write("settings.textSpeedValue", Variant(percent(s.textSpeedMs,120)));
     const Status installed=InstallTemplate(Screen::Settings);if(!installed)return installed;
     // The authored track represents the percentage printed beside it. Keep
@@ -1279,7 +1280,7 @@ Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
             });
         }
     };
-    slider("Master",s.masterMuted ? 0 : s.master,128,"set.master.value","settings.masterValue");slider("BGM",s.bgmMuted ? 0 : s.bgm,128,"set.bgm.value","settings.bgmValue");slider("SE",s.seMuted ? 0 : s.se,128,"set.se.value","settings.seValue");slider("Voice",s.voiceMuted ? 0 : s.voice,128,"set.voice.value","settings.voiceValue");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value","settings.textSpeedValue");
+    slider("Master",s.master,128,"set.master.value","settings.masterValue");slider("BGM",s.bgm,128,"set.bgm.value","settings.bgmValue");slider("SE",s.se,128,"set.se.value","settings.seValue");slider("Voice",s.voice,128,"set.voice.value","settings.voiceValue");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value","settings.textSpeedValue");
     for (const auto& [name, muted] : std::initializer_list<std::pair<const char*, bool>>{
              {"MuteMasterLabel", s.masterMuted}, {"MuteBGMLabel", s.bgmMuted},
              {"MuteSELabel", s.seMuted}, {"MuteVoiceLabel", s.voiceMuted}})
@@ -1296,9 +1297,9 @@ Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
                 const int percent = static_cast<int>(std::round(value * 100.0 / 128.0));
                 control->SetRange(0, 100, 1);
                 const bool muted = s.voiceProfileMuted.contains(id) && s.voiceProfileMuted.at(id);
-                control->SetValue(muted ? 0 : percent);
+                control->SetValue(percent);
                 if (auto* label = FindNamed<Label>(m_context.Root(), "VoiceProfileValue_" + id))
-                    label->SetText(std::to_string(percent));
+                    label->SetText(muted ? "mute" : std::to_string(percent));
                 if (auto* label = FindNamed<Label>(m_context.Root(), "VoiceProfileMute_" + id + "Label"))
                     label->SetText(muted ? "☑MUTE" : "□MUTE");
                 control->SetOnChanged([this, id](double changed) {

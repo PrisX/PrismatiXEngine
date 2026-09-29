@@ -40,6 +40,13 @@
 #include "Engine/SDK/CharacterResources.h"
 #include "Engine/SDK/GameCatalogResources.h"
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace px::sdk {
 namespace {
 
@@ -125,6 +132,127 @@ std::filesystem::path JsonPath(const Json& root, const char* key) {
     if (found == root.end() || !found->is_string()) return {};
     return Utf8Path(found->get<std::string>());
 }
+
+// A bare file name that is portable across Windows and POSIX file systems.
+bool PortableExecutableName(const std::string& name) {
+    if (name.empty() || name.size() > 64 || name.back() == ' ' || name.back() == '.' ||
+        name.front() == ' ' || name.front() == '.')
+        return false;
+    for (const unsigned char c : name)
+        if (c < 0x20 || c == 0x7f || std::strchr("<>:\"/\\|?*", c)) return false;
+    std::string stem = name.substr(0, name.find('.'));
+    std::transform(stem.begin(), stem.end(), stem.begin(),
+                   [](const unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    static constexpr std::array<std::string_view, 4> reserved{"CON", "PRN", "AUX", "NUL"};
+    if (std::ranges::find(reserved, stem) != reserved.end()) return false;
+    if (stem.size() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) &&
+        stem[3] >= '1' && stem[3] <= '9')
+        return false;
+    return true;
+}
+
+std::filesystem::path PackagedPlayerName(const PackageRequest& request) {
+    if (request.executableName.empty()) return request.playerExecutable.filename();
+    return Utf8Path(request.executableName + px::PathToUtf8(request.playerExecutable.extension()));
+}
+
+#ifdef _WIN32
+// Replaces every icon resource of a PE file with the images of one .ico file,
+// as group 1, which Explorer and SDL's window class both show.
+bool WriteExecutableIcon(const std::filesystem::path& executable,
+                         const std::filesystem::path& iconFile, std::string& error) {
+    // RT_ICON and RT_GROUP_ICON, as wide resource types.
+    const LPCWSTR kIcon = MAKEINTRESOURCEW(3);
+    const LPCWSTR kGroupIcon = MAKEINTRESOURCEW(14);
+    std::ifstream input(iconFile, std::ios::binary);
+    const std::vector<std::uint8_t> ico((std::istreambuf_iterator<char>(input)),
+                                        std::istreambuf_iterator<char>());
+    const auto u16 = [&](const std::size_t at) {
+        return static_cast<std::uint16_t>(ico[at] | (ico[at + 1] << 8));
+    };
+    const auto u32 = [&](const std::size_t at) {
+        return static_cast<std::uint32_t>(ico[at] | (ico[at + 1] << 8) |
+                                          (ico[at + 2] << 16) |
+                                          (static_cast<std::uint32_t>(ico[at + 3]) << 24));
+    };
+    if (ico.size() < 6 || u16(0) != 0 || u16(2) != 1 || u16(4) == 0 ||
+        u16(4) > 64 || ico.size() < 6 + 16 * static_cast<std::size_t>(u16(4))) {
+        error = "icon is not a Windows .ico file";
+        return false;
+    }
+    const std::uint16_t count = u16(4);
+    struct Image { std::size_t entry, offset, size; };
+    std::vector<Image> images;
+    for (std::uint16_t index = 0; index < count; ++index) {
+        const std::size_t at = 6 + 16 * static_cast<std::size_t>(index);
+        const std::size_t size = u32(at + 8), offset = u32(at + 12);
+        if (size == 0 || offset > ico.size() || size > ico.size() - offset) {
+            error = "icon image entry lies outside the file";
+            return false;
+        }
+        images.push_back({at, offset, size});
+    }
+
+    // Existing icons are removed first so group 1 is the executable's only icon.
+    struct Existing { LPCWSTR type; std::wstring name; WORD id; WORD language; };
+    struct Context { std::vector<Existing>* out; LPCWSTR type; std::wstring name; WORD id; };
+    std::vector<Existing> existing;
+    if (HMODULE module = LoadLibraryExW(executable.c_str(), nullptr,
+            LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE)) {
+        for (const LPCWSTR type : {kGroupIcon, kIcon}) {
+            Context context{&existing, type, {}, 0};
+            EnumResourceNamesW(module, type,
+                [](HMODULE handle, LPCWSTR resourceType, LPWSTR name, LONG_PTR parameter) -> BOOL {
+                    auto& owner = *reinterpret_cast<Context*>(parameter);
+                    owner.name = IS_INTRESOURCE(name) ? std::wstring{} : std::wstring(name);
+                    owner.id = IS_INTRESOURCE(name)
+                        ? static_cast<WORD>(reinterpret_cast<std::uintptr_t>(name)) : 0;
+                    EnumResourceLanguagesW(handle, resourceType, name,
+                        [](HMODULE, LPCWSTR, LPCWSTR, WORD language, LONG_PTR inner) -> BOOL {
+                            auto& target = *reinterpret_cast<Context*>(inner);
+                            target.out->push_back({target.type, target.name, target.id, language});
+                            return TRUE;
+                        }, parameter);
+                    return TRUE;
+                }, reinterpret_cast<LONG_PTR>(&context));
+        }
+        FreeLibrary(module);
+    }
+
+    HANDLE update = BeginUpdateResourceW(executable.c_str(), FALSE);
+    if (!update) {
+        error = "executable resources could not be opened";
+        return false;
+    }
+    bool ok = true;
+    for (const auto& item : existing) {
+        const LPCWSTR name = item.name.empty() ? MAKEINTRESOURCEW(item.id) : item.name.c_str();
+        ok = ok && UpdateResourceW(update, item.type, name, item.language, nullptr, 0);
+    }
+    const WORD neutral = MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL);
+    // GRPICONDIR followed by one 14-byte GRPICONDIRENTRY per RT_ICON image.
+    std::vector<std::uint8_t> group{0, 0, 1, 0, static_cast<std::uint8_t>(count & 0xff),
+                                    static_cast<std::uint8_t>(count >> 8)};
+    for (std::uint16_t index = 0; index < count && ok; ++index) {
+        const auto& image = images[index];
+        const WORD id = static_cast<WORD>(index + 1);
+        ok = UpdateResourceW(update, kIcon, MAKEINTRESOURCEW(id), neutral,
+                             const_cast<std::uint8_t*>(ico.data() + image.offset),
+                             static_cast<DWORD>(image.size));
+        group.insert(group.end(), ico.begin() + static_cast<std::ptrdiff_t>(image.entry),
+                     ico.begin() + static_cast<std::ptrdiff_t>(image.entry + 12));
+        group.push_back(static_cast<std::uint8_t>(id & 0xff));
+        group.push_back(static_cast<std::uint8_t>(id >> 8));
+    }
+    ok = ok && UpdateResourceW(update, kGroupIcon, MAKEINTRESOURCEW(1), neutral,
+                               group.data(), static_cast<DWORD>(group.size()));
+    if (!EndUpdateResourceW(update, ok ? FALSE : TRUE) || !ok) {
+        error = "icon resources could not be written";
+        return false;
+    }
+    return true;
+}
+#endif
 
 bool RequiredString(const Json& root, const char* key, std::string& value, std::vector<PackageDiagnostic>& diagnostics) {
     const auto found = root.find(key);
@@ -1870,6 +1998,18 @@ ValidationResult Validate(const PackageRequest& request,
     if (error || !std::filesystem::is_regular_file(player, error)) {
         AddDiagnostic(diagnostics, "PXPKG1209", "playerExecutable is not a readable file", true);
     }
+    if (!request.icon.empty()) {
+        std::error_code iconError;
+        std::string extension = px::PathToUtf8(request.icon.extension());
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+                       [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        const bool readable = request.icon.is_absolute() && extension == ".ico" &&
+            std::filesystem::is_regular_file(request.icon, iconError);
+        const auto size = readable ? std::filesystem::file_size(request.icon, iconError) : 0;
+        if (!readable || iconError || size > 4 * 1024 * 1024)
+            AddDiagnostic(diagnostics, "PXPKG1270",
+                          "icon must be an absolute path to a readable .ico file of at most 4 MiB", true);
+    }
     if (request.outputDir == request.outputDir.root_path() || request.outputDir.filename().empty() || request.outputDir != request.outputDir.lexically_normal()) {
         AddDiagnostic(diagnostics, "PXPKG1210", "outputDir cannot be a filesystem root");
     }
@@ -2870,6 +3010,19 @@ PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
                 retireCacheSource->get<bool>();
     }
     result.request.playerExecutable = JsonPath(root, "playerExecutable");
+    if (const auto name = root.find("executableName"); name != root.end()) {
+        if (!name->is_string() || !PortableExecutableName(name->get<std::string>()))
+            AddDiagnostic(result.diagnostics, "PXPKG1269",
+                          "executableName must be a portable file name of at most 64 bytes without an extension");
+        else
+            result.request.executableName = name->get<std::string>();
+    }
+    if (const auto icon = root.find("icon"); icon != root.end()) {
+        if (!icon->is_string() || icon->get<std::string>().empty())
+            AddDiagnostic(result.diagnostics, "PXPKG1270", "icon must be an absolute .ico path");
+        else
+            result.request.icon = JsonPath(root, "icon");
+    }
     result.request.cancelFile = JsonPath(root, "cancelFile");
     RequiredString(root, "title", result.request.title, result.diagnostics);
     RequiredString(root, "startScript", result.request.startScript, result.diagnostics);
@@ -3627,10 +3780,20 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     }
 
     EmitProgress(request, eventSink, "runtime", 0, 1, "Copying Player and runtime libraries");
-    const auto stagedPlayer = staging / request.playerExecutable.filename();
+    const auto stagedPlayer = staging / PackagedPlayerName(request);
     std::filesystem::copy_file(request.playerExecutable, stagedPlayer, std::filesystem::copy_options::overwrite_existing, error);
     if (error) {
         return Fail(request, eventSink, "PXPKG1308", "Player executable could not be copied", true);
+    }
+    if (!request.icon.empty()) {
+#ifdef _WIN32
+        std::string iconError;
+        if (!WriteExecutableIcon(stagedPlayer, request.icon, iconError))
+            return Fail(request, eventSink, "PXPKG1320", "Player icon could not be applied: " + iconError, true);
+#else
+        EmitProgress(request, eventSink, "runtime", 0, 1,
+                     "Executable icons apply to Windows Players only; icon ignored");
+#endif
     }
     std::vector<std::filesystem::path> libraries;
     error.clear();
@@ -3877,7 +4040,7 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     completed.kind = PackageEventKind::Completed;
     completed.requestId = request.requestId;
     completed.outputDir = request.outputDir;
-    completed.playerExecutable = request.outputDir / request.playerExecutable.filename();
+    completed.playerExecutable = request.outputDir / PackagedPlayerName(request);
     completed.manifestPath = request.outputDir / "Package/manifest.json";
     completed.inputCount = request.inputs.size();
     Emit(eventSink, std::move(completed));

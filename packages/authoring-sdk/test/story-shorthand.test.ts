@@ -144,6 +144,21 @@ test("storyAssets is an author-only manifest field", () => {
   }
 });
 
+test("distribution is an author-only manifest field", () => {
+  const distribution = {executableName: "hikari", icon: "Assets/Branding/hikari.ico"};
+  const normalized = normalizeProject({project: {name: "Brand", distribution},
+    sourceFiles: {"Story/main.pxstory": "こんにちは。\n"}});
+  assert.equal(normalized.valid, true, JSON.stringify(normalized.diagnostics));
+  assert.deepEqual(normalized.value?.distribution, distribution);
+  assert.equal("distribution" in (normalized.value?.project ?? {}), false);
+  for (const invalid of [{executableName: "a/b"}, {executableName: "game.exe"},
+    {executableName: "CON"}, {executableName: " x"}, {icon: "../icon.ico"},
+    {icon: "Assets/icon.png"}, {title: "x"}, "hikari"]) {
+    const result = normalizeProject({project: {name: "Brand", distribution: invalid}});
+    assert.deepEqual(result.diagnostics.map(({code}) => code), ["PXBUILD1065"], JSON.stringify(invalid));
+  }
+});
+
 test("project compile resolves storyAssets against included resources", () => {
   const result = compileProject({
     project: {name: "Roots", resourceIncludes: ["Assets"], storyAssets: {bg: ["Assets/bg"]}},

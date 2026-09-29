@@ -845,6 +845,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         m_runtime.GetInput(), &m_saveKey, m_saveFallbackKeys);
     m_profileWritable = profileLoad != progress::PersistLoadStatus::Failed;
     m_settingsWritable = settingsLoad != progress::PersistLoadStatus::Failed;
+    m_settingsMissing = settingsLoad == progress::PersistLoadStatus::Missing;
     m_saves.Configure(PathToUtf8(m_saveDirectory), &m_saveKey,
                       m_saveFallbackKeys);
     PX_LOG_DEBUG("Player boot: persistence configured");
@@ -1078,6 +1079,51 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                             return false;
                         }
                     }
+                }
+                if (const auto volumes = settings->find("player.defaultVolumes");
+                    volumes != settings->end() && volumes->is_object()) {
+                    // Percentages, as the project's Config shows them.
+                    const auto level = [&](const char* key, int& target) {
+                        const auto value = volumes->find(key);
+                        if (value != volumes->end() && value->is_number())
+                            target = static_cast<int>(std::lround(
+                                std::clamp(value->get<double>(), 0.0, 100.0) * 128.0 / 100.0));
+                    };
+                    level("master", m_settingsDefaults.masterVolume);
+                    level("bgm", m_settingsDefaults.bgmVolume);
+                    level("se", m_settingsDefaults.seVolume);
+                    level("voice", m_settingsDefaults.voiceVolume);
+                    if (m_settingsMissing) {
+                        m_settings.masterVolume = m_settingsDefaults.masterVolume;
+                        m_settings.bgmVolume = m_settingsDefaults.bgmVolume;
+                        m_settings.seVolume = m_settingsDefaults.seVolume;
+                        m_settings.voiceVolume = m_settingsDefaults.voiceVolume;
+                        m_runtime.Audio().SetMainVolume(m_settings.masterVolume);
+                        m_runtime.Audio().SetBGMVolume(m_settings.bgmVolume);
+                        m_runtime.Audio().SetSEVolume(m_settings.seVolume);
+                        m_runtime.Audio().SetVoiceVolume(m_settings.voiceVolume);
+                    }
+                }
+                if (const auto profiles = settings->find("player.voiceProfiles");
+                    profiles != settings->end() && profiles->is_object()) {
+                    const auto safeId = [](const std::string& id) {
+                        return !id.empty() && id.size() <= 64 &&
+                            std::ranges::all_of(id, [](const unsigned char c) {
+                                return std::isalnum(c) || c == '_' || c == '-'; });
+                    };
+                    if (const auto ids = profiles->find("ids"); ids != profiles->end() && ids->is_array())
+                        for (const auto& id : *ids)
+                            if (id.is_string() && safeId(id.get<std::string>()) &&
+                                m_voiceProfileIds.size() < 256)
+                                m_voiceProfileIds.push_back(id.get<std::string>());
+                    std::vector<std::pair<std::string, std::string>> fallbacks;
+                    if (const auto prefixes = profiles->find("fallbackByFilePrefix");
+                        prefixes != profiles->end() && prefixes->is_object())
+                        for (auto item = prefixes->begin(); item != prefixes->end(); ++item)
+                            if (!item.key().empty() && item.key().size() <= 64 &&
+                                item.value().is_string() && safeId(item.value().get<std::string>()))
+                                fallbacks.emplace_back(item.key(), item.value().get<std::string>());
+                    m_runtime.Audio().SetVoiceProfileFallbacks(std::move(fallbacks));
                 }
                 if (const auto dock = settings->find("player.dockArea");
                     dock != settings->end() && dock->is_object()) {
@@ -3152,7 +3198,12 @@ void PlayerApp::RequestConfirm(const std::string_view kind, std::function<void()
     m_dialogSkipNext = false;
     PublishDialog();
     // "Move the cursor automatically": land it on the yes button (dialogact 0).
-    if (OptionValue("mouse") == 1) WarpCursorTo(838.0f, 619.0f);
+    if (OptionValue("mouse") == 1)
+        if (const auto* yes = FindUiControlNamed<ui::Control>(m_ui.Root(), "DialogYes")) {
+            const auto area = yes->LayoutRect();
+            if (area.w > 0.0f && area.h > 0.0f)
+                WarpCursorTo(area.x + area.w / 2.0f, area.y + area.h / 2.0f);
+        }
 }
 
 int PlayerApp::OptionValue(const std::string_view name) const {
@@ -3163,18 +3214,12 @@ int PlayerApp::OptionValue(const std::string_view name) const {
         ? spec->second.def : std::clamp(stored->second, spec->second.min, spec->second.max);
 }
 
-namespace {
-constexpr std::string_view kVoiceProfileIds[] = {
-    "rnd", "szd", "mkd", "rna", "yum", "aid", "ked", "wtd", "tmd",
-    "sud", "knd", "skd", "mzd", "kid", "frd", "man", "fem"};
-}
-
 void PlayerApp::PublishMuteData() {
     (void)m_ui.UpdateUiData("settings.muted.master", Variant(m_settings.masterMuted));
     (void)m_ui.UpdateUiData("settings.muted.bgm", Variant(m_settings.bgmMuted));
     (void)m_ui.UpdateUiData("settings.muted.se", Variant(m_settings.seMuted));
     (void)m_ui.UpdateUiData("settings.muted.voice", Variant(m_settings.voiceMuted));
-    for (const std::string_view id : kVoiceProfileIds) {
+    for (const std::string& id : m_voiceProfileIds) {
         const auto found = m_settings.voiceProfileMuted.find(id);
         (void)m_ui.UpdateUiData("settings.profileMuted." + std::string(id),
             Variant(found != m_settings.voiceProfileMuted.end() && found->second));
@@ -3224,7 +3269,7 @@ Status PlayerApp::DefineOptionData() {
         if (const Status defined = m_ui.DefineUiData(
                 "settings.muted." + std::string(bus), Variant(false)); !defined)
             return defined;
-    for (const std::string_view id : kVoiceProfileIds)
+    for (const std::string& id : m_voiceProfileIds)
         if (const Status defined = m_ui.DefineUiData(
                 "settings.profileMuted." + std::string(id), Variant(false)); !defined)
             return defined;
@@ -3689,13 +3734,9 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             else audio.SetVoiceVolume(effective);
             if (auto* control = FindUiControlNamed<ui::Label>(m_ui.Root(), label))
                 control->SetText(*muted ? "☑MUTE" : "□MUTE");
-            const char* sliderName = bus == "master" ? "Master" :
-                bus == "bgm" ? "BGM" : bus == "se" ? "SE" : "Voice";
-            if (auto* slider = FindUiControlNamed<ui::Slider>(m_ui.Root(), sliderName))
-                slider->SetValueSilently(*muted ? 0 : std::round(volume * 100.0 / 128.0));
-            if (bus == "master")
-                (void)m_ui.UpdateUiData("settings.masterValue", Variant(*muted ? "mute" :
-                    std::to_string(static_cast<int>(std::round(volume * 100.0 / 128.0)))));
+            // The slider keeps the level; only the number reads "mute" (conf_mutetext).
+            (void)m_ui.UpdateUiData("settings." + bus + "Value", Variant(*muted ? "mute" :
+                std::to_string(static_cast<int>(std::round(volume * 100.0 / 128.0)))));
         }
     } else if (t == "set.duck.on" || t == "set.duck.off") {
         m_settings.duckBgmOnVoice = t.ends_with(".on");
@@ -3728,11 +3769,11 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             if (auto* label = FindUiControlNamed<ui::Label>(m_ui.Root(),
                     "VoiceProfileMute_" + id + "Label"))
                 label->SetText(muted ? "☑MUTE" : "□MUTE");
-            if (auto* slider = FindUiControlNamed<ui::Slider>(m_ui.Root(),
-                    "VoiceProfile_" + id))
-                slider->SetValueSilently(muted ? 0 : std::round(
+            if (auto* label = FindUiControlNamed<ui::Label>(m_ui.Root(),
+                    "VoiceProfileValue_" + id))
+                label->SetText(muted ? "mute" : std::to_string(static_cast<int>(std::round(
                     (volume == m_settings.voiceProfileVolumes.end() ? 128 : volume->second)
-                    * 100.0 / 128.0));
+                    * 100.0 / 128.0))));
         }
     } else if (t == "voiceProfile.test") {
         audio.PlayVoice(action.argument);
@@ -3807,7 +3848,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     } else if (t == "settings.reset" || t == "system.reset.apply") {
         const std::string locale=m_settings.language;
         const bool fullscreen=m_settings.fullscreen;
-        m_settings=progress::GameSettings{};
+        m_settings=m_settingsDefaults;
         m_runtime.GetInput().ResetKeyboardBindings();
         m_runtime.GetInput().ResetWheelBindings();
         m_settings.language=locale;
@@ -3827,7 +3868,8 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             for (int index = 1; index <= 4; ++index)
                 (void)m_ui.UpdateUiData("settings.page" + std::to_string(index),
                                         Variant(index == m_settingsPage));
-            (void)m_ui.ShowSettings(SettingsUI());
+            // Pages are bound groups of one installed screen; rebuilding it
+            // here would restart every transition on the screen.
             return;
         }
         while (!m_session->Routes().CurrentModalRoute().empty())

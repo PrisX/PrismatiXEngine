@@ -608,6 +608,11 @@ int main() {
         assert(!finished && peak.y == 10.0f && peak.x == 0.0f);
         const auto rest = px::vn::SampleActorAction(*nod, 10.0, finished);
         assert(finished && rest.y == 0.0f);
+        // いいえ (loop 1): left, right, left, then back to rest, as image_act.lua.
+        const auto shake = px::vn::ExpandActorAction({"shake-head", 0.0f, 100, 1, ""});
+        assert(shake && shake->keys.size() == 4 && shake->keys[0].to.x == -12.0f &&
+               shake->keys[1].to.x == 12.0f && shake->keys[2].to.x == -12.0f &&
+               shake->keys[3].to.x == 0.0f);
         const auto floating = px::vn::ExpandActorAction({"float", 5.0f, 100, -1, "linear"});
         assert(floating && floating->loopFrom == 1);
         const auto later = px::vn::SampleActorAction(*floating, 100.05, finished);

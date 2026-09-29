@@ -55,6 +55,10 @@ struct PackageRequest {
     // cross-distribution hard links to mutable archive files.
     bool retireCacheSourceAfterPromotion = false;
     std::filesystem::path playerExecutable;
+    // Optional distribution branding: the packaged Player's file name without
+    // its extension, and a Windows .ico written into that executable.
+    std::string executableName;
+    std::filesystem::path icon;
     std::string title;
     int width = 1280;
     int height = 720;

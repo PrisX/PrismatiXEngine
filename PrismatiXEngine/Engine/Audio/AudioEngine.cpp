@@ -955,6 +955,12 @@ void AudioEngine::SetVoiceProfileVolume(std::string profile, int volume) {
     ApplyMixGains();
 }
 
+void AudioEngine::SetVoiceProfileFallbacks(
+    std::vector<std::pair<std::string, std::string>> prefixes) {
+    m_voiceProfileFallbacks = std::move(prefixes);
+    ApplyMixGains();
+}
+
 void AudioEngine::SetVoiceDuckingEnabled(bool enabled) {
     m_voiceDuckingEnabled = enabled;
     ApplyMixGains();
@@ -976,10 +982,12 @@ void AudioEngine::ApplyMixGains(){
         else {
             const std::string_view filename = std::string_view(m_voicePath).substr(
                 slash == std::string::npos ? 0 : slash + 1);
-            const std::string_view group = filename.starts_with("man_") ? "man" :
-                filename.starts_with("fem_") ? "fem" : "";
-            if (const auto fallback = m_voiceProfileVolumes.find(std::string(group));
-                fallback != m_voiceProfileVolumes.end()) profileVolume = fallback->second;
+            for (const auto& [prefix, profile] : m_voiceProfileFallbacks) {
+                if (!filename.starts_with(prefix)) continue;
+                if (const auto fallback = m_voiceProfileVolumes.find(profile);
+                    fallback != m_voiceProfileVolumes.end()) profileVolume = fallback->second;
+                break;
+            }
         }
     }
     if(m_voiceTrack)MIX_SetTrackGain(m_voiceTrack,ToGain(m_voiceVolume)*ToGain(profileVolume)*main);

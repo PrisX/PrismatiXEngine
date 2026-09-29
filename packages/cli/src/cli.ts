@@ -41,6 +41,7 @@ import {
   compileProject,
   externalizeStoryIds,
   parseStory,
+  projectDistributionError,
   readBoundedUtf8File,
   storyRequiresIdentityMap,
   StoryProjectCompilationCache,
@@ -51,6 +52,7 @@ import {
   type BuildArtifact,
   type CompileProjectInput,
   type InputKeyRegistryMetadata,
+  type ProjectDistribution,
   type ProjectDocument,
   type SourceSpan,
   type UiTypeRegistryMetadata,
@@ -1609,6 +1611,36 @@ function packageOutputObserver(activity = "Packaging", streamMachineOutput = tru
   };
 }
 
+interface PackageBranding {
+  readonly executableName?: string;
+  readonly icon?: string;
+  readonly iconSha256?: string;
+}
+
+// `distribution` in prismatix.json names the shipped executable and its icon.
+// It is read from the author manifest even when packing a prebuilt artifact:
+// branding is a distribution choice, not compiled content.
+async function packageBranding(projectArgument: string | undefined): Promise<PackageBranding> {
+  const location = await resolveProjectPath(projectArgument);
+  if (!location.manifestExists || basename(location.projectPath) !== "prismatix.json") return {};
+  const raw = object(await readJson(location.projectPath));
+  if (raw?.distribution === undefined) return {};
+  const error = projectDistributionError(raw.distribution);
+  if (error !== undefined)
+    throw new PackagerFailure([diagnostic("PXCLI1221", error, location.projectPath)]);
+  const distribution = raw.distribution as ProjectDistribution;
+  if (distribution.icon === undefined)
+    return distribution.executableName === undefined ? {} : {executableName: distribution.executableName};
+  const icon = projectFile(location.root, distribution.icon);
+  const info = await lstat(icon).catch(() => undefined);
+  if (info === undefined || !info.isFile() || info.size > 4 * 1024 * 1024)
+    throw new PackagerFailure([diagnostic("PXCLI1221",
+      "distribution.icon must name a regular .ico file of at most 4 MiB", location.projectPath, distribution.icon)]);
+  const iconSha256 = createHash("sha256").update(await readFile(icon)).digest("hex");
+  return {...(distribution.executableName === undefined ? {} : {executableName: distribution.executableName}),
+    icon, iconSha256};
+}
+
 async function packProject(options: Options): Promise<{output: string; player: string;
   validatedOnly?: boolean; deferredMediaCount?: number}> {
   let packager: string;
@@ -1707,9 +1739,14 @@ async function packProject(options: Options): Promise<{output: string; player: s
         throw new Error("--previous-package manifest changed during verification");
       protectedPaths.push(previousPackage);
     }
+    const branding = await packageBranding(options.positional[0]);
+    const packagedPlayer = branding.executableName === undefined ? basename(player)
+      : branding.executableName + extname(player);
     const requestPlan = {
       format: "PrismatiXPackageRequest", schemaRevision: 2,
       gameId: project.id, playerExecutable: player, title: project.name,
+      ...(branding.executableName === undefined ? {} : {executableName: branding.executableName}),
+      ...(branding.icon === undefined ? {} : {icon: branding.icon}),
       width: project.resolution.width, height: project.resolution.height,
       startScript, sourceMap,
       startRoute: project.entry.ui,
@@ -1755,20 +1792,26 @@ async function packProject(options: Options): Promise<{output: string; player: s
         phase: "validate-package", current: inputs.length, total: inputs.length,
         message: `Package preflight passed: ${inputs.length} inputs, ` +
           `${deferredMediaCount} media hashes deferred; no distribution written`});
-      return {output, player: join(output, basename(player)), validatedOnly: true,
+      return {output, player: join(output, packagedPlayer), validatedOnly: true,
         deferredMediaCount};
     }
+    // The icon's bytes, not only its path, decide whether a package is reusable.
+    const keyedPlan = branding.iconSha256 === undefined ? requestPlan
+      : {...requestPlan, iconSha256: branding.iconSha256};
     const planKey = suppliedArtifact === undefined ? undefined :
-      await packageRetentionKey(packager, player, artifactRoot, requestPlan);
+      await packageRetentionKey(packager, player, artifactRoot, keyedPlan);
     const contentKey = planKey === undefined ? undefined :
-      await packageContentKey(packager, artifactRoot, requestPlan);
-    const runtimeSources = contentKey === undefined ? undefined :
+      await packageContentKey(packager, artifactRoot, keyedPlan);
+    // Refreshing the runtime in place copies the stock Player; a branded
+    // executable is renamed and patched by the native Packager instead.
+    const branded = branding.executableName !== undefined || branding.icon !== undefined;
+    const runtimeSources = contentKey === undefined || branded ? undefined :
       await runtimeReplacementFiles(player);
     const publication = {output, projectRoot: root,
       protectedPaths: [...protectedPaths, packager, player],
       ...(planKey === undefined && previousManifestBytes === undefined ? {} : {beforePromotion: async () => {
         if (planKey !== undefined &&
-            await packageRetentionKey(packager, player, artifactRoot, requestPlan) !== planKey)
+            await packageRetentionKey(packager, player, artifactRoot, keyedPlan) !== planKey)
           throw new Error("Runtime tools changed while packaging; distribution was not published");
         if (previousPackage !== undefined && previousManifestBytes !== undefined &&
             !(await readFile(join(previousPackage, "Package", "manifest.json"))).equals(previousManifestBytes))
@@ -1783,22 +1826,22 @@ async function packProject(options: Options): Promise<{output: string; player: s
     };
     if (previousPackage === undefined && planKey !== undefined && await retainPackageIfMatching(
       publication, artifactRoot, inputs, planKey,
-      () => packageRetentionKey(packager, player, artifactRoot, requestPlan))) {
+      () => packageRetentionKey(packager, player, artifactRoot, keyedPlan))) {
       progress({event: "progress", severity: "information", code: "PXCLI1215",
         phase: "retain-package", current: inputs.length, total: inputs.length,
         message: `Retained verified unchanged distribution: ${output}`});
-      return {output, player: join(output, basename(player))};
+      return {output, player: join(output, packagedPlayer)};
     }
     if (previousPackage === undefined && planKey !== undefined && contentKey !== undefined &&
         runtimeSources !== undefined && await refreshRuntimePackageIfMatching(
           publication, artifactRoot, inputs, planKey, contentKey,
           runtimeSources,
-          () => packageRetentionKey(packager, player, artifactRoot, requestPlan),
-          () => packageContentKey(packager, artifactRoot, requestPlan))) {
+          () => packageRetentionKey(packager, player, artifactRoot, keyedPlan),
+          () => packageContentKey(packager, artifactRoot, keyedPlan))) {
       progress({event: "progress", severity: "information", code: "PXCLI1217",
         phase: "refresh-runtime", current: runtimeSources.size, total: runtimeSources.size,
         message: `Updated Player runtime without rebuilding packaged content: ${output}`});
-      return {output, player: join(output, basename(player))};
+      return {output, player: join(output, packagedPlayer)};
     }
     const inputBytes = inputs.reduce((sum, input) => sum + BigInt(input.size), 0n);
     const performanceHint = debugPackagerHint(packager, inputBytes);
@@ -1884,7 +1927,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
       else await writePackageProvenance(staging, planKey);
     }
     });
-    return {output, player: join(output, basename(player))};
+    return {output, player: join(output, packagedPlayer)};
   } finally {
     await rm(temp, {recursive: true, force: true});
   }

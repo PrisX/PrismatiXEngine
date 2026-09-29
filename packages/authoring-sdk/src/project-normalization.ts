@@ -53,6 +53,39 @@ export interface NormalizedProjectInput {
   readonly resourceIncludes: readonly string[];
   /** Author-only Story short-name roots; never serialized into project.pxproject. */
   readonly storyAssets?: StoryAssetRoots;
+  /** Packaging branding; never serialized into project.pxproject. */
+  readonly distribution?: ProjectDistribution;
+}
+
+/**
+ * How `prismatix pack` names the shipped game. `executableName` replaces
+ * `PrismatiXPlayer` (the platform extension is kept); `icon` is a
+ * project-relative `.ico` written into the Windows executable.
+ */
+export interface ProjectDistribution {
+  readonly executableName?: string;
+  readonly icon?: string;
+}
+
+const reservedFileNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+/** Validates the author-only `distribution` block of prismatix.json. */
+export function projectDistributionError(value: unknown): string | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return "distribution must be an object";
+  const {executableName, icon, ...rest} = value as Record<string, unknown>;
+  const extra = Object.keys(rest);
+  if (extra.length > 0) return `distribution does not support ${extra.join(", ")}`;
+  if (executableName !== undefined && (typeof executableName !== "string" ||
+      executableName.length === 0 || new TextEncoder().encode(executableName).length > 64 ||
+      /[\u0000-\u001f\u007f<>:"/\\|?*]/.test(executableName) ||
+      /^[ .]|[ .]$/.test(executableName) || reservedFileNames.test(executableName) ||
+      /\.exe$/i.test(executableName)))
+    return "distribution.executableName must be a portable file name of at most 64 bytes, without .exe";
+  if (icon !== undefined && (typeof icon !== "string" || !isSafeResourcePath(icon) ||
+      icon.includes(":") || !/\.ico$/i.test(icon)))
+    return "distribution.icon must be a safe project-relative .ico path";
+  return undefined;
 }
 
 function issue(code: string, message: string, path: string, details?: string): AuthoringDiagnostic {
@@ -399,9 +432,15 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
   if (storyAssetsError !== undefined)
     return {diagnostics: [issue("PXBUILD1056", storyAssetsError, projectPath)], valid: false};
   const storyAssets = raw.storyAssets as StoryAssetRoots | undefined;
+  const distributionError = raw.distribution === undefined ? undefined
+    : projectDistributionError(raw.distribution);
+  if (distributionError !== undefined)
+    return {diagnostics: [issue("PXBUILD1065", distributionError, projectPath)], valid: false};
+  const distribution = raw.distribution as ProjectDistribution | undefined;
   const runtimeSource = {...raw};
   delete runtimeSource.resourceIncludes;
   delete runtimeSource.storyAssets;
+  delete runtimeSource.distribution;
   const name = typeof raw.name === "string" ? raw.name : "PrismatiX Game";
   const projectId = typeof raw.id === "string" ? raw.id : identifier(name);
   const documents = Object.assign(Object.create(null) as Record<string, unknown>,
@@ -517,6 +556,7 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
       storyPath,
       resourceIncludes: resourceIncludes ?? [],
       ...(storyAssets === undefined ? {} : {storyAssets}),
+      ...(distribution === undefined ? {} : {distribution}),
     },
     diagnostics: validated.diagnostics,
     valid: true,

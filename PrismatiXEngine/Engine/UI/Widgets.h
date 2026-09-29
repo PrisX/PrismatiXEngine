@@ -7,6 +7,7 @@
 #include "Engine/SDK/Portrait.h"
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -46,6 +47,14 @@ public:
     [[nodiscard]] bool Wrap() const { return m_wrap; }
     void SetFontSize(int value) { if (m_fontSize == value) return; m_fontSize = value; InvalidateLayout(); }
     [[nodiscard]] int FontSize() const { return m_fontSize; }
+    // A VFS font file for this label only; empty uses the theme font.
+    void SetFontPath(std::string value) { m_fontPath = std::move(value); }
+    [[nodiscard]] const std::string& FontPath() const { return m_fontPath; }
+    // Extra pixels between characters of a single-line label.
+    void SetLetterSpacing(float value) {
+        m_letterSpacing = std::isfinite(value) ? std::clamp(value, -64.0f, 64.0f) : 0.0f;
+    }
+    [[nodiscard]] float LetterSpacing() const { return m_letterSpacing; }
     [[nodiscard]] int FontSizeToFit(std::string_view content, int requested,
                                     float width, float height) const;
     void SetColor(Color value) { m_color = value; m_hasColor = true; }
@@ -67,6 +76,8 @@ private:
     std::string m_text;
     bool m_wrap = false;
     int m_fontSize = 0;
+    std::string m_fontPath;
+    float m_letterSpacing = 0.0f;
     Color m_color{};
     bool m_hasColor = false;
     int m_outlineSize = 0;

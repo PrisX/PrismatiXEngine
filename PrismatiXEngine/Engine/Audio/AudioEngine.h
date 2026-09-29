@@ -186,6 +186,9 @@ public:
     void SetSEVolume(int volume);
     void SetVoiceVolume(int volume);
     void SetVoiceProfileVolume(std::string profile, int volume);
+    // Voices whose folder is not a profile use the first profile whose file
+    // name prefix matches, e.g. {"man_", "man"}.
+    void SetVoiceProfileFallbacks(std::vector<std::pair<std::string, std::string>> prefixes);
     void SetVoiceDuckingEnabled(bool enabled);
     void SetAmbienceVolume(int volume);
     void SetMainVolume(int volume);
@@ -284,6 +287,7 @@ private:
     int m_seVolume = 110;
     int m_voiceVolume = 128;
     std::unordered_map<std::string, int> m_voiceProfileVolumes;
+    std::vector<std::pair<std::string, std::string>> m_voiceProfileFallbacks;
     bool m_voiceDuckingEnabled = true;
     int m_ambienceVolume = 96;
     int m_mainVolume = 128;

@@ -127,10 +127,37 @@ int Label::FontSizeToFit(std::string_view content, int requested,
 void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     const auto& style = theme.Resolve(*this);
     const int size = m_fontSize > 0 ? m_fontSize : style.fontSize;
-    renderer.DrawTextInRect(m_text,LayoutRect(),style.font,size,
-                            m_hasColor?m_color:(Enabled()?style.text:style.textDisabled),
-                            Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),m_wrap,
-                            255,m_outlineSize,m_outlineColor);
+    const std::string& font = m_fontPath.empty() ? style.font : m_fontPath;
+    const Color color = m_hasColor ? m_color : (Enabled() ? style.text : style.textDisabled);
+    if (m_letterSpacing == 0.0f || m_wrap || m_text.find('\n') != std::string::npos) {
+        renderer.DrawTextInRect(m_text,LayoutRect(),font,size,color,
+                                Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),m_wrap,
+                                255,m_outlineSize,m_outlineColor);
+        return;
+    }
+    // Tracked text: lay each UTF-8 character out on its own so the gap between
+    // characters can grow. Kerning pairs are not applied across the gap.
+    std::vector<std::pair<std::string, float>> characters;
+    float width = 0.0f;
+    for (std::size_t index = 0; index < m_text.size();) {
+        const auto lead = static_cast<unsigned char>(m_text[index]);
+        const std::size_t length = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+        std::string character = m_text.substr(index, length);
+        const float advance = renderer.MeasureText(character, font, size).x;
+        width += advance + (characters.empty() ? 0.0f : m_letterSpacing);
+        characters.emplace_back(std::move(character), advance);
+        index += length;
+    }
+    const Rect area = LayoutRect();
+    float x = area.x;
+    if (m_horizontalAlignment == HorizontalTextAlignment::Center) x += (area.w - width) / 2.0f;
+    else if (m_horizontalAlignment == HorizontalTextAlignment::Right) x += area.w - width;
+    for (const auto& [character, advance] : characters) {
+        renderer.DrawTextInRect(character, {x, area.y, advance + 1.0f, area.h}, font, size, color,
+                                graphics::HorizontalAlignment::Left, Vertical(m_verticalAlignment),
+                                false, 255, m_outlineSize, m_outlineColor);
+        x += advance + m_letterSpacing;
+    }
 }
 
 Button::Button(std::string text, std::string name) : Control(std::move(name)), m_text(std::move(text)) {

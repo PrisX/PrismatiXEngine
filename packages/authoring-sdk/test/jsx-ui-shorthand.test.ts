@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {Group, Scene, Slider, TextureButton, compileJsxUi} from "../src/index.js";
+import {Group, Scene, Slider, Text, TextureButton, compileJsxUi} from "../src/index.js";
 import {jsx, jsxs, type UiElement} from "../src/jsx-runtime.js";
 
 function compiled(children: readonly UiElement[]) {
@@ -52,4 +52,13 @@ test("Slider is a typed native control with skin and range props", () => {
     railPath: "Assets/UI/rail.png", railHoverPath: "Assets/UI/rail-hover.png",
     knobPath: "Assets/UI/knob.png", railHeight: 18, knobSize: 20});
   assert.equal(slider.layout.sizeRule, "fixed");
+});
+
+test("Text font and letterSpacing lower to Label runtime properties", () => {
+  const node = compiled([jsx(Text, {name: "Value", text: "100", position: [0, 0], size: [90, 32],
+    fontSize: 19, font: "Assets/Fonts/Number.otf", letterSpacing: 4.5})]);
+  const label = node("Value").runtimeProperties;
+  assert.equal(label.fontPath, "Assets/Fonts/Number.otf");
+  assert.equal(label.letterSpacing, 4.5);
+  assert.equal("font" in label, false);
 });

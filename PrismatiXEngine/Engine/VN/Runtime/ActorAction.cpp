@@ -19,7 +19,7 @@ struct Preset {
     // Builds (intro, body, outro) value/time-factor lists for one magnitude.
     enum class Shape {
         Out,          // body: size, rest
-        Swing,        // intro: -size; half swings alternate +/-; outro rest
+        Swing,        // intro: -size; 2*loop half swings alternate +/-; outro rest
         Sequence,     // fixed keys, no loop
         Dip,          // body: size (out, t/2), rest (in, t/2)
         Wobble,       // intro size (t/4), -size (t/2); body +/-; outro rest (t/4)
@@ -156,7 +156,9 @@ std::optional<ActorActionTrack> ExpandActorAction(const ActorActionRequest& requ
                 key(value(-1.0f), 1.0f, ease);
                 break;
             }
-            for (int half = 0; half < loops * 2 - 1; ++half)
+            // image_act.lua: the middle tween reverses 2*loop-1 times, so it
+            // spans 2*loop halves and ends back at -size before the outro.
+            for (int half = 0; half < loops * 2; ++half)
                 key(value(half % 2 == 0 ? 1.0f : -1.0f), 1.0f, ease);
             key(rest, 1.0f, ease);
             break;

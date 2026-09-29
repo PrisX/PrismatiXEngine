@@ -75,7 +75,9 @@ void Control::SetVisibility(Visibility value) {
         m_hiding = false;
     } else if (value != Visibility::Visible) {
         m_showElapsed = m_showTransitionSeconds;
-        m_hiding = wasVisible && m_hideTransitionSeconds > 0.0f;
+        // A control that never reached the screen has nothing to fade out; a
+        // screen rebuilt under a hidden binding must not flash its hidden parts.
+        m_hiding = wasVisible && m_presented && m_hideTransitionSeconds > 0.0f;
         m_hideElapsed = 0.0f;
     }
     m_visibility = value;
@@ -290,6 +292,7 @@ void Control::Update(float deltaSeconds) {
 
 void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
     if (m_visibility != Visibility::Visible && !m_hiding) return;
+    m_presented = true;
     // `visible` is the fraction of the way to fully shown (1 when settled) and
     // `slide` the vertical offset left to travel.
     float visible = 1.0f;

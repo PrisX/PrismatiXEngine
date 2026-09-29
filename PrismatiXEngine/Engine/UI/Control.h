@@ -294,6 +294,7 @@ private:
     float m_hideTransitionSeconds = 0.0f;
     float m_hideElapsed = 0.0f;
     bool m_hiding = false;
+    bool m_presented = false;
     float m_showOffsetY = 8.0f;
     float m_hideOffsetY = 0.0f;
     float m_showOffsetX = 0.0f;

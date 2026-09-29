@@ -189,6 +189,10 @@ export interface ModalProps extends Omit<UiNodeProps, "children"> {
 export interface TextProps extends Omit<UiNodeProps, "children"> {
   readonly text?: string;
   readonly fontSize?: number;
+  /** Project font file for this label; the theme font is used otherwise. */
+  readonly font?: string;
+  /** Extra pixels between the characters of a single-line label. */
+  readonly letterSpacing?: number;
   readonly wrap?: boolean;
   readonly outlineSize?: number;
   readonly outlineColor?: string;
@@ -554,11 +558,13 @@ export function ItemsPlaced(props: ItemsPlacedProps): UiElement {
 
 export function Text(props: TextProps): UiElement {
   const text = props.text ?? textualChildren(props.children);
-  const {children: _children, fontSize, wrap, outlineSize, outlineColor,
+  const {children: _children, fontSize, font, letterSpacing, wrap, outlineSize, outlineColor,
     horizontalAlignment, verticalAlignment, ...rest} = props;
   return node("label", "Label", {...rest, ...(text === undefined ? {} : {text}),
     runtimeProperties: {...props.runtimeProperties,
       ...(fontSize === undefined ? {} : {fontSize}),
+      ...(font === undefined ? {} : {fontPath: font}),
+      ...(letterSpacing === undefined ? {} : {letterSpacing}),
       ...(wrap === undefined ? {} : {wrap}),
       ...(outlineSize === undefined ? {} : {outlineSize}),
       ...(outlineColor === undefined ? {} : {outlineColor: {type: "color", value: outlineColor}}),

@@ -169,6 +169,10 @@ private:
     std::future<bool> m_saveWrite;
     int m_saveWriteSlot = 0;
     bool m_settingsWritable = true;
+    // Settings a fresh install and "reset" start from: engine defaults with the
+    // project's `player.defaultVolumes` percentages applied.
+    progress::GameSettings m_settingsDefaults;
+    bool m_settingsMissing = false;
     progress::GlobalProfile m_profile;
     progress::GameSettings m_settings;
     progress::SaveSystem m_saves;
@@ -183,6 +187,9 @@ private:
         std::vector<int> choices;
     };
     std::map<std::string, OptionSpec, std::less<>> m_optionSpecs;
+    // `player.voiceProfiles.ids`: per-character voice volume groups the
+    // settings screen may bind as `settings.profileMuted.<id>`.
+    std::vector<std::string> m_voiceProfileIds;
     std::vector<std::string> m_fontChoices;
     float m_messageWindowOpacity = 1.0f;
     bool m_dimReadText = false;
