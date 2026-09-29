@@ -641,6 +641,15 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = "stopse";
             Add(command, "fade", DurationMilliseconds(Argument(operation, "fade")));
             Add(command, "channel", Argument(operation, "channel"));
+        } else if (operation.kind == "textMode") {
+            // [nvl], [adv] and [nvl.clear]: the Player keeps the NVL page.
+            const std::string& mode = Argument(operation, "mode");
+            if (mode != "nvl" && mode != "adv" && mode != "clear") {
+                adapterErrors.push_back("invalid text mode at Runtime IR operation " +
+                                        std::to_string(index));
+                continue;
+            }
+            command.type = mode == "clear" ? "nvl_clear" : mode;
         } else if (operation.kind == "stopVoice") {
             command.type = "stopvoice";
         } else if (operation.kind == "ui") {

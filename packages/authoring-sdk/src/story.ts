@@ -59,6 +59,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   motion: ["asset", "await", "speed"], "motion.stop": [],
   ui: ["route", "operation"],
   hud: ["visible"],
+  nvl: [], adv: [], "nvl.clear": [],
   unlock: ["kind", "id"],
   effect: ["value"], shake: ["duration", "amplitude", "target"],
   flash: ["color", "alpha", "duration", "loop"], tone: ["mode"],
@@ -1320,6 +1321,11 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         break;
       }
       case "voice.stop": emit(node, "stopVoice", {}); break;
+      // Full-screen text: [nvl] collects lines on a page, [nvl.clear] starts
+      // a new page and [adv] returns to the message window.
+      case "nvl": emit(node, "textMode", {mode: "nvl"}); break;
+      case "adv": emit(node, "textMode", {mode: "adv"}); break;
+      case "nvl.clear": emit(node, "textMode", {mode: "clear"}); break;
       case "bgm.stop":
       case "ambience.stop": {
         const fade = named("fade") ?? positional(0);
@@ -1546,7 +1552,7 @@ export interface StoryCommandCompletion {
   readonly parameters: readonly {readonly name: string; readonly required: boolean; readonly values?: readonly JsonValue[]}[];
 }
 
-const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "macro", "endmacro"];
+const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "macro", "endmacro"];
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
   const builtins = builtinStoryCommands;

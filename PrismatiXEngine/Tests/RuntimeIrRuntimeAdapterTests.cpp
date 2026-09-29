@@ -4,6 +4,7 @@
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Text/Typography.h"
+#include "Engine/UI/GalgameUI.h"
 #include "Engine/VN/Commands/CommandRegistry.h"
 #include "Engine/VN/Runtime/Backlog.h"
 #include "Engine/VN/Runtime/Dialogue.h"
@@ -416,7 +417,7 @@ int main() {
         "wait",           "timeline",       "effect",       "shake",        "ui",
         "hudVisibility",  "unlock",         "customNode",   "camera",
         "actorAction",    "stopSoundEffect", "stopVoice",
-        "image",          "hideImage",      "transition",
+        "image",          "hideImage",      "transition",  "textMode",
     };
     assert(schemaKinds == exercisedKinds);
 
@@ -472,6 +473,7 @@ int main() {
         Operation("all-unlock", "unlock", {{"kind", "cg"}, {"id", "ev101a"}}),
         Operation("all-custom", "customNode", {{"type", "nvl"}, {"value", "{}"}}),
         Operation("all-camera", "camera", {{"value", "pan"}}),
+        Operation("all-text-mode", "textMode", {{"mode", "nvl"}}),
         Operation("all-image", "image", {{"name", "cg"}, {"asset", "cg.png"},
             {"x", "-10"}, {"zoom", "0.5"}, {"anchor", "10,20"}, {"alpha", "128"},
             {"z", "9"}, {"duration", "300ms"}, {"fromAlpha", "0"}}),
@@ -802,6 +804,25 @@ int main() {
         assert(!clearAudio.ValidateState(invalid, false));
         invalid.seChannels = {{2, {.gain = 0.5f}}};
         assert(clearAudio.ValidateState(invalid, false));
+    }
+
+    // [nvl], [adv] and [nvl.clear] lower to the Player's NVL commands.
+    {
+        px::sdk::RuntimeIrDocument nvlDocument;
+        nvlDocument.documentId = "nvl-mode";
+        nvlDocument.operations = {
+            Operation("to-nvl", "textMode", {{"mode", "nvl"}}),
+            Operation("page", "textMode", {{"mode", "clear"}}),
+            Operation("to-adv", "textMode", {{"mode", "adv"}}),
+        };
+        const px::vn::Program nvlProgram = px::CompileRuntimeIr(nvlDocument);
+        assert(nvlProgram.errors.empty());
+        assert(nvlProgram.code.size() == 3 && nvlProgram.code[0].type == "nvl" &&
+               nvlProgram.code[1].type == "nvl_clear" && nvlProgram.code[2].type == "adv");
+        nvlDocument.operations = {Operation("bad", "textMode", {{"mode", "scroll"}})};
+        assert(!px::CompileRuntimeIr(nvlDocument).errors.empty());
+        assert(px::ui::GalgameUI::NvlPageMarkup({"a", "【B】[b]c[/b]"}) ==
+               "a[br][br]【B】[b]c[/b]");
     }
 
     px::vn::GameCatalog localizedCatalog;

@@ -188,6 +188,7 @@ GalgameUI::GalgameUI() {
     (void)m_viewModel.Define("saveLoad.slots", Variant(std::move(initialSlots)), true);
     (void)m_viewModel.Define("gallery.items", Variant(VariantArray{}), true);
     (void)m_viewModel.Define("dialogue.choices", Variant(VariantArray{}), true);
+    (void)m_viewModel.Define("dialogue.nvl", Variant(false), true);
     (void)m_viewModel.Define("backlog.entries", Variant(VariantArray{}), true);
     for (const char* property : {"fullscreen", "windowed", "skipReadOnly", "skipAll"})
         (void)m_viewModel.Define(std::string("settings.") + property,
@@ -752,6 +753,21 @@ Status GalgameUI::InstallRouteTemplate(const std::string_view route){
     return Status::Ok();
 }
 
+std::string GalgameUI::NvlPageMarkup(const std::vector<std::string>& lines) {
+    std::string text;
+    for (std::size_t index = 0; index < lines.size(); ++index)
+        text += (index == 0 ? "" : "[br][br]") + lines[index];
+    return text;
+}
+
+bool GalgameUI::NvlPageFits(const std::vector<std::string>& lines) const {
+    if (!m_nvlText || lines.empty()) return true;
+    const Rect bounds = m_nvlText->LayoutRect();
+    if (bounds.w <= 0.0f || bounds.h <= 0.0f) return true;
+    const int size = m_nvlText->FontSize() > 0 ? m_nvlText->FontSize() : 30;
+    return m_nvlText->FontSizeToFit(NvlPageMarkup(lines), size, bounds.w, bounds.h) == size;
+}
+
 bool GalgameUI::HasControlNamed(const std::string_view name) const {
     return FindNamed<Control>(const_cast<Control*>(m_context.Root()), name) != nullptr;
 }
@@ -1012,11 +1028,22 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
         if(showChapter||showMusic)m_noticePanel->RevealFor(5.0f);
     }
     m_lastChapterTitle=p.chapterTitle;m_lastMusicTitle=p.musicTitle;
-    if (m_nvlText) {
-        std::string text; for (const auto& line : p.nvlLines) text += line + "[br][br]"; SetPresentationText(m_nvlText, std::move(text));
-        if (auto* panel = dynamic_cast<Control*>(m_nvlText->Parent())) panel->SetVisibility(p.nvlMode ? Visibility::Visible : Visibility::Collapsed);
+    if (m_nvlText) SetPresentationText(m_nvlText, NvlPageMarkup(p.nvlLines));
+    (void)m_viewModel.Write("dialogue.nvl", Variant(p.nvlMode));
+    // NVL shows the page and hides the message window. A HUD with NVLPanel
+    // and ADVPanel groups (the built-in one) switches those; an authored HUD
+    // with its text controls side by side switches the controls themselves.
+    const auto show = [](Control* control, const bool visible) {
+        if (control) control->SetVisibility(visible ? Visibility::Visible : Visibility::Collapsed);
+    };
+    if (auto* page = FindNamed<Control>(m_context.Root(), "NVLPanel")) show(page, p.nvlMode);
+    else show(m_nvlText, p.nvlMode);
+    if (auto* window = FindNamed<Control>(m_context.Root(), "ADVPanel")) show(window, !p.nvlMode);
+    else {
+        show(m_dialogue, !p.nvlMode);
+        show(m_speaker, !p.nvlMode);
+        show(m_messageWindow, !p.nvlMode);
     }
-    if (m_dialogue) if (auto* panel = dynamic_cast<Control*>(m_dialogue->Parent())) panel->SetVisibility(p.nvlMode ? Visibility::Collapsed : Visibility::Visible);
     if (m_mode) m_mode->SetText(std::string(p.autoMode ? "● AUTO  " : "") + (p.skipMode ? "▶▶ SKIP" : ""));
     if (auto* toolbar = FindNamed<EdgeRevealContainer>(m_context.Root(), "EdgeToolbar"))
         toolbar->SetReducedMotion(p.reducedMotion);

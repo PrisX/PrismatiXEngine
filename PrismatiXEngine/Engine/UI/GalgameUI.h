@@ -137,6 +137,10 @@ public:
     void SetChoiceLayout(ChoiceLayout layout) { m_choiceLayout = std::move(layout); }
     /** True when the mounted route contains a control with this name. */
     [[nodiscard]] bool HasControlNamed(std::string_view name) const;
+    // Whether these NVL lines fit the HUD's NVLText box at its font size.
+    [[nodiscard]] bool NvlPageFits(const std::vector<std::string>& lines) const;
+    // One NVL page: lines separated by an empty line.
+    [[nodiscard]] static std::string NvlPageMarkup(const std::vector<std::string>& lines);
     /** Current value and range of a Player option, or nullopt when undeclared. */
     struct OptionRange { int value = 0; int minimum = 0; int maximum = 100; };
     using OptionSource = std::function<std::optional<OptionRange>(std::string_view)>;

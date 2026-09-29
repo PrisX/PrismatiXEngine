@@ -57,6 +57,11 @@ constexpr std::string_view kUIRouteE2ERoutes[] = {
 constexpr std::string_view kUIActionsE2EReplayLabel =
     "sb.115-afterver1-01.yos-part-15";
 
+// One line of the NVL page: the speaker in brackets, then the text.
+std::string NvlLineText(const std::string& speaker, const std::string& text) {
+    return speaker.empty() ? text : "【" + speaker + "】" + text;
+}
+
 // Player operations `player.confirmations` may ask before.
 constexpr std::string_view kConfirmableOperations[] = {
     "quickSave", "quickLoad", "save", "overwrite", "load", "returnToTitle",
@@ -3220,9 +3225,11 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
     view.textScale=m_settings.textScale;view.reducedMotion=m_settings.reducedMotion;
     view.windowOpacity = m_messageWindowOpacity;
     view.dimReadText = m_dimReadText && m_session->VM().CurrentLineSeen();
-    for (const auto& line : m_nvlLines) view.nvlLines.push_back(line.speaker.empty() ? line.text : "【" + line.speaker + "】" + line.text);
+    for (const auto& line : m_nvlLines) view.nvlLines.push_back(NvlLineText(line.speaker, line.text));
+    // The newest line types out like ADV text.
     if (!view.nvlLines.empty() && m_session->Dialogue().State().fullText == m_nvlLines.back().text)
-        view.nvlLines.back() = m_session->Dialogue().State().speaker.empty() ? m_session->Dialogue().State().displayText : "【" + m_session->Dialogue().State().speaker + "】" + m_session->Dialogue().State().displayText;
+        view.nvlLines.back() = NvlLineText(m_session->Dialogue().State().speaker,
+                                           m_session->Dialogue().State().displayText);
     return view;
 }
 
@@ -5707,7 +5714,14 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         for (const vn::BacklogEntry& e :
              m_session->Backlog().EntriesAfter(m_lastBacklogSequence)) {
             latestEntry = &e;
-            if (m_nvlMode && !e.isChoice) m_nvlLines.push_back(e);
+            if (m_nvlMode && !e.isChoice) {
+                // A line that no longer fits the page starts the next one.
+                std::vector<std::string> page;
+                for (const auto& line : m_nvlLines) page.push_back(NvlLineText(line.speaker, line.text));
+                page.push_back(NvlLineText(e.speaker, e.text));
+                if (!m_nvlLines.empty() && !m_ui.NvlPageFits(page)) m_nvlLines.clear();
+                m_nvlLines.push_back(e);
+            }
             if (m_settings.selfVoicing && !e.isChoice)
                 m_speech.Speak(e.speaker.empty() ? e.text : e.speaker + ". " + e.text);
         }

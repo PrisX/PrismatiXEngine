@@ -353,3 +353,12 @@ test("sound effects play and stop per channel", () => {
   assert.ok(codes("[se Assets/a.ogg channel=65]\n").includes("PXSTORY1177"));
   assert.ok(codes("[se.stop channel=x]\n").includes("PXSTORY1177"));
 });
+
+test("nvl, nvl.clear and adv switch the text mode", () => {
+  const ops = operations("[nvl]\n一行目。\n[nvl.clear]\n二行目。\n[adv]\n");
+  assert.deepEqual(ops.map(({kind, arguments: args}) => [kind, args.mode ?? args.text]), [
+    ["textMode", "nvl"], ["narration", "一行目。"], ["textMode", "clear"],
+    ["narration", "二行目。"], ["textMode", "adv"],
+  ]);
+  assert.ok(codes("[nvl clear=true]\n").includes("PXSTORY1017"));
+});

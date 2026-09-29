@@ -162,6 +162,34 @@ something new):
   marks survive edits elsewhere. Changing a macro's body renumbers the lines
   of every call, like editing those lines in place.
 
+### Full-screen (NVL) text
+
+`[nvl]` switches from the message window to a full-screen page: each line
+that follows is added to the page under the previous ones instead of
+replacing them. `[nvl.clear]` starts a new page, and `[adv]` returns to the
+message window and discards the page.
+
+```pxstory
+[nvl]
+桜の季節が、また巡ってきた。
+@直哉 「……ああ」
+[nvl.clear]
+新しい頁。
+[adv]
+```
+
+- The HUD needs a `RichTextLabel` named `NVLText`. The Player shows it (or a
+  group named `NVLPanel` around it) in NVL mode and hides `Dialogue`,
+  `Speaker` and `MessageWindow` (or a group named `ADVPanel`); `dialogue.nvl`
+  is bindable UI data for anything else that should follow the mode.
+- A speaker's line appears as `【name】text`; lines are separated by an empty
+  line, the newest one types out like ADV text, and inline styles and ruby
+  work as in the message window.
+- A line that would overflow `NVLText` at its font size starts a new page by
+  itself, so long passages need no manual `[nvl.clear]`.
+- Every line also goes to the backlog as usual. The page and the mode are
+  saved, restored after loading and rolled back with the line they belong to.
+
 ## Characters, backgrounds and sound
 
 The starter registers `guide`, its `smile` expression and an original background. Reuse these without hand-writing another UUID:
