@@ -8,26 +8,52 @@ import type {AuthoringDiagnostic, JsonValue} from "./types.js";
 type JsonObject = Record<string, JsonValue>;
 
 const labelTypes = ["Label", "RichTextLabel"];
+// Any runtime type: the Player only checks that the control exists or shows it.
+const anyType: readonly string[] = [];
+const saveLoadNodes = {
+  Slots: ["GridView"], SlotButton: ["Button", "TextureButton"],
+  SaveLoadConfirm: anyType, SaveLoadError: anyType,
+};
 // Route-scoped node names the Player looks up, and the types it casts to.
+// PlayerUiContractTests keeps this in step with the C++ lookups.
 const namedNodes: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>> = {
   hud: {
     Speaker: labelTypes, Dialogue: labelTypes, NVLText: labelTypes,
     ModeState: labelTypes, ChapterNotice: labelTypes, MusicNotice: labelTypes,
     SkipHint: labelTypes, Choices: ["VBoxContainer"],
     NoticePanel: ["EdgeRevealContainer"], EdgeToolbar: ["EdgeRevealContainer"],
-    ChapterNumber: ["SpriteText"],
+    ChapterNumber: ["SpriteText"], ChapterBanner: anyType, ChoiceList: anyType,
+    Face: ["TextureRect"], NVLPanel: anyType, ADVPanel: anyType, MessageWindow: anyType,
   },
-  save: {Slots: ["GridView"]},
-  load: {Slots: ["GridView"]},
+  save: saveLoadNodes,
+  load: saveLoadNodes,
   settings: {
     Master: ["Slider"], BGM: ["Slider"], SE: ["Slider"], Voice: ["Slider"],
     TextSpeed: ["Slider"], Fullscreen: ["CheckBox"], HighContrast: ["CheckBox"],
     ReducedMotion: ["CheckBox"], SelfVoicing: ["CheckBox"], SkipRead: ["CheckBox"],
-    Language: ["OptionButton"],
+    Language: ["OptionButton"], MuteMasterLabel: labelTypes, MuteBGMLabel: labelTypes,
+    MuteSELabel: labelTypes, MuteVoiceLabel: labelTypes,
   },
   gallery: {Items: ["GridView"]},
   backlog: {Entries: ["ListView"]},
+  flowchart: {scenejumpButton: ["Button", "TextureButton"], FlowSelectedItem: labelTypes,
+    FlowSelectedHeading: labelTypes, FlowSelectedDetails: labelTypes},
+  music: {MusicVolume: ["Slider"]},
+  extra: {MusicVolume: ["Slider"]},
 };
+// Names the Player finds in whichever route is showing.
+const anyRouteNodes: Readonly<Record<string, readonly string[]>> = {
+  ConfirmDialog: anyType, DialogYes: anyType, TitleConfirm: anyType, SystemConfirm: anyType,
+};
+// Name prefixes the Player completes at runtime (per voice profile or slot).
+const namedNodePrefixes = ["VoiceProfile_", "VoiceProfileValue_", "VoiceProfileMute_", "Slot"];
+
+/** Every control name the stock Player looks up, for contract drift tests. */
+export function playerLookupNames(): {readonly names: ReadonlySet<string>;
+  readonly prefixes: readonly string[]} {
+  return {names: new Set([...Object.values(namedNodes).flatMap(Object.keys),
+    ...Object.keys(anyRouteNodes)]), prefixes: namedNodePrefixes};
+}
 
 const itemFields: Readonly<Record<string, readonly string[]>> = {
   "saveLoad.slots": ["key", "number", "argument", "image", "occupied", "title", "subtitle", "enabled"],
@@ -163,7 +189,43 @@ export function validatePlayerUiContract(input: PlayerUiContractInput,
     const nodes = (Array.isArray(object(document)?.nodes) ? object(document)!.nodes as JsonValue[] : [])
       .map(object).filter((node): node is JsonObject => node !== undefined);
     const byId = new Map(nodes.map((node) => [node.id, node]));
-    const contracts = (routes.get(path) ?? []).map((route) => namedNodes[route] ?? {});
+    const documentRoutes = routes.get(path) ?? [];
+    const contracts = [...documentRoutes.map((route) => namedNodes[route] ?? {}), anyRouteNodes];
+    const hostName = (name: string) => contracts.some((contract) => contract[name] !== undefined) ||
+      (documentRoutes.length > 0 && namedNodePrefixes.some((prefix) =>
+        prefix !== "Slot" && name.startsWith(prefix)));
+    // The Player searches the whole route for a name, and hover.<name> data
+    // follows whichever control has it, so either would silently use only
+    // the first match. Reusable components legitimately repeat child names
+    // under different parents; siblings with one name are a mistake.
+    const hovered = new Set(nodes.flatMap((node) => Object.values(object(node.bindings) ?? {}))
+      .map((binding) => object(binding)?.path)
+      .filter((bound): bound is string => typeof bound === "string" && bound.startsWith("hover."))
+      .map((bound) => bound.slice(6)));
+    const firstIndex = new Map<string, number>();
+    const firstSibling = new Map<string, number>();
+    nodes.forEach((node, index) => {
+      if (typeof node.name !== "string" || node.name === "") return;
+      const sibling = `${String(node.parentId)}\n${node.name}`;
+      const first = firstIndex.get(node.name);
+      const firstInParent = firstSibling.get(sibling);
+      if (first === undefined) firstIndex.set(node.name, index);
+      if (firstInParent === undefined) firstSibling.set(sibling, index);
+      if (first === undefined) return;
+      if (hostName(node.name))
+        diagnostics.push({severity: "error", code: "PXBUILD1106",
+          message: `The Player finds ${node.name} by name, but nodes[${first}] already uses it; only the first would work`,
+          path, details: `nodes[${index}].name:${node.name}`});
+      else if (firstInParent !== undefined || hovered.has(node.name))
+        diagnostics.push({severity: "warning", code: "PXBUILD1107",
+          message: `Control name ${node.name} is already used by nodes[${firstInParent ?? first}]` +
+            (hovered.has(node.name) ? `; hover.${node.name} follows only one of them` : " in the same parent"),
+          path, details: `nodes[${index}].name:${node.name}`});
+    });
+    if (documentRoutes.includes("hud") && nodes.length > 0 && !firstIndex.has("Dialogue"))
+      diagnostics.push({severity: "warning", code: "PXBUILD1108",
+        message: "The HUD has no control named Dialogue, so Story text is never shown; name the dialogue Label or RichTextLabel Dialogue",
+        path});
     nodes.forEach((node, index) => {
       const name = typeof node.name === "string" ? node.name : "";
       if (name === "ConfirmDialog" && !asksAnything)
@@ -172,7 +234,7 @@ export function validatePlayerUiContract(input: PlayerUiContractInput,
           path, details: `nodes[${index}].name:${name}`});
       for (const contract of contracts) {
         const expected = contract[name];
-        if (expected !== undefined && typeof node.runtimeType === "string" &&
+        if (expected !== undefined && expected.length > 0 && typeof node.runtimeType === "string" &&
             !expected.includes(node.runtimeType))
           // The Player only skips a control whose type does not match, so
           // this is a lost behavior rather than a broken build.

@@ -59,6 +59,7 @@ test("bindings under Player-owned roots must name published data", () => {
 
 test("dialog kinds and voice profiles come from the project's settings", () => {
   const hud = document([
+    jsx(Text, {name: "Dialogue", text: "", position: [0, 120], size: [200, 20]}),
     jsx(Group, {name: "ConfirmDialog", position: [0, 0], size: [200, 100], children: [
       jsx(Text, {name: "AskSave", text: "", position: [0, 0], size: [100, 20],
         bind: {visible: "dialog.kind.qsave"}}),
@@ -83,4 +84,49 @@ test("dialog kinds and voice profiles come from the project's settings", () => {
     ["PXBUILD1100", "The Player publishes no UI data at dialog.kind.exit"],
     ["PXBUILD1100", "The Player publishes no UI data at settings.profileMuted.hikari"],
   ]);
+});
+
+test("duplicate control names are reported, as errors when the Player looks the name up", () => {
+  const hud = document([
+    jsx(Text, {name: "Dialogue", text: "", position: [0, 0], size: [200, 20]}),
+    jsx(Text, {name: "Dialogue", text: "", position: [0, 30], size: [200, 20]}),
+    jsx(Text, {name: "DockLock", text: "", position: [0, 60], size: [40, 20]}),
+    jsx(Text, {name: "DockLock", text: "", position: [0, 90], size: [40, 20]}),
+  ]);
+  const diagnostics = validatePlayerUiContract({uiEntryPoints: {hud: "Content/UI/HUD.tsx"}},
+    new Map([["Content/UI/HUD.pxui", hud as never]]));
+  assert.deepEqual(diagnostics.map(({severity, code, details}) => [severity, code, details]), [
+    ["error", "PXBUILD1106", "nodes[2].name:Dialogue"],
+    ["warning", "PXBUILD1107", "nodes[4].name:DockLock"],
+  ]);
+});
+
+test("a HUD without a Dialogue control is reported", () => {
+  const hud = document([jsx(Text, {name: "Body", text: "", position: [0, 0], size: [200, 20]})]);
+  const diagnostics = validatePlayerUiContract({uiEntryPoints: {hud: "Content/UI/HUD.tsx"}},
+    new Map([["Content/UI/HUD.pxui", hud as never]]));
+  assert.deepEqual(diagnostics.map(({code}) => code), ["PXBUILD1108"]);
+  assert.deepEqual(validatePlayerUiContract({uiEntryPoints: {extra: "Content/UI/HUD.tsx"}},
+    new Map([["Content/UI/HUD.pxui", hud as never]])), []);
+});
+
+test("the contract names every control the C++ Player looks up by a literal name", async (t) => {
+  const {readFile} = await import("node:fs/promises");
+  const {playerLookupNames} = await import("../src/index.js");
+  const root = new URL("../../../../PrismatiXEngine/", import.meta.url);
+  const sources: string[] = [];
+  for (const file of ["Engine/UI/GalgameUI.cpp", "Applications/Player/PlayerApp.cpp"]) {
+    try { sources.push(await readFile(new URL(file, root), "utf8")); }
+    catch { t.skip("engine sources are not beside this package"); return; }
+  }
+  const {names, prefixes} = playerLookupNames();
+  const looked = new Set<string>();
+  for (const source of sources)
+    for (const match of source.matchAll(/Named(?:<[^>]*>)?\s*\([^;"]*?"([A-Za-z_]+)"/gu))
+      looked.add(match[1]!);
+  // Controls only the Player's built-in QA journeys click.
+  const qaOnly = new Set(["btyosButton", "music_SongOpButton", "yoshinoButton", "ConfirmNoButton"]);
+  const missing = [...looked].filter((name) => !qaOnly.has(name) &&
+    !names.has(name) && !prefixes.some((prefix) => name.startsWith(prefix)));
+  assert.deepEqual(missing, []);
 });
