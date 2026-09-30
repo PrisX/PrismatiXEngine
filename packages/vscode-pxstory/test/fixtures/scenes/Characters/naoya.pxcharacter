@@ -1,0 +1,9 @@
+{
+  "format": "PrismatiXCharacter",
+  "schemaRevision": 2,
+  "displayName": "直哉",
+  "aliases": ["naoya"],
+  "expressions": [
+    {"name": "普通", "aliases": ["normal"], "assetPath": "Assets/Portraits/naoya.png"}
+  ]
+}

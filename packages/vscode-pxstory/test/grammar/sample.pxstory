@@ -1,0 +1,30 @@
+; @prismatix-ids
+*start
+*bad label
+[chapter title="第Ⅰ章"]
+[if affection >= 2 && met == true]
+[bg street rule=083r duration=1000ms vague=40 anchor=960,563 x=-23]
+[show guide smile left rotate=-90]
+[bgm.stop fade=5000ms]
+[se rain channel=2 loop=true fade=500ms volume=40]
+[choice text="公園へ" goto=walk]
+[jump scene="00_op_01_2"]
+[flash color=af4154 alpha=0.6 duration=300ms]
+[custom.effect data={"x": [1, 2]} tint=#C04040]
+[endif]
+@guide
+今天想去哪裡呢？
+@直哉「うっぷ……少し食い過ぎたか……」
+@guide[smile left voice=g0042] 一起去吧！
+@"A B" quoted speaker
+あれめんどくさいんだよなぁ。\
+[b]他で[/b]返せたら、そっちでチャラにしたいものだ。
+[b]Stop[/b], she said, [color=#C04040]quietly[/color].
+@guide [size=75%]（小声で）[/size][ruby=きおく]記憶[/ruby]がない。[br]次へ
+A literal backslash \\
+Prose with an [unknown] tag, and %% percent.
+[macro scream who line volume=150%]
+[se se9022]
+@%who [size=%volume]%line[/size]
+[endmacro]
+[scream 直哉 「ぎゃああああ」]

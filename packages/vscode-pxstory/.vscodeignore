@@ -1,0 +1,10 @@
+**
+!package.json
+!README.md
+!LICENSE
+!language-configuration.json
+!syntaxes/**
+!dist/*.js
+!dist/*.cjs
+!dist/chunks/*.js
+!dist/THIRD_PARTY_NOTICES.txt

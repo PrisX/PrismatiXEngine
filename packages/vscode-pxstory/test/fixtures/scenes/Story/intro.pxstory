@@ -1,0 +1,22 @@
+; Intro scene for the language server tests.
+*start
+[bg street duration=500ms]
+[bgm theme fade=1s]
+[show guide smile left]
+@guide 今日はどこへ行こうか。
+@直哉「公園がいいな」
+
+[macro greet who line]
+@%who %line
+[endmacro]
+[greet guide こんにちは]
+[choice text="公園へ" goto=walk]
+[choice text="家にいる" goto=stay]
+[choice.wait]
+
+*walk
+[jump scene=park target=gate]
+
+*stay
+[set affection=1]
+[jump target=start]

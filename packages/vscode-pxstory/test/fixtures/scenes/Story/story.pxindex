@@ -1,0 +1,11 @@
+{
+  "format": "PrismatiXStoryIndex",
+  "schemaRevision": 2,
+  "id": "main",
+  "entryScene": "intro",
+  "chapters": [{"id": "chapter1", "title": "Chapter 1", "scenes": ["intro", "park"]}],
+  "scenes": [
+    {"id": "intro", "title": "Intro", "sources": {"ja-JP": "Story/intro.pxstory"}},
+    {"id": "park", "title": "Park", "sources": {"ja-JP": "Story/park.pxstory"}}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "Fixture",
+  "id": "fixture",
+  "defaultLocale": "zh-TW",
+  "resolution": {"width": 1280, "height": 720},
+  "uiEntryPoints": {"title": "Content/UI/Title.tsx"},
+  "assets": [
+    {"id":"10000000-0000-4000-8000-000000000001","name":"Window at dusk","kind":"background","source":"Assets/window.png"},
+    {"id":"50000000-0000-4000-8000-000000000001","name":"Starter provenance","kind":"provenance","source":"ASSET_PROVENANCE.md"}
+  ],
+  "characters": [{"alias":"guide","displayName":"小光","source":"Characters/guide.pxcharacter"}]
+}

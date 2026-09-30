@@ -1,0 +1,6 @@
+*gate
+[bg night/street rule=wipe-left]
+@guide[sad voice=g001] 暗いね。
+*bench
+[se door]
+[jump scene=intro target=stay]

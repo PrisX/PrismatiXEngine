@@ -1,0 +1,105 @@
+{
+  "name": "vscode-pxstory",
+  "displayName": "PrismatiX Story (.pxstory)",
+  "description": "Syntax highlighting, diagnostics, completion and navigation for PrismatiX .pxstory Story files.",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "publisher": "prismatix",
+  "license": "MIT",
+  "repository": {"type": "git", "url": "https://github.com/owenliu0924/PrismatiXEngine.git", "directory": "packages/vscode-pxstory"},
+  "engines": {"vscode": "^1.91.0"},
+  "categories": ["Programming Languages", "Linters"],
+  "keywords": ["prismatix", "pxstory", "visual novel"],
+  "main": "./dist/extension.cjs",
+  "activationEvents": ["workspaceContains:**/prismatix.json"],
+  "contributes": {
+    "languages": [{
+      "id": "pxstory",
+      "aliases": ["PrismatiX Story", "pxstory"],
+      "extensions": [".pxstory"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "pxstory",
+      "scopeName": "source.pxstory",
+      "path": "./syntaxes/pxstory.tmLanguage.json"
+    }],
+    "commands": [
+      {"command": "prismatix.validateProject", "title": "Validate Project", "category": "PrismatiX"},
+      {"command": "prismatix.previewFromHere", "title": "Preview From Here", "category": "PrismatiX",
+        "enablement": "editorLangId == pxstory"},
+      {"command": "prismatix.stopPreview", "title": "Stop Preview", "category": "PrismatiX"}
+    ],
+    "menus": {
+      "editor/context": [
+        {"command": "prismatix.previewFromHere", "when": "editorLangId == pxstory", "group": "navigation@90"}
+      ]
+    },
+    "configuration": {
+      "title": "PrismatiX",
+      "properties": {
+        "prismatix.languageServer.sdk": {
+          "type": "string",
+          "enum": ["auto", "bundled"],
+          "enumDescriptions": [
+            "Use the @prismatix/authoring-sdk installed in the project, so diagnostics match its pinned CLI; fall back to the bundled SDK.",
+            "Always use the Authoring SDK bundled with this extension."
+          ],
+          "default": "auto",
+          "description": "Which Authoring SDK checks Story files."
+        },
+        "prismatix.validation.projectOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "After saving a .pxstory file, compile every Story scene of the project in the background and report errors in other files."
+        },
+        "prismatix.validation.debounceMs": {
+          "type": "number",
+          "default": 250,
+          "minimum": 0,
+          "maximum": 5000,
+          "description": "Delay after typing before the open Story file is checked again."
+        },
+        "prismatix.cli.path": {
+          "type": "string",
+          "default": "",
+          "description": "PrismatiX CLI to run instead of the project's node_modules/@prismatix/cli (a cli.js file or an executable)."
+        },
+        "prismatix.cli.nodePath": {
+          "type": "string",
+          "default": "node",
+          "description": "Node.js executable used to run the PrismatiX CLI."
+        },
+        "prismatix.cli.validateArgs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": [],
+          "description": "Extra arguments for `prismatix validate`, for example [\"--ui-registry\", \"path/to/PrismatiXUiTypeRegistry.json\"]."
+        },
+        "prismatix.cli.devArgs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": [],
+          "description": "Extra arguments for `prismatix dev` started by Preview From Here."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/build.mjs",
+    "test": "node --test out/test/*.test.js",
+    "vscode:prepublish": "node scripts/build.mjs",
+    "package": "npx --yes @vscode/vsce@4.0.0 package --no-dependencies --out dist/vscode-pxstory.vsix"
+  },
+  "devDependencies": {
+    "@prismatix/authoring-sdk": "0.2.0",
+    "@types/vscode": "1.91.0",
+    "esbuild": "0.28.2",
+    "vscode-languageclient": "10.1.2",
+    "vscode-languageserver": "10.1.2",
+    "vscode-languageserver-textdocument": "1.0.15",
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.3.2"
+  }
+}

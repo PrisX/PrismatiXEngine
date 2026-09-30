@@ -1,0 +1,10 @@
+{
+  "format": "PrismatiXCharacter",
+  "schemaRevision": 2,
+  "displayName": "小光",
+  "aliases": ["guide"],
+  "expressions": [
+    {"name": "微笑", "aliases": ["smile"], "assetPath": "Assets/Portraits/guide-smile.png"},
+    {"name": "悲しい", "aliases": ["sad"], "assetPath": "Assets/Portraits/guide-sad.png"}
+  ]
+}

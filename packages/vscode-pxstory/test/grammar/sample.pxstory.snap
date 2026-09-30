@@ -1,0 +1,308 @@
+> ; @prismatix-ids
+  ";" comment.line.semicolon.pxstory punctuation.definition.comment.pxstory
+  " @prismatix-ids" comment.line.semicolon.pxstory
+> *start
+  "*" meta.label.pxstory punctuation.definition.label.pxstory
+  "start" meta.label.pxstory entity.name.function.label.pxstory
+> *bad label
+  "*" meta.label.pxstory punctuation.definition.label.pxstory
+  "bad" meta.label.pxstory entity.name.function.label.pxstory
+  " label" meta.label.pxstory invalid.illegal.label.pxstory
+> [chapter title="第Ⅰ章"]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "chapter" meta.command.pxstory support.function.command.pxstory
+  " " meta.command.pxstory
+  "title" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "\"" meta.command.pxstory string.quoted.double.pxstory
+  "第Ⅰ章" meta.command.pxstory string.quoted.double.pxstory
+  "\"" meta.command.pxstory string.quoted.double.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory
+> [if affection >= 2 && met == true]
+  "[" meta.command.if.pxstory punctuation.definition.command.begin.pxstory
+  "if" meta.command.if.pxstory keyword.control.conditional.pxstory
+  " " meta.command.if.pxstory
+  "affection" meta.command.if.pxstory variable.other.pxstory
+  " " meta.command.if.pxstory
+  ">=" meta.command.if.pxstory keyword.operator.comparison.pxstory
+  " " meta.command.if.pxstory
+  "2" meta.command.if.pxstory constant.numeric.pxstory
+  " " meta.command.if.pxstory
+  "&&" meta.command.if.pxstory keyword.operator.comparison.pxstory
+  " " meta.command.if.pxstory
+  "met" meta.command.if.pxstory variable.other.pxstory
+  " " meta.command.if.pxstory
+  "==" meta.command.if.pxstory keyword.operator.comparison.pxstory
+  " " meta.command.if.pxstory
+  "true" meta.command.if.pxstory constant.language.pxstory
+  "]" meta.command.if.pxstory punctuation.definition.command.end.pxstory
+> [bg street rule=083r duration=1000ms vague=40 anchor=960,563 x=-23]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "bg" meta.command.pxstory support.function.command.pxstory
+  " street " meta.command.pxstory
+  "rule" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "083r" meta.command.pxstory string.unquoted.value.pxstory
+  " " meta.command.pxstory
+  "duration" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "1000" meta.command.pxstory constant.numeric.pxstory
+  "ms" meta.command.pxstory constant.numeric.pxstory keyword.other.unit.pxstory
+  " " meta.command.pxstory
+  "vague" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "40" meta.command.pxstory constant.numeric.pxstory
+  " " meta.command.pxstory
+  "anchor" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "960" meta.command.pxstory constant.numeric.pxstory
+  "," meta.command.pxstory
+  "563" meta.command.pxstory constant.numeric.pxstory
+  " " meta.command.pxstory
+  "x" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "-23" meta.command.pxstory constant.numeric.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory
+> [show guide smile left rotate=-90]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "show" meta.command.pxstory support.function.command.pxstory
+  " guide smile left " meta.command.pxstory
+  "rotate" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "-90" meta.command.pxstory constant.numeric.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory
+> [bgm.stop fade=5000ms]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "bgm.stop" meta.command.pxstory support.function.command.pxstory
+  " " meta.command.pxstory
+  "fade" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "5000" meta.command.pxstory constant.numeric.pxstory
+  "ms" meta.command.pxstory constant.numeric.pxstory keyword.other.unit.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory
+> [se rain channel=2 loop=true fade=500ms volume=40]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "se" meta.command.pxstory support.function.command.pxstory
+  " rain " meta.command.pxstory
+  "channel" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "2" meta.command.pxstory constant.numeric.pxstory
+  " " meta.command.pxstory
+  "loop" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "true" meta.command.pxstory constant.language.pxstory
+  " " meta.command.pxstory
+  "fade" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "500" meta.command.pxstory constant.numeric.pxstory
+  "ms" meta.command.pxstory constant.numeric.pxstory keyword.other.unit.pxstory
+  " " meta.command.pxstory
+  "volume" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "40" meta.command.pxstory constant.numeric.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory
+> [choice text="公園へ" goto=walk]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "choice" meta.command.pxstory keyword.control.flow.pxstory
+  " " meta.command.pxstory
+  "text" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "\"" meta.command.pxstory string.quoted.double.pxstory
+  "公園へ" meta.command.pxstory string.quoted.double.pxstory
+  "\"" meta.command.pxstory string.quoted.double.pxstory
+  " " meta.command.pxstory
+  "goto" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "walk" meta.command.pxstory string.unquoted.value.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory
+> [jump scene="00_op_01_2"]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "jump" meta.command.pxstory keyword.control.flow.pxstory
+  " " meta.command.pxstory
+  "scene" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "\"" meta.command.pxstory string.quoted.double.pxstory
+  "00_op_01_2" meta.command.pxstory string.quoted.double.pxstory
+  "\"" meta.command.pxstory string.quoted.double.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory
+> [flash color=af4154 alpha=0.6 duration=300ms]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "flash" meta.command.pxstory support.function.command.pxstory
+  " " meta.command.pxstory
+  "color" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "af4154" meta.command.pxstory string.unquoted.value.pxstory
+  " " meta.command.pxstory
+  "alpha" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "0.6" meta.command.pxstory constant.numeric.pxstory
+  " " meta.command.pxstory
+  "duration" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "300" meta.command.pxstory constant.numeric.pxstory
+  "ms" meta.command.pxstory constant.numeric.pxstory keyword.other.unit.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory
+> [custom.effect data={"x": [1, 2]} tint=#C04040]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "custom.effect" meta.command.pxstory entity.name.function.command.pxstory
+  " " meta.command.pxstory
+  "data" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "{" meta.command.pxstory meta.structure.object.pxstory
+  "\"" meta.command.pxstory meta.structure.object.pxstory string.quoted.double.pxstory
+  "x" meta.command.pxstory meta.structure.object.pxstory string.quoted.double.pxstory
+  "\"" meta.command.pxstory meta.structure.object.pxstory string.quoted.double.pxstory
+  ": " meta.command.pxstory meta.structure.object.pxstory
+  "[" meta.command.pxstory meta.structure.object.pxstory meta.structure.array.pxstory
+  "1" meta.command.pxstory meta.structure.object.pxstory meta.structure.array.pxstory constant.numeric.pxstory
+  ", " meta.command.pxstory meta.structure.object.pxstory meta.structure.array.pxstory
+  "2" meta.command.pxstory meta.structure.object.pxstory meta.structure.array.pxstory constant.numeric.pxstory
+  "]" meta.command.pxstory meta.structure.object.pxstory meta.structure.array.pxstory
+  "}" meta.command.pxstory meta.structure.object.pxstory
+  " " meta.command.pxstory
+  "tint" meta.command.pxstory variable.parameter.pxstory
+  "=" meta.command.pxstory keyword.operator.assignment.pxstory
+  "#C04040" meta.command.pxstory constant.other.color.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory
+> [endif]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "endif" meta.command.pxstory keyword.control.flow.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory
+> @guide
+  "@" meta.dialogue.pxstory punctuation.definition.speaker.pxstory
+  "guide" meta.dialogue.pxstory entity.name.type.speaker.pxstory
+> 今天想去哪裡呢？
+  "今天想去哪裡呢？" meta.paragraph.text.pxstory
+> @直哉「うっぷ……少し食い過ぎたか……」
+  "@" meta.dialogue.pxstory punctuation.definition.speaker.pxstory
+  "直哉" meta.dialogue.pxstory entity.name.type.speaker.pxstory
+  "「うっぷ……少し食い過ぎたか……」" meta.dialogue.pxstory
+> @guide[smile left voice=g0042] 一起去吧！
+  "@" meta.dialogue.pxstory punctuation.definition.speaker.pxstory
+  "guide" meta.dialogue.pxstory entity.name.type.speaker.pxstory
+  "[" meta.dialogue.pxstory punctuation.definition.options.begin.pxstory
+  "smile left " meta.dialogue.pxstory meta.speaker-options.pxstory
+  "voice" meta.dialogue.pxstory meta.speaker-options.pxstory variable.parameter.pxstory
+  "=" meta.dialogue.pxstory meta.speaker-options.pxstory keyword.operator.assignment.pxstory
+  "g0042" meta.dialogue.pxstory meta.speaker-options.pxstory string.unquoted.value.pxstory
+  "]" meta.dialogue.pxstory punctuation.definition.options.end.pxstory
+  " 一起去吧！" meta.dialogue.pxstory
+> @"A B" quoted speaker
+  "@" meta.dialogue.pxstory punctuation.definition.speaker.pxstory
+  "\"A B\"" meta.dialogue.pxstory string.quoted.double.speaker.pxstory
+  " quoted speaker" meta.dialogue.pxstory
+> あれめんどくさいんだよなぁ。\
+  "あれめんどくさいんだよなぁ。" meta.paragraph.text.pxstory
+  "\\" meta.paragraph.text.pxstory constant.character.escape.line-continuation.pxstory
+> [b]他で[/b]返せたら、そっちでチャラにしたいものだ。
+  "[" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "b" meta.paragraph.text.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "]" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+  "他で" meta.paragraph.text.pxstory
+  "[" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "/" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.close.pxstory
+  "b" meta.paragraph.text.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "]" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+  "返せたら、そっちでチャラにしたいものだ。" meta.paragraph.text.pxstory
+> [b]Stop[/b], she said, [color=#C04040]quietly[/color].
+  "[" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "b" meta.paragraph.text.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "]" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+  "Stop" meta.paragraph.text.pxstory
+  "[" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "/" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.close.pxstory
+  "b" meta.paragraph.text.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "]" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+  ", she said, " meta.paragraph.text.pxstory
+  "[" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "color" meta.paragraph.text.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "=" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.separator.key-value.pxstory
+  "#C04040" meta.paragraph.text.pxstory meta.tag.inline.pxstory string.unquoted.attribute-value.pxstory
+  "]" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+  "quietly" meta.paragraph.text.pxstory
+  "[" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "/" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.close.pxstory
+  "color" meta.paragraph.text.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "]" meta.paragraph.text.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+  "." meta.paragraph.text.pxstory
+> @guide [size=75%]（小声で）[/size][ruby=きおく]記憶[/ruby]がない。[br]次へ
+  "@" meta.dialogue.pxstory punctuation.definition.speaker.pxstory
+  "guide" meta.dialogue.pxstory entity.name.type.speaker.pxstory
+  " " meta.dialogue.pxstory
+  "[" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "size" meta.dialogue.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "=" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.separator.key-value.pxstory
+  "75%" meta.dialogue.pxstory meta.tag.inline.pxstory string.unquoted.attribute-value.pxstory
+  "]" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+  "（小声で）" meta.dialogue.pxstory
+  "[" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "/" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.close.pxstory
+  "size" meta.dialogue.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "]" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+  "[" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "ruby" meta.dialogue.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "=" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.separator.key-value.pxstory
+  "きおく" meta.dialogue.pxstory meta.tag.inline.pxstory string.unquoted.attribute-value.pxstory
+  "]" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+  "記憶" meta.dialogue.pxstory
+  "[" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "/" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.close.pxstory
+  "ruby" meta.dialogue.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "]" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+  "がない。" meta.dialogue.pxstory
+  "[" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "br" meta.dialogue.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "]" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+  "次へ" meta.dialogue.pxstory
+> A literal backslash \\
+  "A literal backslash " meta.paragraph.text.pxstory
+  "\\\\" meta.paragraph.text.pxstory constant.character.escape.backslash.pxstory
+> Prose with an [unknown] tag, and %% percent.
+  "Prose with an " meta.paragraph.text.pxstory
+  "[unknown]" meta.paragraph.text.pxstory meta.tag.unknown.pxstory
+  " tag, and " meta.paragraph.text.pxstory
+  "%%" meta.paragraph.text.pxstory constant.character.escape.percent.pxstory
+  " percent." meta.paragraph.text.pxstory
+> [macro scream who line volume=150%]
+  "[" meta.command.macro.pxstory punctuation.definition.command.begin.pxstory
+  "macro" meta.command.macro.pxstory storage.type.macro.pxstory
+  " " meta.command.macro.pxstory
+  "scream" meta.command.macro.pxstory entity.name.function.macro.pxstory
+  " " meta.command.macro.pxstory
+  "who" meta.command.macro.pxstory variable.parameter.pxstory
+  " " meta.command.macro.pxstory
+  "line" meta.command.macro.pxstory variable.parameter.pxstory
+  " " meta.command.macro.pxstory
+  "volume" meta.command.macro.pxstory variable.parameter.pxstory
+  "=" meta.command.macro.pxstory keyword.operator.assignment.pxstory
+  "150" meta.command.macro.pxstory constant.numeric.pxstory
+  "%" meta.command.macro.pxstory constant.numeric.pxstory keyword.other.unit.pxstory
+  "]" meta.command.macro.pxstory punctuation.definition.command.end.pxstory
+> [se se9022]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "se" meta.command.pxstory support.function.command.pxstory
+  " se9022" meta.command.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory
+> @%who [size=%volume]%line[/size]
+  "@" meta.dialogue.pxstory punctuation.definition.speaker.pxstory
+  "%who" meta.dialogue.pxstory entity.name.type.speaker.pxstory variable.other.macro-parameter.pxstory
+  " " meta.dialogue.pxstory
+  "[" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "size" meta.dialogue.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "=" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.separator.key-value.pxstory
+  "%volume" meta.dialogue.pxstory meta.tag.inline.pxstory string.unquoted.attribute-value.pxstory variable.other.macro-parameter.pxstory
+  "]" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+  "%line" meta.dialogue.pxstory variable.other.macro-parameter.pxstory
+  "[" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.begin.pxstory
+  "/" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.close.pxstory
+  "size" meta.dialogue.pxstory meta.tag.inline.pxstory entity.name.tag.pxstory
+  "]" meta.dialogue.pxstory meta.tag.inline.pxstory punctuation.definition.tag.end.pxstory
+> [endmacro]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "endmacro" meta.command.pxstory keyword.control.flow.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory
+> [scream 直哉 「ぎゃああああ」]
+  "[" meta.command.pxstory punctuation.definition.command.begin.pxstory
+  "scream" meta.command.pxstory entity.name.function.command.pxstory
+  " 直哉 「ぎゃああああ」" meta.command.pxstory
+  "]" meta.command.pxstory punctuation.definition.command.end.pxstory

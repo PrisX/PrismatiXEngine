@@ -1,0 +1,230 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "PrismatiX Story",
+  "scopeName": "source.pxstory",
+  "fileTypes": ["pxstory"],
+  "patterns": [
+    {"include": "#comment"},
+    {"include": "#label"},
+    {"include": "#if-command"},
+    {"include": "#macro-command"},
+    {"include": "#command"},
+    {"include": "#speaker"},
+    {"include": "#prose"}
+  ],
+  "repository": {
+    "comment": {
+      "match": "^\\s*(;).*$",
+      "name": "comment.line.semicolon.pxstory",
+      "captures": {"1": {"name": "punctuation.definition.comment.pxstory"}}
+    },
+    "label": {
+      "match": "^\\s*(\\*)\\s*([A-Za-z0-9][A-Za-z0-9._-]*)?(.*?)\\s*$",
+      "name": "meta.label.pxstory",
+      "captures": {
+        "1": {"name": "punctuation.definition.label.pxstory"},
+        "2": {"name": "entity.name.function.label.pxstory"},
+        "3": {"name": "invalid.illegal.label.pxstory"}
+      }
+    },
+    "if-command": {
+      "begin": "^\\s*(\\[)\\s*(if)(?=[\\s\\]])",
+      "beginCaptures": {
+        "1": {"name": "punctuation.definition.command.begin.pxstory"},
+        "2": {"name": "keyword.control.conditional.pxstory"}
+      },
+      "end": "(\\])\\s*$|$",
+      "endCaptures": {"1": {"name": "punctuation.definition.command.end.pxstory"}},
+      "name": "meta.command.if.pxstory",
+      "patterns": [
+        {"include": "#strings"},
+        {"include": "#numbers"},
+        {"include": "#constants"},
+        {"include": "#macro-parameter"},
+        {"match": "==|!=|<=|>=|<|>|&&|\\|\\||!", "name": "keyword.operator.comparison.pxstory"},
+        {"match": "[()]", "name": "punctuation.section.parens.pxstory"},
+        {"match": "[A-Za-z_][A-Za-z0-9_.]*", "name": "variable.other.pxstory"}
+      ]
+    },
+    "macro-command": {
+      "begin": "^\\s*(\\[)\\s*(macro)(?=[\\s\\]])\\s*([^\\s\\]]+)?",
+      "beginCaptures": {
+        "1": {"name": "punctuation.definition.command.begin.pxstory"},
+        "2": {"name": "storage.type.macro.pxstory"},
+        "3": {"name": "entity.name.function.macro.pxstory"}
+      },
+      "end": "(\\])\\s*$|$",
+      "endCaptures": {"1": {"name": "punctuation.definition.command.end.pxstory"}},
+      "name": "meta.command.macro.pxstory",
+      "patterns": [
+        {
+          "match": "([A-Za-z_][A-Za-z0-9_-]*)(=)",
+          "captures": {
+            "1": {"name": "variable.parameter.pxstory"},
+            "2": {"name": "keyword.operator.assignment.pxstory"}
+          }
+        },
+        {"include": "#strings"},
+        {"include": "#numbers"},
+        {"include": "#constants"},
+        {"match": "[A-Za-z_][A-Za-z0-9_-]*", "name": "variable.parameter.pxstory"}
+      ]
+    },
+    "command": {
+      "begin": "^\\s*(\\[)(?!(?:/?[bi]|br|/(?:font|size|color|ruby)|(?:font|size|color|ruby)=[^\\]]*)\\])\\s*([^\\s\\]]*)",
+      "beginCaptures": {
+        "1": {"name": "punctuation.definition.command.begin.pxstory"},
+        "2": {"patterns": [{"include": "#command-name"}]}
+      },
+      "end": "(\\])\\s*$|$",
+      "endCaptures": {"1": {"name": "punctuation.definition.command.end.pxstory"}},
+      "name": "meta.command.pxstory",
+      "patterns": [{"include": "#arguments"}]
+    },
+    "command-name": {
+      "patterns": [
+        {
+          "match": "(?<![^\\s\\[])(?:jump|call|return|end|choice|choice\\.wait|else|endif|endmacro)$",
+          "name": "keyword.control.flow.pxstory"
+        },
+        {
+          "match": "(?<![^\\s\\[])(?:id|chapter|say|narrate|bg|image|image\\.hide|transition|show|move|hide|wait|set|add|voice|voice\\.stop|bgm|bgm\\.stop|se|se\\.stop|ambience|ambience\\.stop|video|timeline|motion|motion\\.stop|ui|hud|unlock|effect|flash|tone|shake|camera|act|nvl|nvl\\.clear|adv|auto|skip\\.stop|skip\\.disable|skip\\.enable)$",
+          "name": "support.function.command.pxstory"
+        },
+        {"match": "(?<![^\\s\\[])%\\S*$", "name": "variable.other.macro-parameter.pxstory"},
+        {"match": "(?<![^\\s\\[])[^\\s\\[\\]]+$", "name": "entity.name.function.command.pxstory"}
+      ]
+    },
+    "arguments": {
+      "patterns": [
+        {
+          "match": "([A-Za-z_][A-Za-z0-9_.-]*)(=)",
+          "captures": {
+            "1": {"name": "variable.parameter.pxstory"},
+            "2": {"name": "keyword.operator.assignment.pxstory"}
+          }
+        },
+        {"include": "#strings"},
+        {"include": "#structured"},
+        {"include": "#numbers"},
+        {"include": "#constants"},
+        {"include": "#macro-parameter"},
+        {"match": "(?<==)[^\\s\\]\"'\\[{]+", "name": "string.unquoted.value.pxstory"}
+      ]
+    },
+    "structured": {
+      "patterns": [
+        {
+          "begin": "\\[",
+          "end": "\\]",
+          "name": "meta.structure.array.pxstory",
+          "patterns": [{"include": "#strings"}, {"include": "#numbers"}, {"include": "#constants"}, {"include": "#structured"}]
+        },
+        {
+          "begin": "\\{",
+          "end": "\\}",
+          "name": "meta.structure.object.pxstory",
+          "patterns": [{"include": "#strings"}, {"include": "#numbers"}, {"include": "#constants"}, {"include": "#structured"}]
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "begin": "\"",
+          "end": "\"|$",
+          "name": "string.quoted.double.pxstory",
+          "patterns": [
+            {"match": "\\\\.", "name": "constant.character.escape.pxstory"},
+            {"include": "#macro-parameter"}
+          ]
+        },
+        {
+          "begin": "'",
+          "end": "'|$",
+          "name": "string.quoted.single.pxstory",
+          "patterns": [
+            {"match": "\\\\.", "name": "constant.character.escape.pxstory"},
+            {"include": "#macro-parameter"}
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "match": "(?<![\\w.#%-])[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?(ms|s|%)?(?![\\w.])",
+      "name": "constant.numeric.pxstory",
+      "captures": {"1": {"name": "keyword.other.unit.pxstory"}}
+    },
+    "constants": {
+      "patterns": [
+        {"match": "(?<![\\w.-])(?:true|false|null)(?![\\w.-])", "name": "constant.language.pxstory"},
+        {"match": "#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?(?![\\w])", "name": "constant.other.color.pxstory"}
+      ]
+    },
+    "macro-parameter": {
+      "patterns": [
+        {"match": "%%", "name": "constant.character.escape.percent.pxstory"},
+        {"match": "%[A-Za-z_][A-Za-z0-9_-]*", "name": "variable.other.macro-parameter.pxstory"}
+      ]
+    },
+    "speaker": {
+      "begin": "^\\s*(@)(?:(\"(?:[^\"\\\\]|\\\\.)*\")|([^\\s\\[「『（(“]+))?(?:(\\[)([^\\]]*)(\\]))?",
+      "beginCaptures": {
+        "1": {"name": "punctuation.definition.speaker.pxstory"},
+        "2": {"name": "string.quoted.double.speaker.pxstory"},
+        "3": {"name": "entity.name.type.speaker.pxstory", "patterns": [{"include": "#macro-parameter"}]},
+        "4": {"name": "punctuation.definition.options.begin.pxstory"},
+        "5": {"name": "meta.speaker-options.pxstory", "patterns": [{"include": "#arguments"}]},
+        "6": {"name": "punctuation.definition.options.end.pxstory"}
+      },
+      "end": "(?<!\\\\)$|(?<=[^\\\\]\\\\\\\\)$",
+      "name": "meta.dialogue.pxstory",
+      "patterns": [{"include": "#text"}]
+    },
+    "prose": {
+      "begin": "^(?=\\s*\\S)",
+      "end": "(?<!\\\\)$|(?<=[^\\\\]\\\\\\\\)$",
+      "name": "meta.paragraph.text.pxstory",
+      "patterns": [{"include": "#text"}]
+    },
+    "text": {
+      "patterns": [
+        {"match": "\\\\\\\\", "name": "constant.character.escape.backslash.pxstory"},
+        {"match": "\\\\$", "name": "constant.character.escape.line-continuation.pxstory"},
+        {
+          "match": "(\\[)(/?)(b|i|br)(\\])",
+          "name": "meta.tag.inline.pxstory",
+          "captures": {
+            "1": {"name": "punctuation.definition.tag.begin.pxstory"},
+            "2": {"name": "punctuation.definition.tag.close.pxstory"},
+            "3": {"name": "entity.name.tag.pxstory"},
+            "4": {"name": "punctuation.definition.tag.end.pxstory"}
+          }
+        },
+        {
+          "match": "(\\[)(/)(font|size|color|ruby)(\\])",
+          "name": "meta.tag.inline.pxstory",
+          "captures": {
+            "1": {"name": "punctuation.definition.tag.begin.pxstory"},
+            "2": {"name": "punctuation.definition.tag.close.pxstory"},
+            "3": {"name": "entity.name.tag.pxstory"},
+            "4": {"name": "punctuation.definition.tag.end.pxstory"}
+          }
+        },
+        {
+          "match": "(\\[)(font|size|color|ruby)(=)([^\\]]*)(\\])",
+          "name": "meta.tag.inline.pxstory",
+          "captures": {
+            "1": {"name": "punctuation.definition.tag.begin.pxstory"},
+            "2": {"name": "entity.name.tag.pxstory"},
+            "3": {"name": "punctuation.separator.key-value.pxstory"},
+            "4": {"name": "string.unquoted.attribute-value.pxstory", "patterns": [{"include": "#macro-parameter"}]},
+            "5": {"name": "punctuation.definition.tag.end.pxstory"}
+          }
+        },
+        {"match": "\\[[^\\]]*\\]", "name": "meta.tag.unknown.pxstory"},
+        {"include": "#macro-parameter"}
+      ]
+    }
+  }
+}

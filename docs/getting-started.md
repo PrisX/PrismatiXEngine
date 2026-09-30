@@ -44,6 +44,20 @@ its adjacent native exporter.
 
 Press Ctrl+C to close a watch session. Superseded and rejected revisions are retired only after their Preview process confirms closure. The last successfully acknowledged revision remains in `.prismatix/dev/` for diagnosis and is ignored by Git. A process that cannot confirm closure keeps its resources.
 
+## Editing Story in VS Code
+
+The `vscode-pxstory` extension in `packages/vscode-pxstory` highlights
+`.pxstory` files and runs a language server built on the same Authoring SDK
+as `validate`: errors appear as you type (with the SDK's codes and spans),
+completion offers commands, characters and expressions, `storyAssets` short
+names and labels (including `scene:label` in other scenes), and
+go-to-definition and hover work on labels, macros, characters and images.
+**PrismatiX: Validate Project** runs the project's own CLI, and **PrismatiX:
+Preview From Here** starts `prismatix dev` at the cursor's scene and line
+(`--at <scene>:<line>`; a CLI without that flag is reported, not ignored).
+It is not on the Marketplace yet; build and install the `.vsix` as described
+in [its README](../packages/vscode-pxstory/README.md).
+
 ## Daily work and distribution
 
 ```bash
