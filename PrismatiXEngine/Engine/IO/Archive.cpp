@@ -1,6 +1,7 @@
 #include "Engine/Support/Utf8Path.h"
 #include "Engine/IO/Archive.h"
 
+#include "Engine/IO/FileSource.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Support/Logger.h"
 
@@ -43,6 +44,13 @@ constexpr std::uint64_t kMaxStoredEntrySize =
         kAeadRecordOverhead;
 constexpr std::size_t kMaxNameLength = 4096;
 constexpr std::size_t kFixedEntryBytes = 8 + 2 + 8 + 8 + 8 + 4 + 1;
+
+[[nodiscard]] bool SeekAbsolute(SeekableReadStream& stream,
+                                const std::uint64_t offset) {
+    return offset <= static_cast<std::uint64_t>(
+                         (std::numeric_limits<std::int64_t>::max)()) &&
+           stream.Seek(static_cast<std::int64_t>(offset), SeekOrigin::Begin);
+}
 
 class MemoryReadStream final : public SeekableReadStream {
 public:
@@ -89,36 +97,22 @@ private:
 
 class ArchiveRangeReadStream final : public SeekableReadStream {
 public:
-    ArchiveRangeReadStream(const std::string& path, const std::uint64_t offset,
-                           const std::uint64_t size)
-        : m_input(px::PathFromUtf8(path), std::ios::binary), m_offset(offset), m_size(size) {
-        if (!m_input || offset > static_cast<std::uint64_t>(
-                                    (std::numeric_limits<std::streamoff>::max)())) {
-            m_failed = true;
-            return;
-        }
-        m_input.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
-        m_failed = !m_input;
+    ArchiveRangeReadStream(const FileSource& source, const std::string& path,
+                           const std::uint64_t offset, const std::uint64_t size)
+        : m_input(source.Open(path)), m_offset(offset), m_size(size) {
+        m_failed = !m_input || !SeekAbsolute(*m_input, offset);
     }
 
     [[nodiscard]] std::size_t Read(std::uint8_t* destination,
                                    const std::size_t bytes) override {
         if (m_failed || !destination || bytes == 0 || m_position >= m_size)
             return 0;
-        const std::size_t count = static_cast<std::size_t>(std::min<std::uint64_t>(
-            m_size - m_position,
-            std::min<std::uint64_t>(
-                bytes, static_cast<std::uint64_t>(
-                           (std::numeric_limits<std::streamsize>::max)()))));
-        m_input.read(reinterpret_cast<char*>(destination),
-                     static_cast<std::streamsize>(count));
-        const std::streamsize read = m_input.gcount();
-        if (read < 0 || read != static_cast<std::streamsize>(count)) {
-            m_failed = true;
-            if (read <= 0) return 0;
-        }
-        m_position += static_cast<std::uint64_t>(read);
-        return static_cast<std::size_t>(read);
+        const auto count = static_cast<std::size_t>(
+            std::min<std::uint64_t>(m_size - m_position, bytes));
+        const std::size_t read = ReadUpTo(*m_input, destination, count);
+        if (read != count || m_input->Failed()) m_failed = true;
+        m_position += read;
+        return read;
     }
     [[nodiscard]] bool Seek(const std::int64_t offset,
                             const SeekOrigin origin) override {
@@ -134,13 +128,11 @@ public:
         const std::int64_t requested = base + offset;
         if (requested < 0 || static_cast<std::uint64_t>(requested) > m_size ||
             m_offset > static_cast<std::uint64_t>(
-                           (std::numeric_limits<std::streamoff>::max)()) -
+                           (std::numeric_limits<std::int64_t>::max)()) -
                            static_cast<std::uint64_t>(requested))
             return false;
-        m_input.clear();
-        m_input.seekg(static_cast<std::streamoff>(m_offset + requested),
-                      std::ios::beg);
-        if (!m_input) {
+        if (!SeekAbsolute(*m_input,
+                          m_offset + static_cast<std::uint64_t>(requested))) {
             m_failed = true;
             return false;
         }
@@ -152,7 +144,7 @@ public:
     [[nodiscard]] bool Failed() const override { return m_failed; }
 
 private:
-    std::ifstream m_input;
+    std::unique_ptr<SeekableReadStream> m_input;
     std::uint64_t m_offset = 0;
     std::uint64_t m_size = 0;
     std::uint64_t m_position = 0;
@@ -164,15 +156,13 @@ private:
 // without retaining the whole decompressed resource.
 class ZstdReadStream final : public SeekableReadStream {
 public:
-    ZstdReadStream(const std::string& path, const std::uint64_t offset,
-                   const std::uint64_t storedSize,
+    ZstdReadStream(const FileSource& source, const std::string& path,
+                   const std::uint64_t offset, const std::uint64_t storedSize,
                    const std::uint64_t rawSize, const std::uint32_t crc)
-        : m_input(px::PathFromUtf8(path), std::ios::binary),
+        : m_input(source.Open(path)),
           m_offset(offset), m_storedSize(storedSize), m_rawSize(rawSize),
           m_expectedCrc(crc), m_decoder(ZSTD_createDStream()) {
-        m_failed = !m_input || !m_decoder ||
-                   offset > static_cast<std::uint64_t>(
-                       (std::numeric_limits<std::streamoff>::max)());
+        m_failed = !m_input || !m_decoder;
         if (!m_failed && !Reset()) m_failed = true;
     }
 
@@ -236,11 +226,10 @@ public:
 
 private:
     [[nodiscard]] bool Reset() {
-        m_input.clear();
-        m_input.seekg(static_cast<std::streamoff>(m_offset), std::ios::beg);
         // Level-19 PDX frames need at most a 128 MiB history window. Reject
         // hostile larger windows before zstd can allocate entry-sized memory.
-        if (!m_input || ZSTD_isError(ZSTD_initDStream(m_decoder)) ||
+        if (!SeekAbsolute(*m_input, m_offset) ||
+            ZSTD_isError(ZSTD_initDStream(m_decoder)) ||
             ZSTD_isError(ZSTD_DCtx_setParameter(
                 m_decoder, ZSTD_d_windowLogMax, 27))) {
             m_failed = true;
@@ -264,9 +253,7 @@ private:
         }
         const auto count = static_cast<std::size_t>(
             std::min<std::uint64_t>(m_remainingStored, m_compressed.size()));
-        m_input.read(reinterpret_cast<char*>(m_compressed.data()),
-                     static_cast<std::streamsize>(count));
-        if (m_input.gcount() != static_cast<std::streamsize>(count)) {
+        if (!ReadExact(*m_input, m_compressed.data(), count)) {
             m_failed = true;
             return false;
         }
@@ -331,7 +318,7 @@ private:
         return false;
     }
 
-    std::ifstream m_input;
+    std::unique_ptr<SeekableReadStream> m_input;
     std::uint64_t m_offset = 0;
     std::uint64_t m_storedSize = 0;
     std::uint64_t m_rawSize = 0;
@@ -359,13 +346,14 @@ std::string ChunkContext(const std::string_view name,
 
 class ChunkedEncryptedReadStream final : public SeekableReadStream {
 public:
-    ChunkedEncryptedReadStream(std::string path, std::string name,
+    ChunkedEncryptedReadStream(const FileSource& source,
+                               const std::string& path, std::string name,
                                const std::uint64_t offset,
                                const std::uint64_t rawSize,
                                const std::uint32_t chunkSize,
                                const std::uint32_t chunkCount,
                                const crypto::Key& key)
-        : m_input(px::PathFromUtf8(path), std::ios::binary), m_name(std::move(name)),
+        : m_input(source.Open(path)), m_name(std::move(name)),
           m_offset(offset), m_rawSize(rawSize), m_chunkSize(chunkSize),
           m_chunkCount(chunkCount), m_key(key) {
         m_failed = !m_input || m_chunkSize == 0 ||
@@ -452,19 +440,11 @@ private:
             m_offset + static_cast<std::uint64_t>(index) *
                            (static_cast<std::uint64_t>(m_chunkSize) +
                             kAeadRecordOverhead);
-        if (storedOffset > static_cast<std::uint64_t>(
-                               (std::numeric_limits<std::streamoff>::max)())) {
-            m_failed = true;
-            return false;
-        }
         const std::size_t cipherBytes =
             static_cast<std::size_t>(rawBytes + kAeadRecordOverhead);
         m_cipher.resize(cipherBytes);
-        m_input.clear();
-        m_input.seekg(static_cast<std::streamoff>(storedOffset), std::ios::beg);
-        m_input.read(reinterpret_cast<char*>(m_cipher.data()),
-                     static_cast<std::streamsize>(m_cipher.size()));
-        if (m_input.gcount() != static_cast<std::streamsize>(m_cipher.size())) {
+        if (!SeekAbsolute(*m_input, storedOffset) ||
+            !ReadExact(*m_input, m_cipher.data(), m_cipher.size())) {
             m_failed = true;
             return false;
         }
@@ -481,7 +461,7 @@ private:
         return true;
     }
 
-    std::ifstream m_input;
+    std::unique_ptr<SeekableReadStream> m_input;
     std::string m_name;
     std::uint64_t m_offset = 0;
     std::uint64_t m_rawSize = 0;
@@ -496,24 +476,19 @@ private:
     bool m_failed = false;
 };
 
-std::uint32_t Crc32Range(const std::string& path, const std::uint64_t offset,
-                         const std::uint64_t size, bool& ok) {
+std::uint32_t Crc32Range(const FileSource& source, const std::string& path,
+                         const std::uint64_t offset, const std::uint64_t size,
+                         bool& ok) {
     ok = false;
-    std::ifstream input(px::PathFromUtf8(path), std::ios::binary);
-    if (!input || offset > static_cast<std::uint64_t>(
-                               (std::numeric_limits<std::streamoff>::max)()))
-        return 0;
-    input.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
-    if (!input) return 0;
+    const auto input = source.Open(path);
+    if (!input || !SeekAbsolute(*input, offset)) return 0;
     std::array<std::uint8_t, 64 * 1024> buffer{};
     std::uint64_t remaining = size;
     std::uint32_t crc = 0xffffffffu;
     while (remaining > 0) {
         const std::size_t count = static_cast<std::size_t>(
             std::min<std::uint64_t>(remaining, buffer.size()));
-        input.read(reinterpret_cast<char*>(buffer.data()),
-                   static_cast<std::streamsize>(count));
-        if (input.gcount() != static_cast<std::streamsize>(count)) return 0;
+        if (!ReadExact(*input, buffer.data(), count)) return 0;
         crc = crypto::UpdateCrc32(crc, buffer.data(), count);
         remaining -= count;
     }
@@ -632,24 +607,29 @@ std::optional<ChunkedPayload> EncryptChunked(const Bytes& input,
 
 
 bool Archive::Open(const std::string& path, const crypto::Key* key) {
+    return Open(PackageFileSource(), path, key);
+}
+
+bool Archive::Open(std::shared_ptr<const FileSource> source,
+                   const std::string& path, const crypto::Key* key) {
     Close();
-    std::ifstream in(px::PathFromUtf8(path), std::ios::binary);
+    if (!source) source = PackageFileSource();
+    const auto in = source->IsFile(path) ? source->Open(path) : nullptr;
     if (!in) {
         PX_LOG_ERROR("Archive::Open cannot open '{}'", path);
         return false;
     }
-    std::error_code sizeError;
-    const std::uintmax_t fileSize = std::filesystem::file_size(px::PathFromUtf8(path), sizeError);
-    if (sizeError || fileSize < kHeaderSize) {
+    const std::uint64_t fileSize = in->Size();
+    if (fileSize < kHeaderSize) {
         PX_LOG_ERROR("Archive::Open invalid file size for '{}'", path);
         return false;
     }
 
     std::uint8_t header[kHeaderSize];
-    in.read(reinterpret_cast<char*>(header), kHeaderSize);
-    const bool magicV4 = std::memcmp(header, kMagicV4, 4) == 0;
-    const bool magicV5 = std::memcmp(header, kMagicV5, 4) == 0;
-    if (!in || (!magicV4 && !magicV5)) {
+    const bool headerRead = ReadExact(*in, header, kHeaderSize);
+    const bool magicV4 = headerRead && std::memcmp(header, kMagicV4, 4) == 0;
+    const bool magicV5 = headerRead && std::memcmp(header, kMagicV5, 4) == 0;
+    if (!headerRead || (!magicV4 && !magicV5)) {
         PX_LOG_ERROR("Archive::Open bad magic in '{}'", path);
         return false;
     }
@@ -683,9 +663,8 @@ bool Archive::Open(const std::string& path, const crypto::Key* key) {
     }
 
     Bytes indexBlob(indexStored);
-    in.seekg(static_cast<std::streamoff>(indexOffset), std::ios::beg);
-    in.read(reinterpret_cast<char*>(indexBlob.data()), static_cast<std::streamsize>(indexStored));
-    if (!in) {
+    if (!SeekAbsolute(*in, indexOffset) ||
+        !ReadExact(*in, indexBlob.data(), indexBlob.size())) {
         PX_LOG_ERROR("Archive::Open failed to read index of '{}'", path);
         return false;
     }
@@ -773,9 +752,10 @@ bool Archive::Open(const std::string& path, const crypto::Key* key) {
     }
 
     m_path = path;
+    m_source = std::move(source);
     m_open = true;
-    PX_LOG_INFO("Mounted archive '{}' ({} entries, encrypted={})", path, m_entries.size(),
-                m_encrypted);
+    PX_LOG_INFO("Mounted archive '{}' ({} entries, encrypted={}, source={})", path,
+                m_entries.size(), m_encrypted, m_source->Name());
     return true;
 }
 
@@ -786,6 +766,7 @@ void Archive::Close() {
     m_entries.clear();
     m_index.clear();
     m_path.clear();
+    m_source.reset();
 }
 
 bool Archive::Contains(std::string_view path) const {
@@ -816,7 +797,7 @@ std::unique_ptr<SeekableReadStream> Archive::OpenStreamImpl(
 
     if ((entry.flags & kEntryChunkedEncrypted) != 0) {
         auto stream = std::make_unique<ChunkedEncryptedReadStream>(
-            m_path, entry.name, entry.offset, entry.rawSize, entry.chunkSize,
+            *m_source, m_path, entry.name, entry.offset, entry.rawSize, entry.chunkSize,
             entry.chunkCount, m_key);
         if (!stream->Failed()) return stream;
         return {};
@@ -826,14 +807,15 @@ std::unique_ptr<SeekableReadStream> Archive::OpenStreamImpl(
         if (preverifyPlainCrc) {
             bool verified = false;
             const std::uint32_t crc =
-                Crc32Range(m_path, entry.offset, entry.rawSize, verified);
+                Crc32Range(*m_source, m_path, entry.offset, entry.rawSize,
+                           verified);
             if (!verified || crc != entry.crc) {
                 PX_LOG_ERROR("Archive::OpenStream crc mismatch for '{}'", entry.name);
                 return {};
             }
         }
         auto stream = std::make_unique<ArchiveRangeReadStream>(
-            m_path, entry.offset, entry.rawSize);
+            *m_source, m_path, entry.offset, entry.rawSize);
         if (!stream->Failed()) return stream;
         return {};
     }
@@ -841,7 +823,7 @@ std::unique_ptr<SeekableReadStream> Archive::OpenStreamImpl(
     if ((entry.flags & kEntryCompressed) != 0 &&
         (entry.flags & kEntryEncrypted) == 0) {
         auto stream = std::make_unique<ZstdReadStream>(
-            m_path, entry.offset, entry.storedSize, entry.rawSize, entry.crc);
+            *m_source, m_path, entry.offset, entry.storedSize, entry.rawSize, entry.crc);
         if (!stream->Failed()) return stream;
         return {};
     }
@@ -884,14 +866,13 @@ std::optional<Bytes> Archive::Read(std::string_view path) const {
         return raw;
     }
 
-    std::ifstream in(px::PathFromUtf8(m_path), std::ios::binary);
+    const auto in = m_source->Open(m_path);
     if (!in) {
         return std::nullopt;
     }
     Bytes stored(e.storedSize);
-    in.seekg(static_cast<std::streamoff>(e.offset), std::ios::beg);
-    in.read(reinterpret_cast<char*>(stored.data()), static_cast<std::streamsize>(e.storedSize));
-    if (!in) {
+    if (!SeekAbsolute(*in, e.offset) ||
+        !ReadExact(*in, stored.data(), stored.size())) {
         return std::nullopt;
     }
 

@@ -278,16 +278,12 @@ bool RelocalizeRuntimeState(
     return true;
 }
 
-std::optional<std::string> ReadBoundedTextFile(const std::filesystem::path& path,
+// Package files come from APK assets on Android, so read through the package
+// FileSource rather than std::ifstream.
+std::optional<std::string> ReadBoundedTextFile(const std::string& path,
                                                const std::uintmax_t limit) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error || size == 0 || size > limit) return std::nullopt;
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) return std::nullopt;
-    std::string text(static_cast<std::size_t>(size), '\0');
-    stream.read(text.data(), static_cast<std::streamsize>(text.size()));
-    if (!stream) return std::nullopt;
+    auto text = io::ReadTextFile(*io::PackageFileSource(), path, limit);
+    if (!text || text->empty()) return std::nullopt;
     return text;
 }
 std::optional<Variant> JsonVariant(const nlohmann::json& value, const int depth = 0) {

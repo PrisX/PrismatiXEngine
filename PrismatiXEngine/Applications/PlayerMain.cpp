@@ -1,5 +1,6 @@
 #include "Applications/Player/PlayerApp.h"
 
+#include "Engine/IO/FileSource.h"
 #include "Engine/Support/Logger.h"
 #include "Engine/Progression/Persist.h"
 #include "Engine/Progression/UserDataLocation.h"
@@ -18,17 +19,24 @@
 #include <optional>
 
 namespace {
+// On desktop the package sits next to the executable. On Android
+// SDL_GetBasePath() is "./" and the package is in the APK's assets, which the
+// package FileSource opens by relative path.
+std::string PackageManifestPath(const std::filesystem::path& root) {
+#if defined(__ANDROID__)
+    (void)root;
+    return "Package/manifest.json";
+#else
+    return px::PathToUtf8(root / "Package/manifest.json");
+#endif
+}
+
 std::optional<std::string> PackagedGameId(const std::filesystem::path& root) {
-    const auto manifest = root / "Package/manifest.json";
-    std::error_code error;
-    const auto size = std::filesystem::file_size(manifest, error);
-    if (error || size == 0 || size > 4u * 1024u * 1024u) return std::nullopt;
-    std::ifstream input(manifest, std::ios::binary);
-    if (!input) return std::nullopt;
-    std::string text(static_cast<std::size_t>(size), '\0');
-    input.read(text.data(), static_cast<std::streamsize>(text.size()));
-    if (!input) return std::nullopt;
-    const auto parsed = px::sdk::detail::ParsePackageManifest(text);
+    const auto text = px::io::ReadTextFile(*px::io::PackageFileSource(),
+                                           PackageManifestPath(root),
+                                           4u * 1024u * 1024u);
+    if (!text || text->empty()) return std::nullopt;
+    const auto parsed = px::sdk::detail::ParsePackageManifest(*text);
     if (!parsed.Valid()) return std::nullopt;
     return parsed.manifest.gameId;
 }
@@ -159,8 +167,10 @@ int main(int argc, char* argv[]) {
         const std::filesystem::path packageRoot(
             std::u8string(base, base + std::char_traits<char>::length(base)));
         std::error_code error;
-        if (std::filesystem::is_regular_file(packageRoot / "Package/manifest.json", error)) {
+        if (px::io::PackageFileSource()->IsFile(PackageManifestPath(packageRoot))) {
+#if !defined(__ANDROID__)
             std::filesystem::current_path(packageRoot, error);
+#endif
             if (error) {
                 std::fprintf(stderr, "PXPLAYER5003: Cannot enter packaged game directory: %s\n",
                              error.message().c_str());

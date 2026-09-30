@@ -605,6 +605,7 @@ if(PRISMATIX_BUILD_WASM_PREVIEW)
         Engine/Runtime.cpp
         Engine/Platform/Input.cpp
         Engine/Platform/Window.cpp
+        Engine/IO/FileSource.cpp
         Engine/IO/VFS.cpp
     )
     prismatix_configure_target(PrismatiXPreviewWasm)
@@ -1042,6 +1043,10 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiXSplashSequencePlayerTests
         Tests/Unit/Runtime/SplashSequencePlayerTests.cpp
         PrismatiX.Unit.Runtime.Splash "unit;runtime;splash" PrismatiXRuntime)
+    prismatix_add_simple_test(
+        PrismatiXFileSourceTests
+        Tests/Unit/IO/FileSourceTests.cpp
+        PrismatiX.Unit.IO.FileSource "unit;io;archive;android" PrismatiXRuntime)
     prismatix_add_simple_test(
         PrismatiXPlayerBootSplashIntegrationTests
         Tests/Integration/PlayerBootSplashIntegrationTests.cpp

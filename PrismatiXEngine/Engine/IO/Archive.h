@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/IO/Crypto.h"
+#include "Engine/IO/FileSource.h"
 #include "Engine/IO/SeekableStream.h"
 
 #include <cstdint>
@@ -31,7 +32,13 @@ public:
         std::uint32_t chunkCount = 0;
     };
 
+    // Reads through PackageFileSource(): the file system on desktop, APK
+    // assets and internal storage on Android.
     bool Open(const std::string& path, const crypto::Key* key = nullptr);
+    // Every stream opened from this archive reads `path` through `source`,
+    // each with its own cursor. A null source means PackageFileSource().
+    bool Open(std::shared_ptr<const FileSource> source, const std::string& path,
+              const crypto::Key* key = nullptr);
     void Close();
 
     [[nodiscard]] bool IsOpen() const { return m_open; }
@@ -53,6 +60,7 @@ private:
     [[nodiscard]] std::unique_ptr<SeekableReadStream> OpenStreamImpl(
         std::string_view path, bool preverifyPlainCrc) const;
     std::string m_path;
+    std::shared_ptr<const FileSource> m_source;
     bool m_open = false;
     bool m_encrypted = false;
     std::uint32_t m_version = 0;
