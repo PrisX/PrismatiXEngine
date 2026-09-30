@@ -7,6 +7,7 @@
 #include "Engine/Graphics/CustomEffect.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Core/Clock.h"
+#include "Engine/Platform/AppLifecycle.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Platform/Window.h"
 
@@ -14,6 +15,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+union SDL_Event;
 
 namespace px {
 
@@ -69,8 +72,18 @@ public:
     [[nodiscard]] graphics::Renderer2D& Renderer() { return *m_renderer; }
     [[nodiscard]] audio::AudioEngine& Audio() { return *m_audio; }
     [[nodiscard]] const RuntimeConfig& Config() const { return m_config; }
+    // Android/iOS lifecycle. The Runtime pauses audio and video, trims caches
+    // and stops rendering while suspended; the game only supplies its save
+    // path, which runs on this thread before media is paused.
+    void SetLifecyclePersistHandler(platform::AppLifecycle::PersistHandler handler) {
+        m_lifecycle.SetPersistHandler(std::move(handler));
+    }
+    [[nodiscard]] platform::AppLifecycle& Lifecycle() { return m_lifecycle; }
 
 private:
+    static bool LifecycleEventWatch(void* userdata, SDL_Event* event);
+    void HandleEvent(SDL_Event& event, bool& resized);
+
     RuntimeConfig m_config;
     Window m_window;
     Input m_input;
@@ -80,6 +93,8 @@ private:
     std::unique_ptr<graphics::Renderer2D> m_renderer;
     std::unique_ptr<audio::AudioEngine> m_audio;
     std::function<void()> m_composedFrame;
+    platform::AppLifecycle m_lifecycle;
+    bool m_lifecycleWatch = false;
     bool m_initialized = false;
     bool m_running = false;
 };

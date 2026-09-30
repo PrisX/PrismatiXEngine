@@ -55,6 +55,11 @@ public:
     void Stop();
     void Skip();
 
+    // App lifecycle: pauses every player that is playing, and later resumes
+    // only those, so a video the story paused stays paused.
+    static void SetAllSuspended(bool suspended);
+    [[nodiscard]] bool LifecycleSuspended() const { return m_lifecycleSuspended; }
+
     void Update(float dt);
     // Draws letterboxed into the given logical-coordinate viewport.
     void Render(int logicalW, int logicalH);
@@ -96,6 +101,7 @@ private:
     float m_volume = 1.0f;
     double m_clock = 0.0;
     std::atomic<PlaybackState> m_state{PlaybackState::Idle};
+    bool m_lifecycleSuspended = false;
     std::string m_lastError;
     std::unique_ptr<FfmpegState> m_ffmpeg;
 };

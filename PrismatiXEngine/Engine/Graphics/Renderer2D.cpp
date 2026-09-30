@@ -2,6 +2,7 @@
 #include "Engine/Diagnostics/FrameProfiler.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Support/Logger.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
@@ -279,6 +280,13 @@ void Renderer2D::DestroyFrameTargets() {
     m_framePreviousTarget = nullptr;
     m_frameRecording = false;
     FinishScreenEffect(ScreenEffectStatus::Cancelled);
+}
+
+void Renderer2D::ResetRenderTargets() {
+    if (m_frameRecording) return;
+    DestroyMaskTargets();
+    DestroyFrameTargets();
+    PX_LOG_INFO("Renderer2D render targets reset; recreating on next frame");
 }
 
 bool Renderer2D::BeginFrame(const Color clearColor) {

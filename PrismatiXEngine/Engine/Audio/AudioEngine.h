@@ -195,6 +195,14 @@ public:
     // Reads a voice or sound effect on a worker thread so the line that
     // plays it does not wait for the disk. Holds the last few requests.
     void Prefetch(const std::string& path);
+    // App lifecycle (Android/iOS background). Suspending pauses every track
+    // that is audible now; unsuspending resumes exactly those, so tracks the
+    // game paused itself stay paused. Handles and saved state are unchanged.
+    void SetSuspended(bool suspended);
+    [[nodiscard]] bool Suspended() const { return m_suspended; }
+    // Low-memory response: frees decoded audio no track references and
+    // prefetched reads that have finished. Returns the entries released.
+    std::size_t TrimReclaimable();
     void PlayAmbience(const std::string& path,bool loop=true,int fadeMs=0,
                       float gain=1.0f);
     void StopAmbience(int fadeMs=0);
@@ -249,7 +257,7 @@ private:
     // Returns the track and records the audio about to play on it.
     MIX_Track* AcquireSeTrack(MIX_Audio* audio);
     // Caps decoded-audio memory; long sessions otherwise grow without bound.
-    void EvictAudio();
+    void EvictAudio(std::size_t limit);
     void ApplyMixGains();
     static bool SetTrackPaused(MIX_Track* track, bool paused);
     bool StartMusic(const std::string& path, bool loop, int fadeMs, float gain);
@@ -310,6 +318,8 @@ private:
     // Evicted reads still in flight; dropping one would block until it ends.
     std::vector<std::shared_future<std::optional<io::Bytes>>> m_retiredPrefetches;
     AudioEntry m_voiceAudio;  // current voice line only (not cached)
+    bool m_suspended = false;
+    std::vector<MIX_Track*> m_suspendedTracks;
 
     int m_bgmVolume = 96;
     int m_seVolume = 110;

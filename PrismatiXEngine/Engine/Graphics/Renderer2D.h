@@ -112,6 +112,11 @@ public:
     void SetLogicalSize(int width, int height, bool updateTextDensity = true);
     // Re-derives the text raster density after the window's pixel size changes.
     void UpdateTextDensity();
+    // The backend lost render-target contents (Android/iOS resume, device
+    // reset). Drops every offscreen target so the next frame recreates them
+    // cleared; an in-flight screen effect or presentation hold ends early
+    // rather than showing stale memory.
+    void ResetRenderTargets();
     void GetLogicalSize(int& width, int& height) const;
 
     // Runtime owns these calls. Every complete frame is rendered into a

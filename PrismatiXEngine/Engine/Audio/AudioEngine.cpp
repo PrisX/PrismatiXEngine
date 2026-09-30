@@ -171,12 +171,12 @@ MIX_Audio* AudioEngine::AcquireAudio(const std::string& path, bool predecode) {
         return nullptr;
     }
     m_audio[path] = AudioEntry{ audio, held, m_useCounter };
-    EvictAudio();
+    EvictAudio(kMaxAudioEntries);
     return audio;
 }
 
-void AudioEngine::EvictAudio() {
-    if (m_audio.size() <= kMaxAudioEntries) {
+void AudioEngine::EvictAudio(const std::size_t limit) {
+    if (m_audio.size() <= limit) {
         return;
     }
     std::vector<std::pair<std::uint64_t, std::string>> order;
@@ -187,7 +187,7 @@ void AudioEngine::EvictAudio() {
     std::sort(order.begin(), order.end());
 
     for (const auto& [lastUse, path] : order) {
-        if (m_audio.size() <= kMaxAudioEntries) {
+        if (m_audio.size() <= limit) {
             break;
         }
         auto it = m_audio.find(path);
@@ -207,7 +207,10 @@ void AudioEngine::EvictAudio() {
                 if (m_seTrackAudio[i] != audio) {
                     continue;
                 }
-                if (MIX_TrackPlaying(m_seTracks[i])) {
+                // A paused cue (including one paused by a lifecycle
+                // suspend) still needs its audio when it resumes.
+                if (MIX_TrackPlaying(m_seTracks[i]) ||
+                    MIX_TrackPaused(m_seTracks[i])) {
                     busy = true;
                     break;
                 }
@@ -223,6 +226,52 @@ void AudioEngine::EvictAudio() {
         }
         m_audio.erase(it);
     }
+}
+
+void AudioEngine::SetSuspended(const bool suspended) {
+    if (!m_initialized || suspended == m_suspended) return;
+    m_suspended = suspended;
+    std::vector<MIX_Track*> live(m_bgmTracks.begin(), m_bgmTracks.end());
+    live.push_back(m_voiceTrack);
+    live.push_back(m_ambienceTrack);
+    live.insert(live.end(), m_seTracks.begin(), m_seTracks.end());
+    for (const auto& [id, channel] : m_seChannels) live.push_back(channel.track);
+    if (suspended) {
+        m_suspendedTracks.clear();
+        for (MIX_Track* track : live)
+            if (track && MIX_TrackPlaying(track) && MIX_PauseTrack(track))
+                m_suspendedTracks.push_back(track);
+        PX_LOG_INFO("AudioEngine suspended tracks={}", m_suspendedTracks.size());
+        return;
+    }
+    std::size_t resumed = 0;
+    for (MIX_Track* track : m_suspendedTracks)
+        if (std::ranges::find(live, track) != live.end() &&
+            MIX_TrackPaused(track) && MIX_ResumeTrack(track))
+            ++resumed;
+    m_suspendedTracks.clear();
+    PX_LOG_INFO("AudioEngine resumed tracks={}", resumed);
+}
+
+std::size_t AudioEngine::TrimReclaimable() {
+    const std::size_t before = m_audio.size();
+    EvictAudio(0);
+    std::size_t released = before - m_audio.size();
+    for (auto it = m_prefetched.begin(); it != m_prefetched.end();) {
+        if (it->second.wait_for(std::chrono::seconds(0)) ==
+            std::future_status::ready) {
+            std::erase(m_prefetchOrder, it->first);
+            it = m_prefetched.erase(it);
+            ++released;
+        } else {
+            ++it;
+        }
+    }
+    released += std::erase_if(m_retiredPrefetches, [](const auto& read) {
+        return read.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+    });
+    PX_LOG_INFO("AudioEngine trimmed reclaimable entries={}", released);
+    return released;
 }
 
 MIX_Track* AudioEngine::AcquireSeTrack(MIX_Audio* audio) {

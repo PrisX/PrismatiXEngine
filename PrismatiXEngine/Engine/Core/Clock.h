@@ -7,6 +7,8 @@ namespace px {
 class Clock {
 public:
     void Tick();
+    // The next Tick() reports a zero delta, e.g. after the app was suspended.
+    void Restart() { m_lastNs = 0; }
 
     [[nodiscard]] float DeltaSeconds() const { return m_delta; }
     [[nodiscard]] std::uint64_t NowMs() const { return m_nowMs; }

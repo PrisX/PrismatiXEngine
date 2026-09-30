@@ -142,6 +142,15 @@ public:
 
     void Clear();
 
+    // Low-memory response (Android/iOS): frees file-backed textures that were
+    // not drawn last frame and cached font files no open font still uses.
+    // Everything dropped reloads on demand. Returns texture bytes released.
+    std::size_t TrimReclaimable();
+    // The GPU device was reset and texture contents are gone. Drops every
+    // file-backed texture so it reloads on next use; mem:// textures must be
+    // registered again by their owners.
+    void ReleaseDeviceTextures();
+
 private:
     struct FontEntry {
         TTF_Font* font = nullptr;

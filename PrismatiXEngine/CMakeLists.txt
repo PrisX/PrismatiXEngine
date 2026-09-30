@@ -603,6 +603,7 @@ if(PRISMATIX_BUILD_WASM_PREVIEW)
     add_executable(PrismatiXPreviewWasm
         Applications/PreviewWasmMain.cpp
         Engine/Runtime.cpp
+        Engine/Platform/AppLifecycle.cpp
         Engine/Platform/Input.cpp
         Engine/Platform/Window.cpp
         Engine/IO/FileSource.cpp
@@ -1047,6 +1048,11 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiXFileSourceTests
         Tests/Unit/IO/FileSourceTests.cpp
         PrismatiX.Unit.IO.FileSource "unit;io;archive;android" PrismatiXRuntime)
+    prismatix_add_simple_test(
+        PrismatiXAppLifecycleTests
+        Tests/Unit/Platform/AppLifecycleTests.cpp
+        PrismatiX.Unit.Platform.AppLifecycle
+        "unit;platform;lifecycle;audio;android" PrismatiXRuntime)
     prismatix_add_simple_test(
         PrismatiXPlayerBootSplashIntegrationTests
         Tests/Integration/PlayerBootSplashIntegrationTests.cpp

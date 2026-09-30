@@ -9,6 +9,9 @@
 #include "Engine/IO/Crypto.h"
 #endif
 #include "Engine/Diagnostics/FrameProfiler.h"
+#if !defined(PRISMATIX_PREVIEW_WASM)
+#include "Engine/Video/VideoPlayer.h"
+#endif
 #include "Engine/Support/Logger.h"
 
 namespace px {
@@ -22,6 +25,11 @@ bool Runtime::Init(const RuntimeConfig& config) {
         PX_LOG_ERROR("SDL_Init failed: {}", SDL_GetError());
         return false;
     }
+    // Android and iOS deliver lifecycle events synchronously from inside
+    // event pumping (on the thread that pumps), before the OS suspends the
+    // app; a polled copy could arrive only after resuming. Desktop platforms
+    // never send them.
+    m_lifecycleWatch = SDL_AddEventWatch(&Runtime::LifecycleEventWatch, this);
     if (!TTF_Init()) {
         PX_LOG_ERROR("TTF_Init failed: {}", SDL_GetError());
         SDL_Quit();
@@ -104,6 +112,24 @@ bool Runtime::Init(const RuntimeConfig& config) {
     }
     m_audio = std::make_unique<audio::AudioEngine>(m_vfs);
     m_audio->Init();
+    m_lifecycle.SetActions({
+        .suspendMedia = [this] {
+            if (m_audio) m_audio->SetSuspended(true);
+#if !defined(PRISMATIX_PREVIEW_WASM)
+            video::VideoPlayer::SetAllSuspended(true);
+#endif
+        },
+        .resumeMedia = [this] {
+            if (m_audio) m_audio->SetSuspended(false);
+#if !defined(PRISMATIX_PREVIEW_WASM)
+            video::VideoPlayer::SetAllSuspended(false);
+#endif
+        },
+        .trimCaches = [this] {
+            if (m_assets) (void)m_assets->TrimReclaimable();
+            if (m_audio) (void)m_audio->TrimReclaimable();
+        },
+    });
 
     m_initialized = true;
     m_running = true;
@@ -116,6 +142,11 @@ void Runtime::Shutdown() {
         !m_window.Valid() && SDL_WasInit(0) == 0) {
         return;
     }
+    if (m_lifecycleWatch) {
+        SDL_RemoveEventWatch(&Runtime::LifecycleEventWatch, this);
+        m_lifecycleWatch = false;
+    }
+    m_lifecycle.SetActions({});
     m_audio.reset();
     m_renderer.reset();
     m_assets.reset();
@@ -137,13 +168,22 @@ bool Runtime::BeginFrame() {
     m_input.NewFrame();
     SDL_Event event;
     bool resized = false;
-    while (SDL_PollEvent(&event)) {
-        if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) resized = true;
-        SDL_ConvertEventToRenderCoordinates(m_window.Renderer(), &event);
-        m_input.Process(event);
+    while (SDL_PollEvent(&event)) HandleEvent(event, resized);
+    // Nothing may be drawn while the app is in the background: the surface
+    // can be gone. Android's SDL glue already blocks inside the pump while
+    // paused; this also covers platforms that keep pumping.
+    while (m_lifecycle.Suspended() && !m_input.QuitRequested() &&
+           !m_lifecycle.TerminateRequested()) {
+        if (SDL_WaitEventTimeout(&event, 250)) HandleEvent(event, resized);
+    }
+    if (m_lifecycle.ConsumeResumed()) {
+        // The swapchain may have been recreated at a new size, and the time
+        // spent suspended is not frame time.
+        resized = true;
+        m_clock.Restart();
     }
     if (resized && m_renderer) m_renderer->UpdateTextDensity();
-    if (m_input.QuitRequested()) {
+    if (m_input.QuitRequested() || m_lifecycle.TerminateRequested()) {
         m_running = false;
         return false;
     }
@@ -158,6 +198,34 @@ bool Runtime::BeginFrame() {
     if (!m_renderer->BeginFrame(m_config.clearColor))
         m_window.Clear(m_config.clearColor);
     return true;
+}
+
+bool Runtime::LifecycleEventWatch(void* userdata, SDL_Event* event) {
+    auto* runtime = static_cast<Runtime*>(userdata);
+    if (!runtime || !event) return true;
+    if (const auto lifecycle =
+            platform::AppLifecycle::FromSdlEventType(event->type))
+        runtime->m_lifecycle.Handle(*lifecycle);
+    return true;
+}
+
+void Runtime::HandleEvent(SDL_Event& event, bool& resized) {
+    switch (event.type) {
+    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+        resized = true;
+        break;
+    case SDL_EVENT_RENDER_TARGETS_RESET:
+        if (m_renderer) m_renderer->ResetRenderTargets();
+        break;
+    case SDL_EVENT_RENDER_DEVICE_RESET:
+        if (m_assets) m_assets->ReleaseDeviceTextures();
+        if (m_renderer) m_renderer->ResetRenderTargets();
+        break;
+    default:
+        break;
+    }
+    SDL_ConvertEventToRenderCoordinates(m_window.Renderer(), &event);
+    m_input.Process(event);
 }
 
 void Runtime::EndFrame() {

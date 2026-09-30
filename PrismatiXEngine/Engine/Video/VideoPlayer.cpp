@@ -111,10 +111,39 @@ struct FfmpegState {
     std::string error;
 };
 
-VideoPlayer::VideoPlayer(SDL_Renderer* renderer, io::VFS& vfs)
-    : m_renderer(renderer), m_vfs(vfs) {}
+namespace {
+// Live players, for app lifecycle suspend. Players are created, destroyed
+// and suspended on the thread that owns the renderer.
+std::mutex g_playersMutex;
+std::vector<VideoPlayer*> g_players;
+}  // namespace
 
-VideoPlayer::~VideoPlayer() { Close(); }
+VideoPlayer::VideoPlayer(SDL_Renderer* renderer, io::VFS& vfs)
+    : m_renderer(renderer), m_vfs(vfs) {
+    std::scoped_lock lock(g_playersMutex);
+    g_players.push_back(this);
+}
+
+VideoPlayer::~VideoPlayer() {
+    {
+        std::scoped_lock lock(g_playersMutex);
+        std::erase(g_players, this);
+    }
+    Close();
+}
+
+void VideoPlayer::SetAllSuspended(const bool suspended) {
+    std::scoped_lock lock(g_playersMutex);
+    for (VideoPlayer* player : g_players) {
+        if (suspended) {
+            if (!player->m_lifecycleSuspended && player->Pause())
+                player->m_lifecycleSuspended = true;
+        } else if (player->m_lifecycleSuspended) {
+            player->m_lifecycleSuspended = false;
+            (void)player->Resume();
+        }
+    }
+}
 
 int VideoPlayer::ReadFfmpeg(void* opaque, std::uint8_t* buffer, const int size) {
     auto* player = static_cast<VideoPlayer*>(opaque);

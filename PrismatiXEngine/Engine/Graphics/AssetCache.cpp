@@ -147,6 +147,34 @@ void AssetCache::BeginFrame() {
     }
 }
 
+std::size_t AssetCache::TrimReclaimable() {
+    std::size_t released = 0;
+    std::erase_if(m_textures, [&](const auto& item) {
+        const auto& [path, entry] = item;
+        if (!entry.texture || path.rfind("mem://", 0) == 0 ||
+            entry.lastUse + 1 >= m_frame)
+            return false;
+        released += entry.bytes;
+        m_residentTextureBytes -= std::min(m_residentTextureBytes, entry.bytes);
+        return true;
+    });
+    const std::size_t fontFiles = std::erase_if(m_fontFiles, [](const auto& item) {
+        return item.second.use_count() == 1;
+    });
+    PX_LOG_INFO("AssetCache trimmed textureBytes={} fontFiles={}", released,
+                fontFiles);
+    return released;
+}
+
+void AssetCache::ReleaseDeviceTextures() {
+    std::erase_if(m_textures, [&](const auto& item) {
+        const auto& [path, entry] = item;
+        if (!entry.texture || path.rfind("mem://", 0) == 0) return false;
+        m_residentTextureBytes -= std::min(m_residentTextureBytes, entry.bytes);
+        return true;
+    });
+}
+
 void AssetCache::SetPreloadConcurrency(const std::size_t value) {
     m_preloadConcurrency = std::clamp<std::size_t>(value, 1, 32);
 }

@@ -870,6 +870,18 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         PX_LOG_CRITICAL("Failed to initialize runtime.");
         return false;
     }
+    // Android/iOS may kill a backgrounded app without warning: the Runtime
+    // calls this before pausing media. It reuses the autosave slot and the
+    // normal settings/profile writers, and waits for them to finish.
+    m_runtime.SetLifecyclePersistHandler([this](platform::PersistReason) {
+        if (m_appState == AppState::Game && m_session &&
+            !m_gameStartTransitionActive)
+            SaveSlotInBackground(kAutoSaveSlot);
+        HarvestBackgroundSave(true);
+        if (m_saveDirectory.empty()) return;
+        (void)SaveSettingsIfWritable();
+        (void)SaveProfileIfWritable();
+    });
     if (PX_QA_ENV("PRISMATIX_E2E_EXPECT_REMOVED_RESOURCE")) {
         const bool hidden = !m_runtime.VFS().Exists(
             "Content/Overlay/player-second.txt");
