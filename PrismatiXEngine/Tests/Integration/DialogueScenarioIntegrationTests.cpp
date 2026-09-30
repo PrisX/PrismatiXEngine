@@ -375,6 +375,7 @@ px::Variant ContractValue(const px::vn::CommandParameterDescriptor& parameter) {
         case px::VariantType::Number:
             return px::Variant(1.0);
         case px::VariantType::String:
+            if (!parameter.options.empty()) return px::Variant(parameter.options.front());
             return px::Variant(parameter.name == "textId" ? px::Uuid::Random().ToString() : std::string("value"));
         case px::VariantType::ResourceRef:
             return px::ResourceRefValue{ px::Uuid::Random(), "Content/test.asset" };
@@ -403,7 +404,7 @@ void TestEveryCommandDescriptorContract() {
     px::vn::VM vm(vfs, audio, stage, dialogue, variables, backlog);
     const std::set<std::string> hostCommands{
         "ambience", "stopambience", "route", "animation", "screen_effect",
-        "screen_transition", "hud_visibility",
+        "screen_transition", "hud_visibility", "auto_mode", "skip_control",
         "nvl", "adv", "er", "nvl_clear",
     };
     std::vector<std::string> delegated;

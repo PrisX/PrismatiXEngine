@@ -829,10 +829,10 @@ int main() {
             Operation("said", "dialogue", {{"speaker", "Alice"}, {"text", "Hi"}}),
             Operation("narrated", "narration", {{"text", "Wind."}}),
         };
-        const px::vn::Program program = px::CompileRuntimeIr(lines);
-        assert(program.errors.empty() && program.code.size() == 2);
-        assert(program.code[1].Has("speaker") && program.code[1].Get("speaker").empty());
-        assert(clearVm.LoadCompiledProgram(program, "memory://narration-speaker"));
+        const px::vn::Program narration = px::CompileRuntimeIr(lines);
+        assert(narration.errors.empty() && narration.code.size() == 2);
+        assert(narration.code[1].Has("speaker") && narration.code[1].Get("speaker").empty());
+        assert(clearVm.LoadCompiledProgram(narration, "memory://narration-speaker"));
         assert(clearDialogue.State().speaker == "Alice");
         clearDialogue.ShowAll();
         clearVm.OnAdvance();
