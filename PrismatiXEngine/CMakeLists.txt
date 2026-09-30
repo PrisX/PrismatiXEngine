@@ -874,6 +874,15 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(PrismatiX.Runtime.RuntimeIrPatch
                          PROPERTIES LABELS "runtime;contract;preview;patch")
 
+    add_executable(PrismatiXStorySyntaxRuntimeTests
+                   Tests/StorySyntaxRuntimeTests.cpp)
+    target_link_libraries(PrismatiXStorySyntaxRuntimeTests PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXStorySyntaxRuntimeTests)
+    add_test(NAME PrismatiX.Runtime.StorySyntax
+             COMMAND PrismatiXStorySyntaxRuntimeTests)
+    set_tests_properties(PrismatiX.Runtime.StorySyntax
+                         PROPERTIES LABELS "runtime;contract;narrative")
+
     add_executable(PrismatiXRuntimeAssetResolverTests
                    Tests/RuntimeAssetResolverTests.cpp)
     target_link_libraries(PrismatiXRuntimeAssetResolverTests

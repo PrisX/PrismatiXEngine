@@ -498,6 +498,11 @@ VMRunResult VM::RunSlice(const std::size_t maxInstructions) {
         }
         if (t == "choice") {
             CollectChoices();
+            // Every option hidden by its condition: there is nothing to ask.
+            if (m_choices.empty()) {
+                SkipChoiceBlock();
+                continue;
+            }
             m_state = VMState::WaitingChoice;
             return finishSlice(VMRunStatus::AwaitingInput, true);
         }
@@ -1036,18 +1041,23 @@ void VM::CollectChoices() {
     m_choices.clear();
     const auto& code = m_program.code;
     int i = m_pc;
+    bool inBlock = false;
     while (i < static_cast<int>(code.size())) {
         if (code[i].type == "choice") {
-            m_choices.push_back(
-                Choice{ FilterText(m_vars.Substitute(code[i].Get("text", code[i].Get("value"))),code[i].Get("textId")),
-                        code[i].Get("target"), code[i].sourceId,
-                        code[i].operationId });
+            inBlock = true;
+            // A conditional option (Story `if=`) is offered only while true.
+            const Variant* condition = code[i].FindTyped("condition");
+            if (condition == nullptr || EvaluateExpression(*condition, code[i]))
+                m_choices.push_back(
+                    Choice{ FilterText(m_vars.Substitute(code[i].Get("text", code[i].Get("value"))),code[i].Get("textId")),
+                            code[i].Get("target"), code[i].sourceId,
+                            code[i].operationId });
             ++i;
             continue;
         }
         // Scenario IR emits a stable statement label before every command.
         // Labels between linked Choice nodes are metadata, not a block break.
-        if (!m_choices.empty() && code[i].type == "label" &&
+        if (inBlock && code[i].type == "label" &&
             i + 1 < static_cast<int>(code.size()) && code[i + 1].type == "choice") {
             ++i;
             continue;
@@ -1056,26 +1066,38 @@ void VM::CollectChoices() {
     }
 }
 
-bool VM::EvaluateCondition(const Command& cmd) const {
-    if (const Variant* encoded = cmd.FindTyped("expression")) {
-        const auto expression = ExpressionFromValue(*encoded, m_scriptPath);
-        if (!expression) {
-            for (const auto& diagnostic : expression.Diagnostics()) diag::Emit(diagnostic);
-            return false;
-        }
-        const auto result = m_vars.Evaluate(expression.Value());
-        if (!result) {
-            for (const auto& diagnostic : result.Diagnostics()) diag::Emit(diagnostic);
-            return false;
-        }
-        if (const bool* boolean = result.Value().TryGet<bool>()) return *boolean;
-        diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXVM7601",
-                                    .category="VN.Runtime",
-                                    .message="If expression did not evaluate to bool"};
-        ApplyDiagnosticSource(diagnostic, cmd);
-        diag::Emit(std::move(diagnostic));return false;
+void VM::SkipChoiceBlock() {
+    const auto& code = m_program.code;
+    while (m_pc < static_cast<int>(code.size())) {
+        if (code[m_pc].type == "choice") { ++m_pc; continue; }
+        if (code[m_pc].type == "label" && m_pc + 1 < static_cast<int>(code.size()) &&
+            code[m_pc + 1].type == "choice") { ++m_pc; continue; }
+        break;
     }
+}
+
+bool VM::EvaluateCondition(const Command& cmd) const {
+    if (const Variant* encoded = cmd.FindTyped("expression")) return EvaluateExpression(*encoded, cmd);
     return false;
+}
+
+bool VM::EvaluateExpression(const Variant& encoded, const Command& cmd) const {
+    const auto expression = ExpressionFromValue(encoded, m_scriptPath);
+    if (!expression) {
+        for (const auto& diagnostic : expression.Diagnostics()) diag::Emit(diagnostic);
+        return false;
+    }
+    const auto result = m_vars.Evaluate(expression.Value());
+    if (!result) {
+        for (const auto& diagnostic : result.Diagnostics()) diag::Emit(diagnostic);
+        return false;
+    }
+    if (const bool* boolean = result.Value().TryGet<bool>()) return *boolean;
+    diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXVM7601",
+                                .category="VN.Runtime",
+                                .message="If expression did not evaluate to bool"};
+    ApplyDiagnosticSource(diagnostic, cmd);
+    diag::Emit(std::move(diagnostic));return false;
 }
 
 bool VM::JumpToTarget(const std::string& target) {
@@ -1121,13 +1143,7 @@ void VM::SelectChoice(int index) {
     m_choices.clear();
     // Step past the whole consecutive choice block first; a choice without a
     // target then continues after the block instead of re-prompting the rest.
-    const auto& code = m_program.code;
-    while (m_pc < static_cast<int>(code.size())) {
-        if (code[m_pc].type == "choice") { ++m_pc; continue; }
-        if (code[m_pc].type == "label" && m_pc + 1 < static_cast<int>(code.size()) &&
-            code[m_pc + 1].type == "choice") { ++m_pc; continue; }
-        break;
-    }
+    SkipChoiceBlock();
     JumpToTarget(chosen.target);
     Run();
 }

@@ -429,6 +429,17 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             Add(command, "text", Argument(operation, "text"));
             Add(command, "textId", operation.sourceId);
             Add(command, "target", LabelTarget(Argument(operation, "target")));
+            // An optional condition hides the option while it is false.
+            if (const auto condition = operation.arguments.find("condition");
+                condition != operation.arguments.end()) {
+                const auto expression = ParseRuntimeExpression(condition->second);
+                if (!expression) {
+                    adapterErrors.push_back("invalid choice condition at Runtime IR operation " +
+                                            std::to_string(index));
+                    continue;
+                }
+                command.typedArgs["condition"] = vn::ExpressionToValue(*expression);
+            }
         } else if (operation.kind == "background") {
             command.type = "bg";
             Add(command, "file", Argument(operation, "asset"));

@@ -44,7 +44,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   show: ["character", "expression", "asset", "sprite", "position", "x", "y", "scale", "rotate", "transition"],
   move: ["character", "position", "x", "y", "scale", "rotate", "duration", "ease", "wait"],
   hide: ["character", "transition"],
-  choice: ["text", "goto", "target", "scene"],
+  choice: ["text", "goto", "target", "scene", "if"],
   jump: ["goto", "target", "scene"],
   call: ["goto", "target", "scene"],
   return: [], end: [], wait: ["duration"],
@@ -290,6 +290,81 @@ function isProse(trimmed: string): boolean {
     (!trimmed.startsWith("[") || leadingTextTag.test(trimmed));
 }
 
+/** A bare `[choice]` opens a block when its first option line follows. */
+function startsChoiceBlock(lines: readonly SourceLine[], from: number): boolean {
+  for (let index = from; index < lines.length; index += 1) {
+    const text = lines[index]!.text.trim();
+    if (text.length === 0 || text.startsWith(";")) continue;
+    return text.startsWith("-");
+  }
+  return false;
+}
+
+/**
+ * One block option: `- text -> label`, optionally `scene=id`, and
+ * `if <expression>` after the target. Quote the text (`- "a -> b" -> x`) when
+ * it contains `->`. The node is an ordinary `[choice]` command.
+ */
+function parseChoiceOption(path: string, line: SourceLine,
+  diagnostics: AuthoringDiagnostic[]): StoryNode | undefined {
+  const trimmed = line.text.trim();
+  const column = line.text.indexOf(trimmed) + 1;
+  const lineSpan = span(path, line, column, column + trimmed.length);
+  const invalid = (message: string): undefined => {
+    diagnostics.push(error("PXSTORY1240", message, lineSpan));
+    return undefined;
+  };
+  if (!trimmed.startsWith("-"))
+    return invalid("A [choice] block holds `- text -> label` lines");
+  const body = trimmed.slice(1).trimStart();
+  const bodyColumn = column + trimmed.length - body.length;
+  let label: string | undefined;
+  let afterLabel: number;
+  if (body.startsWith("\"")) {
+    let end = 1;
+    while (end < body.length && body[end] !== "\"") end += body[end] === "\\" ? 2 : 1;
+    try { label = JSON.parse(body.slice(0, end + 1)) as string; } catch { label = undefined; }
+    afterLabel = end + 1;
+    if (label === undefined || !body.slice(afterLabel).trimStart().startsWith("->"))
+      return invalid("A quoted choice text must be followed by -> label");
+    afterLabel = body.indexOf("->", afterLabel);
+  } else {
+    afterLabel = body.indexOf("->");
+    if (afterLabel < 0) return invalid("A choice option needs -> and a label: `- text -> label`");
+    label = body.slice(0, afterLabel).trim();
+  }
+  if (label.length === 0) return invalid("A choice option needs text before ->");
+  let rest = body.slice(afterLabel + 2);
+  let restColumn = bodyColumn + afterLabel + 2;
+  const leading = rest.length - rest.trimStart().length;
+  rest = rest.trimStart();
+  restColumn += leading;
+  // `if` starts the condition, which runs to the end of the line.
+  const condition = /(?:^|\s)if\s+(\S.*)$/u.exec(rest);
+  const flow = condition === undefined || condition === null ? rest
+    : rest.slice(0, condition.index).trimEnd();
+  const tokenized = tokenizeCommand(flow);
+  if (tokenized.error !== undefined) return invalid(tokenized.error);
+  const flowArguments = parseArguments(path, line, tokenized.tokens, diagnostics, restColumn);
+  const textSpan = span(path, line, bodyColumn, bodyColumn + Math.max(1, afterLabel));
+  const expression = condition?.[1]?.trim();
+  const expressionColumn = expression === undefined ? 0
+    : restColumn + rest.lastIndexOf(expression);
+  return {
+    id: `story-${stableId(`${path}:${line.offset}:${trimmed}`)}`,
+    kind: "command",
+    span: lineSpan,
+    raw: line.text,
+    name: "choice",
+    arguments: [
+      {name: "text", raw: label, value: label, span: textSpan},
+      ...flowArguments,
+      ...(expression === undefined ? [] : [{name: "if", raw: expression, value: expression,
+        span: span(path, line, expressionColumn, expressionColumn + expression.length)}]),
+    ],
+  };
+}
+
 export function parseStory(text: string, path = "Story/untitled.pxstory"): StoryDocument {
   const diagnostics: AuthoringDiagnostic[] = [];
   const nodes: StoryNode[] = [];
@@ -428,7 +503,36 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
       }
       const [command, ...argumentTokens] = tokenized.tokens;
       const parsedArguments = parseArguments(path, line, argumentTokens, diagnostics,
-        startColumn + 1 + leadingWhitespace, command!.raw !== "if");
+        startColumn + 1 + leadingWhitespace, command!.raw !== "if" && command!.raw !== "elseif");
+      if (command!.raw === "choice" && argumentTokens.length === 0 &&
+          startsChoiceBlock(lines, lineIndex + 1)) {
+        // [choice] / `- text -> label` lines / [endchoice]: each option is an
+        // ordinary [choice text=... goto=...] node with its own identity.
+        let end = lineIndex + 1;
+        let options = 0;
+        for (; end < lines.length; end += 1) {
+          const optionLine = lines[end]!;
+          const optionText = optionLine.text.trim();
+          if (optionText === "[endchoice]") break;
+          if (optionText.length === 0 || optionText.startsWith(";")) continue;
+          const option = parseChoiceOption(path, optionLine, diagnostics);
+          if (option !== undefined) {
+            nodes.push(option);
+            options += 1;
+          }
+        }
+        if (end >= lines.length)
+          diagnostics.push(error("PXSTORY1241", "[choice] block is missing its [endchoice]", lineSpan));
+        else if (options === 0)
+          diagnostics.push(error("PXSTORY1242", "[choice] block has no options", lineSpan));
+        activeSpeaker = undefined;
+        lineIndex = end;
+        continue;
+      }
+      if (command!.raw === "endchoice") {
+        diagnostics.push(error("PXSTORY1241", "[endchoice] closes no [choice] block", lineSpan));
+        continue;
+      }
       if (command!.raw === "macro") {
         // The body stays source text; each call parses it after substitution.
         let end = lineIndex + 1;
@@ -862,6 +966,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     };
   };
 
+  // Open [if] chains: how many [elseif] each nested, and whether [else] came.
+  const conditions: {elseifs: number; sawElse: boolean}[] = [];
   for (const node of nodes) {
     if (node.kind === "comment" || node.kind === "speaker") continue;
     if (node.kind === "label") {
@@ -1201,14 +1307,23 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         }
         break;
       }
-      case "choice":
+      case "choice": {
+        // if="expr" hides the option while the expression is false.
+        const source = named("if");
+        const condition = source === undefined ? undefined
+          : parseStoryExpression(source, context.game?.variables);
         if (args.has("scene")) diagnostics.push(error("PXSTORY1215", "Cross-scene choice requires compileStoryProject; compileStory only resolves labels in one document", node.span));
         else if (target === undefined || named("text") === undefined) diagnostics.push(error("PXSTORY1116", "choice requires text and goto", node.span));
+        else if (condition !== undefined && (condition.error !== undefined || condition.encoded === undefined))
+          diagnostics.push(error("PXSTORY1133",
+            `Invalid choice condition: ${condition.error ?? "unknown error"}`, args.get("if")?.span ?? node.span));
         else {
           if (!labels.has(target)) diagnostics.push(error("PXSTORY1117", `Unknown choice target: ${target}`, node.span));
-          emit(node, "choiceOption", {text: named("text")!, target}, named("text")!);
+          emit(node, "choiceOption", {text: named("text")!, target,
+            ...(condition?.encoded === undefined ? {} : {condition: condition.encoded})}, named("text")!);
         }
         break;
+      }
       case "jump":
         if (args.has("scene")) diagnostics.push(error("PXSTORY1215", "Cross-scene jump requires compileStoryProject; compileStory only resolves labels in one document", node.span));
         else if (target === undefined || !labels.has(target)) diagnostics.push(error("PXSTORY1118", `Unknown jump target: ${target ?? ""}`, node.span));
@@ -1280,10 +1395,43 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         } else {
           emit(node, "condition", {expression: expression.encoded});
         }
+        conditions.push({elseifs: 0, sawElse: false});
         break;
       }
-      case "else": emit(node, "else", {}); break;
-      case "endif": emit(node, "endCondition", {}); break;
+      case "elseif": {
+        // [elseif b] lowers to [else] + a nested [if b]; the [endif] closes
+        // every condition the chain opened, so the Runtime needs nothing new.
+        const open = conditions.at(-1);
+        const source = (node.arguments ?? []).map((value) => value.raw).join(" ");
+        const expression = parseStoryExpression(source, context.game?.variables);
+        if (open === undefined)
+          diagnostics.push(error("PXSTORY1243", "[elseif] needs an open [if]", node.span));
+        else if (open.sawElse)
+          diagnostics.push(error("PXSTORY1244", "[elseif] cannot follow [else] in the same [if]", node.span));
+        else if (expression.error !== undefined || expression.encoded === undefined)
+          diagnostics.push(error("PXSTORY1133",
+            `Invalid condition expression: ${expression.error ?? "unknown error"}`, node.span));
+        else {
+          const sourceId = claimSourceId(node);
+          emit(node, "else", {}, node.raw.trim(), sourceId);
+          emit(node, "condition", {expression: expression.encoded}, node.raw.trim(),
+            `${sourceId}/elseif`);
+          open.elseifs += 1;
+        }
+        break;
+      }
+      case "else":
+        if (conditions.length > 0) conditions.at(-1)!.sawElse = true;
+        emit(node, "else", {});
+        break;
+      case "endif": {
+        const closed = conditions.pop();
+        const sourceId = claimSourceId(node);
+        emit(node, "endCondition", {}, node.raw.trim(), sourceId);
+        for (let index = 1; index <= (closed?.elseifs ?? 0); index += 1)
+          emit(node, "endCondition", {}, node.raw.trim(), `${sourceId}/elseif${index}`);
+        break;
+      }
       case "voice":
       case "bgm":
       case "ambience":
@@ -1657,7 +1805,7 @@ export interface StoryCommandCompletion {
   readonly parameters: readonly {readonly name: string; readonly required: boolean; readonly values?: readonly JsonValue[]}[];
 }
 
-const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "auto", "skip.stop", "skip.disable", "skip.enable", "macro", "endmacro"];
+const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "elseif", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "auto", "skip.stop", "skip.disable", "skip.enable", "macro", "endmacro", "endchoice"];
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
   const builtins = builtinStoryCommands;
@@ -1699,7 +1847,8 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
       {name:"character", required:true}, {name:"transition", required:false, values:[true, false]},
     ],
     choice: [{name:"text", required:true}, {name:"goto", required:false},
-      {name:"target", required:false}, {name:"scene", required:false}],
+      {name:"target", required:false}, {name:"scene", required:false},
+      {name:"if", required:false}],
     wait: [{name:"duration", required:true}],
     voice: [{name:"asset", required:true}],
     se: [{name:"asset", required:true}, {name:"channel", required:false},

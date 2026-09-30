@@ -300,7 +300,10 @@ private:
     void ExecuteSimple(const Command& cmd);
     void HandleSay(const Command& cmd, bool recordPlayback = true);
     void CollectChoices();
+    // Moves the pc past the consecutive choice block starting at it.
+    void SkipChoiceBlock();
     bool EvaluateCondition(const Command& cmd) const;
+    bool EvaluateExpression(const Variant& encoded, const Command& cmd) const;
     void ApplyDiagnosticSource(diag::Diagnostic& diagnostic,
                                const Command& command) const;
     // Jumps to a label in the current program or loads another script.

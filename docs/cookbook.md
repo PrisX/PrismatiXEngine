@@ -9,19 +9,20 @@ These examples use the public Story compiler in `packages/authoring-sdk/src/stor
 @guide
 今天想去哪裡呢？
 
-[choice text="看看星星" goto=stars]
-[choice text="聽個故事" goto=story]
-[choice.wait]
+[choice]
+- 看看星星 -> stars
+- 聽個故事 -> story
+[endchoice]
 *stars
 第一顆星亮起了。
-[jump target=finish]
+[jump finish]
 *story
 很久很久以前，有一個小小的願望。
 *finish
 [end]
 ```
 
-An empty line ends speaker scope. Labels use `*name`; choices use `text` and `goto`, jumps use `target`. A generated project's adjacent `.pxids.json` keeps save identities without `[id ...]` in the prose. Prose rewrites retain their identities; for added or removed executable lines, review `prismatix ids <project> --sync` and then run `--sync --write`. Removing an old operation requires `--accept-removals` when writing the sidecar, after reviewing old saves and migration. Do not delete the Story's `; @prismatix-ids` marker or the sidecar. Changing routes, resources or variable schemas still requires a deliberate migration test against old saves. Identity stability does not by itself prove compatibility.
+An empty line ends speaker scope. Labels use `*name`; each `- text -> label` line is one choice (the long form is `[choice text="看看星星" goto=stars]`), and `[jump finish]` is short for `[jump target=finish]`. A generated project's adjacent `.pxids.json` keeps save identities without `[id ...]` in the prose. Prose rewrites retain their identities; for added or removed executable lines, review `prismatix ids <project> --sync` and then run `--sync --write`. Removing an old operation requires `--accept-removals` when writing the sidecar, after reviewing old saves and migration. Do not delete the Story's `; @prismatix-ids` marker or the sidecar. Changing routes, resources or variable schemas still requires a deliberate migration test against old saves. Identity stability does not by itself prove compatibility.
 
 ## Short forms for long scripts
 
@@ -518,6 +519,44 @@ Declare a catalog, for example by setting `"gameCatalog":"Content/game.pxgame"` 
 ```
 
 Use `session` for story state that belongs to a checkpoint; use `profile` intentionally for cross-session progression. Do not treat profile unlocks or preferences as ordinary rollback variables. The compiler checks declared variable names and assignment types.
+
+### `[elseif]`, conditional choices and choice blocks
+
+```pxstory
+[if affection > 5]
+「ずっと一緒にいたい」
+[elseif affection > 2]
+「また明日ね」
+[else]
+「……じゃあ」
+[endif]
+
+[choice]
+- 一起看看星星 -> stars
+- 告白する -> confess if affection > 3
+- 次の日へ -> scene=day2
+[endchoice]
+```
+
+- `[elseif expr]` may repeat between `[if]` and an optional `[else]`. It
+  compiles to `[else]` plus a nested `[if]`, and the one `[endif]` closes
+  them all, so older Players run it unchanged. `[elseif]` without an open
+  `[if]` is `PXSTORY1243`; after `[else]` it is `PXSTORY1244`; a bad
+  expression is `PXSTORY1133` as for `[if]`.
+- `[choice text="告白する" goto=confess if="affection > 3"]` shows the option
+  only while the expression is true when the choices appear. The others keep
+  their order; if every option is hidden, the Story continues after the
+  choices instead of waiting. Saves keep the options that were offered.
+- A `[choice]` block lists one option per line as `- text -> label`. After
+  the label, `scene=id` jumps to another scene (`-> scene=day2` alone jumps
+  to its start) and `if <expression>` runs to the end of the line. Quote the
+  text when it contains `->` (`- "A -> B" -> label`). Blank lines and `;`
+  comments are allowed; `[choice.wait]` is not needed. Each option compiles
+  to exactly the operation of the equivalent `[choice text=... goto=...]`
+  line and is its own entry in the `.pxids.json` sidecar.
+- Block mistakes: a line that is not an option is `PXSTORY1240`, a missing
+  `[endchoice]` (or one without a block) is `PXSTORY1241`, and an empty block
+  is `PXSTORY1242`.
 
 ## UI actions and Timeline
 
