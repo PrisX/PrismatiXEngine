@@ -26,7 +26,11 @@ if(NOT PRISMATIX_ENGINE_COMMIT_LENGTH EQUAL 40 OR
     set(PRISMATIX_ENGINE_COMMIT "0000000000000000000000000000000000000000")
 endif()
 if(NOT DEFINED PRISMATIX_TARGET_TRIPLE OR PRISMATIX_TARGET_TRIPLE STREQUAL "")
-    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    if(ANDROID AND CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
+        set(PRISMATIX_TARGET_TRIPLE "aarch64-linux-android")
+    elseif(ANDROID)
+        set(PRISMATIX_TARGET_TRIPLE "${CMAKE_ANDROID_ARCH_ABI}-linux-android")
+    elseif(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
         set(PRISMATIX_TARGET_TRIPLE "x86_64-pc-windows-msvc")
     elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
         set(PRISMATIX_TARGET_TRIPLE "aarch64-apple-darwin")
@@ -111,8 +115,18 @@ target_link_libraries(PrismatiXSDK PUBLIC
     zstd::libzstd
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
-    SDL3_shadercross::SDL3_shadercross
 )
+if(ANDROID)
+    # Packaging (and so custom-effect shader compilation) runs on the host.
+    # The Android Player links PrismatiXSDK only for package verification.
+    target_compile_definitions(PrismatiXSDK PRIVATE
+        PRISMATIX_OFFLINE_SHADER_COMPILER=0)
+else()
+    target_link_libraries(PrismatiXSDK PUBLIC
+        SDL3_shadercross::SDL3_shadercross)
+    target_compile_definitions(PrismatiXSDK PRIVATE
+        PRISMATIX_OFFLINE_SHADER_COMPILER=1)
+endif()
 if(TARGET MbedTLS::mbedcrypto)
     target_link_libraries(PrismatiXSDK PUBLIC MbedTLS::mbedcrypto)
 elseif(TARGET MbedTLS::tfpsacrypto)
@@ -124,10 +138,11 @@ endif()
 add_library(PrismatiXPackagerSDK INTERFACE)
 add_library(PrismatiX::PackagerSDK ALIAS PrismatiXPackagerSDK)
 set_target_properties(PrismatiXPackagerSDK PROPERTIES EXPORT_NAME PackagerSDK)
-target_link_libraries(PrismatiXPackagerSDK INTERFACE
-    PrismatiXSDK
-    SDL3_shadercross::SDL3_shadercross
-)
+target_link_libraries(PrismatiXPackagerSDK INTERFACE PrismatiXSDK)
+if(NOT ANDROID)
+    target_link_libraries(PrismatiXPackagerSDK INTERFACE
+        SDL3_shadercross::SDL3_shadercross)
+endif()
 
 install(TARGETS PrismatiXSDK PrismatiXPackagerSDK EXPORT PrismatiXSDKTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PrismatiXSDK
@@ -332,7 +347,7 @@ if(NOT EMSCRIPTEN)
     if(APPLE)
         list(APPEND PRISMATIX_NATIVE_PLATFORM_SOURCES
             Engine/Accessibility/PlatformSemanticAdapterMac.mm)
-    elseif(UNIX)
+    elseif(UNIX AND NOT ANDROID)
         list(APPEND PRISMATIX_NATIVE_PLATFORM_SOURCES
             Engine/Accessibility/PlatformSemanticAdapterLinux.cpp)
     endif()
@@ -364,6 +379,11 @@ if(NOT EMSCRIPTEN)
         set_source_files_properties(
             Engine/Accessibility/PlatformSemanticAdapterMac.mm
             PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    elseif(ANDROID)
+        # UNVERIFIED: SDL3's static Android build normally exports these
+        # through its CMake config; listed so a static link cannot miss them.
+        target_link_libraries(PrismatiXRuntimePlatformNative PUBLIC
+            android log)
     elseif(UNIX)
         target_link_libraries(PrismatiXRuntimePlatformNative PUBLIC
             PkgConfig::DBUS)
@@ -379,10 +399,28 @@ if(NOT EMSCRIPTEN)
 # with the PRISMATIX_E2E_* hooks (scripted journeys, save redirection, start
 # labels) compiled in; tests and QA packs use it, games never ship it.
 function(prismatix_add_player target qa_hooks)
-    add_executable(${target}
+    set(_player_sources
         Applications/PlayerMain.cpp
         Applications/Player/PlayerApp.cpp
     )
+    if(ANDROID)
+        # UNVERIFIED on a device. SDL's Java glue (SDLActivity) loads the
+        # game as libmain.so and calls its SDL_main; see docs/android.md.
+        # The shipped and QA Players both use that name, so they build into
+        # separate directories.
+        add_library(${target} SHARED ${_player_sources})
+        if(qa_hooks)
+            set(_player_variant qa)
+        else()
+            set(_player_variant shipped)
+        endif()
+        set_target_properties(${target} PROPERTIES
+            OUTPUT_NAME main
+            LIBRARY_OUTPUT_DIRECTORY
+                "${CMAKE_BINARY_DIR}/android/${_player_variant}/${CMAKE_ANDROID_ARCH_ABI}")
+    else()
+        add_executable(${target} ${_player_sources})
+    endif()
     target_link_libraries(${target} PRIVATE PrismatiXRuntime)
     target_compile_definitions(${target} PRIVATE PRISMATIX_QA_HOOKS=${qa_hooks})
     if(MSVC)
@@ -399,6 +437,9 @@ endfunction()
 prismatix_add_player(PrismatiXPlayer 0)
 prismatix_add_player(PrismatiXPlayerQA 1)
 
+# Everything below is desktop tooling and its install layout. An Android
+# build produces only the Player libraries; packaging stays on the host.
+if(NOT ANDROID)
 add_executable(PrismatiXPackager Applications/PackagerMain.cpp)
 target_link_libraries(PrismatiXPackager PRIVATE PrismatiXPackagerSDK PrismatiXRuntime)
 prismatix_configure_target(PrismatiXPackager)
@@ -597,6 +638,7 @@ if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
         FILES_MATCHING PATTERN "*.dll"
     )
 endif()
+endif()  # NOT ANDROID
 endif()
 
 if(PRISMATIX_BUILD_WASM_PREVIEW)
@@ -640,7 +682,7 @@ if(PRISMATIX_BUILD_WASM_PREVIEW)
         VERBATIM)
 endif()
 
-if(BUILD_TESTING AND NOT EMSCRIPTEN)
+if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
     # Contract and integration tests use assert() as their executable test
     # primitive. Keep those checks active in Release/RelWithDebInfo quality
     # gates; otherwise NDEBUG removes both validation and assertion operands.

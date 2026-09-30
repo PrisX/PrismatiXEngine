@@ -1,0 +1,56 @@
+// PrismatiX Android Player app module. UNVERIFIED: not yet built into an
+// APK or run on a device. See docs/android.md for the manual steps.
+//
+// Inputs this module expects, all copied in by hand for now:
+//   src/main/jniLibs/arm64-v8a/libmain.so    PrismatiXPlayer (android-arm64 preset)
+//   src/main/jniLibs/arm64-v8a/libav*.so     FFmpeg shared libraries (LGPL)
+//   src/main/jniLibs/arm64-v8a/libsw*.so
+//   src/main/java/org/libsdl/app/*.java      SDL 3.4.x Java glue (same version as native SDL)
+//   src/main/assets/                         the packaged game: Package/ and *.pdx
+plugins {
+    id "com.android.application"
+}
+
+android {
+    // Replace with the game's reverse-DNS identifier before release.
+    namespace "com.prismatix.player"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.example.prismatixgame"
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName "0.1.0"
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Signing is configured by the developer; see docs/android.md.
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    androidResources {
+        // PDX shards are already zstd-compressed, and the Player seeks inside
+        // them. Stored (uncompressed) assets can be opened and seeked in
+        // place; compressed ones would be inflated on every backward seek.
+        noCompress += ["pdx", "json"]
+    }
+
+    packagingOptions {
+        jniLibs {
+            // Keep .so files uncompressed and page-aligned so they load
+            // straight from the APK.
+            useLegacyPackaging false
+        }
+    }
+}

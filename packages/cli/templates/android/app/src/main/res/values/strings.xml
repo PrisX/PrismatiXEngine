@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Replace with the game's title. -->
+    <string name="app_name">PrismatiX Game</string>
+</resources>

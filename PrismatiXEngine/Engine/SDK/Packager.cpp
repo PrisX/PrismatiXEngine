@@ -5,7 +5,12 @@
 
 #include <psa/crypto.h>
 #include <SDL3/SDL.h>
+#ifndef PRISMATIX_OFFLINE_SHADER_COMPILER
+#define PRISMATIX_OFFLINE_SHADER_COMPILER 1
+#endif
+#if PRISMATIX_OFFLINE_SHADER_COMPILER
 #include <SDL3_shadercross/SDL_shadercross.h>
+#endif
 #include <SDL3_ttf/SDL_ttf.h>
 #include <zstd.h>
 
@@ -1480,7 +1485,13 @@ std::optional<Bytes> ReadArchiveEntry(const ArchiveEntry& entry,
 bool ShaderCrossReady() {
     static std::once_flag once;
     static bool ready = false;
+#if PRISMATIX_OFFLINE_SHADER_COMPILER
     std::call_once(once, [] { ready = SDL_ShaderCross_Init(); });
+#else
+    std::call_once(once, [] {
+        SDL_SetError("the offline shader compiler exists only in host builds");
+    });
+#endif
     return ready;
 }
 
@@ -1690,6 +1701,7 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
             continue;
         }
 
+#if PRISMATIX_OFFLINE_SHADER_COMPILER
         SDL_ShaderCross_HLSL_Info hlslInfo{};
         hlslInfo.source = hlsl.c_str();
         hlslInfo.entrypoint = "main";
@@ -1774,6 +1786,10 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
 #endif
         SDL_free(msl);
         SDL_free(spirv);
+#else
+        // Not reached: ShaderCrossReady() fails first on these targets.
+        continue;
+#endif
         result.sourceAssets.insert(shaderPath);
         result.manifests.push_back(std::move(compiled));
     }

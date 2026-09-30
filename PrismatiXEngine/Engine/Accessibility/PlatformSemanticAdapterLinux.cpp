@@ -1,6 +1,6 @@
 #include "Engine/Accessibility/PlatformSemanticAdapter.h"
 
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 
 #include "Engine/Support/Logger.h"
 

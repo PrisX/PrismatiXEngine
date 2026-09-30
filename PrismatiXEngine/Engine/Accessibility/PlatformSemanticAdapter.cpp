@@ -1080,7 +1080,7 @@ std::string_view PlatformAccessibilityBackend() { return "Windows UI Automation"
 
 }  // namespace px::accessibility
 
-#elif !defined(__APPLE__) && !defined(__linux__)
+#elif !defined(__APPLE__) && (!defined(__linux__) || defined(__ANDROID__))
 
 namespace px::accessibility {
 std::shared_ptr<SemanticAdapter> CreatePlatformSemanticAdapter(SDL_Window*) {

@@ -1,0 +1,18 @@
+// PrismatiX Android Player project template. UNVERIFIED: this project has
+// not been built into an APK or run on a device yet. See docs/android.md.
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "PrismatiXGame"
+include(":app")
