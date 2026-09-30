@@ -46,6 +46,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   show: ["character", "expression", "asset", "sprite", "position", "x", "y", "scale", "rotate", "transition"],
   move: ["character", "position", "x", "y", "scale", "rotate", "duration", "ease", "wait"],
   hide: ["character", "transition"],
+  face: ["character", "face", "transition"],
   choice: ["text", "goto", "target", "scene", "if"],
   jump: ["goto", "target", "scene"],
   call: ["goto", "target", "scene"],
@@ -975,6 +976,33 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     return framed;
   };
 
+  // [face alias key]: for every body (the set of `base` layers) of a layered
+  // character, the expression that shows the face `key`. The key is a face
+  // image's file name without extension (e0023), several joined with +, or
+  // an expression whose face to use. The Player picks the entry matching the
+  // body on stage, so the pose, position and outfit stay.
+  const faceTables = new Map<string, readonly {readonly expression: CharacterDocument["expressions"][number];
+    readonly base: string; readonly face: string}[]>();
+  const layeredExpressions = (character: CharacterDocument) => {
+    let table = faceTables.get(character.id);
+    if (table !== undefined) return table;
+    const stem = (path: string) => path.slice(path.lastIndexOf("/") + 1).replace(/\.[^.]*$/u, "");
+    table = character.expressions.flatMap((expression) => {
+      const source = canonicalResourceReference(`asset:${expression.assetId}`,
+        context.resourceAssets ?? [])?.source;
+      const portrait = source === undefined || !source.endsWith(".pxportrait") ? undefined
+        : context.portraits?.layers(source);
+      if (portrait === undefined || portrait.schemaRevision !== 2) return [];
+      const base = portrait.layers.filter((layer) => layer.role === "base").map((layer) => layer.path);
+      const face = portrait.layers.filter((layer) => layer.role === "expression")
+        .map((layer) => stem(layer.path)).sort();
+      return base.length === 0 || face.length === 0 ? []
+        : [{expression, base: base.join("\n"), face: face.join("+")}];
+    });
+    faceTables.set(character.id, table);
+    return table;
+  };
+
   // Shared by [show] and inline `@alias[expression position]` dialogue.
   const showArguments = (node: StoryNode, alias: string,
     authored: {readonly expression?: string; readonly position?: string;
@@ -1312,6 +1340,51 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
             ...(transition === undefined ? {} : {transition}),
           });
         }
+        break;
+      }
+      case "face": {
+        const alias = named("character") ?? positional(0);
+        const wanted = named("face") ?? positional(named("character") === undefined ? 1 : 0);
+        const transition = named("transition");
+        const character = alias === undefined ? undefined : characters.get(alias);
+        if (alias === undefined || wanted === undefined) {
+          diagnostics.push(error("PXSTORY1260", "face requires a character and a face", node.span));
+          break;
+        }
+        if (character === undefined) {
+          diagnostics.push(error("PXSTORY1113", `Unknown character alias: ${alias}`, node.span));
+          break;
+        }
+        if (transition !== undefined && transition !== "true" && transition !== "false" && transition !== "auto") {
+          diagnostics.push(error("PXSTORY1145", "face transition must be true, false, or auto", node.span));
+          break;
+        }
+        const layered = layeredExpressions(character);
+        if (layered.length === 0) {
+          diagnostics.push(error("PXSTORY1261",
+            `${alias} has no layered expressions (.pxportrait revision 2 with base and expression layers)`,
+            node.span));
+          break;
+        }
+        const byName = character.expressions.find((value) => value.id === wanted ||
+          value.aliases.includes(wanted) || value.name === wanted);
+        const key = byName === undefined ? wanted
+          : layered.find((item) => item.expression === byName)?.face;
+        const byBody = new Map<string, (typeof layered)[number]>();
+        for (const item of layered)
+          if (item.face === key && !byBody.has(item.base)) byBody.set(item.base, item);
+        if (byBody.size === 0) {
+          diagnostics.push(error("PXSTORY1262", `No layered expression of ${alias} shows face ${wanted}`,
+            node.span));
+          break;
+        }
+        const faces = [...byBody.values()].map((item) => {
+          if (context.resourceAssets !== undefined) resolveResource(node, `asset:${item.expression.assetId}`);
+          return {base: item.base, sprite: `asset:${item.expression.assetId}`,
+            expression: item.expression.id};
+        });
+        emit(node, "showCharacter", {character: character.id, faces: JSON.stringify(faces),
+          ...(transition === undefined ? {} : {transition})});
         break;
       }
       case "move": {
@@ -1852,7 +1925,7 @@ export interface StoryCommandCompletion {
   readonly parameters: readonly {readonly name: string; readonly required: boolean; readonly values?: readonly JsonValue[]}[];
 }
 
-const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "elseif", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "auto", "skip.stop", "skip.disable", "skip.enable", "macro", "endmacro", "endchoice", "var"];
+const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "elseif", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "auto", "skip.stop", "skip.disable", "skip.enable", "macro", "endmacro", "endchoice", "var", "face"];
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
   const builtins = builtinStoryCommands;

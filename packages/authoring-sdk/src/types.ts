@@ -1,6 +1,7 @@
 import type {ProjectAssetDescriptor} from "./resources.js";
 import type {StoryAssetIndex} from "./story-assets.js";
 import type {StoryMacroLibrary} from "./story-macros.js";
+import type {StoryPortraitIndex} from "./portrait.js";
 
 export type DiagnosticSeverity = "error" | "warning" | "information";
 
@@ -244,6 +245,8 @@ export interface StoryCompileContext {
   readonly storyAssets?: StoryAssetIndex;
   /** Project-wide macros from the `storyMacros` files; see createStoryMacroLibrary. */
   readonly storyMacros?: StoryMacroLibrary;
+  /** Layered portrait descriptors for `[face]`; see createStoryPortraitIndex. */
+  readonly portraits?: StoryPortraitIndex;
 }
 
 export interface StoryCompileResult {

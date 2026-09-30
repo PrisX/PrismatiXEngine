@@ -48,6 +48,12 @@ count, roles, and all `base` layers are identical while at least one
 portraits. This makes a changed outfit or pose safe without per-story-line
 transition flags; it does not infer semantic roles from filenames.
 
+When a character's expressions are role-tagged descriptors, `[face alias
+e0023]` changes only the face: the compiler finds, for each set of `base`
+layers, the expression whose `expression` layer file is named `e0023`, and
+the Player picks the one matching the body on stage. See the Story
+cookbook's "Changing only the face of a layered character".
+
 The Authoring project compiler validates reachable descriptors and includes
 their layer textures from Story, UI action arguments, locale resources,
 explicit includes, or asset-catalog references. A UI `TextureRect` can use a

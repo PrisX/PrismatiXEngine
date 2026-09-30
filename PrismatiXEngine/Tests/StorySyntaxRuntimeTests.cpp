@@ -12,7 +12,10 @@
 #include "Engine/VN/Runtime/VM.h"
 
 #include <cassert>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -180,6 +183,62 @@ int main() {
         }), path));
         assert(dialogue.State().fullText == "待ってね！");
         assert(!backlog.Entries().empty() && backlog.Entries().back().text == "待ってね！");
+    }
+
+    // [face]: the entry whose base layers match the body on stage wins, and
+    // the placement is kept.
+    {
+        const auto root = std::filesystem::temp_directory_path() /
+                          ("prismatix-story-face-" + std::to_string(std::random_device{}()));
+        std::filesystem::create_directories(root / "P");
+        const auto portrait = [&](const std::string& name, const std::string& body,
+                                  const std::string& face) {
+            std::ofstream(root / "P" / name, std::ios::binary)
+                << R"({"format":"PrismatiXLayeredPortrait","schemaRevision":2,"width":16,"height":16,"layers":[)"
+                << R"({"path":")" << body << R"(","width":16,"height":16,"role":"base"},)"
+                << R"({"path":")" << face << R"(","width":8,"height":8,"role":"expression"}]})";
+        };
+        portrait("z1_e1.pxportrait", "L/body1.png", "L/e1.png");
+        portrait("z1_e2.pxportrait", "L/body1.png", "L/e2.png");
+        portrait("z2_e1.pxportrait", "L/body2.png", "L/e1.png");
+        portrait("z2_e2.pxportrait", "L/body2.png", "L/e2.png");
+        px::io::VFS faceVfs;
+        faceVfs.MountDirectory(root.string());
+        px::graphics::AssetCache faceAssets(nullptr, faceVfs);
+        px::graphics::Renderer2D faceRenderer(nullptr, faceAssets);
+        px::vn::Stage faceStage(faceRenderer, faceAssets);
+        px::vn::Dialogue faceDialogue;
+        px::vn::VariableStore faceVariables;
+        px::vn::Backlog faceBacklog;
+        px::vn::VM faceVm(faceVfs, audio, faceStage, faceDialogue, faceVariables, faceBacklog);
+        const std::string table =
+            R"([{"base":"L/body1.png","sprite":"P/z1_e2.pxportrait","expression":"e2"},)"
+            R"({"base":"L/body2.png","sprite":"P/z2_e2.pxportrait","expression":"e2b"}])";
+        for (const std::string body : {"z1", "z2"}) {
+            assert(faceVm.LoadCompiledProgram(Compile({
+                Operation("show", "showCharacter", {{"character", "hero"},
+                    {"sprite", "P/" + body + "_e1.pxportrait"}, {"position", "1"}, {"x", "12"}}),
+                Operation("face", "showCharacter", {{"character", "hero"}, {"faces", table}}),
+                Operation("line", "narration", {{"text", "ok"}}),
+            }), path));
+            assert(faceStage.CharacterImage("hero") == "P/" + body + "_e2.pxportrait");
+            const auto placement = faceStage.FindCharacterPlacement("hero");
+            assert(placement && placement->slot == 1 && placement->offsetX == 12.0f);
+        }
+        // A body the table does not know keeps the current image.
+        assert(faceVm.LoadCompiledProgram(Compile({
+            Operation("show", "showCharacter", {{"character", "hero"}, {"sprite", "P/z1_e1.pxportrait"}}),
+            Operation("face", "showCharacter", {{"character", "hero"}, {"faces",
+                R"([{"base":"L/other.png","sprite":"P/z2_e2.pxportrait"}])"}}),
+            Operation("line", "narration", {{"text", "ok"}}),
+        }), path));
+        assert(faceStage.CharacterImage("hero") == "P/z1_e1.pxportrait");
+        px::sdk::RuntimeIrDocument badFaces;
+        badFaces.documentId = "bad-faces";
+        badFaces.operations = {Operation("face", "showCharacter", {{"character", "hero"}, {"faces", "{}"}})};
+        assert(!px::CompileRuntimeIr(badFaces).errors.empty());
+        std::error_code ignored;
+        std::filesystem::remove_all(root, ignored);
     }
 
     std::cout << "Story syntax runtime tests passed\n";

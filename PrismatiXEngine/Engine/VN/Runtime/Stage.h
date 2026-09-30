@@ -189,6 +189,9 @@ public:
         const std::string& name) const;
     // The image a visible (not exiting) character shows, if any.
     [[nodiscard]] std::optional<std::string> CharacterImage(const std::string& name) const;
+    // The `base` layer paths (one per line) of the revision-2 layered
+    // portrait a visible character shows; Story [face] matches its body.
+    [[nodiscard]] std::optional<std::string> CharacterPortraitBase(const std::string& name);
     // Prefetches a plain sprite or the image layers referenced by a portrait
     // descriptor. Descriptors themselves are not image textures.
     void PreloadCharacter(const std::string& imagePath);

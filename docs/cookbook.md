@@ -466,6 +466,36 @@ and a click or skip moves on:
 Rule images resolve from `storyAssets.rule`. `[act window hop size=5]` plays
 any character action preset on the message window.
 
+### Changing only the face of a layered character
+
+When a character's expressions are revision-2 `.pxportrait` descriptors
+(see [layered portraits](portrait-authoring.md)), each expression is a body
+(`base` layers) plus a face (`expression` layers), and an alias such as
+`z1e0700_e0022` names both. `[face]` changes only the face and keeps the
+body, pose, position, offset, scale and turn on stage:
+
+```pxstory
+[show 藍 z1e0700_e0022 center]
+@藍「……」
+[face 藍 e0023]
+@藍「えへへ」
+[face 藍 z1e0000_e0001]
+```
+
+- The face is the file name, without extension, of the expression layer
+  image (`e0023` for `.../e0023.png`; several layers join with `+`), or an
+  expression alias whose face to use.
+- The compiler lists, for every body of that character, the expression that
+  shows this face; the Player picks the one whose `base` layers match the
+  portrait on stage and switches with `transition=auto` (only the face
+  crossfades). `transition=true|false` works as for `[show]`.
+- A character without layered expressions is `PXSTORY1261`; a face no
+  expression shows is `PXSTORY1262`; `[face]` without a character and a face
+  is `PXSTORY1260`. At run time a body with no such face, or a character not
+  on stage, leaves the image unchanged and logs warning `PXVN6102`.
+- The message-window face option `@藍[face=...]` is a different feature: it
+  picks the face image shown inside the message window for one line.
+
 To add an expression, add a source image and an expression with `assetPath` in `Characters/guide.pxcharacter`, then select its alias with `expression=...`. The Authoring project compiler generates canonical character, expression, and asset UUIDs when omitted; no catalog entry is needed for that image. For example, `{"name":"Happy","aliases":["happy"],"assetPath":"Assets/guide-happy.png"}` is enough inside `expressions`. TypeScript generators can use the exported `CharacterSourceDocument` type; the stricter `CharacterDocument` type describes the published canonical file. Validate this shorthand with `compileProject` or `prismatix validate`, not the low-level `validateDocument("character")` canonical checker. The generated IDs derive from the project, character source path, expression's first alias, and image path. Keep those stable across save-compatible releases, or pin `id`/`assetId` explicitly before renaming; a file move is not automatically a save migration. Positions are `left`, `center`, `right` (also 1/2/3). The move duration is milliseconds in the native session implementation.
 
 For a dynamically selected family of UI/media files, put the containing

@@ -473,6 +473,34 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             Add(command, "rule", Argument(operation, "rule"));
             Add(command, "vague", Argument(operation, "vague"));
             Add(command, "wait", Argument(operation, "wait"));
+        } else if (operation.kind == "showCharacter" &&
+                   operation.arguments.contains("faces")) {
+            // Story [face]: one expression per body; the VM picks the one
+            // whose base layers match the portrait on stage.
+            command.type = "char_face";
+            Add(command, "id", Argument(operation, "character"));
+            Add(command, "transition", Argument(operation, "transition"));
+            const nlohmann::json faces =
+                nlohmann::json::parse(Argument(operation, "faces"), nullptr, false);
+            VariantArray entries;
+            bool valid = faces.is_array() && !faces.empty();
+            for (const auto& face : valid ? faces : nlohmann::json::array()) {
+                if (!face.is_object() || !face.contains("base") || !face["base"].is_string() ||
+                    !face.contains("sprite") || !face["sprite"].is_string()) {
+                    valid = false;
+                    break;
+                }
+                VariantObject entry;
+                entry["base"] = Variant(face["base"].get<std::string>());
+                entry["file"] = Variant(face["sprite"].get<std::string>());
+                entries.push_back(Variant(std::move(entry)));
+            }
+            if (!valid) {
+                adapterErrors.push_back("invalid face table at Runtime IR operation " +
+                                        std::to_string(index));
+                continue;
+            }
+            command.typedArgs["faces"] = Variant(std::move(entries));
         } else if (operation.kind == "showCharacter") {
             command.type = "char";
             Add(command, "id", Argument(operation, "character"));

@@ -10,7 +10,8 @@ import {createJsonSourceLocator, jsonPointerSpans} from "./json-source-spans.js"
 import {validateHostActionContract, validateUiActionUsage,
   type HostActionContract} from "./project-actions.js";
 import {validatePlayerUiBindings} from "./project-ui-bindings.js";
-import type {LayeredPortraitDocument} from "./portrait.js";
+import {createStoryPortraitIndex, type LayeredPortraitDocument,
+  type StoryPortraitIndex} from "./portrait.js";
 import type {MotionDocument} from "./motion.js";
 import {validateProjectCharacterResources} from "./project-resources.js";
 import {validateUiPropertyUsage, type UiTypeRegistryMetadata} from "./semantic.js";
@@ -894,6 +895,24 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       return {diagnostics, valid: false};
     storyMacros = built.library;
   }
+  // [face] reads the layered portraits of character expressions. Load them
+  // only when some Story (or shared macro file) uses the command.
+  let portraits: StoryPortraitIndex | undefined;
+  if (Object.entries(sourceFiles).some(([path, source]) => path.endsWith(".pxstory") &&
+      /^[ \t]*\[\s*face\s/mu.test(source))) {
+    const documentsByPath: Record<string, LayeredPortraitDocument> = {};
+    for (const character of characters) for (const expression of character.expressions) {
+      const source = canonicalResourceReference(`asset:${expression.assetId}`, resourceAssets)?.source;
+      if (source === undefined || !source.endsWith(".pxportrait") || source in documentsByPath) continue;
+      let text: string | undefined;
+      try { text = sourceFiles[source] ?? input.resourceText?.(source); } catch { text = undefined; }
+      // A missing or invalid descriptor is reported with the package graph.
+      const parsed = text === undefined ? undefined
+        : parseDocument<LayeredPortraitDocument>("portrait", text, source);
+      if (parsed?.valid === true && parsed.value !== undefined) documentsByPath[source] = parsed.value;
+    }
+    portraits = createStoryPortraitIndex(documentsByPath);
+  }
   const storyProgressCounts = {parse: 0, compile: 0};
   const globalStoryTotal = storyIndex.scenes.length *
     (1 + project.supportedLocales.filter((locale) => locale !== project.defaultLocale).length);
@@ -925,6 +944,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       resourceAssets,
       ...(storyAssets === undefined ? {} : {storyAssets}),
       ...(storyMacros === undefined ? {} : {storyMacros}),
+      ...(portraits === undefined ? {} : {portraits}),
       ...(input.onStoryProgress === undefined ? {} : {onProgress: (event: StoryProjectProgress) => {
         storyProgressCounts[event.phase] += 1;
         input.onStoryProgress?.({...event,

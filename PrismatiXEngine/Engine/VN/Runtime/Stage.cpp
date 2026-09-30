@@ -1291,6 +1291,20 @@ std::optional<std::string> Stage::CharacterImage(const std::string& name) const 
     return found->second.imagePath;
 }
 
+std::optional<std::string> Stage::CharacterPortraitBase(const std::string& name) {
+    const auto image = CharacterImage(name);
+    const auto* portrait = image ? ResolveLayeredPortrait(*image) : nullptr;
+    if (portrait == nullptr || portrait->schemaRevision != 2) return std::nullopt;
+    std::string base;
+    for (const auto& layer : portrait->layers) {
+        if (layer.role != PortraitLayer::Role::Base) continue;
+        if (!base.empty()) base += '\n';
+        base += layer.path;
+    }
+    if (base.empty()) return std::nullopt;
+    return base;
+}
+
 void Stage::SetCharacterAuto(const std::string& name, const std::string& imagePath,
                              const int slot, const float offsetX, const float offsetY,
                              const float scale) {

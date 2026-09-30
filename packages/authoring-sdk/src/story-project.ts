@@ -5,6 +5,7 @@ import {jsonPointerSpans} from "./json-source-spans.js";
 import type {ProjectAssetDescriptor} from "./resources.js";
 import type {StoryAssetIndex} from "./story-assets.js";
 import type {StoryMacroLibrary} from "./story-macros.js";
+import type {StoryPortraitIndex} from "./portrait.js";
 import type {
   AuthoringDiagnostic,
   CharacterDocument,
@@ -78,6 +79,8 @@ export interface StoryProjectCompileContext {
   readonly storyAssets?: StoryAssetIndex;
   /** Project-wide macros every scene may call (`storyMacros` in prismatix.json). */
   readonly storyMacros?: StoryMacroLibrary;
+  /** Layered portrait descriptors `[face]` reads. */
+  readonly portraits?: StoryPortraitIndex;
   readonly onProgress?: (event: StoryProjectProgress) => void;
 }
 
@@ -97,7 +100,7 @@ function storyCompilationSnapshot(context: StoryProjectCompileContext): StoryCom
     context.documentId ?? context.storyIndex.id,
     context.characters, context.game, context.extensions,
     context.resources, context.resourceAssets, context.storyAssets?.fingerprint,
-    context.storyMacros?.fingerprint,
+    context.storyMacros?.fingerprint, context.portraits?.fingerprint,
   ]);
   const sources = context.storyIndex.scenes.map((scene) => {
     const path = scene.sources[context.locale] ?? "";
@@ -654,6 +657,7 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
       documentId, context.locale, context.characters, context.game,
       context.extensions, context.resources, context.resourceAssets,
       context.storyAssets?.fingerprint, context.storyMacros?.fingerprint,
+      context.portraits?.fingerprint,
     ]),
     labels: JSON.stringify([...scenesById].map(([id, scene]) =>
       [id, [...scene.labels].sort()])),
@@ -739,6 +743,7 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
           ...(context.resourceAssets === undefined ? {} : {resourceAssets: context.resourceAssets}),
           ...(context.storyAssets === undefined ? {} : {storyAssets: context.storyAssets}),
           ...(context.storyMacros === undefined ? {} : {storyMacros: context.storyMacros}),
+          ...(context.portraits === undefined ? {} : {portraits: context.portraits}),
         });
         stubSourceIds = rewritten.stubSourceIds;
         if (snapshot !== undefined) sceneCache?.remember(context.locale, descriptor.id,

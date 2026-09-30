@@ -1,3 +1,5 @@
+import {createHash} from "node:crypto";
+
 import {serializeDocument, validateDocument} from "./contracts.js";
 import type {JsonValue, Result} from "./types.js";
 
@@ -49,6 +51,26 @@ export function defineLayeredPortrait(input: LayeredPortraitInput): Result<Layer
     })),
   };
   return validateDocument<LayeredPortraitDocument>("portrait", document);
+}
+
+/**
+ * Layered portraits the Story compiler may read, keyed by project path. The
+ * `[face]` command uses it to find, for each body, the expression that shows
+ * a given face; `fingerprint` lets build caches notice a changed portrait.
+ */
+export interface StoryPortraitIndex {
+  readonly fingerprint: string;
+  layers(source: string): LayeredPortraitDocument | undefined;
+}
+
+export function createStoryPortraitIndex(
+  portraits: Readonly<Record<string, LayeredPortraitDocument>>,
+): StoryPortraitIndex {
+  const entries = new Map(Object.entries(portraits).sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0));
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify([...entries])).digest("hex");
+  return {fingerprint, layers: (source) => entries.get(source)};
 }
 
 /** Returns canonical UTF-8 JSON ready to save as a .pxportrait resource. */

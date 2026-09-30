@@ -796,6 +796,48 @@ void VM::ExecuteSimple(const Command& cmd) {
         if (placed || cmd.Has("rotate")) (void)m_stage.SetCharacterRotation(name, rotation);
         return;
     }
+    if (t == "char_face") {
+        // Story [face]: keep the body, pose and placement on stage and show
+        // the expression that pairs this body with the requested face.
+        const std::string name = cmd.Get("id");
+        const auto base = m_stage.CharacterPortraitBase(name);
+        std::string file;
+        if (const Variant* faces = cmd.FindTyped("faces"); faces && base) {
+            for (const Variant& entry : faces->AsArray() ? *faces->AsArray() : VariantArray{}) {
+                const auto* fields = entry.AsObject();
+                if (!fields) continue;
+                const auto baseField = fields->find("base");
+                const auto fileField = fields->find("file");
+                const auto* entryBase = baseField == fields->end() ? nullptr
+                                                                   : baseField->second.TryGet<std::string>();
+                if (!entryBase || *entryBase != *base || fileField == fields->end()) continue;
+                if (const auto* reference = fileField->second.TryGet<ResourceRefValue>())
+                    file = reference->lastKnownPath;
+                else if (const auto* text = fileField->second.TryGet<std::string>())
+                    file = *text;
+                break;
+            }
+        }
+        if (file.empty()) {
+            diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,
+                .code="PXVN6102",.category="VN.Character",
+                .message=base ? "No expression pairs this face with the body on stage"
+                              : "[face] needs the character on stage in a layered portrait",
+                .details=name};
+            ApplyDiagnosticSource(diagnostic, cmd);
+            diag::Emit(std::move(diagnostic));
+            return;
+        }
+        const auto keep = m_stage.FindCharacterPlacement(name).value_or(Stage::CharacterPlacement{});
+        const auto imagePath = Resolve(m_config.charDir, file);
+        const std::string transition = cmd.Get("transition", "auto");
+        if (transition == "auto")
+            m_stage.SetCharacterAuto(name, imagePath, keep.slot, keep.offsetX, keep.offsetY, keep.scale);
+        else
+            m_stage.SetCharacter(name, imagePath, keep.slot, TruthyFlag(cmd), keep.offsetX,
+                                 keep.offsetY, keep.scale);
+        return;
+    }
     if (t == "char_clear") {
         m_stage.ClearCharacter(cmd.Get("name", cmd.Get("id")), TruthyFlag(cmd));
         return;
