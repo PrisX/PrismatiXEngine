@@ -43,9 +43,19 @@ configure_file(
     "${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKManifest.json"
     @ONLY
 )
+# The build tree carries its own manifest, so `--runtime out/build/<preset>/
+# PrismatiXEngine` works without an install; the installed one points from
+# share/PrismatiX to bin.
+set(PRISMATIX_RUNTIME_BIN_DIR ".")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/PrismatiXRuntimeManifest.json.in"
     "${CMAKE_CURRENT_BINARY_DIR}/runtime-manifest.json"
+    @ONLY
+)
+set(PRISMATIX_RUNTIME_BIN_DIR "../../bin")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/PrismatiXRuntimeManifest.json.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/install/runtime-manifest.json"
     @ONLY
 )
 configure_file(
@@ -511,7 +521,7 @@ else()
     )
 endif()
 install(FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/runtime-manifest.json"
+    "${CMAKE_CURRENT_BINARY_DIR}/install/runtime-manifest.json"
     "${CMAKE_CURRENT_BINARY_DIR}/release-inventory.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE"
     "${CMAKE_CURRENT_SOURCE_DIR}/../THIRD_PARTY_NOTICES.md"
@@ -811,7 +821,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
                           PRIVATE PrismatiXRuntime)
     target_compile_definitions(PrismatiXSDKManifestContractTests PRIVATE
         "PRISMATIX_SDK_MANIFEST_PATH=\"${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKManifest.json\""
-        "PRISMATIX_RUNTIME_MANIFEST_PATH=\"${CMAKE_CURRENT_BINARY_DIR}/runtime-manifest.json\""
+        "PRISMATIX_RUNTIME_MANIFEST_PATH=\"${CMAKE_CURRENT_BINARY_DIR}/install/runtime-manifest.json\""
         "PRISMATIX_EXECUTABLE_SUFFIX=\"${CMAKE_EXECUTABLE_SUFFIX}\"")
     prismatix_configure_target(PrismatiXSDKManifestContractTests)
     add_test(NAME PrismatiX.SDK.ManifestContract

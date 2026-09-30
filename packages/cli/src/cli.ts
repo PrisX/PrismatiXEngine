@@ -1119,7 +1119,11 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
   onStoryProgress?: NonNullable<CompileProjectInput["onStoryProgress"]>,
   storyCompilationCache?: StoryProjectCompilationCache) {
   const uiTypeRegistry = await loadUiRegistry(registryOverride, runtimeHint, packagerPath);
-  const inputKeyRegistry = await loadInputKeyRegistry(runtimeHint, packagerPath);
+  // A UI registry named on its own sits in a Runtime build directory, beside
+  // the input key registry that directory also exports.
+  const inputKeyRegistry = await loadInputKeyRegistry(runtimeHint ??
+    (packagerPath === undefined && registryOverride !== undefined
+      ? dirname(resolve(registryOverride)) : undefined), packagerPath);
   // A compile checks tens of thousands of media paths, often grouped in a few
   // directories. Keep this inventory local to one synchronous compile call;
   // publication still fingerprints the actual files before accepting output.
