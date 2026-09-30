@@ -192,6 +192,8 @@ export interface ItemsPlacedProps extends Omit<UiNodeProps, "itemSource"> {
 export interface ControlProps extends UiNodeProps {
   readonly kind?: UiNodeKind;
   readonly runtimeType?: string;
+  /** Caption of a native control that shows one, such as a CheckBox. */
+  readonly text?: string;
 }
 
 export interface ModalProps extends Omit<UiNodeProps, "children"> {

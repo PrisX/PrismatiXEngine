@@ -79,6 +79,7 @@ add_library(PrismatiXRuntimeContracts STATIC
     Engine/SDK/RuntimeIr.cpp
     Engine/SDK/SourceMap.cpp
     Engine/SDK/Ui.cpp
+    Engine/SDK/UiJson.cpp
 )
 add_library(PrismatiX::RuntimeContracts ALIAS PrismatiXRuntimeContracts)
 set_target_properties(PrismatiXRuntimeContracts PROPERTIES
@@ -430,6 +431,22 @@ add_dependencies(PrismatiXPackager PrismatiXUiTypeRegistryManifest)
 add_dependencies(PrismatiXPlayer PrismatiXUiTypeRegistryManifest)
 add_dependencies(PrismatiXPlayerQA PrismatiXUiTypeRegistryManifest)
 add_dependencies(PrismatiXPreviewHost PrismatiXUiTypeRegistryManifest)
+# The built-in screens as .pxui documents, for `prismatix eject ui`.
+set(PRISMATIX_BUILTIN_UI_DIR "${CMAKE_CURRENT_BINARY_DIR}/BuiltinUI")
+add_custom_command(
+    OUTPUT "${PRISMATIX_BUILTIN_UI_DIR}/title.pxui"
+    COMMAND $<TARGET_FILE:PrismatiXUiTypeManifest> --builtin-ui "${PRISMATIX_BUILTIN_UI_DIR}"
+    DEPENDS PrismatiXUiTypeManifest
+    COMMENT "Exporting the built-in UI screens"
+    VERBATIM
+)
+add_custom_target(PrismatiXBuiltinUiScreens ALL
+                  DEPENDS "${PRISMATIX_BUILTIN_UI_DIR}/title.pxui")
+add_dependencies(PrismatiXPreviewHost PrismatiXBuiltinUiScreens)
+install(DIRECTORY "${PRISMATIX_BUILTIN_UI_DIR}/"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX/BuiltinUI
+    COMPONENT PrismatiXRuntime
+)
 add_executable(PrismatiXInputKeyManifest Applications/InputKeyManifestMain.cpp)
 target_link_libraries(PrismatiXInputKeyManifest PRIVATE PrismatiXRuntime)
 prismatix_configure_target(PrismatiXInputKeyManifest)

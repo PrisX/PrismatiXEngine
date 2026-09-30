@@ -95,8 +95,16 @@ options with `--help`:
 ```bash
 prismatix add character kei --from Assets/Portraits/kei --name 圭
 prismatix add scene chapter2 --chapter chapter-1 --title "放學後"
+prismatix eject ui hud
 prismatix release --help
 ```
+
+`eject ui <route>` (or `all`) copies a stock Player screen (`title`, `hud`,
+`backlog`, `save`, `load`, `gallery`, `settings`, `video`) into
+`Content/UI/<Route>.tsx`, scaled to the project's resolution, and registers it
+in `uiEntryPoints`. It lowers to exactly the built-in screen, so you start from
+a working HUD or Save screen with every control name and binding the Player
+needs, and restyle from there.
 
 Rebuilding the same CLI-owned artifact compares the compiled files and media
 sources by SHA-256 with its existing ownership inventory. If every file is

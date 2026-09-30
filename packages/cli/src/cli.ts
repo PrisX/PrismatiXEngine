@@ -34,6 +34,7 @@ import {distributionCoversLineage, distributionLineage, readReleaseLineage,
   recordReleaseLineage, releaseLineageFile, saveCompatibilityWarning} from "./release-lineage.js";
 import {addCharacter, addScene} from "./scaffold.js";
 import {resolvePreviewTarget} from "./preview-target.js";
+import {builtinRoutes, ejectBuiltinUi} from "./eject.js";
 import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
 
 import {
@@ -94,6 +95,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   run: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space"},
   add: {values: "project from name chapter title", flags: ""},
+  eject: {values: "project runtime", flags: "force"},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync accept-removals"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
@@ -129,6 +131,11 @@ function parseOptions(command: string, args: readonly string[]): Options {
     const value = equals >= 0 ? argument.slice(equals + 1) : args[++index];
     if (value === undefined || value.length === 0 || value.startsWith("--")) throw new Error(`--${name} requires a value`);
     values.set(name, value);
+  }
+  if (command === "eject" && !flags.has("help")) {
+    if (positional.length !== 2 || positional[0] !== "ui")
+      throw new Error("Use prismatix eject ui <route|all>");
+    return {values, flags, positional};
   }
   if (command === "add" && !flags.has("help")) {
     if (positional.length !== 2 || !["character", "scene"].includes(positional[0]!))
@@ -2019,6 +2026,37 @@ async function packProject(options: Options): Promise<{output: string; player: s
   }
 }
 
+// The built-in screens ship beside the Player as share/PrismatiX/BuiltinUI
+// (installed) or BuiltinUI (an Engine build directory).
+async function builtinUiDirectory(options: Options): Promise<string> {
+  const player = await discoverRuntimeTool("player", runtimeOptions(options));
+  const base = dirname(player.path);
+  const candidates = [join(base, "BuiltinUI"), join(base, "..", "share", "PrismatiX", "BuiltinUI"),
+    join(base, "share", "PrismatiX", "BuiltinUI")];
+  const found = candidates.find((candidate) => existsSync(join(candidate, "title.pxui")));
+  if (found === undefined)
+    throw new Error(`The selected Runtime has no built-in screens beside ${player.path}; ` +
+      "rebuild PrismatiXBuiltinUiScreens or choose another --runtime");
+  return found;
+}
+
+async function ejectCommand(options: Options): Promise<number> {
+  try {
+    const location = await resolveProjectPath(options.values.get("project"));
+    const requested = options.positional[1]!;
+    const routes = requested === "all" ? [...builtinRoutes] : [requested];
+    const result = await ejectBuiltinUi(location.root, routes, await builtinUiDirectory(options),
+      options.flags.has("force"));
+    process.stdout.write(machineOutput ? `${JSON.stringify({ejected: routes, ...result})}\n`
+      : [...result.created.map((path) => `Created ${path}`),
+        ...result.registered.map((route) => `Registered uiEntryPoints.${route}`), ""].join("\n"));
+    return 0;
+  } catch (error) {
+    printDiagnostics([diagnostic("PXCLI1250", "eject failed", options.values.get("project"), String(error))]);
+    return 1;
+  }
+}
+
 async function addCommand(options: Options): Promise<number> {
   try {
     const location = await resolveProjectPath(options.values.get("project"));
@@ -2762,6 +2800,8 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
   add: ["Register a character from a folder of expression images, or add a scene to the story index.",
     "prismatix add character <alias> --from <folder> [--name <display name>] [--project <dir>]",
     "prismatix add scene <id> [--chapter <chapter-id>] [--title <title>] [--project <dir>]"],
+  eject: ["Copy a built-in Player screen into the project as editable TSX and register it.",
+    "prismatix eject ui <title|hud|backlog|save|load|gallery|settings|video|all> [--force] [--runtime <dir>]"],
   augment: ["Add declared files to a built artifact without editing ownership by hand.",
     "prismatix augment [project] --artifact <dir> --manifest <augmentation.json>"],
   ids: ["Write or check the stable save identities of Story lines.", "prismatix ids [project] [--check|--write]"],
@@ -3243,6 +3283,7 @@ async function main(): Promise<number> {
   if (command === "run") return runCommand(options);
   if (command === "release") return releaseCommand(options);
   if (command === "add") return addCommand(options);
+  if (command === "eject") return ejectCommand(options);
   if (command === "augment") return augmentCommand(options);
   if (command === "ids") return idsCommand(options);
   if (command === "migrate") return migrateCommand(options);

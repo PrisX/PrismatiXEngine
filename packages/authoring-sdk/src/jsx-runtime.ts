@@ -62,7 +62,7 @@ export function jsx(
   if (!isUiElement(rendered)) {
     throw new TypeError("PrismatiX JSX components must return one UI element");
   }
-  const lints = runtimePropertyLints(element.props);
+  const lints = runtimePropertyLints(element.props, (type as {name?: string}).name ?? "");
   const linted = lints.length === 0 ? rendered
     : {...rendered, [uiLintMarker]: [...rendered[uiLintMarker] ?? [], ...lints]};
   // Keep a key on the rendered authoring element even when a local function
@@ -105,7 +105,11 @@ const typedRuntimeProperties: Readonly<Record<string, string>> = {
 
 const statePaths = ["normalPath", "hoverPath", "pressedPath", "disabledPath"] as const;
 
-function runtimePropertyLints(props: Readonly<Record<string, unknown>>): UiLint[] {
+// Text styling props exist only on these components.
+const textComponents = new Set(["Text", "RichTextLabel", "Button", "TextureButton"]);
+const textProperties = new Set(["fontSize", "wrap", "font", "letterSpacing", "outlineSize", "outlineColor"]);
+
+function runtimePropertyLints(props: Readonly<Record<string, unknown>>, component: string): UiLint[] {
   const lints: UiLint[] = [];
   if (props.runtimeType === "Slider")
     lints.push({code: "PXSDKJSX1101", property: "runtimeType",
@@ -122,6 +126,7 @@ function runtimePropertyLints(props: Readonly<Record<string, unknown>>): UiLint[
   const authored = props.runtimeProperties;
   if (authored === null || typeof authored !== "object" || Array.isArray(authored)) return lints;
   for (const key of Object.keys(authored)) {
+    if (textProperties.has(key) && !textComponents.has(component)) continue;
     const typed = typedRuntimeProperties[key];
     if (typed !== undefined)
       lints.push({code: "PXSDKJSX1100", property: `runtimeProperties.${key}`,

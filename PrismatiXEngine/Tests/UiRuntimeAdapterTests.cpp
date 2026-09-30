@@ -13,6 +13,8 @@
 #include <SDL3/SDL_events.h>
 
 #include "Engine/SDK/Ui.h"
+#include "Engine/SDK/UiJson.h"
+#include "Engine/UI/BuiltinUiPackage.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/UI/GalgameUI.h"
 #include "Engine/UI/Actions/ActionCatalog.h"
@@ -992,7 +994,25 @@ void TestExternalConfigTemplate() {
     (void)galgame.Update(input, 1920, 1080);
 }
 
+// `prismatix eject ui` exports the built-in screens through WriteUiSceneJson;
+// each must parse back into the same document.
+void TestBuiltinScreensExportAsCanonicalJson() {
+    for (const auto& entry : px::ui::CreateBuiltinUiPackage(1920, 1080)) {
+        const auto written = px::sdk::WriteUiSceneJson(entry.document);
+        Check(written.has_value(), "built-in screens must be exportable");
+        const auto parsed = px::sdk::ParseUi(*written);
+        if (!parsed.Valid())
+            for (const auto& diagnostic : parsed.diagnostics)
+                std::cerr << entry.route << ": " << diagnostic.code << ' ' << diagnostic.message
+                          << " node=" << diagnostic.nodeIndex << '\n';
+        Check(parsed.Valid(), "an exported built-in screen must parse as a UI scene");
+        Check(px::sdk::WriteUiSceneJson(parsed.document) == written,
+              "exporting a parsed built-in screen must reproduce the same JSON");
+    }
+}
+
 int main() {
+    TestBuiltinScreensExportAsCanonicalJson();
     TestExternalSaveTemplate();
     TestExternalConfigTemplate();
     TestGalgameUiHostContract();
