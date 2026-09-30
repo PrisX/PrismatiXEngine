@@ -295,6 +295,82 @@ export interface TextureButtonProps extends ButtonProps {
   readonly tooltip?: UiChild;
 }
 
+type StateButtonBase = Omit<TextureButtonProps, "skin" | "action" | "onClick" | "normalPath" |
+  "hoverPath" | "pressedPath" | "disabledPath" | "tooltip" | "children" | "text">;
+
+/**
+ * Two-state image button. Either `option` names a `player.options` entry
+ * (on = `onValue`, default 1; off = `offValue`, default 0) or `checked` names
+ * a boolean UI data path and `action` flips it. Lowers to `<name>On` and
+ * `<name>Off` buttons inside a `<name>` group.
+ */
+export interface ToggleProps extends StateButtonBase {
+  readonly option?: string;
+  readonly onValue?: number;
+  readonly offValue?: number;
+  readonly checked?: string;
+  readonly action?: string | UiAction;
+  /** Skin shown while on. */
+  readonly on: string | TextureButtonSkin;
+  /** Skin shown while off. */
+  readonly off: string | TextureButtonSkin;
+}
+
+/** One choice of a `player.options` entry; `selected` is shown while it is chosen. */
+export interface RadioProps extends StateButtonBase {
+  readonly option: string;
+  readonly value: number;
+  readonly skin: string | TextureButtonSkin;
+  readonly selected: string | TextureButtonSkin;
+}
+
+function optionAction(option: string, value: number): UiAction {
+  return {id: "option.set", arguments: {argument: `${option}=${value}`}};
+}
+
+function stateButtons(props: StateButtonBase, role: string, states: readonly {
+  readonly suffix: string; readonly skin: string | TextureButtonSkin;
+  readonly visibleWhen: string; readonly action?: string | UiAction; readonly label?: string;
+}[]): UiElement {
+  if (props.name === undefined) throw new TypeError(`A ${role} needs a name`);
+  const box = Object.fromEntries(layoutProps.filter((key) => props[key] !== undefined)
+    .map((key) => [key, props[key]]));
+  const inner = {...props} as Record<string, unknown>;
+  for (const key of layoutProps) delete inner[key];
+  return Group({...box, name: props.name, mouseFilter: "Ignore",
+    ...(props.visibleWhen === undefined ? {} : {visibleWhen: props.visibleWhen}),
+    children: states.map((state) => TextureButton({
+      ...inner, name: `${props.name}${state.suffix}`, fill: true, skin: state.skin,
+      visibleWhen: state.visibleWhen, accessibilityRole: props.accessibilityRole ?? role,
+      ...(state.label === undefined ? {} : {accessibilityLabel: state.label}),
+      ...(state.action === undefined ? {} : {action: state.action}),
+    } as unknown as TextureButtonProps))});
+}
+
+export function Toggle(props: ToggleProps): UiElement {
+  const {option, onValue = 1, offValue = 0, checked, action, on, off, ...rest} = props;
+  if ((option === undefined) === (checked === undefined))
+    throw new TypeError(`Toggle ${props.name ?? ""} needs exactly one of option or checked`);
+  if (checked !== undefined && action === undefined)
+    throw new TypeError(`Toggle ${props.name ?? ""} with checked needs the action that flips it`);
+  const isOn = option !== undefined ? `options.${option}.is${onValue}` : checked!;
+  return stateButtons(rest, "checkbox", [
+    {suffix: "Off", skin: off, visibleWhen: `!${isOn}`,
+      action: option !== undefined ? optionAction(option, onValue) : action!},
+    {suffix: "On", skin: on, visibleWhen: isOn,
+      action: option !== undefined ? optionAction(option, offValue) : action!},
+  ]);
+}
+
+export function Radio(props: RadioProps): UiElement {
+  const {option, value, skin, selected, ...rest} = props;
+  const chosen = `options.${option}.is${value}`;
+  return stateButtons(rest, "radio", [
+    {suffix: "Button", skin, visibleWhen: `!${chosen}`, action: optionAction(option, value)},
+    {suffix: "Selected", skin: selected, visibleWhen: chosen},
+  ]);
+}
+
 /** Native numeric range input with optional image rail and knob. */
 export interface SliderProps extends Omit<UiNodeProps, "children"> {
   readonly minimum?: number;

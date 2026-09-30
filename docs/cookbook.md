@@ -530,6 +530,27 @@ the element (positioned relative to the button) while the pointer is over it;
 the build declares the `hover.<name>` data it needs, so `player.uiData` needs
 no `hover.*` entries.
 
+Two-state and one-of-many controls need no pair of hand-bound buttons:
+
+```tsx
+import {Radio, Toggle, actions} from "@prismatix/authoring-sdk";
+
+<Toggle name="DockLock" option="dock" on="Assets/UI/mw/bt_lock" off="Assets/UI/mw/bt_unlock"
+  position={[1864, 783]} size={[41, 38]} />
+<Toggle name="MuteBGM" checked="settings.muted.bgm" action={actions.setting.toggleMute("bgm")}
+  on="Assets/UI/conf/mute-on" off="Assets/UI/conf/mute-off" position={[1405, 256]} size={[80, 32]} />
+<Radio name="FontSerif" option="font" value={2} skin="Assets/UI/conf/radio34"
+  selected="Assets/UI/conf/radio34-on" position={[913, 354]} size={[34, 34]} />
+<TextureButton name="Slot" skin="Assets/UI/save/slot" action={actions.save.slot("$key")} />
+```
+
+`Toggle` lowers to `<name>On` / `<name>Off` buttons and `Radio` to
+`<name>Button` / `<name>Selected`, bound to `options.<key>.is<value>` or the
+`checked` path. `actions` builds every stock Player action with the right id
+and argument key (`actions.option.set("dock", 0)`, `actions.setting.volume("bgm",
+80)`, `actions.screen.close`, ...), so a typo is a TypeScript error rather than
+a button that does nothing.
+
 `skin="stem"` uses `stem-normal.png`, `stem-hover.png` (also for pressed) and,
 with `skin={{base: "stem", states: ["hover", "pressed", "disabled"]}}`, the
 other states; an explicit `*Path` wins. Button sounds need no per-button

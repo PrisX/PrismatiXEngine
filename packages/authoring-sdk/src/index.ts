@@ -12,6 +12,7 @@ export * from "./import-resources.js";
 export * from "./localization.js";
 export * from "./motion.js";
 export * from "./jsx-ui.js";
+export * from "./ui-actions.js";
 export * from "./project-resources.js";
 export * from "./project-actions.js";
 export * from "./project-normalization.js";

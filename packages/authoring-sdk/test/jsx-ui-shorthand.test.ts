@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {Control, Group, Scene, Slider, Text, TextureButton, compileJsxUi} from "../src/index.js";
+import {Control, Group, Radio, Scene, Slider, Text, TextureButton, Toggle, compileJsxUi} from "../src/index.js";
 import {jsx, jsxs, type UiElement} from "../src/jsx-runtime.js";
 
 function compiled(children: readonly UiElement[]) {
@@ -120,4 +120,41 @@ test("a TextureButton tooltip shows beside the button while hover.<name> is true
   assert.equal(node("Save").parentId, group.id);
   assert.deepEqual(node("SaveTooltip").bindings, {visible: {path: "hover.Save"}});
   assert.equal(node("SaveHelp").parentId, node("SaveTooltip").id);
+});
+
+test("Toggle and Radio lower to state buttons bound to options or UI data", () => {
+  const node = compiled([
+    jsx(Toggle, {name: "DockLock", option: "dock", position: [1864, 783], size: [41, 38],
+      on: "Assets/UI/mw/bt_lock", off: {base: "Assets/UI/mw/bt_unlock", states: ["hover"]}}),
+    jsx(Toggle, {name: "MuteBGM", checked: "settings.muted.bgm", action: "set.mute.bgm",
+      position: [0, 0], size: [80, 32], on: "Assets/UI/muted", off: "Assets/UI/unmuted"}),
+    jsx(Radio, {name: "FontSerif", option: "font", value: 2, position: [900, 300], size: [34, 34],
+      skin: "Assets/UI/radio", selected: "Assets/UI/radio-on"}),
+  ]);
+  assert.deepEqual([node("DockLock").layout.x, node("DockLock").layout.width], [1864, 41]);
+  assert.deepEqual(node("DockLockOff").bindings, {visible: {path: "options.dock.is1", formatter: "Not"}});
+  assert.deepEqual(node("DockLockOff").onClick, {id: "option.set", arguments: {argument: "dock=1"}});
+  assert.deepEqual(node("DockLockOn").bindings, {visible: {path: "options.dock.is1"}});
+  assert.deepEqual(node("DockLockOn").onClick, {id: "option.set", arguments: {argument: "dock=0"}});
+  assert.equal(node("DockLockOn").accessibilityRole, "checkbox");
+  assert.deepEqual(node("MuteBGMOn").onClick, {id: "set.mute.bgm", arguments: {}});
+  assert.deepEqual(node("MuteBGMOff").bindings, {visible: {path: "settings.muted.bgm", formatter: "Not"}});
+  assert.deepEqual(node("FontSerifButton").onClick, {id: "option.set", arguments: {argument: "font=2"}});
+  assert.deepEqual(node("FontSerifSelected").bindings, {visible: {path: "options.font.is2"}});
+  assert.equal(node("FontSerifSelected").onClick, undefined);
+  assert.equal(node("FontSerifSelected").runtimeProperties.normalPath, "Assets/UI/radio-on-normal.png");
+});
+
+test("typed action builders produce the Player's action ids and argument keys", async () => {
+  const {actions} = await import("../src/index.js");
+  assert.deepEqual(actions.save.slot("$key"), {id: "save.slot", arguments: {slot: "$key"}});
+  assert.deepEqual(actions.load.slot(3), {id: "load.slot", arguments: {slot: 3}});
+  assert.deepEqual(actions.option.set("dock", 0), {id: "option.set", arguments: {argument: "dock=0"}});
+  assert.deepEqual(actions.setting.volume("bgm", 80), {id: "set.bgm.value", arguments: {value: 80}});
+  assert.deepEqual(actions.screen.close, {id: "overlay.close", arguments: {}});
+  assert.throws(() => actions.option.set("bad key", 1), /option.set/u);
+  assert.throws(() => actions.save.slot(-1), /slot/u);
+  const node = compiled([jsx(TextureButton, {name: "Quick", skin: "Assets/UI/qsave",
+    position: [0, 0], size: [96, 47], action: actions.save.quick})]);
+  assert.deepEqual(node("Quick").onClick, {id: "save.quick", arguments: {}});
 });
