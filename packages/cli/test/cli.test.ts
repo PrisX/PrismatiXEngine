@@ -1516,6 +1516,87 @@ test("pack carries a verified previous distribution into a separate output", asy
   await assert.rejects(stat(changedOutput), /ENOENT/u);
 });
 
+test("pack keeps same-version saves loadable through the project's release lineage", async () => {
+  const value = await fixture();
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-lineage-"));
+  const mock = join(tools, "mock-packager.mjs");
+  // Mirrors how the native Packager folds a request's saveLineage into the
+  // manifest's persistence block.
+  await write(mock, `
+    import {mkdir, readFile, writeFile} from "node:fs/promises";
+    import {join} from "node:path";
+    const [flag, path] = process.argv.slice(2);
+    if (flag !== "--request") process.exit(43);
+    const request = JSON.parse(await readFile(path, "utf8"));
+    const lineage = request.saveLineage;
+    const sameVersion = lineage !== undefined &&
+      lineage.contentVersion === request.contentVersion &&
+      lineage.saveVersion === request.saveVersion;
+    await mkdir(join(request.outputDir, "Package"), {recursive: true});
+    await writeFile(join(request.outputDir, "Package", "manifest.json"), JSON.stringify({
+      gameId: request.gameId, packageFingerprint: process.env.PRISMATIX_TEST_FINGERPRINT,
+      contentVersion: request.contentVersion, saveVersion: request.saveVersion,
+      persistence: {dataId: request.gameId, keyId: "game-data-v1",
+        legacyReaders: lineage?.legacyReaders ?? [],
+        compatibleSaveFingerprints: sameVersion
+          ? [...lineage.compatibleSaveFingerprints, lineage.packageFingerprint] : []}}));
+    process.stdout.write(JSON.stringify({event: "completed",
+      receivedLineage: lineage?.packageFingerprint ?? null}) + "\\n");
+  `);
+  const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+  await write(player, "fixture");
+  const lineagePath = join(value.root, ".prismatix-release", "lineage.json");
+  const [first, second, third] = ["1", "2", "3"].map(digit => digit.repeat(64));
+  const pack = (output: string, fingerprint: string) => {
+    process.env.PRISMATIX_TEST_FINGERPRINT = fingerprint;
+    try {
+      return run(["pack", value.project, "--packager", mock, "--player", player,
+        "--output", join(value.root, output)]);
+    } finally {
+      delete process.env.PRISMATIX_TEST_FINGERPRINT;
+    }
+  };
+
+  const initial = pack("release-1", first!);
+  assert.equal(initial.status, 0, initial.stderr);
+  assert.match(initial.stdout, /"receivedLineage":null/u);
+  assert.match(initial.stderr, /PXCLI1222/u, "a pack with no known lineage warns");
+  assert.match(initial.stderr, /reject every save from that release \(PXSAVE6111\)/u);
+  assert.match(initial.stderr, /PXCLI1224/u);
+  assert.deepEqual(JSON.parse(await readFile(lineagePath, "utf8")), {
+    format: "PrismatiXReleaseLineage", schemaRevision: 1, gameId: "cli-sample",
+    packageFingerprint: first, contentVersion: "chapter-1", saveVersion: 1,
+    compatibleSaveFingerprints: [], legacyReaders: [],
+  });
+
+  // A new output folder, as on a clean CI machine, still accepts release-1 saves.
+  const relocated = pack("release-2", second!);
+  assert.equal(relocated.status, 0, relocated.stderr);
+  assert.match(relocated.stdout, new RegExp(`"receivedLineage":"${first}"`, "u"));
+  assert.doesNotMatch(relocated.stderr, /PXCLI122[23]/u);
+  const afterRelocation = JSON.parse(await readFile(lineagePath, "utf8")) as
+    {packageFingerprint: string; compatibleSaveFingerprints: string[]};
+  assert.equal(afterRelocation.packageFingerprint, second);
+  assert.deepEqual(afterRelocation.compatibleSaveFingerprints, [first]);
+
+  const authorProject = JSON.parse(await readFile(value.project, "utf8")) as
+    Record<string, unknown>;
+  await write(value.project, JSON.stringify({...authorProject, contentVersion: "chapter-2"}));
+  const bumped = pack("release-3", third!);
+  assert.equal(bumped.status, 0, bumped.stderr);
+  assert.match(bumped.stderr, /PXCLI1223/u,
+    "a version change without a migration from the recorded release warns");
+  assert.deepEqual((JSON.parse(await readFile(lineagePath, "utf8")) as
+    {compatibleSaveFingerprints: string[]}).compatibleSaveFingerprints, []);
+
+  await write(lineagePath, JSON.stringify({...afterRelocation,
+    format: "PrismatiXReleaseLineage", schemaRevision: 1, gameId: "other-game",
+    contentVersion: "chapter-2", saveVersion: 1, legacyReaders: []}));
+  const foreign = pack("release-4", third!);
+  assert.equal(foreign.status, 1);
+  assert.match(foreign.stderr, /records game \\"other-game\\"/u);
+});
+
 test("pack validates UI against the selected Packager's adjacent registry", async () => {
   const value = await fixture();
   const uiPath = join(value.root, "Content/UI/Title.pxui");

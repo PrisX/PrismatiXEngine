@@ -2751,7 +2751,7 @@ bool PlayerApp::LoadSlot(int slot) {
     if (snap->gameId != m_boot.gameId) {
         diag::Emit(diag::Diagnostic{
             .severity = diag::Severity::Error,
-            .code = "PXSAVE6111",
+            .code = "PXSAVE6115",
             .category = "Persistence.Save",
             .message = "Save belongs to a different game"});
         return false;
@@ -2767,7 +2767,9 @@ bool PlayerApp::LoadSlot(int slot) {
             .severity = diag::Severity::Error,
             .code = "PXSAVE6111",
             .category = "Persistence.Save",
-            .message = "Package fingerprint changed without a content/save version migration"});
+            .message = "Package fingerprint changed without a content/save version migration",
+            .hint = "Pack releases with the project's .prismatix-release/lineage.json, or "
+                    "advance contentVersion/saveVersion with a save migration"});
         return false;
     }
     if (!sameContent) {

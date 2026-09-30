@@ -1,5 +1,34 @@
 # Save migration anchors
 
+## Same-version releases
+
+A release that keeps `contentVersion` and `saveVersion` needs no migration,
+but its package fingerprint still changes with its content. The Player accepts
+a save from an earlier fingerprint only when the current package lists that
+fingerprint in `persistence.compatibleSaveFingerprints`. Packager builds the
+list from the distribution it replaces and from the project's
+`.prismatix-release/lineage.json`, which the CLI updates after each pack.
+Commit that file with each release. It records the latest package fingerprint,
+its content/save version, the earlier same-version fingerprints, and the legacy
+persistence readers. These are the values the shipped `Package/manifest.json`
+already contains in plain text. Up to 64 same-version fingerprints are kept; Packager fails
+with `PXPKG1428` beyond that, which means it is time to advance the version.
+When the version changes, the list starts over and the declared migrations
+decide which old saves still load.
+
+The Player reports these load failures separately:
+
+| Code | Meaning |
+| --- | --- |
+| `PXSAVE6115` | The save belongs to a different game ID. |
+| `PXSAVE6111` | Same content/save version, but the save's package fingerprint is not current or listed as compatible. The package was probably built without the previous release's lineage. |
+
+To recover from `PXSAVE6111` after a release has shipped, restore the lineage
+file from version control, or pack again with `--previous-package` naming the
+shipped distribution. The new package then accepts both fingerprints.
+
+## Anchors
+
 When a release changes `contentVersion` or `saveVersion`, declare each migration
 step in `prismatix.json` and provide its `.pxsave-migration` document. A step
 can also rename variables or routes and change the Runtime IR path. Test it

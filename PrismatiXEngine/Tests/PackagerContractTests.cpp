@@ -317,6 +317,36 @@ int main() {
         suite.Expect(parsed.Valid(), "locked package request parses");
          suite.Expect(parsed.request.cacheSourceDir == output,
                       "optional external cache source survives wire parsing");
+        suite.Expect(!parsed.request.saveLineage,
+                     "a request without saveLineage has no project lineage");
+        auto lineageRequest = nlohmann::json::parse(json.str());
+        lineageRequest["saveLineage"] = {
+            {"packageFingerprint", std::string(64, 'B')},
+            {"contentVersion", "v1"},
+            {"saveVersion", 1},
+            {"compatibleSaveFingerprints", {std::string(64, 'c')}},
+            {"legacyReaders", {{{"keyId", "legacy-fingerprint-v1"},
+                                {"secret", std::string(64, 'd')}}}}};
+        const auto withLineage =
+            px::sdk::ParsePackageRequest(lineageRequest.dump());
+        suite.Expect(withLineage.Valid() && withLineage.request.saveLineage &&
+                         withLineage.request.saveLineage->packageFingerprint ==
+                             std::string(64, 'b') &&
+                         withLineage.request.saveLineage->compatibleSaveFingerprints ==
+                             std::vector<std::string>{std::string(64, 'c')} &&
+                         withLineage.request.saveLineage->legacyReaders.size() == 1,
+                     "project save lineage survives wire parsing");
+        lineageRequest["saveLineage"]["legacyReaders"][0]["keyId"] = "unknown";
+        const auto badReader =
+            px::sdk::ParsePackageRequest(lineageRequest.dump());
+        lineageRequest["saveLineage"]["legacyReaders"] = nlohmann::json::array();
+        lineageRequest["saveLineage"]["saveVersion"] = 0;
+        const auto badVersion =
+            px::sdk::ParsePackageRequest(lineageRequest.dump());
+        suite.Expect(!badReader.Valid() && !badVersion.Valid() &&
+                         badReader.diagnostics.front().code == "PXPKG1121" &&
+                         badVersion.diagnostics.front().code == "PXPKG1121",
+                     "malformed project save lineage is rejected");
         suite.Expect(parsed.request.routes.size() == 1 && parsed.request.routes.front().id == "title", "typed Player route is retained by the SDK contract");
 
         px::sdk::PackageEvent progress;
@@ -2068,6 +2098,76 @@ int main() {
                          stagedManifest.manifest.legacyPersistenceReaders.front().secret ==
                              legacySecret,
                      "CLI-style staging carries both save ancestry and legacy keys");
+
+        // A new output folder has no previous distribution to discover; the
+        // project's recorded lineage must carry the same save identity.
+        auto freshOutput = sameVersion;
+        freshOutput.requestId = "persistence-fresh-output";
+        freshOutput.outputDir = fixture.path / "Build/PersistenceFresh";
+        suite.Require(px::sdk::RunPackager(freshOutput).Completed(),
+                      "a same-version package into a new folder completes");
+        const auto forgetfulManifest = px::sdk::detail::ParsePackageManifest(
+            Read(freshOutput.outputDir / "Package/manifest.json"));
+        suite.Expect(forgetfulManifest.Valid() &&
+                         forgetfulManifest.manifest.compatibleSaveFingerprints.empty() &&
+                         forgetfulManifest.manifest.legacyPersistenceReaders.empty(),
+                     "without lineage a new folder cannot know earlier releases");
+        const std::string olderFingerprint(64, 'a');
+        auto withLineage = freshOutput;
+        withLineage.requestId = "persistence-fresh-lineage";
+        withLineage.outputDir = fixture.path / "Build/PersistenceLineage";
+        withLineage.saveLineage = px::sdk::PackageSaveLineage{
+            .packageFingerprint = priorFingerprint,
+            .contentVersion = "fixture-v2",
+            .saveVersion = sameVersion.saveVersion,
+            .compatibleSaveFingerprints = {olderFingerprint},
+            .legacyReaders = {{"legacy-archive-v1", legacySecret}}};
+        suite.Require(px::sdk::RunPackager(withLineage).Completed(),
+                      "a package with project lineage into a new folder completes");
+        const auto lineageManifest = px::sdk::detail::ParsePackageManifest(
+            Read(withLineage.outputDir / "Package/manifest.json"));
+        auto expectedLineage = std::vector<std::string>{priorFingerprint,
+                                                        olderFingerprint};
+        std::ranges::sort(expectedLineage);
+        suite.Expect(lineageManifest.Valid() &&
+                         lineageManifest.manifest.compatibleSaveFingerprints ==
+                             expectedLineage &&
+                         lineageManifest.manifest.legacyPersistenceReaders.size() == 1 &&
+                         lineageManifest.manifest.legacyPersistenceReaders.front().secret ==
+                             legacySecret,
+                     "project lineage carries save ancestry and legacy keys into a new folder");
+
+        auto mergedLineage = stagedSameVersion;
+        mergedLineage.requestId = "persistence-merged-lineage";
+        mergedLineage.outputDir = fixture.path / "Build/PersistenceMerged";
+        mergedLineage.saveLineage = px::sdk::PackageSaveLineage{
+            .packageFingerprint = olderFingerprint,
+            .contentVersion = "fixture-v2",
+            .saveVersion = sameVersion.saveVersion,
+            .compatibleSaveFingerprints = {},
+            .legacyReaders = {{"legacy-archive-v1", legacySecret}}};
+        suite.Require(px::sdk::RunPackager(mergedLineage).Completed(),
+                      "a package with both a previous folder and lineage completes");
+        const auto mergedManifest = px::sdk::detail::ParsePackageManifest(
+            Read(mergedLineage.outputDir / "Package/manifest.json"));
+        suite.Expect(mergedManifest.Valid() &&
+                         mergedManifest.manifest.compatibleSaveFingerprints ==
+                             expectedLineage &&
+                         mergedManifest.manifest.legacyPersistenceReaders.size() == 1,
+                     "lineage and the replaced distribution combine without duplicate readers");
+
+        auto staleLineage = withLineage;
+        staleLineage.requestId = "persistence-stale-lineage";
+        staleLineage.outputDir = fixture.path / "Build/PersistenceStale";
+        staleLineage.saveLineage->contentVersion = "fixture-v1";
+        suite.Require(px::sdk::RunPackager(staleLineage).Completed(),
+                      "a package with an older-version lineage completes");
+        const auto staleManifest = px::sdk::detail::ParsePackageManifest(
+            Read(staleLineage.outputDir / "Package/manifest.json"));
+        suite.Expect(staleManifest.Valid() &&
+                         staleManifest.manifest.compatibleSaveFingerprints.empty() &&
+                         staleManifest.manifest.legacyPersistenceReaders.size() == 1,
+                     "a lineage at another content version keeps readers but leaves version changes to migrations");
         auto malformedManifest = nlohmann::json::parse(Read(manifestPath));
         malformedManifest["persistence"]["compatibleSaveFingerprints"] =
             nlohmann::json::array({

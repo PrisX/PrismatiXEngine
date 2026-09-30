@@ -3117,6 +3117,69 @@ PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
         }
     }
 
+    if (const auto lineage = root.find("saveLineage"); lineage != root.end()) {
+        const auto isFingerprint = [](const Json& value) {
+            return value.is_string() && value.get<std::string>().size() == 64 &&
+                   std::ranges::all_of(value.get<std::string>(),
+                                       [](const unsigned char character) {
+                                           return std::isxdigit(character) != 0;
+                                       });
+        };
+        PackageSaveLineage parsed;
+        bool valid = lineage->is_object();
+        if (valid) {
+            const auto fingerprint = lineage->find("packageFingerprint");
+            const auto content = lineage->find("contentVersion");
+            const auto save = lineage->find("saveVersion");
+            const auto saveValue = save == lineage->end()
+                                       ? std::optional<int>{}
+                                       : JsonInt(*save);
+            const auto compatible = lineage->find("compatibleSaveFingerprints");
+            const auto readers = lineage->find("legacyReaders");
+            valid = fingerprint != lineage->end() && isFingerprint(*fingerprint) &&
+                    content != lineage->end() && content->is_string() &&
+                    !content->get<std::string>().empty() &&
+                    saveValue && *saveValue > 0 &&
+                    compatible != lineage->end() && compatible->is_array() &&
+                    compatible->size() <= 64 &&
+                    readers != lineage->end() && readers->is_array() &&
+                    readers->size() <= 64;
+            if (valid) {
+                parsed.packageFingerprint = Lower(fingerprint->get<std::string>());
+                parsed.contentVersion = content->get<std::string>();
+                parsed.saveVersion = static_cast<std::uint32_t>(*saveValue);
+                for (const auto& value : *compatible) {
+                    if (!isFingerprint(value)) {
+                        valid = false;
+                        break;
+                    }
+                    parsed.compatibleSaveFingerprints.push_back(
+                        Lower(value.get<std::string>()));
+                }
+                for (const auto& value : *readers) {
+                    PackagePersistenceKey reader{
+                        value.is_object() ? value.value("keyId", std::string{})
+                                          : std::string{},
+                        value.is_object() ? value.value("secret", std::string{})
+                                          : std::string{}};
+                    if ((reader.keyId != "legacy-archive-v1" &&
+                         reader.keyId != "legacy-fingerprint-v1") ||
+                        reader.secret.empty() || reader.secret.size() > 1024) {
+                        valid = false;
+                        break;
+                    }
+                    parsed.legacyReaders.push_back(std::move(reader));
+                }
+            }
+        }
+        if (!valid)
+            AddDiagnostic(result.diagnostics, "PXPKG1121",
+                          "saveLineage must name a package fingerprint, content and save version, "
+                          "and at most 64 compatible fingerprints and legacy readers");
+        else
+            result.request.saveLineage = std::move(parsed);
+    }
+
     const auto inputs = root.find("inputs");
     if (inputs == root.end() || !inputs->is_array()) {
         AddDiagnostic(result.diagnostics, "PXPKG1109", "inputs must be an array");
@@ -3455,17 +3518,41 @@ bool PreparePackageContent(const PackageRequest& request,
     const auto packageDigest = Sha256Text(identityMaterial);
     if (!packageDigest) return reject("PXPKG1306", "SHA-256 is unavailable");
     plan.packageFingerprint = Hex(*packageDigest);
-    auto& compatibleSaveFingerprints = plan.compatibleSaveFingerprints;
-    compatibleSaveFingerprints =
-        std::move(previousPersistence.compatibleSaveFingerprints);
-    if (previousPersistence.contentVersion != request.contentVersion ||
-        previousPersistence.saveVersion != request.saveVersion) {
-        compatibleSaveFingerprints.clear();
-    } else if (!previousPersistence.packageFingerprint.empty() &&
-               previousPersistence.packageFingerprint != plan.packageFingerprint) {
-        compatibleSaveFingerprints.push_back(
-            previousPersistence.packageFingerprint);
+    // Both the distribution being replaced and the project's recorded release
+    // lineage may know earlier builds; saves from either stay loadable.
+    PreviousPersistence lineage;
+    if (request.saveLineage) {
+        lineage.packageFingerprint = request.saveLineage->packageFingerprint;
+        lineage.contentVersion = request.saveLineage->contentVersion;
+        lineage.saveVersion = request.saveLineage->saveVersion;
+        lineage.compatibleSaveFingerprints =
+            request.saveLineage->compatibleSaveFingerprints;
+        for (const auto& reader : request.saveLineage->legacyReaders)
+            lineage.readers.push_back({reader.keyId, reader.secret});
     }
+    auto& compatibleSaveFingerprints = plan.compatibleSaveFingerprints;
+    auto& legacyPersistenceReaders = plan.legacyPersistenceReaders;
+    for (auto* previous : {&previousPersistence, &lineage}) {
+        for (auto& reader : previous->readers) {
+            if (std::ranges::none_of(legacyPersistenceReaders, [&](const auto& known) {
+                    return known.keyId == reader.keyId &&
+                           known.secret == reader.secret;
+                }))
+                legacyPersistenceReaders.push_back(std::move(reader));
+        }
+        if (previous->contentVersion != request.contentVersion ||
+            previous->saveVersion != request.saveVersion)
+            continue;
+        compatibleSaveFingerprints.insert(
+            compatibleSaveFingerprints.end(),
+            previous->compatibleSaveFingerprints.begin(),
+            previous->compatibleSaveFingerprints.end());
+        if (!previous->packageFingerprint.empty())
+            compatibleSaveFingerprints.push_back(previous->packageFingerprint);
+    }
+    if (legacyPersistenceReaders.size() > 64)
+        return reject("PXPKG1429",
+                      "The legacy save reader history exceeds 64 releases");
     std::erase(compatibleSaveFingerprints, plan.packageFingerprint);
     std::ranges::sort(compatibleSaveFingerprints);
     compatibleSaveFingerprints.erase(
@@ -3475,7 +3562,6 @@ bool PreparePackageContent(const PackageRequest& request,
     if (compatibleSaveFingerprints.size() > 64)
         return reject("PXPKG1428",
                       "The same-version save fingerprint history exceeds 64 releases");
-    plan.legacyPersistenceReaders = std::move(previousPersistence.readers);
     plan.customEffects = std::move(customEffects.manifests);
     plan.encryptionKey = "pxpkg-" + Hex(DeriveKey(
         "PrismatiXPackage|" + identityMaterial));

@@ -101,7 +101,10 @@ public key, and non-content runtime files, but distinct package fingerprints.
 `--previous-package` makes v2 a standalone distribution that carries compatible
 save identity and legacy key readers from v1. The CLI verifies v1 before
 using it and leaves it untouched. Subsequent standalone versions should name
-their immediate predecessor the same way. For incompatible Story state, advance
+their immediate predecessor the same way. The project's committed
+`.prismatix-release/lineage.json` carries the same save identity when the
+previous distribution is not available (see
+[same-version releases](save-migrations.md#same-version-releases)). For incompatible Story state, advance
 the content/save version and provide an explicit migration.
 The public key is a lowercase, uncompressed SEC1 P-256 point in
 `Package/manifest.json`. It also affects the package fingerprint. Keep the

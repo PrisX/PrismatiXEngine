@@ -30,6 +30,8 @@ import {packageContentKey, packageRetentionKey, refreshRuntimePackageIfMatching,
   retainPackageIfMatching, reusedArchiveInputs, runtimeOutputsMatch,
   runtimeReplacementFiles, writePackageProvenance} from "./package-retain.js";
 import {debugPackagerHint} from "./package-tool-hint.js";
+import {distributionCoversLineage, distributionLineage, readReleaseLineage,
+  recordReleaseLineage, releaseLineageFile, saveCompatibilityWarning} from "./release-lineage.js";
 import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
 
 import {
@@ -1739,6 +1741,26 @@ async function packProject(options: Options): Promise<{output: string; player: s
         throw new Error("--previous-package manifest changed during verification");
       protectedPaths.push(previousPackage);
     }
+    // Saves record the package fingerprint. The project's lineage file keeps
+    // same-version releases compatible when the old output folder is gone.
+    const releaseLineage = await readReleaseLineage(root, project.id);
+    const outputLineage = previousPackage === undefined
+      ? await distributionLineage(output, project.id) : undefined;
+    const predecessor = releaseLineage ?? (previousPackage === undefined
+      ? outputLineage : await distributionLineage(previousPackage, project.id));
+    const compatibilityWarning = saveCompatibilityWarning(project, predecessor);
+    if (compatibilityWarning !== undefined)
+      progress({severity: "warning", code: predecessor === undefined ? "PXCLI1222" : "PXCLI1223",
+        message: `Warning: ${compatibilityWarning}`});
+    const lineageCovered = releaseLineage === undefined || outputLineage === undefined ||
+      distributionCoversLineage(outputLineage, releaseLineage);
+    const recordLineage = async () => {
+      const packed = await distributionLineage(output, project.id);
+      if (packed !== undefined && await recordReleaseLineage(root, project.id, packed))
+        progress({severity: "information", code: "PXCLI1224",
+          message: `Recorded this release's save lineage in ${join(root, releaseLineageFile)}; ` +
+            "commit it so later packs keep accepting these saves."});
+    };
     const branding = await packageBranding(options.positional[0]);
     const packagedPlayer = branding.executableName === undefined ? basename(player)
       : branding.executableName + extname(player);
@@ -1824,15 +1846,18 @@ async function packProject(options: Options): Promise<{output: string; player: s
         message: `Checking distribution ${value.phase}: ${value.files} files, ` +
           `${(value.bytes / 1024 ** 2).toFixed(1)} MiB${value.done ? " (done)" : ""}`}),
     };
-    if (previousPackage === undefined && planKey !== undefined && await retainPackageIfMatching(
+    if (previousPackage === undefined && lineageCovered && planKey !== undefined &&
+        await retainPackageIfMatching(
       publication, artifactRoot, inputs, planKey,
       () => packageRetentionKey(packager, player, artifactRoot, keyedPlan))) {
       progress({event: "progress", severity: "information", code: "PXCLI1215",
         phase: "retain-package", current: inputs.length, total: inputs.length,
         message: `Retained verified unchanged distribution: ${output}`});
+      await recordLineage();
       return {output, player: join(output, packagedPlayer)};
     }
-    if (previousPackage === undefined && planKey !== undefined && contentKey !== undefined &&
+    if (previousPackage === undefined && lineageCovered && planKey !== undefined &&
+        contentKey !== undefined &&
         runtimeSources !== undefined && await refreshRuntimePackageIfMatching(
           publication, artifactRoot, inputs, planKey, contentKey,
           runtimeSources,
@@ -1841,6 +1866,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
       progress({event: "progress", severity: "information", code: "PXCLI1217",
         phase: "refresh-runtime", current: runtimeSources.size, total: runtimeSources.size,
         message: `Updated Player runtime without rebuilding packaged content: ${output}`});
+      await recordLineage();
       return {output, player: join(output, packagedPlayer)};
     }
     const inputBytes = inputs.reduce((sum, input) => sum + BigInt(input.size), 0n);
@@ -1889,6 +1915,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
       cacheSourceDir: previousPackage ?? output,
       retireCacheSourceAfterPromotion: previousPackage === undefined,
       cancelFile: join(temp, ".cancel-package"),
+      ...(releaseLineage === undefined ? {} : {saveLineage: releaseLineage}),
     };
     const requestPath = join(temp, "package-request.json");
     await writeFile(requestPath, `${JSON.stringify(request)}\n`, "utf8");
@@ -1927,6 +1954,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
       else await writePackageProvenance(staging, planKey);
     }
     });
+    await recordLineage();
     return {output, player: join(output, packagedPlayer)};
   } finally {
     await rm(temp, {recursive: true, force: true});

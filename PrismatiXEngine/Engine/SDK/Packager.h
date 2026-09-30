@@ -42,6 +42,22 @@ struct PackageSaveMigration {
     std::string asset;
 };
 
+struct PackagePersistenceKey {
+    std::string keyId;
+    std::string secret;
+};
+
+// Save identity of the most recent release, recorded in the author project
+// (.prismatix-release/lineage.json) rather than in an output directory, so a
+// new output folder or a clean CI checkout keeps accepting existing saves.
+struct PackageSaveLineage {
+    std::string packageFingerprint;
+    std::string contentVersion;
+    std::uint32_t saveVersion = 0;
+    std::vector<std::string> compatibleSaveFingerprints;
+    std::vector<PackagePersistenceKey> legacyReaders;
+};
+
 struct PackageRequest {
     std::string requestId;
     std::string gameId;
@@ -80,6 +96,8 @@ struct PackageRequest {
     std::uint32_t archiveShards = 1;
     std::vector<PackageInput> inputs;
     std::filesystem::path cancelFile;
+    // Combined with the persistence of the distribution being replaced.
+    std::optional<PackageSaveLineage> saveLineage;
 };
 
 struct PackageDiagnostic {

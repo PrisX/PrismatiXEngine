@@ -93,6 +93,27 @@ UI source are **not** included until you build or otherwise update the artifact.
 prismatix pack my-game --artifact my-game/.prismatix/artifact
 ```
 
+Every save records the fingerprint of the package that wrote it. When a new
+package keeps the same `contentVersion` and `saveVersion` but its content
+changed, the Player loads an older save only if the new package lists that
+save's fingerprint as compatible. Otherwise it rejects the save with
+`PXSAVE6111`. After each successful `pack`, `build`, or `run`, the CLI records
+the fingerprint of the package it wrote, and the fingerprints that package
+accepts, in `.prismatix-release/lineage.json` in the project. The next pack
+passes that record to Packager, whatever `--output` it uses. **Commit this
+file.** With it, packing to a new folder, packing on a clean CI machine, or
+deleting an old `dist` folder no longer breaks existing saves. The file changes
+only when the package fingerprint does.
+
+When a pack finds no lineage file, no previous distribution in `--output`, and
+no `--previous-package`, it warns with `PXCLI1222` that saves from an
+already-shipped release with the same versions will be rejected. The warning
+does not appear when a declared save migration leads into the current version.
+For a first release, commit the lineage file that the pack writes.
+`PXCLI1223` warns that the version changed since the recorded release but no
+`saveMigrations` entry starts from the recorded version. A lineage file that
+names another game ID stops the pack. See [save migrations](save-migrations.md).
+
 To publish a standalone new version in a different directory while retaining
 compatible saves from an earlier distribution, name that intact distribution:
 
@@ -104,7 +125,9 @@ prismatix pack my-game --artifact my-game/.prismatix/artifact --previous-package
 verifies the old package, checks its game ID and publisher key, and passes its
 save identity and reusable archive data to Packager. The old directory stays
 untouched; the new output must be absent or empty. Repacking into the same
-output directory already carries this history without the option. Compatible
+output directory already carries this history without the option. Packager
+combines the save identity it finds in the previous distribution with the
+project's lineage file. Compatible
 save identity does not make changed Story state compatible: advance the
 content/save version and provide a migration when needed.
 
