@@ -33,6 +33,7 @@ import {debugPackagerHint} from "./package-tool-hint.js";
 import {distributionCoversLineage, distributionLineage, readReleaseLineage,
   recordReleaseLineage, releaseLineageFile, saveCompatibilityWarning} from "./release-lineage.js";
 import {addCharacter, addScene} from "./scaffold.js";
+import {resolvePreviewTarget} from "./preview-target.js";
 import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
 
 import {
@@ -86,7 +87,7 @@ const machineOutput = process.argv.includes("--json");
 
 const commandOptions: Readonly<Record<string, {values: string; flags: string}>> = {
   create: {values: "name id locale width height", flags: ""},
-  dev: {values: "runtime preview-host debounce ui-registry", flags: "once smoke"},
+  dev: {values: "runtime preview-host debounce ui-registry at", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space"},
   pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space check verify-media"},
@@ -2324,9 +2325,34 @@ async function devCommand(options: Options): Promise<number> {
             undefined, storyCompilationCache, built);
         candidate = await PreviewClient.start(previewHost.path, updated.root);
         await applyPreviewBuild(candidate, updated, false);
+        const at = options.values.get("at");
         const played = await candidate.request("play", updated.artifact.runtimeIr.documentId,
-          updated.artifact.runtimeIr.committedRevision, {showTitle: built === undefined});
+          updated.artifact.runtimeIr.committedRevision, {showTitle: built === undefined && at === undefined});
         if (played.type !== "playAccepted") throw previewResponseError("Play", played);
+        // --at replays every revision up to the same Story position, so an
+        // edit deep in a scene is seen without playing up to it again.
+        if (at !== undefined) {
+          const target = resolvePreviewTarget(updated.artifact, at);
+          const seek = (branchPath: readonly number[]) => candidate!.request("seekStory",
+            updated!.artifact.runtimeIr.documentId, updated!.artifact.runtimeIr.committedRevision,
+            {operationIndex: target.operationIndex, branchPath});
+          const needsChoices = (response: PreviewMessage) => JSON.stringify(response).includes("PXPREVIEW1104");
+          let sought = await seek([]);
+          // Behind a choice, try the first few choice paths breadth-first.
+          const pending: number[][] = [[0], [1], [2], [3]];
+          for (let attempts = 0; needsChoices(sought) && attempts < 40 && pending.length > 0; attempts += 1) {
+            const path = pending.shift()!;
+            sought = await seek(path);
+            if (needsChoices(sought) && path.length < 3)
+              pending.push(...[0, 1, 2, 3].map((choice) => [...path, choice]));
+          }
+          if (sought.type !== "storySeekAccepted")
+            printDiagnostics([{severity: "warning", code: "PXCLI1609",
+              message: `Preview could not start at ${at}; a choice may lead there, so it starts at the scene's beginning instead`,
+              path: target.sourceUri, hint: JSON.stringify(sought)}]);
+          else progress({severity: "information", code: "PXCLI1610",
+            message: `Preview starts at ${target.sourceUri}:${target.line}`});
+        }
         const previous = client;
         const previousBuild = built;
         client = candidate;
@@ -2719,7 +2745,8 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
   create: ["Create a new project with a starter story, title screen and pinned tools.",
     "prismatix create my-game [--name \"My Game\"] [--id my-game] [--locale zh-TW] [--width 1920 --height 1080]"],
   dev: ["Watch the project and replay it in Preview after every successful edit.",
-    "prismatix dev [project] [--runtime <engine-build-or-install>]"],
+    "prismatix dev [project] [--runtime <engine-build-or-install>]",
+    "prismatix dev [project] --at chapter2:120 | --at chapter2:after_school | --at Story/zh-TW/chapter2.pxstory:120"],
   validate: ["Check Story, UI, catalog and resources without writing anything.",
     "prismatix validate [project] [--runtime <dir>]"],
   build: ["Build a playable distribution (or only the compiled artifact).",
