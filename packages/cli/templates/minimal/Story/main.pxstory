@@ -1,19 +1,20 @@
 ; Edit dialogue, save, and watch Preview update. The SDK keeps stable save IDs beside this file.
 *start
-[bg Assets/window.png]
+[bg window]
 [show guide smile center]
 @guide
 你好，我是小光。這是你的第一個故事。
 窗外的天空正在變色。今天想去哪裡呢？
 
-[choice text="一起看看星星" goto=stars]
-[choice text="留在這裡說故事" goto=story]
-[choice.wait]
+[choice]
+- 一起看看星星 -> stars
+- 留在這裡說故事 -> story
+[endchoice]
 
 *stars
 @guide
 我們打開窗，等第一顆星亮起。明天也一起來吧！
-[jump target=finish]
+[jump finish]
 
 *story
 @guide

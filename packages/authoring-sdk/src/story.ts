@@ -45,7 +45,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   transition: ["duration", "rule", "vague", "wait"],
   show: ["character", "expression", "asset", "sprite", "position", "x", "y", "scale", "rotate", "transition"],
   move: ["character", "position", "x", "y", "scale", "rotate", "duration", "ease", "wait"],
-  hide: ["character", "transition"],
+  hide: ["character", "transition", "image", "duration"],
   face: ["character", "face", "transition"],
   choice: ["text", "goto", "target", "scene", "if"],
   jump: ["goto", "target", "scene"],
@@ -1413,6 +1413,26 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         break;
       }
       case "hide": {
+        // [hide image=cg1 400ms] / [hide image=all] is [image.hide].
+        const image = named("image");
+        if (image !== undefined) {
+          const duration = named("duration") ?? positional(0);
+          if (named("character") !== undefined || named("transition") !== undefined ||
+              args.has(`$${named("duration") === undefined ? 1 : 0}`))
+            diagnostics.push(error("PXSTORY1245",
+              "hide image= takes only a duration; hide characters in a separate [hide]", node.span));
+          else if (image !== "all" && !identifierPattern.test(image))
+            diagnostics.push(error("PXSTORY1237", "hide image= requires an image name or all", node.span));
+          else if (duration !== undefined && !validAudioDuration(duration))
+            diagnostics.push(error("PXSTORY1236", "image duration must be a non-negative number of ms or s", node.span));
+          else emit(node, "hideImage", {name: image === "all" ? "*" : image,
+            ...(duration === undefined ? {} : {duration})});
+          break;
+        }
+        if (named("duration") !== undefined) {
+          diagnostics.push(error("PXSTORY1245", "hide duration applies to image= only", node.span));
+          break;
+        }
         const alias = named("character") ?? positional(0);
         const character = alias === undefined ? undefined : characters.get(alias);
         const transition = named("transition");
@@ -1965,6 +1985,7 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
     ],
     hide: [
       {name:"character", required:true}, {name:"transition", required:false, values:[true, false]},
+      {name:"image", required:false}, {name:"duration", required:false},
     ],
     choice: [{name:"text", required:true}, {name:"goto", required:false},
       {name:"target", required:false}, {name:"scene", required:false},

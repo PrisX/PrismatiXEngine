@@ -229,7 +229,7 @@ test("create scaffolds a canonical playable starter without author-supplied UUID
   assert.doesNotMatch(ui, /\{\{[A-Z_]+\}\}/u);
   const manifest = JSON.parse(await readFile(project, "utf8")) as Record<string, unknown>;
   assert.deepEqual(Object.keys(manifest).sort(),
-    ["assets", "characters", "defaultLocale", "id", "name", "resolution", "uiEntryPoints"]);
+    ["assets", "characters", "defaultLocale", "id", "name", "resolution", "storyAssets", "uiEntryPoints"]);
   assert.equal((manifest.characters as Array<{id?: string}>)[0]!.id, undefined);
   assert.equal((manifest.assets as Array<{source: string}>).some((asset) =>
     asset.source === "Assets/guide.png"), false);
@@ -258,7 +258,7 @@ test("create scaffolds a canonical playable starter without author-supplied UUID
   const story = await readFile(join(root, "Story/main.pxstory"), "utf8");
   assert.match(story, /^; @prismatix-ids\r?\n/u);
   assert.doesNotMatch(story, /\[id\s/u);
-  assert.match(story, /\[bg Assets\/window\.png\]/u);
+  assert.match(story, /\[bg window\]/u);
   assert.equal((await stat(join(root, "Story/main.pxstory.pxids.json"))).isFile(), true);
 });
 

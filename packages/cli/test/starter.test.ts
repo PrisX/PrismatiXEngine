@@ -41,7 +41,11 @@ test("starter prepares a compilable branch story and preserves binary font/image
     const identities = JSON.parse(await readFile(`${storyPath}.pxids.json`, "utf8"));
     assert.match(story, /^; @prismatix-ids\r?\n/u);
     assert.doesNotMatch(story, /\[id\s/u);
-    assert.match(story, /\[bg Assets\/window\.png\]/u);
+    // The starter shows the shortest forms: storyAssets names, a choice
+    // block and positional jump targets.
+    assert.match(story, /\[bg window\]/u);
+    assert.match(story, /\[choice\]\r?\n- 一起看看星星 -> stars\r?\n/u);
+    assert.match(story, /\[jump finish\]/u);
     assert.equal(identities.format, "PrismatiXStoryIdentityMap");
     assert.ok(identities.entries.length > 5);
     await writeFile(storyPath, story.replace("你好，我是小光。這是你的第一個故事。",

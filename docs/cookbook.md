@@ -298,7 +298,7 @@ face and in NVL mode); `dialogue.face` holds the path for other bindings.
 The starter registers `guide`, its `smile` expression and an original background. Reuse these without hand-writing another UUID:
 
 ```pxstory
-[bg Assets/window.png]
+[bg window]
 [show guide expression=smile position=left x=0 y=0 scale=0.8]
 @guide
 這裡就是新的背景。
@@ -311,6 +311,22 @@ Use `[hide all]` to fade out every character without listing its aliases.
 the background or independent stage layers. The same operation is available
 to runtime scripts as `Engine.ClearCharacters(false)` or through the typed
 runtime SDK as `ctx.stage.clearCharacters(false)`.
+
+`[bg window]` works because the starter's `prismatix.json` declares
+`"storyAssets": {"bg": ["Assets"]}`; `[bg Assets/window.png]` is the same
+operation.
+
+Characters and image layers are hidden with the same verb:
+
+| Hides | Short form | Long form |
+| --- | --- | --- |
+| one character | `[hide guide]` | `[hide character=guide transition=true]` |
+| every character | `[hide all]` | — |
+| one `[image]` layer | `[hide image=cg1 400ms]` | `[image.hide cg1 400ms]` |
+| every image layer | `[hide image=all]` | `[image.hide all]` |
+
+`[hide image=...]` takes only a duration (`PXSTORY1245` otherwise) and
+compiles to exactly the `[image.hide]` operation.
 
 Character actions move a visible character relative to where it stands and
 always return it to rest, so they never change its slot or saved placement:
