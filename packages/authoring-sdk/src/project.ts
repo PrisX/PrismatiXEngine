@@ -354,6 +354,8 @@ function localizedArgument(kind: string, key: string): boolean {
       kind === "choiceOption")) return true;
   // The visible speaker is localized presentation; character is stable identity.
   if (key === "speaker" && kind === "dialogue") return true;
+  // A [credits] roll's lines and images may differ per locale.
+  if (key === "items" && kind === "timeline") return true;
   return key === "asset" && (kind === "background" || kind === "voice" ||
     kind === "bgm" || kind === "soundEffect" || kind === "ambience");
 }

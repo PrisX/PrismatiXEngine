@@ -259,6 +259,49 @@ message window and discards the page.
 - Every line also goes to the backlog as usual. The page and the mode are
   saved, restored after loading and rolled back with the line they belong to.
 
+### Staff roll
+
+`[credits]` scrolls a staff roll from below the screen to above it, then the
+Story continues:
+
+```pxstory
+[hud visible=false]
+[bg black]
+[credits duration=60s skippable=false size=32 color=#FFFFFF]
+# シナリオ
+Owen Liu
+
+# 原画
+[image logo]
+[endcredits]
+[hud visible=true]
+```
+
+- Each line of the block is one centred item: text, a `#` heading (1.5x
+  the size), `[image name]` (a `storyAssets.bg` name or a path; images wider
+  than the screen are scaled down), or an empty line as a gap. `;` lines are
+  comments; leading and trailing empty lines are dropped. Text is drawn as
+  written: inline tags are not read inside a roll.
+- `duration` is the whole scroll, 1s–600s (default 30s). With the default
+  `skippable=true` a click or skip ends the roll; `skippable=false` ignores
+  them until it has finished. `size` is 8–200 pixels (default 32), `color`
+  is `#RRGGBB(AA)` (default white) and `font` a project font file (default:
+  the locale's first `fontChain` font).
+- The roll is drawn over the Stage, under the HUD and message window, so
+  hide the HUD first as above and choose the background behind it.
+- The whole block is one operation and one `.pxids.json` entry; a locale may
+  change its lines and images. A save made during the roll resumes after it.
+- Errors: a missing `[endcredits]` (or one without a block) is
+  `PXSTORY1270`, a bad option `PXSTORY1271`, and an unsupported or empty
+  body `PXSTORY1272`.
+
+There is no `[input var=...]` name-entry command yet. It needs a Player
+text-entry screen (keyboard, IME and gamepad input), a new waiting state that
+saves and rollback understand, and string variables written from the Player,
+all of which belong to the Player UI rather than the Story compiler. Until
+then, let a TSX screen collect the name and set a `profile` or `session`
+variable through the runtime SDK, and use `{name}` substitution in text.
+
 ### Message-window face
 
 An expression may name a face image, shown inside the message window while

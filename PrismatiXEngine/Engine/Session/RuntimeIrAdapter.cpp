@@ -636,6 +636,38 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
                 Add(command, "speed", Argument(operation, "speed"));
             } else if (Argument(operation, "mode") == "stage-motion-stop") {
                 command.type = "stage_motion_stop";
+            } else if (Argument(operation, "mode") == "credits") {
+                // Story [credits]: items is a JSON array of {text, heading}
+                // or {image}; image asset tokens resolve as typed arguments.
+                command.type = "credits";
+                const nlohmann::json items =
+                    nlohmann::json::parse(Argument(operation, "items"), nullptr, false);
+                VariantArray entries;
+                bool valid = items.is_array();
+                for (const auto& item : valid ? items : nlohmann::json::array()) {
+                    VariantObject entry;
+                    if (item.is_object() && item.contains("text") && item["text"].is_string()) {
+                        entry["text"] = Variant(item["text"].get<std::string>());
+                        entry["heading"] = Variant(item.contains("heading") &&
+                                                   item["heading"].is_boolean() &&
+                                                   item["heading"].get<bool>());
+                    } else if (item.is_object() && item.contains("image") && item["image"].is_string()) {
+                        entry["image"] = Variant(item["image"].get<std::string>());
+                    } else {
+                        valid = false;
+                        break;
+                    }
+                    entries.push_back(Variant(std::move(entry)));
+                }
+                if (!valid) {
+                    adapterErrors.push_back("invalid credits items at Runtime IR operation " +
+                                            std::to_string(index));
+                    continue;
+                }
+                command.typedArgs["items"] = Variant(std::move(entries));
+                Add(command, "ms", DurationMilliseconds(Argument(operation, "duration")));
+                for (const char* name : {"skippable", "size", "color", "font"})
+                    Add(command, name, Argument(operation, name));
             } else if (Argument(operation, "mode") == "move") {
                 command.type = "char_move";
                 Add(command, "id", Argument(operation, "target"));

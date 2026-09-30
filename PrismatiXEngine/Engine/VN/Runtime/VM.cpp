@@ -286,6 +286,7 @@ ProgramSeekStatus VM::ReplayCompiledProgramAt(
             continue;
         }
         if (m_state == VMState::WaitingTimer) {
+            EndTimerWait();
             m_state = VMState::Idle;
             Run();
             continue;
@@ -412,6 +413,11 @@ bool VM::RestoreCompiledState(const VMRuntimeState& state, Program program,
     m_outlineColor=state.outlineColor;m_textSpeed=state.textSpeed;m_textEffect=state.textEffect;
     m_chapter=state.chapter;m_currentBgm=state.currentBgm;m_currentLineSeen=state.currentLineSeen;
     m_nowMs=nowMs;m_timerStart=nowMs;m_timerMs=state.timerRemainingMs;m_skipBacklogOnce=false;
+    // A roll is not saved with the Stage: a save made during [credits]
+    // resumes after it.
+    m_creditsWait=false;m_timerUnskippable=false;
+    if(m_state==VMState::WaitingTimer&&m_pc>0&&m_program.code[static_cast<std::size_t>(m_pc-1)].type=="credits")
+        m_timerMs=0;
     m_skipBreakOnce=false;m_stepping=false;m_stepBudget=0;m_debugResumeState.reset();
     m_seekTargetPc.reset();m_seeking=false;m_safetyRejected=false;return true;
 }
@@ -504,6 +510,43 @@ VMRunResult VM::RunSlice(const std::size_t maxInstructions) {
                 continue;
             }
             m_state = VMState::WaitingChoice;
+            return finishSlice(VMRunStatus::AwaitingInput, true);
+        }
+        if (t == "credits") {
+            Stage::CreditsRoll roll;
+            if (const Variant* items = cmd.FindTyped("items"); items && items->AsArray()) {
+                for (const Variant& value : *items->AsArray()) {
+                    const auto* fields = value.AsObject();
+                    if (!fields) continue;
+                    Stage::CreditsItem item;
+                    const auto text = [&fields](const char* key) -> std::string {
+                        const auto found = fields->find(key);
+                        if (found == fields->end()) return {};
+                        if (const auto* reference = found->second.TryGet<ResourceRefValue>())
+                            return reference->lastKnownPath;
+                        const auto* string = found->second.TryGet<std::string>();
+                        return string ? *string : std::string{};
+                    };
+                    item.text = text("text");
+                    item.image = text("image");
+                    if (!item.image.empty()) item.image = Resolve(m_config.bgDir, item.image);
+                    const auto heading = fields->find("heading");
+                    item.heading = heading != fields->end() && heading->second.TryGet<bool>() &&
+                                   *heading->second.TryGet<bool>();
+                    roll.items.push_back(std::move(item));
+                }
+            }
+            roll.durationMs = std::max(1, ParseInt(cmd.Get("ms"), 30000));
+            roll.size = ParseInt(cmd.Get("size"), 32);
+            roll.color = ParseColor(cmd.Get("color"), roll.color);
+            roll.font = cmd.Get("font");
+            m_stage.StartCredits(std::move(roll));
+            ++m_pc;
+            m_timerMs = static_cast<std::uint64_t>(ParseInt(cmd.Get("ms"), 30000));
+            m_timerStart = m_nowMs;
+            m_creditsWait = true;
+            m_timerUnskippable = cmd.Get("skippable", "true") == "false";
+            m_state = VMState::WaitingTimer;
             return finishSlice(VMRunStatus::AwaitingInput, true);
         }
         if (t == "wait") {
@@ -1280,9 +1323,16 @@ void VM::OnAdvance() {
             Run();
         }
     } else if (m_state == VMState::WaitingTimer) {
-        m_timerHold = {};
+        if (m_timerUnskippable) return;
+        EndTimerWait();
         Run();
     }
+}
+
+void VM::EndTimerWait() {
+    m_timerHold = {};
+    m_timerUnskippable = false;
+    if (std::exchange(m_creditsWait, false)) m_stage.StopCredits();
 }
 
 void VM::Update(std::uint64_t nowMs, float dt) {
@@ -1295,7 +1345,7 @@ void VM::Update(std::uint64_t nowMs, float dt) {
         m_dialogue.Update(nowMs);
     } else if (m_state == VMState::WaitingTimer) {
         if (nowMs - m_timerStart >= m_timerMs && !(m_timerHold && m_timerHold())) {
-            m_timerHold = {};
+            EndTimerWait();
             Run();
         }
     }

@@ -377,6 +377,12 @@ private:
     std::uint64_t m_timerStart = 0;
     std::uint64_t m_timerMs = 0;
     std::uint64_t m_nowMs = 0;
+    // The timer belongs to a Story [credits] roll; skippable=false ignores
+    // clicks and skip until the roll ends.
+    bool m_creditsWait = false;
+    bool m_timerUnskippable = false;
+    // Ends a timer wait (elapsed, clicked or seeked past) before running on.
+    void EndTimerWait();
 };
 
 }

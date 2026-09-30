@@ -47,6 +47,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   move: ["character", "position", "x", "y", "scale", "rotate", "duration", "ease", "wait"],
   hide: ["character", "transition", "image", "duration"],
   face: ["character", "face", "transition"],
+  credits: ["duration", "skippable", "size", "color", "font"],
   choice: ["text", "goto", "target", "scene", "if"],
   jump: ["goto", "target", "scene"],
   call: ["goto", "target", "scene"],
@@ -537,15 +538,23 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
         diagnostics.push(error("PXSTORY1241", "[endchoice] closes no [choice] block", lineSpan));
         continue;
       }
-      if (command!.raw === "macro") {
-        // The body stays source text; each call parses it after substitution.
+      if (command!.raw === "endcredits") {
+        diagnostics.push(error("PXSTORY1270", "[endcredits] closes no [credits] block", lineSpan));
+        continue;
+      }
+      if (command!.raw === "macro" || command!.raw === "credits") {
+        // A macro body stays source text; each call parses it after
+        // substitution. A credits body is the roll, one item per line.
+        const name = command!.raw;
+        const close = `[end${name}]`;
         let end = lineIndex + 1;
-        while (end < lines.length && lines[end]!.text.trim() !== "[endmacro]") end += 1;
+        while (end < lines.length && lines[end]!.text.trim() !== close) end += 1;
         if (end >= lines.length)
-          diagnostics.push(error("PXSTORY1190", "macro is missing its [endmacro]", lineSpan));
+          diagnostics.push(error(name === "macro" ? "PXSTORY1190" : "PXSTORY1270",
+            `${name} is missing its ${close}`, lineSpan));
         const body = lines.slice(lineIndex + 1, end).map((bodyLine) => bodyLine.text).join("\n");
         const last = lines[Math.min(end, lines.length - 1)]!;
-        nodes.push({id, kind: "command", raw, name: "macro", arguments: parsedArguments, text: body,
+        nodes.push({id, kind: "command", raw, name, arguments: parsedArguments, text: body,
           span: {path, start: lineSpan.start,
             end: span(path, last, last.text.length + 1, last.text.length + 1).end}});
         activeSpeaker = undefined;
@@ -1342,6 +1351,74 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         }
         break;
       }
+      case "credits": {
+        // [credits duration=40s skippable=false] ... [endcredits]: one roll
+        // item per line: text, `# heading`, `[image name]`, or empty (a gap).
+        const duration = named("duration") ?? positional(0) ?? "30s";
+        const skippable = named("skippable");
+        const size = named("size");
+        const color = named("color");
+        const font = named("font");
+        const milliseconds = durationMilliseconds(duration);
+        if (milliseconds === undefined || milliseconds < 1000 || milliseconds > 600_000) {
+          diagnostics.push(error("PXSTORY1271", "credits duration must be 1s to 600s", node.span));
+          break;
+        }
+        if (skippable !== undefined && skippable !== "true" && skippable !== "false") {
+          diagnostics.push(error("PXSTORY1271", "credits skippable must be true or false", node.span));
+          break;
+        }
+        if (size !== undefined && (!/^\d+$/u.test(size) || Number(size) < 8 || Number(size) > 200)) {
+          diagnostics.push(error("PXSTORY1271", "credits size must be 8 to 200 pixels", node.span));
+          break;
+        }
+        if (color !== undefined && !/^#?[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/u.test(color)) {
+          diagnostics.push(error("PXSTORY1271", "credits color must be #RRGGBB or #RRGGBBAA", node.span));
+          break;
+        }
+        let fontPath: string | undefined;
+        if (font !== undefined) {
+          const resolved = canonicalResourceReference(font, []);
+          if (resolved === undefined || resolved.source !== font) {
+            diagnostics.push(error("PXSTORY1183", "credits font must name a font file by its project-relative path", node.span));
+            break;
+          }
+          rememberResource(resolved.source, node);
+          fontPath = resolved.source;
+        }
+        const lines = (node.text ?? "").split(/\r?\n/u).map((line) => line.trim())
+          .filter((line) => !line.startsWith(";"));
+        while (lines.length > 0 && lines[0] === "") lines.shift();
+        while (lines.length > 0 && lines.at(-1) === "") lines.pop();
+        const items: JsonValue[] = [];
+        let valid = true;
+        for (const line of lines) {
+          const image = /^\[image\s+(.+)\]$/u.exec(line);
+          if (image !== null) {
+            const resolved = resolveResource(node, image[1]!.trim(), "bg");
+            if (resolved === undefined) valid = false;
+            else items.push({image: resolved});
+          } else if (line.startsWith("[")) {
+            diagnostics.push(error("PXSTORY1272",
+              `credits lines are text, # headings or [image name]: ${line}`, node.span));
+            valid = false;
+          } else if (line.startsWith("#")) items.push({text: line.replace(/^#+\s*/u, ""), heading: true});
+          else items.push({text: line});
+        }
+        if (items.length === 0 && valid) {
+          diagnostics.push(error("PXSTORY1272", "credits needs at least one line", node.span));
+          break;
+        }
+        if (!valid) break;
+        const rgb = color === undefined ? undefined : color.replace(/^#/u, "").match(/../gu)!
+          .map((pair) => String(Number.parseInt(pair, 16))).join(",");
+        emit(node, "timeline", {mode: "credits", items: JSON.stringify(items), duration,
+          ...(skippable === undefined ? {} : {skippable}),
+          ...(size === undefined ? {} : {size}),
+          ...(rgb === undefined ? {} : {color: rgb}),
+          ...(fontPath === undefined ? {} : {font: fontPath})}, node.raw.trim());
+        break;
+      }
       case "face": {
         const alias = named("character") ?? positional(0);
         const wanted = named("face") ?? positional(named("character") === undefined ? 1 : 0);
@@ -1945,7 +2022,7 @@ export interface StoryCommandCompletion {
   readonly parameters: readonly {readonly name: string; readonly required: boolean; readonly values?: readonly JsonValue[]}[];
 }
 
-const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "elseif", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "auto", "skip.stop", "skip.disable", "skip.enable", "macro", "endmacro", "endchoice", "var", "face"];
+const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "elseif", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "auto", "skip.stop", "skip.disable", "skip.enable", "macro", "endmacro", "endchoice", "var", "face", "credits", "endcredits"];
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
   const builtins = builtinStoryCommands;

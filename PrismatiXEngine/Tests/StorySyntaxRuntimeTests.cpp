@@ -241,6 +241,47 @@ int main() {
         std::filesystem::remove_all(root, ignored);
     }
 
+    // [credits]: the roll runs for its duration on the Stage; a click ends it
+    // unless skippable=false, and a save made during it resumes after it.
+    {
+        const auto credits = [](const std::string& skippable) {
+            return Compile({
+                Operation("roll", "timeline", {{"mode", "credits"}, {"duration", "2s"},
+                    {"skippable", skippable}, {"items",
+                    R"([{"text":"Staff","heading":true},{"text":""},{"text":"Owen"},{"image":"Assets/logo.png"}])"}}),
+                Operation("after", "narration", {{"text", "fin"}}),
+            });
+        };
+        auto program = credits("true");
+        const auto* items = program.code.front().FindTyped("items");
+        assert(program.code.front().type == "credits" && items && items->AsArray() &&
+               items->AsArray()->size() == 4 && program.code.front().Get("ms") == "2000");
+        assert(vm.LoadCompiledProgram(std::move(program), path));
+        assert(vm.State() == px::vn::VMState::WaitingTimer && stage.CreditsActive());
+        vm.OnAdvance();
+        assert(!stage.CreditsActive() && dialogue.State().fullText == "fin");
+
+        vm.Update(10'000, 0.0f);
+        assert(vm.LoadCompiledProgram(credits("false"), path));
+        vm.OnAdvance();
+        assert(vm.State() == px::vn::VMState::WaitingTimer && stage.CreditsActive());
+        const auto saved = vm.CaptureState();
+        vm.Update(11'000, 1.0f);
+        assert(vm.State() == px::vn::VMState::WaitingTimer && stage.CreditsActive());
+        vm.Update(12'000, 1.0f);
+        assert(!stage.CreditsActive() && dialogue.State().fullText == "fin");
+
+        assert(vm.RestoreCompiledState(saved, credits("false"), 20'000));
+        assert(vm.State() == px::vn::VMState::WaitingTimer);
+        vm.Update(20'000, 0.0f);
+        assert(dialogue.State().fullText == "fin");
+
+        px::sdk::RuntimeIrDocument badCredits;
+        badCredits.documentId = "bad-credits";
+        badCredits.operations = {Operation("roll", "timeline", {{"mode", "credits"}, {"items", "[1]"}})};
+        assert(!px::CompileRuntimeIr(badCredits).errors.empty());
+    }
+
     std::cout << "Story syntax runtime tests passed\n";
     return 0;
 }

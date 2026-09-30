@@ -192,6 +192,24 @@ public:
     // The `base` layer paths (one per line) of the revision-2 layered
     // portrait a visible character shows; Story [face] matches its body.
     [[nodiscard]] std::optional<std::string> CharacterPortraitBase(const std::string& name);
+    // Story [credits]: a staff roll that scrolls from below the screen to
+    // above it over durationMs, drawn over the Stage (not the HUD). Items
+    // are centred text lines (headings larger, empty text a gap) or images.
+    struct CreditsItem {
+        std::string text;
+        std::string image;
+        bool heading = false;
+    };
+    struct CreditsRoll {
+        std::vector<CreditsItem> items;
+        int durationMs = 30000;
+        int size = 32;
+        Color color{255, 255, 255, 255};
+        std::string font;
+    };
+    void StartCredits(CreditsRoll roll);
+    void StopCredits() { m_credits.reset(); }
+    [[nodiscard]] bool CreditsActive() const { return m_credits.has_value(); }
     // Prefetches a plain sprite or the image layers referenced by a portrait
     // descriptor. Descriptors themselves are not image textures.
     void PreloadCharacter(const std::string& imagePath);
@@ -504,6 +522,12 @@ private:
                              std::uint8_t alpha, const ActorPose* action = nullptr);
     void RenderRuleOverlay(bool compositing);
     void RenderScreenEffects();
+    void RenderCredits();
+    struct CreditsState {
+        CreditsRoll roll;
+        float elapsedMs = 0.0f;
+    };
+    std::optional<CreditsState> m_credits;
     void EndRuleTransition();
     void FinishRulePreparation(bool wait = false);
     [[nodiscard]] static RulePreparation PrepareRuleTransition(

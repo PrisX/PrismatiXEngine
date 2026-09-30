@@ -1393,6 +1393,7 @@ void Stage::ClearAll() {
     if (m_motion && m_motion->preloadBatch)
         (void)m_assets.CancelTexturePreload(m_motion->preloadBatch);
     m_motion.reset();
+    m_credits.reset();
     m_actors.clear();
     m_layers.clear();
     m_nodes.clear();
@@ -1532,6 +1533,12 @@ void Stage::Update(float dt) {
         if (m_flash.elapsed >= m_flash.total) m_flash = {};
     }
     HarvestPortraitReads();
+    // The roll keeps real time even while skipping; the VM decides whether
+    // a click or skip may end it.
+    if (m_credits) {
+        m_credits->elapsedMs += dt * 1000.0f;
+        if (m_credits->elapsedMs >= static_cast<float>(m_credits->roll.durationMs)) m_credits.reset();
+    }
     if (m_fastForward) {
         // Large enough to finish any authored tween, fade, or shake.
         dt = std::max(dt, 60.0f);
@@ -2111,6 +2118,7 @@ void Stage::Render() {
     // the host after this call and must remain stable.
     m_renderer.ResetCamera();
     RenderScreenEffects();
+    RenderCredits();
     if (compositing) {
         const auto effect = [this](const char* name) {
             const auto found = m_screenEffects.find(name);
@@ -2126,6 +2134,69 @@ void Stage::Render() {
         effects.customProgress = m_customEffectProgress;
         effects.customParameters = m_customEffectParameters;
         m_renderer.EndStageLayer(effects);
+    }
+}
+
+void Stage::StartCredits(CreditsRoll roll) {
+    for (const auto& item : roll.items)
+        if (!item.image.empty())
+            m_assets.PreloadTexture(item.image, graphics::AssetPreloadPriority::High);
+    roll.durationMs = std::max(1, roll.durationMs);
+    roll.size = std::clamp(roll.size, 1, 400);
+    m_credits = CreditsState{std::move(roll), 0.0f};
+}
+
+void Stage::RenderCredits() {
+    if (!m_credits) return;
+    int width = 0, height = 0;
+    m_renderer.GetLogicalSize(width, height);
+    const CreditsRoll& roll = m_credits->roll;
+    std::string font = roll.font;
+    if (font.empty() && !m_assets.FontFallbackChain().empty())
+        font = m_assets.FontFallbackChain().front();
+    struct Placed {
+        const CreditsItem* item = nullptr;
+        int size = 0;
+        float width = 0.0f;
+        float height = 0.0f;
+        graphics::TextureHandle texture{};
+    };
+    // Lay the roll out every frame: an image may finish loading mid-roll.
+    std::vector<Placed> placed;
+    placed.reserve(roll.items.size());
+    float total = 0.0f;
+    for (const auto& item : roll.items) {
+        Placed entry{.item = &item, .size = item.heading ? roll.size * 3 / 2 : roll.size};
+        if (!item.image.empty()) {
+            entry.texture = ReadyTexture(item.image);
+            int imageWidth = 0, imageHeight = 0;
+            if (entry.texture) graphics::AssetCache::TextureSize(entry.texture, imageWidth, imageHeight);
+            const float fit = imageWidth > 0
+                ? std::min(1.0f, static_cast<float>(width) * 0.9f / static_cast<float>(imageWidth)) : 1.0f;
+            entry.width = static_cast<float>(imageWidth) * fit;
+            entry.height = static_cast<float>(imageHeight) * fit + static_cast<float>(roll.size) * 0.5f;
+        } else if (item.text.empty() || font.empty()) {
+            entry.height = static_cast<float>(entry.size);
+        } else {
+            const Vec2 measured = m_renderer.MeasureText(item.text, font, entry.size);
+            entry.width = measured.x;
+            entry.height = std::max(measured.y, static_cast<float>(entry.size)) * 1.35f;
+        }
+        total += entry.height;
+        placed.push_back(entry);
+    }
+    const float progress = std::clamp(m_credits->elapsedMs / static_cast<float>(roll.durationMs), 0.0f, 1.0f);
+    float y = static_cast<float>(height) - progress * (static_cast<float>(height) + total);
+    for (const auto& entry : placed) {
+        if (y + entry.height >= 0.0f && y <= static_cast<float>(height)) {
+            const float x = (static_cast<float>(width) - entry.width) * 0.5f;
+            if (entry.texture)
+                m_renderer.DrawTexture(entry.texture, Rect{x, y, entry.width,
+                    entry.height - static_cast<float>(roll.size) * 0.5f});
+            else if (!entry.item->text.empty() && !font.empty())
+                m_renderer.DrawText(entry.item->text, x, y, font, entry.size, roll.color, roll.color.a);
+        }
+        y += entry.height;
     }
 }
 
