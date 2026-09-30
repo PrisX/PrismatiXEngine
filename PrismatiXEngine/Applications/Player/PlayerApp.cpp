@@ -1,4 +1,5 @@
 #include "Applications/Player/PlayerApp.h"
+#include "Applications/Player/QaHooks.h"
 
 #include "Engine/Graphics/Screenshot.h"
 #include "Engine/Diagnostics/Diagnostic.h"
@@ -802,6 +803,9 @@ void PlayerApp::RefreshTitleProgressUi() {
 }
 
 bool PlayerApp::Init(int argc, char* argv[]) {
+    if constexpr (kQaHooks)
+        PX_LOG_WARN("PrismatiXPlayerQA reads PRISMATIX_E2E_* hooks; "
+                    "package games with PrismatiXPlayer");
     m_boot = LoadBootConfig();
     if (!m_boot.valid) return false;
     if (m_boot.packaged) {
@@ -823,7 +827,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         PX_LOG_INFO("Player user data directory={} legacySavesImported={}",
                     PathToUtf8(userData.Value()), imported.Value());
     }
-    if (const char* isolatedSaveDir = SDL_getenv("PRISMATIX_E2E_SAVE_DIR");
+    if (const char* isolatedSaveDir = PX_QA_ENV("PRISMATIX_E2E_SAVE_DIR");
         isolatedSaveDir && *isolatedSaveDir)
         m_saveDirectory = std::filesystem::path(isolatedSaveDir);
     bool runtimeReady = m_runtime.Init(m_boot.config);
@@ -856,7 +860,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         PX_LOG_CRITICAL("Failed to initialize runtime.");
         return false;
     }
-    if (SDL_getenv("PRISMATIX_E2E_EXPECT_REMOVED_RESOURCE")) {
+    if (PX_QA_ENV("PRISMATIX_E2E_EXPECT_REMOVED_RESOURCE")) {
         const bool hidden = !m_runtime.VFS().Exists(
             "Content/Overlay/player-second.txt");
         PX_LOG_INFO("Player E2E removed update resource hidden={}", hidden);
@@ -2649,7 +2653,7 @@ bool PlayerApp::CommitStartGame() {
     }
     // QA hook: begin at a Story label without playing through the game.
     if (m_pendingStoryEntry.empty())
-        if (const char* label = SDL_getenv("PRISMATIX_E2E_START_LABEL"); label && *label)
+        if (const char* label = PX_QA_ENV("PRISMATIX_E2E_START_LABEL"); label && *label)
             m_pendingStoryEntry = label;
     if (!m_pendingStoryEntry.empty()) {
         std::string entry = std::exchange(m_pendingStoryEntry, {});
@@ -4489,7 +4493,7 @@ void PlayerApp::RenderUIWithScripts(const float opacity) {
         HandleUIAction({"set.voiceProfile.mute", firstProfile});
         // PRISMATIX_E2E_TEST_VOICE names a voice file the TEST button must play;
         // without it the journey does not check playback.
-        const char* testVoiceEnv = SDL_getenv("PRISMATIX_E2E_TEST_VOICE");
+        const char* testVoiceEnv = PX_QA_ENV("PRISMATIX_E2E_TEST_VOICE");
         const std::string testVoice = testVoiceEnv ? testVoiceEnv : "";
         bool testPlayed = true;
         if (!testVoice.empty()) {
@@ -4527,12 +4531,12 @@ void PlayerApp::ScreensFrame(float dt) {
 }
 
 void PlayerApp::ConfigureE2EJourney() {
-    const char* journey=SDL_getenv("PRISMATIX_E2E_JOURNEY");
+    const char* journey=PX_QA_ENV("PRISMATIX_E2E_JOURNEY");
     if(!journey)return;
     if(std::string_view(journey)=="video-return"){
         m_videoReturnE2E = true;
         m_videoReturnE2EStartedAt = SDL_GetTicks();
-        const char* captureDir = SDL_getenv("PRISMATIX_E2E_CAPTURE_DIR");
+        const char* captureDir = PX_QA_ENV("PRISMATIX_E2E_CAPTURE_DIR");
         m_presentationE2ECaptureDir = captureDir ? captureDir : "e2e-video-return";
         PX_LOG_INFO("Player video return E2E armed captureDir={}",
                     m_presentationE2ECaptureDir);
@@ -4548,9 +4552,9 @@ void PlayerApp::ConfigureE2EJourney() {
         m_presentationE2E=true;
         m_presentationE2EStage=1;
         m_presentationE2EStartedAt=SDL_GetTicks();
-        const char* captureDir=SDL_getenv("PRISMATIX_E2E_CAPTURE_DIR");
+        const char* captureDir=PX_QA_ENV("PRISMATIX_E2E_CAPTURE_DIR");
         m_presentationE2ECaptureDir=captureDir?captureDir:"e2e-captures";
-        const char* targetOperation=SDL_getenv("PRISMATIX_E2E_TARGET_OPERATION_ID");
+        const char* targetOperation=PX_QA_ENV("PRISMATIX_E2E_TARGET_OPERATION_ID");
         m_presentationE2ETargetOperationId=targetOperation?targetOperation:"";
         m_presentationE2ESplashCaptured.assign(
             m_splash?m_splash->Entries().size():0,false);
@@ -4561,7 +4565,7 @@ void PlayerApp::ConfigureE2EJourney() {
     if(std::string_view(journey)=="ui-routes"){
         m_uiRoutesE2E=true;
         m_uiRoutesE2EStartedAt=SDL_GetTicks();
-        const char* captureDir=SDL_getenv("PRISMATIX_E2E_CAPTURE_DIR");
+        const char* captureDir=PX_QA_ENV("PRISMATIX_E2E_CAPTURE_DIR");
         m_presentationE2ECaptureDir=captureDir?captureDir:"e2e-ui-routes";
         PX_LOG_INFO("Player UI routes E2E armed captureDir={} routes={}",
                     m_presentationE2ECaptureDir,
@@ -4589,7 +4593,7 @@ void PlayerApp::ConfigureE2EJourney() {
     if(std::string_view(journey)=="settings-sound"){
         m_settingsSoundE2E = true;
         m_settingsSoundE2EStartedAt = SDL_GetTicks();
-        const char* captureDir = SDL_getenv("PRISMATIX_E2E_CAPTURE_DIR");
+        const char* captureDir = PX_QA_ENV("PRISMATIX_E2E_CAPTURE_DIR");
         m_presentationE2ECaptureDir = captureDir ? captureDir : "e2e-settings-sound";
         PX_LOG_INFO("Player settings sound E2E armed captureDir={}",
                     m_presentationE2ECaptureDir);
@@ -4634,8 +4638,8 @@ bool PlayerApp::CapturePresentationE2EFrame(const std::string_view name){
 }
 
 void PlayerApp::BenchCapture(std::string name) {
-    if (!SDL_getenv("PRISMATIX_E2E_CAPTURE_DIR")) return;
-    m_presentationE2ECaptureDir = SDL_getenv("PRISMATIX_E2E_CAPTURE_DIR");
+    if (!PX_QA_ENV("PRISMATIX_E2E_CAPTURE_DIR")) return;
+    m_presentationE2ECaptureDir = PX_QA_ENV("PRISMATIX_E2E_CAPTURE_DIR");
     m_runtime.OnNextComposedFrame([this, name = std::move(name)] {
         (void)CapturePresentationE2EFrame(name);
     });
@@ -5348,7 +5352,7 @@ void PlayerApp::DriveE2EJourney() {
             if(m_e2eCustomMenuRouteSeen&&m_scriptHost&&
                !m_scriptHost->HasPendingAction()&&
                m_session->Routes().CurrentModalRoute().empty()){
-                if (SDL_getenv("PRISMATIX_E2E_LOAD_PREVIOUS_SAVE")) {
+                if (PX_QA_ENV("PRISMATIX_E2E_LOAD_PREVIOUS_SAVE")) {
                     if (!LoadSlot(2)) {
                         PX_LOG_ERROR("Player E2E previous-version save could not load");
                         m_e2eFailed = true;

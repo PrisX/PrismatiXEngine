@@ -97,7 +97,7 @@ repair those objects. Use a fresh build directory or rebuild the affected
 objects before trusting an incremental build. `ninja -C out/build/<preset> -t deps`
 shows the recorded dependencies.
 
-Runtime and test binaries are generated under `out/build/<preset>/PrismatiXEngine/`. Install the redistributable runtime component to a staging prefix before running the real Phase 1 acceptance gate:
+Runtime and test binaries are generated under `out/build/<preset>/PrismatiXEngine/`. `PrismatiXPlayer` is the Player games ship; `PrismatiXPlayerQA` is the same Player with the `PRISMATIX_E2E_*` QA hooks (scripted journeys, `PRISMATIX_E2E_START_LABEL`, save redirection) compiled in. Use it for QA packs and native journey tests, never for a release; only `PrismatiXPlayer` is installed with the runtime component. Install the redistributable runtime component to a staging prefix before running the real Phase 1 acceptance gate:
 
 ```bash
 cmake --install out/build/<preset> --prefix out/install/<preset> --component PrismatiXRuntime

@@ -364,21 +364,29 @@ if(NOT EMSCRIPTEN)
 endif()
 
 if(NOT EMSCRIPTEN)
-add_executable(PrismatiXPlayer
-    Applications/PlayerMain.cpp
-    Applications/Player/PlayerApp.cpp
-)
-target_link_libraries(PrismatiXPlayer PRIVATE PrismatiXRuntime)
-if(MSVC)
-    # PlayerApp intentionally integrates the complete shipped-player surface in
-    # one translation unit. Async preload state can push debug builds beyond
-    # COFF's default section count, so use MSVC's extended object format.
-    target_compile_options(PrismatiXPlayer PRIVATE /bigobj)
-endif()
-if(WIN32)
-    target_link_libraries(PrismatiXPlayer PRIVATE sapi)
-endif()
-prismatix_configure_target(PrismatiXPlayer)
+# PrismatiXPlayer is the shipped Player. PrismatiXPlayerQA is the same Player
+# with the PRISMATIX_E2E_* hooks (scripted journeys, save redirection, start
+# labels) compiled in; tests and QA packs use it, games never ship it.
+function(prismatix_add_player target qa_hooks)
+    add_executable(${target}
+        Applications/PlayerMain.cpp
+        Applications/Player/PlayerApp.cpp
+    )
+    target_link_libraries(${target} PRIVATE PrismatiXRuntime)
+    target_compile_definitions(${target} PRIVATE PRISMATIX_QA_HOOKS=${qa_hooks})
+    if(MSVC)
+        # PlayerApp intentionally integrates the complete shipped-player surface in
+        # one translation unit. Async preload state can push debug builds beyond
+        # COFF's default section count, so use MSVC's extended object format.
+        target_compile_options(${target} PRIVATE /bigobj)
+    endif()
+    if(WIN32)
+        target_link_libraries(${target} PRIVATE sapi)
+    endif()
+    prismatix_configure_target(${target})
+endfunction()
+prismatix_add_player(PrismatiXPlayer 0)
+prismatix_add_player(PrismatiXPlayerQA 1)
 
 add_executable(PrismatiXPackager Applications/PackagerMain.cpp)
 target_link_libraries(PrismatiXPackager PRIVATE PrismatiXPackagerSDK PrismatiXRuntime)
@@ -410,6 +418,7 @@ add_custom_target(PrismatiXUiTypeRegistryManifest ALL
 # supported by the newly linked Player/PreviewHost.
 add_dependencies(PrismatiXPackager PrismatiXUiTypeRegistryManifest)
 add_dependencies(PrismatiXPlayer PrismatiXUiTypeRegistryManifest)
+add_dependencies(PrismatiXPlayerQA PrismatiXUiTypeRegistryManifest)
 add_dependencies(PrismatiXPreviewHost PrismatiXUiTypeRegistryManifest)
 add_executable(PrismatiXInputKeyManifest Applications/InputKeyManifestMain.cpp)
 target_link_libraries(PrismatiXInputKeyManifest PRIVATE PrismatiXRuntime)
@@ -428,6 +437,7 @@ add_custom_target(PrismatiXInputKeyRegistryManifest ALL
                   DEPENDS "${PRISMATIX_INPUT_KEY_MANIFEST}")
 add_dependencies(PrismatiXPackager PrismatiXInputKeyRegistryManifest)
 add_dependencies(PrismatiXPlayer PrismatiXInputKeyRegistryManifest)
+add_dependencies(PrismatiXPlayerQA PrismatiXInputKeyRegistryManifest)
 add_dependencies(PrismatiXPreviewHost PrismatiXInputKeyRegistryManifest)
 install(FILES "${PRISMATIX_INPUT_KEY_MANIFEST}"
     DESTINATION .
@@ -727,15 +737,24 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     endif()
     prismatix_configure_target(PrismatiXPlayerCatalogNativeAcceptanceTests)
     add_dependencies(PrismatiXPlayerCatalogNativeAcceptanceTests
-                     PrismatiXPlayer)
+                     PrismatiXPlayerQA)
     add_test(
         NAME PrismatiX.Player.CatalogNativeAcceptance
         COMMAND PrismatiXPlayerCatalogNativeAcceptanceTests
-                $<TARGET_FILE:PrismatiXPlayer>
+                $<TARGET_FILE:PrismatiXPlayerQA>
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Samples/CommercialVN/Content
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/NotoSansTC-Bold.ttf
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/logo.wav)
+    # The shipped Player must not even contain the QA hook names.
+    add_test(
+        NAME PrismatiX.Player.ShippedWithoutQaHooks
+        COMMAND ${CMAKE_COMMAND}
+                -DSHIPPED=$<TARGET_FILE:PrismatiXPlayer>
+                -DQA=$<TARGET_FILE:PrismatiXPlayerQA>
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PlayerQaHooksGate.cmake)
+    set_tests_properties(PrismatiX.Player.ShippedWithoutQaHooks
+                         PROPERTIES LABELS "native;player;release")
     set_tests_properties(
         PrismatiX.Player.CatalogNativeAcceptance
         PROPERTIES
@@ -1094,7 +1113,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiXSplashContractTests
         PrismatiXSplashSequencePlayerTests
         PrismatiXPlayerBootSplashIntegrationTests
-        PrismatiXPlayer)
+        PrismatiXPlayer
+        PrismatiXPlayerQA)
     if(TARGET PrismatiXPlatformAccessibilityIntegrationTests)
         add_dependencies(PrismatiXSDKTests
                          PrismatiXPlatformAccessibilityIntegrationTests)
