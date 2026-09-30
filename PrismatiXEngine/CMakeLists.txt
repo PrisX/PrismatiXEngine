@@ -647,6 +647,7 @@ if(PRISMATIX_BUILD_WASM_PREVIEW)
         Engine/Runtime.cpp
         Engine/Platform/AppLifecycle.cpp
         Engine/Platform/Input.cpp
+        Engine/Platform/TouchGestures.cpp
         Engine/Platform/Window.cpp
         Engine/IO/FileSource.cpp
         Engine/IO/VFS.cpp
@@ -1095,6 +1096,11 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
         Tests/Unit/Platform/AppLifecycleTests.cpp
         PrismatiX.Unit.Platform.AppLifecycle
         "unit;platform;lifecycle;audio;android" PrismatiXRuntime)
+    prismatix_add_simple_test(
+        PrismatiXTouchGestureTests
+        Tests/Unit/Platform/TouchGestureTests.cpp
+        PrismatiX.Unit.Platform.TouchGestures
+        "unit;platform;input;touch;android" PrismatiXRuntime)
     prismatix_add_simple_test(
         PrismatiXPlayerBootSplashIntegrationTests
         Tests/Integration/PlayerBootSplashIntegrationTests.cpp

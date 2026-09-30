@@ -1,7 +1,10 @@
 #pragma once
 
+#include "Engine/Platform/TouchGestures.h"
+
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -267,6 +270,32 @@ public:
 
     void InjectFrame(float mouseX, float mouseY, bool leftClick);
 
+    // Touch interaction profile. Under Auto and On, fingers are recognized as
+    // gestures: tap = primary click (advance / activate), long press =
+    // toggle-ui, two-finger tap = menu, swipe up = backlog, and a moving
+    // finger drives the pointer like a held mouse button. Off keeps the
+    // first finger as a plain pointer. Mouse, keyboard and gamepad behave
+    // the same under every profile.
+    void SetTouchProfile(TouchProfile profile);
+    [[nodiscard]] TouchProfile GetTouchProfile() const { return m_touchProfile; }
+    // Whether UIs should show touch-friendly variants (UI data
+    // platform.touch): always under On, never under Off, and under Auto
+    // whenever the last pointer input came from a finger.
+    [[nodiscard]] bool TouchActive() const;
+    // TouchActive() when it differs from the value last returned here; the
+    // first call always reports.
+    [[nodiscard]] std::optional<bool> TakeTouchActiveChange();
+    // Maps SDL's normalized finger position (0..1 in the window) to pointer
+    // coordinates. Without a mapper, fingers use window pixels.
+    using TouchCoordinateMapper =
+        std::function<bool(float normalizedX, float normalizedY, float& x, float& y)>;
+    void SetTouchCoordinateMapper(TouchCoordinateMapper mapper) {
+        m_touchMapper = std::move(mapper);
+    }
+    // Fires time-based gestures such as long press. The Runtime calls this
+    // once per frame after pumping events, with SDL_GetTicksNS().
+    void UpdateTouch(std::uint64_t nowNs);
+
 private:
     static constexpr std::size_t kActionCount =
         static_cast<std::size_t>(InputAction::Count);
@@ -287,6 +316,7 @@ private:
         GamepadButton,
         Pointer,
         Wheel,
+        Gesture,
     };
     struct EventSource {
         EventSourceKind kind = EventSourceKind::None;
@@ -304,6 +334,14 @@ private:
     void AppendPointerDefaultActions(PointerButton button,
                                      std::uint64_t sourceId);
     void AppendWheelActions(std::uint64_t sourceId);
+    [[nodiscard]] std::pair<float, float> FingerPosition(float normalizedX,
+                                                         float normalizedY,
+                                                         std::uint32_t windowId) const;
+    void ProcessGestureFinger(const SDL_Event& event);
+    void ApplyGestures();
+    void AppendGestureAction(std::string_view action);
+    void AppendPrimaryPress(float x, float y, std::uint64_t pointerId);
+    void AppendPrimaryRelease(float x, float y, std::uint64_t pointerId);
     std::set<int> m_keysPressed;
     bool m_keyCaptureActive = false;
     std::optional<int> m_capturedKey;
@@ -349,6 +387,11 @@ private:
     bool m_suppressText = false;
     std::optional<std::uint64_t> m_primaryFinger;
     std::string m_textInput;
+    TouchProfile m_touchProfile = TouchProfile::Auto;
+    TouchGestureRecognizer m_gestures;
+    TouchCoordinateMapper m_touchMapper;
+    bool m_lastPointerWasTouch = false;
+    std::optional<bool> m_reportedTouch;
 };
 
 }

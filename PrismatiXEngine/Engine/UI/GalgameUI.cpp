@@ -164,6 +164,9 @@ GalgameUI::GalgameUI() {
     (void)m_viewModel.Define("dialogue.text",Variant(std::string{}),true);
     (void)m_viewModel.Define("chapter.title",Variant(std::string{}),true);
     (void)m_viewModel.Define("music.title",Variant(std::string{}),true);
+    // True when the player is using touch (Input::TouchActive), so TSX can
+    // show touch-friendly variants.
+    (void)m_viewModel.Define("platform.touch",Variant(false),true);
     // An authored slot template can bind into one typed collection. Keep the
     // flat fields for older authored UI documents until they are migrated.
     VariantArray initialSlots;

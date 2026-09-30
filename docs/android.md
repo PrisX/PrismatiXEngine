@@ -17,7 +17,7 @@ here is manual.
 | --- | --- | --- |
 | Reading the package from the APK | Done, tested on desktop through SDL | `Engine/IO/FileSource.h` |
 | Background, foreground, low memory, terminate | Done, rules unit-tested | `Engine/Platform/AppLifecycle.h`, `Engine/Runtime.cpp` |
-| Touch gestures | Not started (phase A2) | |
+| Touch gestures and `platform.touch` | Done; gestures unit-tested with synthetic finger events | `Engine/Platform/TouchGestures.h`, [Touch input](#touch-input) |
 | Building `libmain.so` | CMake branch written, never run | `android-arm64` preset |
 | Gradle project | Template written, never built | `packages/cli/templates/android` |
 | Signing, `.aab`, Play Asset Delivery | Not started | phase A2/A3 |
@@ -160,6 +160,39 @@ adb logcat -s SDL SDL/APP PrismatiX
 For a release build, create a keystore and add a `signingConfigs` block.
 The template leaves signing to you.
 
+## Touch input
+
+Fingers are turned into gestures. Each gesture fires the same command the
+mouse, keyboard or gamepad already fires:
+
+| Gesture | Same as | Default effect |
+| --- | --- | --- |
+| Tap | Left click | Advance the text, or activate the control under the finger |
+| Long press (0.5 s) | `toggle-ui` (H) | Hide or show the message window |
+| Two-finger tap | `menu` (Escape, gamepad B) | Whatever the project binds to `menu` in `inputActions` |
+| Swipe up | `backlog` (B, wheel up) | Open the backlog |
+| Drag | Held left button | Sliders and other draggable controls |
+
+A tap acts when the finger lifts, so a swipe or long press never advances
+the text as well. SDL's synthetic mouse copies of touches are ignored.
+Mouse, keyboard and gamepad input is unchanged.
+
+`platform.touch` is Player UI data (boolean), so TSX can show
+touch-friendly variants:
+
+```tsx
+<Group name="TouchToolbar" visibleWhen="platform.touch" ... />
+<Group name="HoverDock" visibleWhen="!platform.touch" ... />
+```
+
+The project setting `player.touchProfile` controls both:
+
+| Value | Gestures | `platform.touch` |
+| --- | --- | --- |
+| `"auto"` (default) | on | `true` while the last pointer input was a finger |
+| `"on"` | on | always `true`: preview touch layouts on desktop |
+| `"off"` | off; the first finger acts as a plain mouse pointer | always `false` |
+
 ## Verification checklist for the first device run
 
 1. `cmake --preset android-arm64` configures, and `libmain.so` links.
@@ -171,5 +204,7 @@ The template leaves signing to you.
 5. Swiping the app away from recents, then relaunching, lets you load the
    autosave.
 6. Video plays, pauses when backgrounded, and resumes.
+7. Every gesture in the touch table works, and taps land on the control
+   under the finger even when the game is letterboxed.
 
 Record what broke and how you fixed it here.

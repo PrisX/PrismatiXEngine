@@ -1198,6 +1198,14 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                                 fallbacks.emplace_back(item.key(), item.value().get<std::string>());
                     m_runtime.Audio().SetVoiceProfileFallbacks(std::move(fallbacks));
                 }
+                if (const auto touch = settings->find("player.touchProfile");
+                    touch != settings->end() && touch->is_string()) {
+                    if (const auto profile = ParseTouchProfile(touch->get<std::string>()))
+                        m_runtime.GetInput().SetTouchProfile(*profile);
+                    else
+                        PX_LOG_WARN("Ignoring player.touchProfile '{}'; use auto, on or off",
+                                    touch->get<std::string>());
+                }
                 if (const auto dock = settings->find("player.dockArea");
                     dock != settings->end() && dock->is_object()) {
                     m_dockArea = {dock->value("x", 0.0f), dock->value("y", 0.0f),
@@ -6081,6 +6089,8 @@ void PlayerApp::MainLoop() {
         m_uiTransitionStartedThisFrame = false;
         UpdateRouteVisualPreload();
         px::Input& input = m_runtime.GetInput();
+        if (const auto touch = input.TakeTouchActiveChange())
+            (void)m_ui.UpdateUiData("platform.touch", Variant(*touch));
         const float dt = m_runtime.GetClock().DeltaSeconds();
         const std::uint64_t now = m_runtime.GetClock().NowMs();
         UpdateCursorVisibility(now);

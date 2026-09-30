@@ -65,7 +65,7 @@ const itemFields: Readonly<Record<string, readonly string[]>> = {
 
 const reservedRoots = new Set(["dialogue", "chapter", "music", "saveLoad", "gallery", "backlog",
   "settings", "title", "system", "replay", "profileFlags", "musicUnlocked", "sceneUnlocked",
-  "dialog", "options", "strings"]);
+  "dialog", "options", "strings", "platform"]);
 
 /** Player operations `player.confirmations` may ask before. */
 export const confirmableOperations = ["quickSave", "quickLoad", "save", "overwrite", "load",
@@ -132,7 +132,7 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
     ...stems.map((stem) => `musicUnlocked.${stem}`),
     ...(input.profileVariables ?? []).map((name) => `profileFlags.${name}`),
     ...(input.localeStrings ?? []).map((key) => `strings.${key}`),
-    "dialogue.nvl", "dialogue.face", "dialog.visible", "dialog.skipNext",
+    "dialogue.nvl", "dialogue.face", "dialog.visible", "dialog.skipNext", "platform.touch",
     ...playerDialogKinds(settings).map((kind) => `dialog.kind.${kind}`),
     ...["master", "bgm", "se", "voice"].map((bus) => `settings.muted.${bus}`),
     ...(Array.isArray(voiceProfiles) ? voiceProfiles : [])

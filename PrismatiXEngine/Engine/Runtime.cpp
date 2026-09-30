@@ -47,6 +47,19 @@ bool Runtime::Init(const RuntimeConfig& config) {
         return false;
     }
 
+    // Fingers use the same logical coordinates as the mouse.
+    m_input.SetTouchCoordinateMapper(
+        [this](const float normalizedX, const float normalizedY, float& x,
+               float& y) {
+            SDL_Window* window = m_window.Handle();
+            SDL_Renderer* renderer = m_window.Renderer();
+            int width = 0, height = 0;
+            return window && renderer &&
+                   SDL_GetWindowSize(window, &width, &height) &&
+                   SDL_RenderCoordinatesFromWindow(
+                       renderer, normalizedX * static_cast<float>(width),
+                       normalizedY * static_cast<float>(height), &x, &y);
+        });
     for (const std::string& dir : m_config.mountDirs) {
         m_vfs.MountDirectory(dir);
     }
@@ -176,6 +189,7 @@ bool Runtime::BeginFrame() {
            !m_lifecycle.TerminateRequested()) {
         if (SDL_WaitEventTimeout(&event, 250)) HandleEvent(event, resized);
     }
+    m_input.UpdateTouch(SDL_GetTicksNS());
     if (m_lifecycle.ConsumeResumed()) {
         // The swapchain may have been recreated at a new size, and the time
         // spent suspended is not frame time.
@@ -221,6 +235,14 @@ void Runtime::HandleEvent(SDL_Event& event, bool& resized) {
         if (m_assets) m_assets->ReleaseDeviceTextures();
         if (m_renderer) m_renderer->ResetRenderTargets();
         break;
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_FINGER_MOTION:
+    case SDL_EVENT_FINGER_UP:
+    case SDL_EVENT_FINGER_CANCELED:
+        // Input maps the window-normalized finger position itself (see the
+        // touch mapper in Init); converting here as well scaled it twice.
+        m_input.Process(event);
+        return;
     default:
         break;
     }

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 #include <utility>
 
 namespace px {
@@ -928,7 +929,190 @@ void Input::AppendWheelActions(const std::uint64_t sourceId) {
     }
 }
 
+void Input::SetTouchProfile(const TouchProfile profile) {
+    if (profile == m_touchProfile) return;
+    m_touchProfile = profile;
+    m_gestures = TouchGestureRecognizer{};
+    m_primaryFinger.reset();
+}
+
+bool Input::TouchActive() const {
+    switch (m_touchProfile) {
+    case TouchProfile::On: return true;
+    case TouchProfile::Off: return false;
+    case TouchProfile::Auto: return m_lastPointerWasTouch;
+    }
+    return false;
+}
+
+std::optional<bool> Input::TakeTouchActiveChange() {
+    const bool active = TouchActive();
+    if (m_reportedTouch == active) return std::nullopt;
+    m_reportedTouch = active;
+    return active;
+}
+
+std::pair<float, float> Input::FingerPosition(const float normalizedX,
+                                              const float normalizedY,
+                                              const std::uint32_t windowId) const {
+    float x = 0.0f, y = 0.0f;
+    if (m_touchMapper && m_touchMapper(normalizedX, normalizedY, x, y))
+        return {x, y};
+    int width = 1, height = 1;
+    if (auto* window = SDL_GetWindowFromID(windowId))
+        (void)SDL_GetWindowSize(window, &width, &height);
+    return {normalizedX * static_cast<float>(width),
+            normalizedY * static_cast<float>(height)};
+}
+
+void Input::AppendPrimaryPress(const float x, const float y,
+                               const std::uint64_t pointerId) {
+    m_mouseX = x;
+    m_mouseY = y;
+    m_leftDown = true;
+    m_leftClick = true;
+    InputEvent inputEvent;
+    inputEvent.type = InputEventType::PointerDown;
+    inputEvent.pointerId = pointerId;
+    inputEvent.button = PointerButton::Primary;
+    inputEvent.x = x;
+    inputEvent.y = y;
+    const std::uint64_t sourceId = AppendEvent(
+        std::move(inputEvent),
+        {.kind=EventSourceKind::Pointer, .pointerButton=PointerButton::Primary});
+    AppendPointerDefaultActions(PointerButton::Primary, sourceId);
+}
+
+void Input::AppendPrimaryRelease(const float x, const float y,
+                                 const std::uint64_t pointerId) {
+    m_mouseX = x;
+    m_mouseY = y;
+    m_leftReleased = m_leftDown;
+    m_leftDown = false;
+    InputEvent inputEvent;
+    inputEvent.type = InputEventType::PointerUp;
+    inputEvent.pointerId = pointerId;
+    inputEvent.button = PointerButton::Primary;
+    inputEvent.x = x;
+    inputEvent.y = y;
+    (void)AppendEvent(std::move(inputEvent),
+                      {.kind=EventSourceKind::Pointer,
+                       .pointerButton=PointerButton::Primary});
+}
+
+void Input::AppendGestureAction(const std::string_view action) {
+    if (!HasAction(action)) return;
+    InputEvent event;
+    event.type = InputEventType::Action;
+    event.action = action;
+    (void)AppendEvent(std::move(event), {.kind=EventSourceKind::Gesture});
+}
+
+void Input::ApplyGestures() {
+    for (const TouchGestureEvent& gesture : m_gestures.Take()) {
+        switch (gesture.gesture) {
+        case TouchGesture::Tap:
+            // A tap is a complete click: press and release in one frame,
+            // after the gesture is known not to be a swipe or long press.
+            AppendPrimaryPress(gesture.x, gesture.y, 0);
+            AppendPrimaryRelease(gesture.x, gesture.y, 0);
+            break;
+        case TouchGesture::DragStart:
+            AppendPrimaryPress(gesture.x, gesture.y, 0);
+            break;
+        case TouchGesture::LongPress:
+            AppendGestureAction(ActionName(InputAction::ToggleUi));
+            break;
+        case TouchGesture::TwoFingerTap:
+            AppendGestureAction(ActionName(InputAction::Menu));
+            break;
+        case TouchGesture::SwipeUp:
+            AppendGestureAction(ActionName(InputAction::Backlog));
+            break;
+        }
+    }
+}
+
+void Input::UpdateTouch(const std::uint64_t nowNs) {
+    if (m_touchProfile == TouchProfile::Off) return;
+    m_gestures.Update(nowNs);
+    ApplyGestures();
+}
+
+void Input::ProcessGestureFinger(const SDL_Event& event) {
+    const auto finger = static_cast<std::uint64_t>(event.tfinger.fingerID);
+    const auto [x, y] = FingerPosition(event.tfinger.x, event.tfinger.y,
+                                       event.tfinger.windowID);
+    const std::uint64_t ns = event.tfinger.timestamp;
+    m_lastPointerWasTouch = true;
+    switch (event.type) {
+    case SDL_EVENT_FINGER_DOWN: {
+        // Hover follows the finger so the control under it highlights.
+        m_mouseX = x;
+        m_mouseY = y;
+        InputEvent move;
+        move.type = InputEventType::PointerMove;
+        move.pointerId = finger;
+        move.x = x;
+        move.y = y;
+        (void)AppendEvent(std::move(move));
+        m_gestures.Down(finger, x, y, ns);
+        ApplyGestures();
+        break;
+    }
+    case SDL_EVENT_FINGER_MOTION: {
+        m_gestures.Move(finger, x, y, ns);
+        ApplyGestures();
+        if (m_gestures.DragFinger() != finger) break;
+        const float previousX = m_mouseX, previousY = m_mouseY;
+        m_mouseX = x;
+        m_mouseY = y;
+        InputEvent move;
+        move.type = InputEventType::PointerMove;
+        move.pointerId = finger;
+        move.x = x;
+        move.y = y;
+        move.deltaX = x - previousX;
+        move.deltaY = y - previousY;
+        (void)AppendEvent(std::move(move));
+        break;
+    }
+    case SDL_EVENT_FINGER_UP:
+    case SDL_EVENT_FINGER_CANCELED: {
+        const bool dragging = m_gestures.DragFinger() == finger;
+        if (event.type == SDL_EVENT_FINGER_CANCELED) m_gestures.Cancel(finger);
+        else m_gestures.Up(finger, x, y, ns);
+        ApplyGestures();
+        if (dragging) AppendPrimaryRelease(x, y, finger);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 void Input::Process(const SDL_Event& event) {
+    // SDL also reports touches as synthetic mouse events. Fingers are
+    // handled below, so those copies would double every tap.
+    if ((event.type == SDL_EVENT_MOUSE_MOTION &&
+         event.motion.which == SDL_TOUCH_MOUSEID) ||
+        ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+          event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+         event.button.which == SDL_TOUCH_MOUSEID) ||
+        (event.type == SDL_EVENT_MOUSE_WHEEL &&
+         event.wheel.which == SDL_TOUCH_MOUSEID))
+        return;
+    if (m_touchProfile != TouchProfile::Off &&
+        (event.type == SDL_EVENT_FINGER_DOWN ||
+         event.type == SDL_EVENT_FINGER_MOTION ||
+         event.type == SDL_EVENT_FINGER_UP ||
+         event.type == SDL_EVENT_FINGER_CANCELED)) {
+        ProcessGestureFinger(event);
+        return;
+    }
+    if (event.type == SDL_EVENT_MOUSE_MOTION ||
+        event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+        m_lastPointerWasTouch = false;
     switch (event.type) {
         case SDL_EVENT_QUIT:
             m_quit = true;
@@ -1039,11 +1223,8 @@ void Input::Process(const SDL_Event& event) {
             if(!m_primaryFinger){
                 m_primaryFinger=static_cast<std::uint64_t>(
                     event.tfinger.fingerID);
-                int width=1,height=1;
-                if(auto* window=SDL_GetWindowFromID(event.tfinger.windowID))
-                    (void)SDL_GetWindowSize(window,&width,&height);
-                m_mouseX=event.tfinger.x*static_cast<float>(width);
-                m_mouseY=event.tfinger.y*static_cast<float>(height);
+                std::tie(m_mouseX, m_mouseY) = FingerPosition(
+                    event.tfinger.x, event.tfinger.y, event.tfinger.windowID);
                 m_leftDown=true;
                 m_leftClick=true;
                 InputEvent inputEvent;
@@ -1066,8 +1247,8 @@ void Input::Process(const SDL_Event& event) {
                 int width=1,height=1;
                 if(auto* window=SDL_GetWindowFromID(event.tfinger.windowID))
                     (void)SDL_GetWindowSize(window,&width,&height);
-                m_mouseX=event.tfinger.x*static_cast<float>(width);
-                m_mouseY=event.tfinger.y*static_cast<float>(height);
+                std::tie(m_mouseX, m_mouseY) = FingerPosition(
+                    event.tfinger.x, event.tfinger.y, event.tfinger.windowID);
                 InputEvent inputEvent;
                 inputEvent.type = InputEventType::PointerMove;
                 inputEvent.pointerId = *m_primaryFinger;
@@ -1083,11 +1264,8 @@ void Input::Process(const SDL_Event& event) {
         case SDL_EVENT_FINGER_CANCELED:
             if(m_primaryFinger==static_cast<std::uint64_t>(
                    event.tfinger.fingerID)){
-                int width=1,height=1;
-                if(auto* window=SDL_GetWindowFromID(event.tfinger.windowID))
-                    (void)SDL_GetWindowSize(window,&width,&height);
-                m_mouseX=event.tfinger.x*static_cast<float>(width);
-                m_mouseY=event.tfinger.y*static_cast<float>(height);
+                std::tie(m_mouseX, m_mouseY) = FingerPosition(
+                    event.tfinger.x, event.tfinger.y, event.tfinger.windowID);
                 m_leftReleased=m_leftDown;
                 m_leftDown=false;
                 InputEvent inputEvent;
