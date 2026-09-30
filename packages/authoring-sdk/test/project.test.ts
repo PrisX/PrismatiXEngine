@@ -754,6 +754,37 @@ test("compileProject validates splash voice variants and packages every possible
   assert.ok(impossibleSkip.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1056"));
 });
 
+test("compileProject packages every Player setting path and rejects missing ones", () => {
+  const settings = {
+    "player.uiFont": "Assets/Fonts/ui.otf",
+    "player.fonts": ["Assets/Fonts/serif.otf", "Assets/Fonts/sans.otf"],
+    "player.musicTracks": ["Assets/Music/one.ogg", "Assets/Music/two.ogg"],
+    "player.titleBgmAfter": {flag: "cleared", path: "Assets/Music/after.ogg"},
+  };
+  const compile = (resourceExists?: (path: string) => boolean) => compileProject({
+    project: {...project, settings},
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+    ...(resourceExists === undefined ? {} : {resourceExists}),
+  });
+  const valid = compile();
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  const packaged = new Set(valid.artifact?.dependencies.map((dependency) => dependency.source));
+  for (const path of ["Assets/Fonts/ui.otf", "Assets/Fonts/serif.otf", "Assets/Fonts/sans.otf",
+    "Assets/Music/one.ogg", "Assets/Music/two.ogg", "Assets/Music/after.ogg"])
+    assert.ok(packaged.has(path), path);
+  for (const missingPath of ["Assets/Fonts/ui.otf", "Assets/Fonts/sans.otf",
+    "Assets/Music/two.ogg", "Assets/Music/after.ogg"]) {
+    const missing = compile((path) => path !== missingPath);
+    assert.equal(missing.valid, false, missingPath);
+    assert.ok(missing.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1044" &&
+      diagnostic.path === missingPath), missingPath);
+  }
+});
+
 test("compileProject checks Player option bindings and confirmations", () => {
   const compile = (settings: unknown) => compileProject({
     project: {...project, settings},

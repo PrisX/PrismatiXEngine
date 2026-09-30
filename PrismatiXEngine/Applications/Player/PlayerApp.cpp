@@ -1085,17 +1085,27 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 }
                 if (const auto layout = settings->find("player.saveLayout");
                     layout != settings->end()) {
-                    if (!layout->is_object()) return false;
+                    const auto invalidLayout = [] {
+                        diag::Emit(diag::Diagnostic{
+                            .severity = diag::Severity::Fatal,
+                            .code = "PXPLAYER5026",
+                            .category = "Player.Save",
+                            .message = "player.saveLayout needs integer pages 1-100, "
+                                       "slotsPerPage 1-32 and firstSlot >= 0 with at "
+                                       "most 1000 slots in total"});
+                        return false;
+                    };
+                    if (!layout->is_object()) return invalidLayout();
                     for (const char* key : {"pages", "slotsPerPage", "firstSlot"}) {
                         if (const auto field = layout->find(key);
                             field != layout->end() && !field->is_number_integer())
-                            return false;
+                            return invalidLayout();
                     }
                     const auto pages = layout->value("pages", 1);
                     const auto perPage = layout->value("slotsPerPage", 12);
                     const auto first = layout->value("firstSlot", 0);
                     if (pages < 1 || pages > 100 || perPage < 1 || perPage > 32 ||
-                        first < 0 || first + pages * perPage > 1000) return false;
+                        first < 0 || first + pages * perPage > 1000) return invalidLayout();
                     m_savePages = pages;
                     m_saveSlotsPerPage = perPage;
                     m_saveFirstSlot = first;
@@ -1440,7 +1450,10 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         runtimeRoutes.emplace(route);
     for(const auto& route:runtimeRoutes){
         const Status registered=m_session->Routes().Register(route,[route](){return Result<std::unique_ptr<ui::Control>>::Success(std::make_unique<ui::Control>(std::string("Route:")+route));});
-        if(!registered)return false;
+        if(!registered){
+            for(const auto& diagnostic:registered.Diagnostics())diag::Emit(diagnostic);
+            return false;
+        }
     }
     m_session->VM().SetDefaultTextSpeed(m_settings.textSpeedMs);
     PX_LOG_DEBUG("Player boot: VN runtime constructed");

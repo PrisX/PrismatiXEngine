@@ -1163,12 +1163,27 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         `settings.player.options.${name}.binds: ${binds}`), severity: "warning"});
     else boundBy.set(binds, name);
   }
+  // Every path the Player reads from settings must be packaged: a missing
+  // music track stops the Player at boot, and a missing font or title theme
+  // would otherwise be dropped silently in favour of the default.
   for (const key of ["player.titleBgm", "player.uiHoverSound", "player.uiActivateSound",
-    "player.uiCancelSound"]) {
+    "player.uiCancelSound", "player.uiFont"]) {
     const value = settings[key];
     if (typeof value === "string") addResourceRef(value, `settings.${key}`,
       projectPath, `/settings/${pointerSegment(key)}`);
   }
+  for (const key of ["player.fonts", "player.musicTracks"]) {
+    const values = settings[key];
+    if (Array.isArray(values))
+      for (const [index, value] of values.entries())
+        addResourceRef(value, `settings.${key}[${index}]`,
+          projectPath, `/settings/${pointerSegment(key)}/${index}`);
+  }
+  const titleBgmAfter = settings["player.titleBgmAfter"];
+  if (titleBgmAfter !== null && typeof titleBgmAfter === "object" && !Array.isArray(titleBgmAfter))
+    addResourceRef((titleBgmAfter as Record<string, JsonValue>).path,
+      "settings.player.titleBgmAfter.path", projectPath,
+      "/settings/player.titleBgmAfter/path");
   const titleVoices = settings["player.titleVoiceVariants"];
   if (Array.isArray(titleVoices)) {
     for (const [index, voice] of titleVoices.entries())
