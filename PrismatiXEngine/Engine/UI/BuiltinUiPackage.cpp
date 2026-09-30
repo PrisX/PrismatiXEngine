@@ -264,7 +264,8 @@ sdk::UiDocument Settings() {
             Layout(96, y, 180, 36), sliders[index].second, 20, kMuted));
         nodes.push_back(Node(
             "76000000-0000-4000-8000-0000000000" + std::to_string(10 + index),
-            root, index, sdk::UiNodeKind::Control, "Slider",
+            // Orders 2 and 3 belong to the heading.
+            root, 4 + index, sdk::UiNodeKind::Control, "Slider",
             sliders[index].first, Layout(300, y, 520, 36), "slider",
             sliders[index].second));
     }
