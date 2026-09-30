@@ -71,8 +71,10 @@ function authoredId(node: StoryNode): string | undefined {
 function observable(node: StoryNode): boolean {
   if (node.kind === "comment" || node.kind === "speaker") return false;
   // A [macro] definition emits nothing itself; its calls are the operations.
+  // A [var] declaration only adds to the game catalog.
   return node.kind !== "command" ||
-    (node.name !== "id" && node.name !== "choice.wait" && node.name !== "macro");
+    (node.name !== "id" && node.name !== "choice.wait" && node.name !== "macro" &&
+      node.name !== "var");
 }
 
 function scan(document: StoryDocument, documentId: string): {

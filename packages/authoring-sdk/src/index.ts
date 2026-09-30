@@ -29,6 +29,7 @@ export * from "./story-external-identity.js";
 export * from "./story-import.js";
 export * from "./story-import-project.js";
 export * from "./story-macros.js";
+export * from "./story-variables.js";
 export * from "./story-project.js";
 export * from "./story-project-node.js";
 export type * from "./types.js";

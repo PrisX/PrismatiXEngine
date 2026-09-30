@@ -503,7 +503,34 @@ these known settings, including paths and timing, before a distribution build.
 
 ## Variables and conditional flow
 
-Declare a catalog, for example by setting `"gameCatalog":"Content/game.pxgame"` in the project and creating:
+Declare a variable in Story with `[var]`; no JSON is needed:
+
+```pxstory
+[var affection=0]
+[var met_aoi=false scope=profile]
+[var nickname="直哉"]
+[var ratio=0 type=number]
+```
+
+- `name=default` gives the name and default value. The type follows the
+  default (`0` integer, `0.5` number, `true`/`false` boolean, anything else
+  string) unless `type=boolean|integer|number|string` says otherwise; `scope`
+  is `session` (the default) or `profile`.
+- A declaration emits no operation and takes no entry in the `.pxids.json`
+  sidecar. The build merges every Story's declarations into the compiled
+  `game.pxgame`, so the Player, saves and UI bindings see an ordinary catalog
+  variable. `[set]`, `[add]`, `[if]` and choice conditions check names and
+  types against it.
+- Declaring the same variable again (in another scene, for example) is fine
+  when it agrees; a different type, scope or default, including one that
+  disagrees with the `.pxgame` file, is `PXSTORY1251` naming the first
+  declaration. A malformed `[var]` is `PXSTORY1250`, and `[var]` inside a
+  macro is `PXSTORY1252` (declarations are read before macros expand).
+  `scope` and `type` cannot be variable names in `[var]`.
+
+A hand-written catalog still works and may be combined with `[var]`, for
+example by setting `"gameCatalog":"Content/game.pxgame"` in the project and
+creating:
 
 ```json
 {"format":"PrismatiXGame","schemaRevision":2,"variables":[{"name":"affection","type":"integer","default":0,"scope":"session"}],"gallery":[],"unlockables":[]}

@@ -5,6 +5,8 @@ import {buildStoryMacroLibrary, expandStoryMacros, type StoryMacroLibrary} from 
 import {inspectTextMarkup} from "./story-text-markup.js";
 import type {StoryAssetCategory} from "./story-assets.js";
 import {parseStoryExpression} from "./story-expression.js";
+import {mergeStoryVariables, storyVariableDeclaration,
+  type StoryVariableDeclaration} from "./story-variables.js";
 import type {
   AuthoringDiagnostic,
   CharacterDocument,
@@ -706,6 +708,29 @@ export function createStoryMacroLibrary(
   return buildStoryMacroLibrary(files, {reserved: reservedMacroNames(extensions), parse: parseStory});
 }
 
+/**
+ * Reads the `[var ...]` declarations of Story sources, in order, for merging
+ * into the game catalog with `mergeStoryVariables`. Declarations inside
+ * macro bodies are not read (compileStory reports them).
+ */
+export function collectStoryVariableDeclarations(
+  files: readonly {readonly path: string; readonly source: string}[],
+): {readonly declarations: readonly StoryVariableDeclaration[];
+  readonly diagnostics: readonly AuthoringDiagnostic[]} {
+  const declarations: StoryVariableDeclaration[] = [];
+  const diagnostics: AuthoringDiagnostic[] = [];
+  for (const file of files) {
+    // Most scenes declare nothing; skip parsing them here.
+    if (!/^[ \t]*\[\s*var\s/mu.test(file.source)) continue;
+    for (const node of parseStory(file.source, file.path).nodes) {
+      if (node.kind !== "command" || node.name !== "var") continue;
+      const declaration = storyVariableDeclaration(node, diagnostics);
+      if (declaration !== undefined) declarations.push(declaration);
+    }
+  }
+  return {declarations, diagnostics};
+}
+
 export function compileStory(document: StoryDocument, context: StoryCompileContext): StoryCompileResult {
   const diagnostics = [...document.diagnostics];
   const expansion = expandStoryMacros(document, {
@@ -727,7 +752,26 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     else labels.set(node.name, node);
   }
   const characters = characterIndex(context.characters ?? []);
-  const variables = new Map((context.game?.variables ?? []).map((value) => [value.name, value]));
+  // [var] declarations join the game catalog. A project build has already
+  // merged them, so the same declaration is found again unchanged there.
+  const declarations: StoryVariableDeclaration[] = [];
+  for (const node of nodes) {
+    if (node.kind !== "command" || node.name !== "var") continue;
+    if (node.macroOrigin !== undefined) {
+      diagnostics.push(error("PXSTORY1252", "Declare variables outside macros", node.span));
+      continue;
+    }
+    const declaration = storyVariableDeclaration(node, diagnostics);
+    if (declaration !== undefined) declarations.push(declaration);
+  }
+  let game = context.game;
+  if (declarations.length > 0) {
+    const merged = mergeStoryVariables(game ?? {format: "PrismatiXGame", schemaRevision: 2,
+      variables: []}, declarations);
+    diagnostics.push(...merged.diagnostics);
+    game = merged.game;
+  }
+  const variables = new Map((game?.variables ?? []).map((value) => [value.name, value]));
   const extensions = new Map<string, ExtensionCommand>();
   for (const extension of context.extensions ?? []) for (const command of extension.commands) extensions.set(command.id, command);
   const operations: RuntimeIrOperation[] = [];
@@ -1099,6 +1143,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         break;
       }
       case "choice.wait": break;
+      // Declarations were read before compiling; they emit nothing.
+      case "var": break;
       case "say":
       case "narrate": {
         const authoredText = args.get("text")?.value;
@@ -1311,7 +1357,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         // if="expr" hides the option while the expression is false.
         const source = named("if");
         const condition = source === undefined ? undefined
-          : parseStoryExpression(source, context.game?.variables);
+          : parseStoryExpression(source, game?.variables);
         if (args.has("scene")) diagnostics.push(error("PXSTORY1215", "Cross-scene choice requires compileStoryProject; compileStory only resolves labels in one document", node.span));
         else if (target === undefined || named("text") === undefined) diagnostics.push(error("PXSTORY1116", "choice requires text and goto", node.span));
         else if (condition !== undefined && (condition.error !== undefined || condition.encoded === undefined))
@@ -1352,7 +1398,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         }
         const descriptor = variableName === undefined ? undefined : variables.get(variableName);
         if (variableName === undefined || value === undefined) diagnostics.push(error("PXSTORY1121", "set requires a variable and value", node.span));
-        else if (context.game !== undefined && descriptor === undefined) diagnostics.push(error("PXSTORY1122", `Unknown game variable: ${variableName}`, node.span));
+        else if (game !== undefined && descriptor === undefined) diagnostics.push(error("PXSTORY1122", `Unknown game variable: ${variableName}`, node.span));
         else {
           const parsed = decodeValue(value).value;
           const matches = descriptor === undefined || (descriptor.type === "integer" ? typeof parsed === "number" && Number.isInteger(parsed) : typeof parsed === descriptor.type);
@@ -1372,7 +1418,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         if (variableName === undefined || amount === undefined ||
             !/^-?\d+$/u.test(amount) || !Number.isSafeInteger(Number(amount)))
           diagnostics.push(error("PXSTORY1150", "add requires a variable and a safe integer amount", node.span));
-        else if (context.game !== undefined && descriptor === undefined)
+        else if (game !== undefined && descriptor === undefined)
           diagnostics.push(error("PXSTORY1122", `Unknown game variable: ${variableName}`, node.span));
         else if (descriptor !== undefined && descriptor.type !== "integer")
           diagnostics.push(error("PXSTORY1151", `add requires an integer variable: ${variableName}`, node.span));
@@ -1385,7 +1431,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       }
       case "if": {
         const source = (node.arguments ?? []).map((value) => value.raw).join(" ");
-        const expression = parseStoryExpression(source, context.game?.variables);
+        const expression = parseStoryExpression(source, game?.variables);
         if (expression.error !== undefined || expression.encoded === undefined) {
           diagnostics.push(error(
             "PXSTORY1133",
@@ -1403,7 +1449,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         // every condition the chain opened, so the Runtime needs nothing new.
         const open = conditions.at(-1);
         const source = (node.arguments ?? []).map((value) => value.raw).join(" ");
-        const expression = parseStoryExpression(source, context.game?.variables);
+        const expression = parseStoryExpression(source, game?.variables);
         if (open === undefined)
           diagnostics.push(error("PXSTORY1243", "[elseif] needs an open [if]", node.span));
         else if (open.sawElse)
@@ -1805,7 +1851,7 @@ export interface StoryCommandCompletion {
   readonly parameters: readonly {readonly name: string; readonly required: boolean; readonly values?: readonly JsonValue[]}[];
 }
 
-const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "elseif", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "auto", "skip.stop", "skip.disable", "skip.enable", "macro", "endmacro", "endchoice"];
+const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "elseif", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "auto", "skip.stop", "skip.disable", "skip.enable", "macro", "endmacro", "endchoice", "var"];
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
   const builtins = builtinStoryCommands;

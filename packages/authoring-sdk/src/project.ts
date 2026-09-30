@@ -1,5 +1,6 @@
 import {createStoryAssetIndex} from "./story-assets.js";
-import {createStoryMacroLibrary} from "./story.js";
+import {collectStoryVariableDeclarations, createStoryMacroLibrary} from "./story.js";
+import {mergeStoryVariables} from "./story-variables.js";
 import type {StoryMacroLibrary} from "./story-macros.js";
 import {canonicalJson} from "./canonical-json.js";
 import {contractDocumentByteLimit, parseDocument, validateDocument} from "./contracts.js";
@@ -550,7 +551,18 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     return {diagnostics, valid: false};
 
   const storyIndex = documentAt<StoryIndexDocument>("storyIndex", project.storyIndex, documents, diagnostics);
-  const game = documentAt<GameDocument>("game", project.gameCatalog, documents, diagnostics);
+  let game = documentAt<GameDocument>("game", project.gameCatalog, documents, diagnostics);
+  // Story `[var ...]` declarations join the published game catalog.
+  let gameDeclaredInStory = false;
+  if (game !== undefined && storyIndex !== undefined) {
+    const storyPaths = new Set(storyIndex.scenes.flatMap((scene) => Object.values(scene.sources)));
+    const declared = collectStoryVariableDeclarations([...storyPaths].flatMap((path) =>
+      sourceFiles[path] === undefined ? [] : [{path, source: sourceFiles[path]!}]));
+    const merged = mergeStoryVariables(game, declared.declarations, project.gameCatalog);
+    diagnostics.push(...declared.diagnostics, ...merged.diagnostics);
+    gameDeclaredInStory = merged.game !== game;
+    game = merged.game;
+  }
   if (game !== undefined) {
     if (input.inputKeyRegistry !== undefined)
       diagnostics.push(...validateInputKeyUsage(game, project.gameCatalog,
@@ -1430,7 +1442,8 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   const files: Record<string, string> = {
     [projectPath]: canonicalJson(project),
     [project.storyIndex]: serialized(documents[project.storyIndex]),
-    [project.gameCatalog]: serialized(documents[project.gameCatalog]),
+    [project.gameCatalog]: gameDeclaredInStory ? canonicalJson(game)
+      : serialized(documents[project.gameCatalog]),
     [runtimeIrPath]: canonicalJson(compiled.runtimeIr),
     [sourceMapPath]: canonicalJson(compiled.sourceMap),
   };
