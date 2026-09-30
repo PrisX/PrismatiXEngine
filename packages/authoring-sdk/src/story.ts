@@ -281,11 +281,12 @@ function continues(text: string): boolean {
 }
 
 /** Inline dialogue text tags; no command or macro may take these names. */
-const inlineTextTagNames = ["b", "i", "br", "font", "size", "color", "ruby"] as const;
+const inlineTextTagNames = ["b", "i", "br", "font", "size", "color", "ruby",
+  "w", "speed", "nowait"] as const;
 
 // Inline text tags no command shares a name with: a line opening with one is
 // prose (`[b]Loud[/b] she said.`), not a command.
-const leadingTextTag = /^\[(?:\/?[bi]|br|\/(?:font|size|color|ruby)|(?:font|size|color|ruby)=[^\]]*)\]/u;
+const leadingTextTag = /^\[(?:\/?[bi]|br|\/(?:font|size|color|ruby)|(?:font|size|color|ruby)=[^\]]*|w [^\]]*|speed [^\]]*|\/speed|\/?nowait)\]/u;
 
 function isProse(trimmed: string): boolean {
   return !trimmed.startsWith(";") && !trimmed.startsWith("*") &&

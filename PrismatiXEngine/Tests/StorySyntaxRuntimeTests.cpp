@@ -142,6 +142,46 @@ int main() {
         assert(dialogue.State().fullText == "after");
     }
 
+    // Reveal tags: [w] pauses, [speed N%] rescales and [nowait] is instant.
+    // The tags never reach the visible text or the backlog.
+    {
+        px::vn::Dialogue reveal;
+        reveal.SetText("", "あ[w 500ms]い[speed 50%]う[/speed][nowait]えお[/nowait]か[w 1s]",
+                       30, {}, {});
+        assert(reveal.State().fullText == "あいうえおか");
+        assert(reveal.State().totalChars == 6);
+        const auto at = [&reveal](const std::uint64_t now) {
+            reveal.Update(now);
+            return reveal.State().displayText;
+        };
+        assert(at(1000).empty());
+        assert(at(1029).empty());
+        assert(at(1030) == "あ");
+        assert(at(1559) == "あ");
+        assert(at(1560) == "あい");
+        assert(at(1619) == "あい");
+        assert(at(1620) == "あいうえお");
+        assert(at(1650) == "あいうえおか" && reveal.Finished());
+
+        px::vn::Dialogue fast;
+        fast.SetText("", "[speed 200%]ab[/speed]", 30, {}, {});
+        fast.Update(5000);
+        fast.Update(5014);
+        assert(fast.State().displayText.empty());
+        fast.Update(5015);
+        assert(fast.State().displayText == "a");
+        // Malformed tags stay text for the markup renderer, as before.
+        px::vn::Dialogue malformed;
+        malformed.SetText("", "[w soon]x[speed 5%]y", 0, {}, {});
+        assert(malformed.State().fullText == "[w soon]x[speed 5%]y");
+
+        assert(vm.LoadCompiledProgram(Compile({
+            Operation("tagged", "narration", {{"text", "待って[w 300ms]ね[nowait]！[/nowait]"}}),
+        }), path));
+        assert(dialogue.State().fullText == "待ってね！");
+        assert(!backlog.Entries().empty() && backlog.Entries().back().text == "待ってね！");
+    }
+
     std::cout << "Story syntax runtime tests passed\n";
     return 0;
 }

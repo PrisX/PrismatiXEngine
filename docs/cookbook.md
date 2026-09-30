@@ -121,6 +121,26 @@ colour. The tags take no typewriter step, so revealed text never shows half a
 tag; the backlog and saves keep the markup, so a loaded game shows the same
 styles. A line may open with a text tag and still be prose.
 
+Three more tags only time the typewriter:
+
+```pxstory
+@直哉「待って[w 500ms]……[speed 50%]ゆっくり[/speed]、[nowait]一気に！[/nowait]」
+[w 1s]間を置いてから話す。
+```
+
+| Tag | Effect |
+| --- | --- |
+| `[w 500ms]`, `[w 1.5s]` | pause before the next character, 0–60s (`ms` when no unit) |
+| `[speed 50%]`…`[/speed]` | reveal at 10%–1000% of the player's text speed; nested tags use the innermost |
+| `[nowait]`…`[/nowait]` | show the enclosed text at once |
+
+The Player removes them from the text it shows, so the backlog, NVL pages
+and saves hold the plain line, and a click still shows the whole line at
+once. Instant text speed ignores them. A malformed pause or speed is
+`PXSTORY1185`; an unclosed `[speed]` or `[nowait]` lasts to the end of the
+line (`PXSTORY1182`). A line may open with one of them and still be prose.
+They are not yet supported inside a ruby base (`PXSTORY1184`).
+
 The Player hides any other bracketed text in dialogue; `prismatix validate`
 warns about it (`PXSTORY1180`) and about style tags inside a ruby base, which
 are shown as written (`PXSTORY1184`); put them around `[ruby]` instead. An

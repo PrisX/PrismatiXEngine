@@ -5,8 +5,66 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <optional>
+#include <string_view>
+#include <system_error>
 
 namespace px::vn {
+namespace {
+
+// Story reveal tags: `[w 500ms]` pauses before the next glyph, `[speed 50%]`
+// ... `[/speed]` scales the reveal rate and `[nowait]` ... `[/nowait]` shows
+// its text at once. They are consumed here and never reach the visible text,
+// the backlog or saves.
+struct RevealTag {
+    enum class Kind { Wait, Speed, SpeedEnd, NoWait, NoWaitEnd };
+    Kind kind = Kind::Wait;
+    std::uint64_t waitMs = 0;
+    int percent = 100;
+    std::size_t length = 0;
+};
+
+std::optional<double> ParseNumber(const std::string_view value) {
+    double number = 0.0;
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), number);
+    if (result.ec != std::errc{} || result.ptr != value.data() + value.size() ||
+        !std::isfinite(number) || number < 0.0)
+        return std::nullopt;
+    return number;
+}
+
+std::optional<RevealTag> ReadRevealTag(const std::string_view text) {
+    if (!text.starts_with('[')) return std::nullopt;
+    const std::size_t close = text.find(']');
+    if (close == std::string_view::npos) return std::nullopt;
+    const std::string_view body = text.substr(1, close - 1);
+    RevealTag tag;
+    tag.length = close + 1;
+    if (body == "/speed") { tag.kind = RevealTag::Kind::SpeedEnd; return tag; }
+    if (body == "nowait") { tag.kind = RevealTag::Kind::NoWait; return tag; }
+    if (body == "/nowait") { tag.kind = RevealTag::Kind::NoWaitEnd; return tag; }
+    if (body.starts_with("w ")) {
+        std::string_view value = body.substr(2);
+        double scale = 1.0;
+        if (value.ends_with("ms")) value.remove_suffix(2);
+        else if (value.ends_with('s')) { value.remove_suffix(1); scale = 1000.0; }
+        const auto amount = ParseNumber(value);
+        if (!amount || *amount * scale > 60'000.0) return std::nullopt;
+        tag.kind = RevealTag::Kind::Wait;
+        tag.waitMs = static_cast<std::uint64_t>(std::lround(*amount * scale));
+        return tag;
+    }
+    if (body.starts_with("speed ") && body.ends_with('%')) {
+        const auto amount = ParseNumber(body.substr(6, body.size() - 7));
+        if (!amount || *amount < 10.0 || *amount > 1000.0) return std::nullopt;
+        tag.kind = RevealTag::Kind::Speed;
+        tag.percent = static_cast<int>(std::lround(*amount));
+        return tag;
+    }
+    return std::nullopt;
+}
+
+}  // namespace
 
 void Dialogue::SetText(const std::string& speaker, const std::string& text, int speedMs,
                        Color textColor, Color outlineColor, const std::string& voice,
@@ -26,16 +84,31 @@ void Dialogue::SetText(const std::string& speaker, const std::string& text, int 
     // carries its style and never shows a half-typed tag.
     m_glyphs.clear();
     m_extraDelayMs.clear();
+    m_speedPercent.clear();
     std::uint64_t carry = 0;
     std::string pendingTags;
+    std::vector<int> speeds;
+    int instant = 0;
     const auto push = [&](std::string glyph) {
         m_glyphs.push_back(std::move(pendingTags) + std::move(glyph));
         pendingTags.clear();
         m_extraDelayMs.push_back(carry);
+        m_speedPercent.push_back(instant > 0 ? 0 : speeds.empty() ? 100 : speeds.back());
         carry = 0;
     };
     std::size_t i = 0;
     while (i < text.size()) {
+        if (const auto reveal = ReadRevealTag(std::string_view(text).substr(i))) {
+            switch (reveal->kind) {
+            case RevealTag::Kind::Wait: carry += reveal->waitMs; break;
+            case RevealTag::Kind::Speed: speeds.push_back(reveal->percent); break;
+            case RevealTag::Kind::SpeedEnd: if (!speeds.empty()) speeds.pop_back(); break;
+            case RevealTag::Kind::NoWait: ++instant; break;
+            case RevealTag::Kind::NoWaitEnd: if (instant > 0) --instant; break;
+            }
+            i += reveal->length;
+            continue;
+        }
         if (const std::size_t tag = text::StyleTagLength(std::string_view(text).substr(i))) {
             if (text[i + 1] == '/' && !m_glyphs.empty() && pendingTags.empty())
                 m_glyphs.back() += text.substr(i, tag);
@@ -109,7 +182,12 @@ void Dialogue::Update(std::uint64_t nowMs) {
     const std::uint64_t step = static_cast<std::uint64_t>(std::max(1, m_speedMs));
     while (m_state.currentChar < m_state.totalChars) {
         const std::size_t idx = static_cast<std::size_t>(m_state.currentChar);
-        const std::uint64_t need = step + (idx < m_extraDelayMs.size() ? m_extraDelayMs[idx] : 0);
+        // [speed N%] scales the step; [nowait] (0%) reveals without one.
+        const int percent = idx < m_speedPercent.size() ? m_speedPercent[idx] : 100;
+        const std::uint64_t scaled = percent <= 0 ? 0 : percent == 100 ? step
+            : std::max<std::uint64_t>(1, (step * 100 + static_cast<std::uint64_t>(percent) / 2) /
+                                             static_cast<std::uint64_t>(percent));
+        const std::uint64_t need = scaled + (idx < m_extraDelayMs.size() ? m_extraDelayMs[idx] : 0);
         if (nowMs - m_lastStepMs < need) {
             break;
         }
