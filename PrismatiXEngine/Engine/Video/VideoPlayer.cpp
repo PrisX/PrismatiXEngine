@@ -37,6 +37,9 @@ constexpr int kOutputSampleRate = 48'000;
 constexpr int kOutputChannels = 2;
 constexpr double kAudioQueueLeadSeconds = 0.75;
 constexpr double kVideoEarlyToleranceSeconds = 0.015;
+constexpr std::size_t kStartupVideoFrames = 3;
+constexpr double kStartupAudioSeconds = 0.1;
+constexpr std::uint64_t kMaximumStartupWaitNs = 1'000'000'000;
 constexpr int kCorruptPacketLimit = 32;
 // Compressed video held back while the decoded-frame queue is full, so the
 // demuxer can reach audio a file stores well behind its video.
@@ -82,12 +85,17 @@ struct FfmpegState {
     std::unique_ptr<io::SeekableReadStream> stream;
     int videoStream = -1;
     int audioStream = -1;
+    int width = 0;
+    int height = 0;
     double timeOrigin = 0.0;
     double nextVideoPts = 0.0;
     double nextAudioPts = 0.0;
     double videoFrameDuration = 1.0 / 30.0;
     double audioSubmittedEndPts = 0.0;
     bool audioStarted = false;
+    bool outputCreated = false;
+    bool presentationStarted = false;
+    std::uint64_t startupAtNs = 0;
 
     mutable std::mutex mutex;
     std::condition_variable queueChanged;
@@ -97,6 +105,7 @@ struct FfmpegState {
     std::size_t audioQueueBytes = 0;
     std::thread worker;
     std::atomic<bool> stopRequested{false};
+    std::atomic<bool> metadataReady{false};
     std::atomic<bool> decoderFinished{false};
     std::atomic<bool> decoderFailed{false};
     std::string error;
@@ -162,29 +171,79 @@ bool VideoPlayer::Open(const std::string& vfsPath, const float volume) {
     m_volume = std::clamp(volume, 0.0f, 1.0f);
     m_lastError.clear();
     m_clock = 0.0;
-    if (OpenFfmpeg(vfsPath)) return true;
+    m_ffmpeg = std::make_unique<FfmpegState>();
+    if (PrepareFfmpeg(vfsPath, m_lastError) && CreateOutput(m_lastError)) {
+        m_ffmpeg->metadataReady.store(true);
+        if (StartWorker(vfsPath, false)) return true;
+    }
+    Stop();
     if (m_lastError.empty()) m_lastError = "media could not be opened";
     m_state.store(PlaybackState::Failed);
     return false;
 }
 
-bool VideoPlayer::OpenFfmpeg(const std::string& vfsPath) {
+bool VideoPlayer::OpenAsync(const std::string& vfsPath, const float volume) {
+    const std::uint64_t startedAtNs = SDL_GetTicksNS();
+    Close();
+    m_volume = std::clamp(volume, 0.0f, 1.0f);
+    m_ffmpeg = std::make_unique<FfmpegState>();
+    if (StartWorker(vfsPath, true)) {
+        PX_LOG_INFO("VideoPlayer: queued '{}' openMs={:.2f}", vfsPath,
+                    static_cast<double>(SDL_GetTicksNS() - startedAtNs) / 1'000'000.0);
+        return true;
+    }
+    CloseFfmpeg();
+    m_state.store(PlaybackState::Failed);
+    return false;
+}
+
+bool VideoPlayer::StartWorker(const std::string& vfsPath, const bool prepare) {
+    m_state.store(PlaybackState::Playing);
+    try {
+        m_ffmpeg->worker = std::thread([this, vfsPath, prepare] {
+            auto& state = *m_ffmpeg;
+            if (prepare) {
+                std::string error;
+                if (!PrepareFfmpeg(vfsPath, error)) {
+                    {
+                        std::scoped_lock lock(state.mutex);
+                        state.error = std::move(error);
+                    }
+                    state.decoderFailed.store(true);
+                    state.decoderFinished.store(true);
+                    state.queueChanged.notify_all();
+                    return;
+                }
+                state.metadataReady.store(true);
+            }
+            PX_LOG_INFO("VideoPlayer: streaming '{}' ({}x{}, videoQueue={}, audioQueue={})",
+                        vfsPath, state.width, state.height, kVideoQueueCapacity,
+                        kAudioQueueCapacity);
+            DecodeFfmpegLoop();
+        });
+    } catch (const std::exception& exception) {
+        m_lastError = std::string("video decode worker could not start: ") +
+                      exception.what();
+        return false;
+    }
+    return true;
+}
+
+bool VideoPlayer::PrepareFfmpeg(const std::string& vfsPath, std::string& error) {
     auto stream = m_vfs.Open(vfsPath);
     if (!stream) {
-        m_lastError = "media was not found or failed integrity validation";
-        PX_LOG_WARN("VideoPlayer: {} '{}'", m_lastError, vfsPath);
+        error = "media was not found or failed integrity validation";
+        PX_LOG_WARN("VideoPlayer: {} '{}'", error, vfsPath);
         return false;
     }
 
-    m_ffmpeg = std::make_unique<FfmpegState>();
     auto& state = *m_ffmpeg;
     state.stream = std::move(stream);
     state.format = avformat_alloc_context();
     auto* ioBuffer = static_cast<unsigned char*>(av_malloc(64 * 1024));
     if (!state.format || !ioBuffer) {
-        m_lastError = "FFmpeg allocation failed";
+        error = "FFmpeg allocation failed";
         if (ioBuffer) av_free(ioBuffer);
-        CloseFfmpeg();
         return false;
     }
     state.io = avio_alloc_context(ioBuffer, 64 * 1024, 0, this,
@@ -192,8 +251,7 @@ bool VideoPlayer::OpenFfmpeg(const std::string& vfsPath) {
                                   &VideoPlayer::SeekFfmpeg);
     if (!state.io) {
         av_free(ioBuffer);
-        m_lastError = "FFmpeg AVIO allocation failed";
-        CloseFfmpeg();
+        error = "FFmpeg AVIO allocation failed";
         return false;
     }
     state.format->pb = state.io;
@@ -203,9 +261,8 @@ bool VideoPlayer::OpenFfmpeg(const std::string& vfsPath) {
     int result = avformat_open_input(&state.format, nullptr, nullptr, nullptr);
     if (result >= 0) result = avformat_find_stream_info(state.format, nullptr);
     if (result < 0) {
-        m_lastError = "FFmpeg could not inspect media: " + AvError(result);
-        PX_LOG_WARN("VideoPlayer: '{}' ({})", vfsPath, m_lastError);
-        CloseFfmpeg();
+        error = "FFmpeg could not inspect media: " + AvError(result);
+        PX_LOG_WARN("VideoPlayer: '{}' ({})", vfsPath, error);
         return false;
     }
 
@@ -213,8 +270,7 @@ bool VideoPlayer::OpenFfmpeg(const std::string& vfsPath) {
     state.videoStream = av_find_best_stream(
         state.format, AVMEDIA_TYPE_VIDEO, -1, -1, &videoDecoder, 0);
     if (state.videoStream < 0 || !videoDecoder) {
-        m_lastError = "media has no supported video stream";
-        CloseFfmpeg();
+        error = "media has no supported video stream";
         return false;
     }
     state.videoCodec = avcodec_alloc_context3(videoDecoder);
@@ -223,36 +279,29 @@ bool VideoPlayer::OpenFfmpeg(const std::string& vfsPath) {
     if (!state.videoCodec ||
         avcodec_parameters_to_context(state.videoCodec, videoParameters) < 0 ||
         avcodec_open2(state.videoCodec, videoDecoder, nullptr) < 0) {
-        m_lastError = "video codec could not be opened";
-        CloseFfmpeg();
+        error = "video codec could not be opened";
         return false;
     }
     state.videoCodec->err_recognition = AV_EF_CAREFUL;
 
-    m_width = state.videoCodec->width;
-    m_height = state.videoCodec->height;
-    if (m_width <= 0 || m_height <= 0 || m_width > 16'384 ||
-        m_height > 16'384 ||
-        static_cast<std::uint64_t>(m_width) *
-                static_cast<std::uint64_t>(m_height) * 3u >
+    state.width = state.videoCodec->width;
+    state.height = state.videoCodec->height;
+    if (state.width <= 0 || state.height <= 0 || state.width > 16'384 ||
+        state.height > 16'384 ||
+        static_cast<std::uint64_t>(state.width) *
+                static_cast<std::uint64_t>(state.height) * 3u >
             kVideoQueueByteCapacity) {
-        m_lastError = "video dimensions exceed runtime limits";
-        CloseFfmpeg();
+        error = "video dimensions exceed runtime limits";
         return false;
     }
     state.videoFrame = av_frame_alloc();
     state.scaler = sws_getContext(
-        m_width, m_height, state.videoCodec->pix_fmt, m_width, m_height,
+        state.width, state.height, state.videoCodec->pix_fmt, state.width, state.height,
         AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr, nullptr, nullptr);
-    m_texture = graphics::TextureResource::CreateStreaming(
-        graphics::TextureBackend::SdlRenderer, m_renderer,
-        graphics::StreamingTextureFormat::Rgb24, m_width, m_height);
-    if (!state.videoFrame || !state.scaler || !m_texture) {
-        m_lastError = "video frame resources could not be created";
-        CloseFfmpeg();
+    if (!state.videoFrame || !state.scaler) {
+        error = "video frame resources could not be created";
         return false;
     }
-    (void)m_texture.SetLinearSampling();
 
     const AVRational guessedRate = av_guess_frame_rate(
         state.format, state.format->streams[state.videoStream], nullptr);
@@ -295,38 +344,39 @@ bool VideoPlayer::OpenFfmpeg(const std::string& vfsPath) {
                     state.audioStream = -1;
                 }
             }
-            if (state.audioCodec) {
-                SDL_AudioSpec specification{};
-                specification.format = SDL_AUDIO_F32;
-                specification.channels = kOutputChannels;
-                specification.freq = kOutputSampleRate;
-                m_audio = SDL_OpenAudioDeviceStream(
-                    SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &specification, nullptr,
-                    nullptr);
-                if (m_audio) {
-                    SDL_ResumeAudioStreamDevice(m_audio);
-                } else {
-                    PX_LOG_WARN(
-                        "VideoPlayer: audio output is unavailable; continuing silently: {}",
-                        SDL_GetError());
-                }
-            }
         }
     }
 
     state.timeOrigin = StreamStartSeconds(state.format);
-    m_state.store(PlaybackState::Playing);
-    try {
-        state.worker = std::thread([this] { DecodeFfmpegLoop(); });
-    } catch (const std::exception& exception) {
-        m_lastError = std::string("video decode worker could not start: ") +
-                      exception.what();
-        CloseFfmpeg();
+    return !state.stopRequested.load();
+}
+
+bool VideoPlayer::CreateOutput(std::string& error) {
+    auto& state = *m_ffmpeg;
+    m_width = state.width;
+    m_height = state.height;
+    m_texture = graphics::TextureResource::CreateStreaming(
+        graphics::TextureBackend::SdlRenderer, m_renderer,
+        graphics::StreamingTextureFormat::Rgb24, m_width, m_height);
+    if (!m_texture) {
+        error = "video texture could not be created";
         return false;
     }
-    PX_LOG_INFO("VideoPlayer: streaming '{}' ({}x{}, videoQueue={}, audioQueue={})",
-                vfsPath, m_width, m_height, kVideoQueueCapacity,
-                kAudioQueueCapacity);
+    (void)m_texture.SetLinearSampling();
+    if (state.audioCodec) {
+        SDL_AudioSpec specification{};
+        specification.format = SDL_AUDIO_F32;
+        specification.channels = kOutputChannels;
+        specification.freq = kOutputSampleRate;
+        m_audio = SDL_OpenAudioDeviceStream(
+            SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &specification, nullptr, nullptr);
+        if (!m_audio)
+            PX_LOG_WARN(
+                "VideoPlayer: audio output is unavailable; continuing silently: {}",
+                SDL_GetError());
+    }
+    state.outputCreated = true;
+    state.startupAtNs = SDL_GetTicksNS();
     return true;
 }
 
@@ -406,8 +456,8 @@ void VideoPlayer::DecodeFfmpegLoop() {
                 fail("video decode failed: " + AvError(received));
                 return false;
             }
-            if (state.videoFrame->width != m_width ||
-                state.videoFrame->height != m_height) {
+            if (state.videoFrame->width != state.width ||
+                state.videoFrame->height != state.height) {
                 av_frame_unref(state.videoFrame);
                 fail("mid-stream video resolution changes are unsupported");
                 return false;
@@ -416,16 +466,16 @@ void VideoPlayer::DecodeFfmpegLoop() {
             decoded.pts = framePts(state.videoFrame, state.videoStream,
                                    state.nextVideoPts,
                                    state.videoFrameDuration);
-            decoded.rgb.resize(static_cast<std::size_t>(m_width) *
-                               static_cast<std::size_t>(m_height) * 3u);
+            decoded.rgb.resize(static_cast<std::size_t>(state.width) *
+                               static_cast<std::size_t>(state.height) * 3u);
             std::uint8_t* destination[] = {decoded.rgb.data(), nullptr, nullptr,
                                            nullptr};
-            const int strides[] = {m_width * 3, 0, 0, 0};
+            const int strides[] = {state.width * 3, 0, 0, 0};
             const int scaled = sws_scale(
                 state.scaler, state.videoFrame->data,
-                state.videoFrame->linesize, 0, m_height, destination, strides);
+                state.videoFrame->linesize, 0, state.height, destination, strides);
             av_frame_unref(state.videoFrame);
-            if (scaled != m_height) {
+            if (scaled != state.height) {
                 fail("video color conversion failed");
                 return false;
             }
@@ -591,10 +641,48 @@ void VideoPlayer::DecodeFfmpegLoop() {
 void VideoPlayer::UpdateFfmpeg(const float dt) {
     if (!m_ffmpeg || m_state.load() != PlaybackState::Playing) return;
     auto& state = *m_ffmpeg;
-    m_clock += std::clamp(static_cast<double>(dt), 0.0, 0.25);
+    if (state.decoderFailed.load()) {
+        std::scoped_lock lock(state.mutex);
+        m_lastError = state.error.empty() ? "video decode failed" : state.error;
+        m_state.store(PlaybackState::Failed);
+        PX_LOG_ERROR("VideoPlayer: {}", m_lastError);
+        return;
+    }
+    if (!state.metadataReady.load()) return;
+    if (!state.outputCreated && !CreateOutput(m_lastError)) {
+        state.stopRequested.store(true);
+        state.queueChanged.notify_all();
+        m_state.store(PlaybackState::Failed);
+        return;
+    }
 
     const int bytesPerSecond =
         kOutputSampleRate * kOutputChannels * static_cast<int>(sizeof(float));
+    const bool starting = !state.presentationStarted;
+    if (starting) {
+        std::unique_lock lock(state.mutex);
+        const bool videoReady = state.videoQueue.size() >= kStartupVideoFrames;
+        const bool audioReady = !m_audio ||
+            static_cast<double>(state.audioQueueBytes) / bytesPerSecond >=
+                kStartupAudioSeconds;
+        // Probing/buffering time is not playback time. Keep audio paused until
+        // both streams are ready, and never apply the incoming frame's dt to
+        // the first picture. EOF and a bounded timeout cover short/poorly
+        // interleaved media without leaving startup waiting forever.
+        if (!(videoReady && audioReady) && !state.decoderFinished.load() &&
+            SDL_GetTicksNS() - state.startupAtNs < kMaximumStartupWaitNs)
+            return;
+        state.presentationStarted = true;
+        const std::size_t bufferedFrames = state.videoQueue.size();
+        const double bufferedAudioSeconds =
+            static_cast<double>(state.audioQueueBytes) / bytesPerSecond;
+        lock.unlock();
+        PX_LOG_INFO("VideoPlayer: playback ready bufferMs={:.2f} videoFrames={} audioSeconds={:.3f}",
+                    static_cast<double>(SDL_GetTicksNS() - state.startupAtNs) / 1'000'000.0,
+                    bufferedFrames, bufferedAudioSeconds);
+    } else {
+        m_clock += std::clamp(static_cast<double>(dt), 0.0, 0.25);
+    }
     int queuedAudioBytes = m_audio ? SDL_GetAudioStreamQueued(m_audio) : 0;
     if (queuedAudioBytes < 0) queuedAudioBytes = 0;
     for (;;) {
@@ -656,6 +744,7 @@ void VideoPlayer::UpdateFfmpeg(const float dt) {
                                static_cast<std::size_t>(m_width) * 3u);
         state.queueChanged.notify_all();
     }
+    if (starting && m_audio) (void)SDL_ResumeAudioStreamDevice(m_audio);
 
     if (state.decoderFailed.load()) {
         std::scoped_lock lock(state.mutex);
@@ -687,7 +776,8 @@ bool VideoPlayer::Pause() {
 
 bool VideoPlayer::Resume() {
     if (m_state.load() != PlaybackState::Paused) return false;
-    if (m_audio) (void)SDL_ResumeAudioStreamDevice(m_audio);
+    if (m_audio && m_ffmpeg && m_ffmpeg->presentationStarted)
+        (void)SDL_ResumeAudioStreamDevice(m_audio);
     m_state.store(PlaybackState::Playing);
     return true;
 }
@@ -762,7 +852,8 @@ QueueMetrics VideoPlayer::Queues() const {
 }
 
 void VideoPlayer::Render(const int logicalW, const int logicalH) {
-    if (!m_texture || m_width <= 0 || m_height <= 0) return;
+    if (!m_texture || !m_ffmpeg || !m_ffmpeg->presentationStarted ||
+        m_width <= 0 || m_height <= 0) return;
     SDL_FRect destination;
     const float scale = std::min(static_cast<float>(logicalW) / m_width,
                                  static_cast<float>(logicalH) / m_height);

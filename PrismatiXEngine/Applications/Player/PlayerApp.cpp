@@ -4527,6 +4527,15 @@ void PlayerApp::ScreensFrame(float dt) {
 void PlayerApp::ConfigureE2EJourney() {
     const char* journey=SDL_getenv("PRISMATIX_E2E_JOURNEY");
     if(!journey)return;
+    if(std::string_view(journey)=="video-return"){
+        m_videoReturnE2E = true;
+        m_videoReturnE2EStartedAt = SDL_GetTicks();
+        const char* captureDir = SDL_getenv("PRISMATIX_E2E_CAPTURE_DIR");
+        m_presentationE2ECaptureDir = captureDir ? captureDir : "e2e-video-return";
+        PX_LOG_INFO("Player video return E2E armed captureDir={}",
+                    m_presentationE2ECaptureDir);
+        return;
+    }
     if(std::string_view(journey)=="save-load"){
         m_saveLoadE2E=true;
         m_saveLoadE2EStartedAt=SDL_GetTicks();
@@ -4740,6 +4749,82 @@ void PlayerApp::DriveBenchJourney() {
 }
 
 void PlayerApp::DriveE2EJourney() {
+    if (m_videoReturnE2E) {
+        const auto now = SDL_GetTicks();
+        if (now - m_videoReturnE2EStartedAt > 300'000) {
+            PX_LOG_ERROR("Player video return E2E timed out stage={} route={}",
+                         m_videoReturnE2EStage, m_ui.CurrentRoute());
+            m_e2eFailed = true;
+            m_videoReturnE2E = false;
+            m_quitRequested = true;
+            return;
+        }
+        switch (m_videoReturnE2EStage) {
+            case 0:
+                if (m_appState == AppState::Title && m_ui.CurrentRoute() == "title" &&
+                    !m_routePreloadBatch && ++m_videoReturnE2ESettledFrames >= 60) {
+                    StartGame();
+                    m_videoReturnE2EStage = 1;
+                }
+                break;
+            case 1:
+                if (m_appState == AppState::Game && !m_gameStartTransitionActive) {
+                    m_settings.skipReadOnly = false;
+                    m_skipMode = true;
+                    if (m_session->VM().State() == vn::VMState::WaitingVideo &&
+                        m_ui.CurrentScreen() == ui::GalgameUI::Screen::Video) {
+                        m_videoReturnE2EVideoAt = now;
+                        m_videoReturnE2EStage = 2;
+                        PX_LOG_INFO("Player video return E2E movie started textSkip=true");
+                    }
+                }
+                break;
+            case 2:
+                // Keep text skip enabled throughout playback. No advance/cancel
+                // input is sent, so this exercises natural movie completion.
+                if (m_session->VM().State() != vn::VMState::WaitingVideo) {
+                    m_skipMode = false;
+                    const bool restored =
+                        m_ui.CurrentScreen() == ui::GalgameUI::Screen::HUD &&
+                        m_ui.HasControlNamed("MessageWindow") &&
+                        m_ui.HasControlNamed("Dialogue");
+                    PX_LOG_INFO("Player video return E2E movie ended elapsedMs={} route={} restored={}",
+                                now - m_videoReturnE2EVideoAt, m_ui.CurrentRoute(), restored);
+                    if (!restored) {
+                        m_e2eFailed = true;
+                        m_videoReturnE2E = false;
+                        m_quitRequested = true;
+                    } else {
+                        m_videoReturnE2EStage = 3;
+                    }
+                }
+                break;
+            case 3:
+                if (!m_routePreloadBatch && m_storyHudVisible && !m_hudHidden &&
+                    m_hudFade >= 0.99f &&
+                    m_session->VM().State() == vn::VMState::WaitingClick &&
+                    m_session->Dialogue().Finished() &&
+                    !m_session->Dialogue().State().displayText.empty()) {
+                    m_videoReturnE2EStage = 4;
+                    m_runtime.OnNextComposedFrame([this] {
+                        const bool restored =
+                            m_ui.CurrentScreen() == ui::GalgameUI::Screen::HUD &&
+                            m_ui.HasControlNamed("MessageWindow") &&
+                            m_ui.HasControlNamed("Dialogue");
+                        const bool captured = CapturePresentationE2EFrame("video-return-dialogue");
+                        PX_LOG_INFO("Player video return E2E complete restored={} captured={} route={}",
+                                    restored, captured, m_ui.CurrentRoute());
+                        m_e2eFailed = !restored || !captured;
+                        m_videoReturnE2E = false;
+                        m_quitRequested = true;
+                    });
+                }
+                break;
+            default:
+                break;
+        }
+        return;
+    }
     if (m_benchE2E) {
         DriveBenchJourney();
         return;
@@ -5514,25 +5599,32 @@ void PlayerApp::TitleFrame(float dt) {
 }
 
 bool PlayerApp::VideoFrame(float dt) {
+    const auto restorePresentation = [this] {
+        if (m_ui.CurrentScreen() != ui::GalgameUI::Screen::Video) return;
+        const auto& routes = m_session->Routes();
+        const std::string route(routes.CurrentModalRoute().empty()
+                                    ? routes.CurrentRoute()
+                                    : routes.CurrentModalRoute());
+        // Video temporarily replaces the UI surface without changing the
+        // route stack. Restore that route before the VM resumes, so subsequent
+        // Story commands can still choose a different presentation.
+        PresentRoute(route, "video-ended");
+        PX_LOG_INFO("Player video presentation restored route={}", route);
+    };
     const bool vmWaiting =
         m_session->VM().State() == vn::VMState::WaitingVideo;
-    if (!vmWaiting && m_scriptVideoHandle == 0) return false;
-    px::Input& input = m_runtime.GetInput();
-
-    const bool skipping =
-        m_skipMode || input.KeyDown(SDL_SCANCODE_LCTRL) ||
-        input.KeyDown(SDL_SCANCODE_RCTRL);
-    if (!m_pendingVideo.empty() && vmWaiting && m_videoSkippable && skipping) {
-        // Skip passes over a skippable movie without decoding a frame.
-        m_pendingVideo.clear();
-        m_session->VM().NotifyVideoDone();
+    if (!vmWaiting && m_scriptVideoHandle == 0) {
+        restorePresentation();
         return false;
     }
+    px::Input& input = m_runtime.GetInput();
+
     if (!m_pendingVideo.empty()) {
         diag::FrameProfiler::Instance().Note("video-open");
         const float volume = static_cast<float>(m_settings.bgmVolume) / 128.0f;
-        if (!m_video->Open(m_pendingVideo, volume)) {
+        if (!m_video->OpenAsync(m_pendingVideo, volume)) {
             m_pendingVideo.clear();
+            restorePresentation();
             m_session->VM().NotifyVideoDone();
             return false;
         }
@@ -5547,9 +5639,11 @@ bool PlayerApp::VideoFrame(float dt) {
     }
 
     m_video->Update(dt);
+    // Text skip (including held Ctrl) waits for movies to finish. Only a
+    // fresh advance/cancel action skips a movie that permits manual skipping.
     const bool skipRequested =
         m_videoSkippable &&
-        (skipping || input.ActionPressed(InputAction::Advance) ||
+        (input.ActionPressed(InputAction::Advance) ||
          input.ActionPressed(InputAction::Cancel));
     if (skipRequested) m_video->Skip();
 
@@ -5569,6 +5663,7 @@ bool PlayerApp::VideoFrame(float dt) {
             m_scriptVideoHandle = 0;
         }
         m_video->Close();
+        restorePresentation();
         if (vmWaiting) m_session->VM().NotifyVideoDone();
         return false;
     }

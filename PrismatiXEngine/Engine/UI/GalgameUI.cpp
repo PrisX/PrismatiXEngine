@@ -1366,12 +1366,12 @@ Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
     return Status::Ok();
 }
 
-Status GalgameUI::ShowVideoOverlay(bool skippable) {
+Status GalgameUI::ShowVideoOverlay(bool /*skippable*/) {
     const Status installed = InstallTemplate(Screen::Video);
     if (!installed) return installed;
     auto* hint = FindNamed<Label>(m_context.Root(), "SkipHint");
     if (!hint) return GalgameFailure("PXUI2808", "Video template requires a Label named SkipHint");
-    hint->SetText(skippable ? "點擊跳過 ▶" : "");
+    hint->SetText("");
     return Status::Ok();
 }
 

@@ -411,6 +411,11 @@ private:
     std::string m_presentationE2ETargetOperationId;
     std::uint64_t m_presentationE2ETitleSeenAt=0;
     std::vector<bool> m_presentationE2ESplashCaptured;
+    bool m_videoReturnE2E = false;
+    int m_videoReturnE2EStage = 0;
+    int m_videoReturnE2ESettledFrames = 0;
+    std::uint64_t m_videoReturnE2EStartedAt = 0;
+    std::uint64_t m_videoReturnE2EVideoAt = 0;
     bool m_uiRoutesE2E = false;
     bool m_uiRoutesE2EReadinessLogged = false;
     std::size_t m_uiRoutesE2EIndex = 0;

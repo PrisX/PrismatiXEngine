@@ -223,13 +223,62 @@ int main() {
         }
 
         {
+            px::video::VideoPlayer player(renderer, vfs);
+            suite.Require(player.OpenAsync("h264-aac.mp4") && player.Pause(),
+                          "asynchronous startup must be pausable before probing finishes");
+            player.Update(0.25f);
+            suite.Expect(player.Width() == 0 && !player.Texture() &&
+                             player.PositionSeconds() == 0.0,
+                         "the worker must not create native output or advance presentation while paused");
+            const auto deadline = SDL_GetTicks() + 2'000;
+            while (SDL_GetTicks() < deadline) {
+                const auto queues = player.Queues();
+                if (queues.videoFrames >= 3 && queues.audioBytes >= 38'400)
+                    break;
+                SDL_Delay(1);
+            }
+            suite.Require(player.Queues().videoFrames >= 3 &&
+                              player.Queues().audioBytes >= 38'400,
+                          "asynchronous probing must feed the bounded decoder queues");
+            suite.Require(player.Resume(), "buffered startup must resume");
+            player.Update(0.25f);
+            suite.Expect(player.Width() == 64 && player.Height() == 64 &&
+                             player.Texture() && player.PositionSeconds() < 0.015,
+                         "startup must present from the beginning without consuming the opening frame's elapsed time");
+            for (int iteration = 0; iteration < 3'000 && player.Playing();
+                 ++iteration) {
+                player.Update(1.0f / 240.0f);
+                player.Render(96, 96);
+                SDL_Delay(1);
+            }
+            suite.Expect(player.Finished() && player.LastError().empty(),
+                         "asynchronous playback must drain both streams to EOF");
+            suite.Require(player.OpenAsync("h264-aac.mp4"),
+                          "asynchronous playback must reopen");
+            player.Stop();
+            suite.Expect(player.State() == px::video::PlaybackState::Stopped &&
+                             !player.Texture() && player.Width() == 0,
+                         "stopping during probing must join the worker and release all output");
+            suite.Require(player.OpenAsync("missing.mp4"),
+                          "asynchronous startup accepts requests before media validation");
+            for (int iteration = 0; iteration < 2'000 && player.Playing();
+                 ++iteration) {
+                player.Update(1.0f / 240.0f);
+                SDL_Delay(1);
+            }
+            suite.Expect(player.State() == px::video::PlaybackState::Failed &&
+                             !player.LastError().empty(),
+                         "asynchronous probe failures must reach a terminal state with an error");
+        }
+
+        {
             px::io::VFS archiveVfs;
             suite.Require(
                 archiveVfs.MountArchive(encryptedPath.string(), &key),
                 "encrypted video archive should mount through VFS");
             px::video::VideoPlayer player(renderer, archiveVfs);
-            suite.Require(player.Open("Video/h264-aac.mp4"),
-                          "MP4/H.264/AAC must open from encrypted PDX AVIO");
+            suite.Require(player.OpenAsync("Video/h264-aac.mp4"),
+                          "MP4/H.264/AAC must open asynchronously from encrypted PDX AVIO");
             suite.Require(player.Pause() && player.Resume(),
                           "encrypted playback must preserve pause/resume lifecycle");
             for (int iteration = 0; iteration < 3'000 && player.Playing();

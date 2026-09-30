@@ -46,6 +46,9 @@ public:
     VideoPlayer& operator=(const VideoPlayer&) = delete;
 
     bool Open(const std::string& vfsPath, float volume = 1.0f);
+    // Starts probing and decoding on the worker. Update creates the native
+    // output on the owning thread; failures are reported through State/Error.
+    bool OpenAsync(const std::string& vfsPath, float volume = 1.0f);
     void Close();
     bool Pause();
     bool Resume();
@@ -70,9 +73,12 @@ public:
     }
     [[nodiscard]] int Width() const { return m_width; }
     [[nodiscard]] int Height() const { return m_height; }
+    [[nodiscard]] double PositionSeconds() const { return m_clock; }
 
 private:
-    bool OpenFfmpeg(const std::string& vfsPath);
+    bool PrepareFfmpeg(const std::string& vfsPath, std::string& error);
+    bool CreateOutput(std::string& error);
+    bool StartWorker(const std::string& vfsPath, bool prepare);
     void UpdateFfmpeg(float dt);
     void DecodeFfmpegLoop();
     void CloseFfmpeg();
