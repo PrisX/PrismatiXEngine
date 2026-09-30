@@ -317,7 +317,13 @@ await writeFile(join(process.cwd(), "phase1-artifact-launched.json"),
       {runtimeType: "Panel", properties: []},
       {runtimeType: "Label", properties: [property("fontSize", "number"), property("wrap", "boolean")]},
       {runtimeType: "RichTextLabel", properties: [property("fontSize", "number"), property("wrap", "boolean")]},
-      {runtimeType: "Button", properties: [property("focusMode", "string")]},
+      {runtimeType: "Button", properties: [property("focusMode", "string"),
+        property("fontSize", "number"), property("mouseFilter", "string")]},
+      // What the starter's TSX title writes (packages/cli/templates/minimal).
+      {runtimeType: "TextureRect", properties: [property("path", "string"),
+        property("scaleMode", "string"), property("mouseFilter", "string")]},
+      {runtimeType: "ColorRect", properties: [property("color", "color"),
+        property("mouseFilter", "string")]},
     ],
   }, null, 2)}\n`, "utf8");
   return root;
@@ -499,13 +505,13 @@ async function main() {
 
     requireSuccess(await cliRun(["validate", project]), "prismatix validate after author edit");
     if (configuration.mock) {
-      const title = join(projectRoot, "Content", "UI", "Title.pxui");
-      const authored = JSON.parse(await readFile(title, "utf8"));
-      const label = authored.nodes.find((node) => node.runtimeType === "RichTextLabel");
-      assert.ok(label, "starter must have a RichTextLabel for UI registry validation");
-      label.runtimeProperties.fontSize = "large";
+      // The starter title is TSX; add a label whose fontSize the bundled
+      // registry must reject by type.
+      const title = join(projectRoot, "Content", "UI", "Title.tsx");
       const original = await readFile(title, "utf8");
-      await writeFile(title, JSON.stringify(authored), "utf8");
+      assert.ok(original.includes("    </Group>"), "starter title must close its root Group");
+      await writeFile(title, original.replace("    </Group>",
+        "      <Text name=\"RegistryProbe\" text=\"\" runtimeProperties={{fontSize: \"large\"}} />\n    </Group>"), "utf8");
       const rejected = await cliRun(["validate", project]);
       assert.notEqual(rejected.code, 0, "bundled registry accepted an invalid fontSize");
       assert.ok(parseJsonLines(rejected.stderr).some((entry) => entry?.code === "PXSDKSEM1324"),
