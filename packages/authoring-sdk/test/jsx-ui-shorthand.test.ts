@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {Group, Scene, Slider, Text, TextureButton, compileJsxUi} from "../src/index.js";
+import {Control, Group, Scene, Slider, Text, TextureButton, compileJsxUi} from "../src/index.js";
 import {jsx, jsxs, type UiElement} from "../src/jsx-runtime.js";
 
 function compiled(children: readonly UiElement[]) {
@@ -61,4 +61,36 @@ test("Text font and letterSpacing lower to Label runtime properties", () => {
   assert.equal(label.fontPath, "Assets/Fonts/Number.otf");
   assert.equal(label.letterSpacing, 4.5);
   assert.equal("font" in label, false);
+});
+
+test("clipping, show/hide transitions and Slider option lower to runtime properties", () => {
+  const node = compiled([
+    jsx(Group, {name: "Panel", fill: true, clipContent: true, linearTransition: true,
+      showTransition: {seconds: 0.2, offset: [0, -50]}, hideTransition: {seconds: 0.15}}),
+    jsx(Slider, {name: "TextSpeed", position: [0, 0], size: [400, 18], option: "mspeed"}),
+  ]);
+  assert.deepEqual(node("Panel").runtimeProperties, {clipContent: true,
+    showTransitionSeconds: 0.2, showOffsetX: 0, showOffsetY: -50,
+    hideTransitionSeconds: 0.15, linearTransition: true});
+  assert.equal(node("TextSpeed").runtimeProperties.optionKey, "mspeed");
+});
+
+test("runtimeProperties with a typed prop, Control sliders and skin-shaped paths are linted", () => {
+  const result = compileJsxUi(jsx(Scene, {name: "Lint", width: 640, height: 360,
+    children: jsxs(Group, {name: "Root", fill: true, children: [
+      jsx(Group, {name: "Clip", fill: true, runtimeProperties: {clipContent: true, custom: 1}}),
+      jsx(TextureButton, {name: "Save", position: [0, 0], size: [96, 47],
+        normalPath: "Assets/UI/bt_save-normal.png", hoverPath: "Assets/UI/bt_save-hover.png",
+        runtimeProperties: {activateSoundPath: "Assets/se/ok.ogg"}}),
+      jsx(TextureButton, {name: "Skinned", skin: "Assets/UI/bt_load", position: [0, 50], size: [96, 47]}),
+    ]})}));
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.diagnostics.map(({severity, code, details}) => [severity, code, details]), [
+    ["warning", "PXSDKJSX1100", "nodes[1].runtimeProperties.clipContent"],
+    ["warning", "PXSDKJSX1102", "nodes[2].runtimeProperties.normalPath"],
+    ["warning", "PXSDKJSX1100", "nodes[2].runtimeProperties.activateSoundPath"],
+  ]);
+  const control = compileJsxUi(jsx(Scene, {name: "Slider", width: 640, height: 360,
+    children: jsx(Control, {name: "Volume", runtimeType: "Slider", position: [0, 0], size: [200, 20]})}));
+  assert.deepEqual(control.diagnostics.map(({code}) => code), ["PXSDKJSX1101"]);
 });

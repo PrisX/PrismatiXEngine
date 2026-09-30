@@ -5,6 +5,15 @@
 
 export const uiElementMarker = Symbol.for("prismatix.ui.authoring.element");
 export const uiJsxSourceMarker = Symbol.for("prismatix.ui.authoring.jsx-source");
+/** Authoring advice about the props an element was written with. */
+export const uiLintMarker = Symbol.for("prismatix.ui.authoring.lint");
+
+export interface UiLint {
+  readonly code: string;
+  readonly message: string;
+  /** Property path inside the lowered node, e.g. `runtimeProperties.clipContent`. */
+  readonly property: string;
+}
 
 export interface UiJsxSource {
   readonly fileName: string;
@@ -15,6 +24,7 @@ export interface UiJsxSource {
 export interface UiElement {
   readonly [uiElementMarker]: true;
   readonly [uiJsxSourceMarker]?: UiJsxSource;
+  readonly [uiLintMarker]?: readonly UiLint[];
   readonly type: unknown;
   readonly props: Readonly<Record<string, unknown>>;
   readonly key?: string | number;
@@ -52,11 +62,72 @@ export function jsx(
   if (!isUiElement(rendered)) {
     throw new TypeError("PrismatiX JSX components must return one UI element");
   }
+  const lints = runtimePropertyLints(element.props);
+  const linted = lints.length === 0 ? rendered
+    : {...rendered, [uiLintMarker]: [...rendered[uiLintMarker] ?? [], ...lints]};
   // Keep a key on the rendered authoring element even when a local function
   // component does not explicitly forward it. The lowering pass can then use
   // the call-site key as a stable identity seed, matching author expectations.
-  return key === undefined || rendered.key !== undefined
-    ? rendered : {...rendered, key};
+  return key === undefined || linted.key !== undefined
+    ? linted : {...linted, key};
+}
+
+// runtimeProperties keys that a typed prop now expresses; the typed form is
+// checked by TypeScript and survives Runtime renames.
+const typedRuntimeProperties: Readonly<Record<string, string>> = {
+  activateSoundPath: "activateSoundPath=",
+  hoverSoundPath: "hoverSoundPath=",
+  focusMode: "focusMode=",
+  mouseFilter: "mouseFilter=",
+  modalCapture: "modalCapture=",
+  clipContent: "clipContent",
+  showTransitionSeconds: "showTransition={{seconds}}",
+  showOffsetX: "showTransition={{offset}}",
+  showOffsetY: "showTransition={{offset}}",
+  hideTransitionSeconds: "hideTransition={{seconds}}",
+  hideOffsetX: "hideTransition={{offset}}",
+  hideOffsetY: "hideTransition={{offset}}",
+  linearTransition: "linearTransition",
+  normalPath: "normalPath= or skin=",
+  hoverPath: "hoverPath= or skin=",
+  pressedPath: "pressedPath= or skin=",
+  disabledPath: "disabledPath= or skin=",
+  scaleMode: "scaleMode=",
+  lockAspectRatio: "lockAspectRatio",
+  optionKey: "option= on <Slider>",
+  fontSize: "fontSize=",
+  wrap: "wrap",
+  font: "font=",
+  letterSpacing: "letterSpacing=",
+  outlineSize: "outlineSize=",
+  outlineColor: "outlineColor=",
+};
+
+const statePaths = ["normalPath", "hoverPath", "pressedPath", "disabledPath"] as const;
+
+function runtimePropertyLints(props: Readonly<Record<string, unknown>>): UiLint[] {
+  const lints: UiLint[] = [];
+  if (props.runtimeType === "Slider")
+    lints.push({code: "PXSDKJSX1101", property: "runtimeType",
+      message: "Use <Slider> instead of <Control runtimeType=\"Slider\">; option= binds a player.options entry"});
+  // Explicit state images that follow the `<stem>-<state>.png` convention.
+  const normal = typeof props.normalPath === "string"
+    ? /^(.*)-normal(\.[A-Za-z0-9]+)$/u.exec(props.normalPath) : null;
+  if (normal !== null && props.skin === undefined && statePaths.slice(1).some((key) => {
+    const value = props[key];
+    return typeof value === "string" && value.startsWith(`${normal[1]}-`);
+  }))
+    lints.push({code: "PXSDKJSX1102", property: "runtimeProperties.normalPath",
+      message: `State images follow ${normal[1]}-<state>${normal[2]}; write skin="${normal[1]}" and keep only the paths that differ`});
+  const authored = props.runtimeProperties;
+  if (authored === null || typeof authored !== "object" || Array.isArray(authored)) return lints;
+  for (const key of Object.keys(authored)) {
+    const typed = typedRuntimeProperties[key];
+    if (typed !== undefined)
+      lints.push({code: "PXSDKJSX1100", property: `runtimeProperties.${key}`,
+        message: `runtimeProperties.${key} has a typed prop; write ${typed} instead`});
+  }
+  return lints;
 }
 
 export const jsxs = jsx;

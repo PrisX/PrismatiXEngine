@@ -63,7 +63,7 @@ import {
 assertLocalBuildFresh(fileURLToPath(new URL("../..", import.meta.url)), "@prismatix/cli");
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
-interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly documentTexts: Readonly<Record<string, string>>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly uiNodeSpans: ReadonlyMap<string, ReadonlyMap<number, SourceSpan>>; readonly storyPath?: string; readonly storyIndexSource?: string}
+interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly documentTexts: Readonly<Record<string, string>>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly uiNodeSpans: ReadonlyMap<string, ReadonlyMap<number, SourceSpan>>; readonly uiWarnings: readonly AuthoringDiagnostic[]; readonly storyPath?: string; readonly storyIndexSource?: string}
 interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string; readonly dependencies: ReadonlySet<string>; readonly protectedPaths: readonly string[]}
 
 class PackagerFailure extends Error {
@@ -313,6 +313,24 @@ function jsxPropertySpan(root: string, texts: ReadonlyMap<string, string>,
         {start: value.getStart(source.ast), end: value.getEnd()});
   }
   return undefined;
+}
+
+// A TSX helper called for every row reports one warning per rendered node;
+// the author fixes it once, at the one authored line.
+function collapseRepeatedWarnings(diagnostics: readonly AuthoringDiagnostic[]): AuthoringDiagnostic[] {
+  const seen = new Map<string, {index: number; count: number}>();
+  const output: AuthoringDiagnostic[] = [];
+  for (const item of diagnostics) {
+    const start = item.span?.start;
+    if (item.severity !== "warning" || start === undefined) { output.push(item); continue; }
+    const key = `${item.code}|${item.message}|${item.span!.path}|${start.offset}`;
+    const earlier = seen.get(key);
+    if (earlier === undefined) { seen.set(key, {index: output.length, count: 1}); output.push(item); continue; }
+    earlier.count += 1;
+    const first = output[earlier.index]!;
+    output[earlier.index] = {...first, details: `${earlier.count} rendered nodes`};
+  }
+  return output;
 }
 
 function withJsxNodeSpans(diagnostics: readonly AuthoringDiagnostic[],
@@ -639,6 +657,7 @@ async function loadJsxUiDocument(root: string, virtualPath: string,
   sourceTexts?: ReadonlyMap<string, string>): Promise<{
     readonly value: unknown;
     readonly nodeSpans: ReadonlyMap<number, SourceSpan>;
+    readonly warnings: readonly AuthoringDiagnostic[];
   }> {
   const sourcePath = projectFile(root, virtualPath);
   const source = await readBoundedText(sourcePath);
@@ -680,7 +699,8 @@ async function loadJsxUiDocument(root: string, virtualPath: string,
     if (!compiled.valid || compiled.value === undefined)
       throw new JsxAuthoringFailure(withJsxNodeSpans(compiled.diagnostics,
         new Map([[virtualPath, nodeSpans]]), root, sourceTexts));
-    return {value: compiled.value, nodeSpans};
+    return {value: compiled.value, nodeSpans,
+      warnings: compiled.diagnostics.filter((item) => item.severity !== "error")};
   } catch (error) {
     if (error instanceof JsxAuthoringFailure) throw error;
     throw new JsxAuthoringFailure([{
@@ -815,6 +835,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
   const documents: Record<string, unknown> = {};
   const documentSources = new Map<string, string>();
   const uiNodeSpans = new Map<string, ReadonlyMap<number, SourceSpan>>();
+  const uiWarnings: AuthoringDiagnostic[] = [];
   const sourceFiles: Record<string, string> = {};
   const locales: Record<string, unknown> = {};
   const dependencies = new Set<string>([projectPath]);
@@ -838,6 +859,8 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
       dependencies, rememberText, textSnapshots);
     documents[outputPath] = compiled.value;
     uiNodeSpans.set(outputPath, compiled.nodeSpans);
+    // Canonical path so withJsxNodeSpans can point at the authored prop.
+    uiWarnings.push(...compiled.warnings.map((item) => ({...item, path: outputPath})));
     documentSources.set(outputPath, virtualPath);
     return outputPath;
   };
@@ -990,7 +1013,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     if (source !== undefined) documentTexts[virtualPath] = source;
   }
   return {root, projectPath, project, documents, documentTexts, sourceFiles, locales, dependencies, includedResources,
-    uiNodeSpans,
+    uiNodeSpans, uiWarnings,
     textSnapshots, absentTextInputs,
     ...(storyIndexSource === undefined ? {} : {storyIndexSource}),
     ...(storyPath === undefined ? {} : {storyPath})};
@@ -1138,9 +1161,10 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
     ...(committedRevision === undefined ? {} : {committedRevision}),
     ...(uiTypeRegistry === undefined ? {} : {uiTypeRegistry}),
     ...(inputKeyRegistry === undefined ? {} : {inputKeyRegistry})});
-  const result = loaded.uiNodeSpans.size === 0 ? compiled :
-    {...compiled, diagnostics: withJsxNodeSpans(compiled.diagnostics,
-      loaded.uiNodeSpans, loaded.root, loaded.textSnapshots)};
+  const authored = [...loaded.uiWarnings, ...compiled.diagnostics];
+  const result = {...compiled, diagnostics: collapseRepeatedWarnings(
+    loaded.uiNodeSpans.size === 0 ? authored : withJsxNodeSpans(authored,
+      loaded.uiNodeSpans, loaded.root, loaded.textSnapshots))};
   const warnings: AuthoringDiagnostic[] = [];
   if (uiTypeRegistry === undefined &&
       Object.keys(loaded.documents).some((path) => /\.pxui(?:component)?$/u.test(path)))

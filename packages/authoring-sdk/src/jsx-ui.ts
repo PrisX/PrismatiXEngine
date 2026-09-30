@@ -6,6 +6,7 @@ import {
   isUiElement,
   uiElementMarker,
   uiJsxSourceMarker,
+  uiLintMarker,
   type UiChild,
   type UiElement,
   type UiJsxSource,
@@ -143,6 +144,14 @@ export interface UiNodeProps {
   readonly modalCapture?: boolean;
   readonly hoverSoundPath?: string;
   readonly activateSoundPath?: string;
+  /** Clip children to this control's rectangle. */
+  readonly clipContent?: boolean;
+  /** Fade (and optionally slide from `offset`) when the control becomes visible. */
+  readonly showTransition?: UiVisibilityTransition;
+  /** Fade (and optionally slide to `offset`) when the control is hidden. */
+  readonly hideTransition?: UiVisibilityTransition;
+  /** Use linear instead of eased show/hide transitions. */
+  readonly linearTransition?: boolean;
   readonly bindings?: UiBindings;
   /** Shorthand bindings; a `"!path"` string applies the `Not` formatter. */
   readonly bind?: Readonly<Record<string, string | UiBinding>>;
@@ -156,6 +165,12 @@ export interface UiNodeProps {
   readonly componentSlot?: UiComponentSlot;
   readonly itemSource?: UiItemSource;
   readonly children?: UiChild;
+}
+
+export interface UiVisibilityTransition {
+  readonly seconds: number;
+  /** Pixels the control slides from (show) or to (hide). */
+  readonly offset?: readonly [x: number, y: number];
 }
 
 export interface ItemsViewProps extends UiNodeProps {
@@ -287,6 +302,8 @@ export interface SliderProps extends Omit<UiNodeProps, "children"> {
   readonly knobSize?: number;
   /** Clip the active rail image to the current value, preserving its full source scale. */
   readonly fillRailToValue?: boolean;
+  /** The `player.options` entry this slider shows and edits. */
+  readonly option?: string;
 }
 
 /** A skinnable button that displays and edits one registered keyboard action. */
@@ -463,7 +480,14 @@ function node(
   runtimeType: string | undefined,
   props: UiNodeProps & {readonly text?: string; readonly assetId?: string | null},
 ): UiElement {
-  const {focusMode, mouseFilter, modalCapture, hoverSoundPath, activateSoundPath, ...rest} = props;
+  const {focusMode, mouseFilter, modalCapture, hoverSoundPath, activateSoundPath,
+    clipContent, showTransition, hideTransition, linearTransition, ...rest} = props;
+  const transition = (phase: "show" | "hide", value: UiVisibilityTransition | undefined) =>
+    value === undefined ? {} : {
+      [`${phase}TransitionSeconds`]: value.seconds,
+      ...(value.offset === undefined ? {}
+        : {[`${phase}OffsetX`]: value.offset[0], [`${phase}OffsetY`]: value.offset[1]}),
+    };
   return definitionElement(nodeType, {
     category: "node", kind,
     ...(runtimeType === undefined ? {} : {runtimeType}),
@@ -474,6 +498,10 @@ function node(
       ...(modalCapture === undefined ? {} : {modalCapture}),
       ...(hoverSoundPath === undefined ? {} : {hoverSoundPath}),
       ...(activateSoundPath === undefined ? {} : {activateSoundPath}),
+      ...(clipContent === undefined ? {} : {clipContent}),
+      ...transition("show", showTransition),
+      ...transition("hide", hideTransition),
+      ...(linearTransition === undefined ? {} : {linearTransition}),
     }},
   });
 }
@@ -674,10 +702,10 @@ export function TextureButton(props: TextureButtonProps): UiElement {
 export function Slider(props: SliderProps): UiElement {
   const {minimum, maximum, step, value, railPath, railHoverPath,
     railPressedPath, knobPath, knobHoverPath, knobPressedPath, railHeight,
-    knobSize, fillRailToValue, ...rest} = props;
+    knobSize, fillRailToValue, option, ...rest} = props;
   const optional = {minimum, maximum, step, value, railPath, railHoverPath,
     railPressedPath, knobPath, knobHoverPath, knobPressedPath, railHeight,
-    knobSize, fillRailToValue};
+    knobSize, fillRailToValue, optionKey: option};
   return node("control", "Slider", {
     ...rest,
     accessibilityRole: props.accessibilityRole ?? "slider",
@@ -921,7 +949,8 @@ function nodeBindings(props: UiNodeProps): UiBindings {
 }
 
 function lowerDocument(element: UiElement, path?: string,
-  onNodeSource?: (index: number, source: UiJsxSource) => void): PrismatiXUiDocument {
+  onNodeSource?: (index: number, source: UiJsxSource) => void,
+  lints: AuthoringDiagnostic[] = []): PrismatiXUiDocument {
   const rootDefinition = definition(element);
   if (rootDefinition.category !== "document") {
     throw new TypeError("PrismatiX JSX must export a Scene or Component root");
@@ -964,6 +993,10 @@ function lowerDocument(element: UiElement, path?: string,
       parentWidth, parentHeight);
     const jsxSource = item[uiJsxSourceMarker];
     if (jsxSource !== undefined) onNodeSource?.(nodes.length, jsxSource);
+    for (const lint of item[uiLintMarker] ?? [])
+      lints.push({severity: "warning", code: lint.code, message: lint.message,
+        ...(path === undefined ? {} : {path}),
+        details: `nodes[${nodes.length}].${lint.property}`});
     nodes.push({
       id, parentId, order, kind: source.kind,
       ...(source.runtimeType === undefined ? {} : {runtimeType: source.runtimeType}),
@@ -1037,8 +1070,9 @@ export function compileJsxUi(
   options: CompileJsxUiOptions = {},
 ): Result<PrismatiXUiDocument> {
   let value: PrismatiXUiDocument;
+  const lints: AuthoringDiagnostic[] = [];
   try {
-    value = lowerDocument(element, options.path, options.onNodeSource);
+    value = lowerDocument(element, options.path, options.onNodeSource, lints);
   } catch (error) {
     return {valid: false, diagnostics: [diagnostic(
       "PXSDKJSX1001", "JSX UI could not be lowered", options.path, String(error),
@@ -1050,9 +1084,11 @@ export function compileJsxUi(
       "PXSDKJSX1002", `Expected a JSX ${options.kind} document`, options.path, value.format,
     )]};
   }
-  return validateDocument<PrismatiXUiDocument>(
+  const validated = validateDocument<PrismatiXUiDocument>(
     actualKind === "scene" ? "ui" : "uiComponent", value, options.path,
   );
+  return lints.length === 0 ? validated
+    : {...validated, diagnostics: [...lints, ...validated.diagnostics]};
 }
 
 /** Convenience form for SDK integrations that prefer exceptions over Result. */

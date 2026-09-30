@@ -506,6 +506,29 @@ A registered `.pxtimeline` can be played using its resource reference:
 
 Create the actual clip with typed authoring contracts or adapt the existing sample's Timeline. Story's `timeline` accepts the clip reference; it does not expose every runtime playback option. For image-layer animations in UI, see [`.pxmotion` authoring](motion-authoring.md); for image-based lettering without a node per possible character, see [SpriteText](sprite-text-authoring.md). For keyboard shortcuts, see [named input actions](input-actions.md). See also [the React-free TSX example](examples/jsx-ui-authoring.tsx), [custom effects](custom-effects.md), and [the runtime SDK](../runtime-sdk/README.md) for richer authored UI and presentation APIs.
 
+### Typed TSX props instead of runtimeProperties
+
+Prefer the typed props below to `runtimeProperties`; TypeScript checks them,
+and `prismatix validate` warns about the old spelling at the authored line
+(`PXSDKJSX1100`), about `<Control runtimeType="Slider">` (`PXSDKJSX1101`) and
+about four hand-written state images that `skin` would derive (`PXSDKJSX1102`):
+
+```tsx
+<TextureButton name="Save" skin="Assets/UI/mw/bt_save" disabledPath="Assets/UI/mw/bt_save-off.png"
+  position={[780, 776]} size={[96, 47]} action="save.open" />
+<Slider name="TextSpeed" option="mspeed" position={[919, 300]} size={[400, 18]}
+  railPath="Assets/UI/conf/rail.png" fillRailToValue />
+<Group name="Dialog" fill clipContent linearTransition
+  showTransition={{seconds: 0.2, offset: [0, -50]}} hideTransition={{seconds: 0.2}} />
+```
+
+`skin="stem"` uses `stem-normal.png`, `stem-hover.png` (also for pressed) and,
+with `skin={{base: "stem", states: ["hover", "pressed", "disabled"]}}`, the
+other states; an explicit `*Path` wins. Button sounds need no per-button
+props: `player.uiActivateSound` plays for every button and
+`player.uiCancelSound` for `overlay.close`, `route.back` and `*.cancel`
+actions; `activateSoundPath=` overrides one button.
+
 ### Player options and confirmation dialogs
 
 `player.options` in `prismatix.json` declares small integer settings the Player
@@ -549,8 +572,7 @@ cursor never hides). Two options binding one behaviour is warned about
 (`PXBUILD1105`); whichever the player set last wins. A misspelled `binds` is a
 validation error.
 
-A `Slider` with `runtimeProperties={{optionKey: "autoSpeed"}}` edits an option
-and needs no host code. `{id: "option.set", arguments: {argument: "font=2"}}`
+`<Slider option="autoSpeed" />` edits an option and needs no host code. `{id: "option.set", arguments: {argument: "font=2"}}`
 sets one, and `options.<name>` (text) and `options.<name>.is<value>` (boolean)
 are bindable UI data.
 
@@ -582,8 +604,9 @@ rejects a `dontAskOption` that `player.options` does not declare
 (`PXBUILD1103`).
 
 Any control can fade out when hidden instead of vanishing:
-`showTransitionSeconds`, `hideTransitionSeconds`, `showOffsetY`,
-`hideOffsetY` and `linearTransition` are ordinary runtime properties.
+`showTransition={{seconds: 0.2, offset: [0, -50]}}`,
+`hideTransition={{seconds: 0.2, offset: [0, 50]}}` and `linearTransition`
+slide and fade it.
 
 ### Audio defaults and per-character voice volume
 
