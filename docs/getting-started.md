@@ -59,6 +59,31 @@ prismatix build my-game --output "release/First Light"
 prismatix build my-game --artifact-only --output my-game/.prismatix/artifact
 ```
 
+For a release candidate, `release` validates, builds, packs and verifies every
+archive in one step, then reminds you to commit `.prismatix-release/lineage.json`
+so later releases keep loading players' saves. Put the settings every build of
+the project should use in `prismatix.json` instead of repeating flags:
+
+```json
+"distribution": {"executableName": "first-light", "icon": "Assets/icon.ico",
+  "output": "release/First Light", "compression": "fast", "archiveShards": 4}
+```
+
+```bash
+prismatix release my-game
+```
+
+Command-line options still win over these defaults. Engine contributors can
+pass a local build directory as `--runtime out/build/x64-release/PrismatiXEngine`.
+Scaffold the files you would otherwise write by hand, and see any command's
+options with `--help`:
+
+```bash
+prismatix add character kei --from Assets/Portraits/kei --name 圭
+prismatix add scene chapter2 --chapter chapter-1 --title "放學後"
+prismatix release --help
+```
+
 Rebuilding the same CLI-owned artifact compares the compiled files and media
 sources by SHA-256 with its existing ownership inventory. If every file is
 unchanged, the CLI verifies the existing artifact under its publication lock

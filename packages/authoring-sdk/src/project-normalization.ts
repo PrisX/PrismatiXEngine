@@ -75,7 +75,8 @@ const reservedFileNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 export function projectDistributionError(value: unknown): string | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return "distribution must be an object";
-  const {executableName, icon, ...rest} = value as Record<string, unknown>;
+  const {executableName, icon, output, compression, archiveShards, ...rest} =
+    value as Record<string, unknown>;
   const extra = Object.keys(rest);
   if (extra.length > 0) return `distribution does not support ${extra.join(", ")}`;
   if (executableName !== undefined && (typeof executableName !== "string" ||
@@ -87,6 +88,15 @@ export function projectDistributionError(value: unknown): string | undefined {
   if (icon !== undefined && (typeof icon !== "string" || !isSafeResourcePath(icon) ||
       icon.includes(":") || !/\.ico$/i.test(icon)))
     return "distribution.icon must be a safe project-relative .ico path";
+  // Defaults for build/pack/release when the command line does not say.
+  if (output !== undefined && (typeof output !== "string" || output.length === 0 ||
+      output.length > 1024 || /[\u0000-\u001f]/.test(output)))
+    return "distribution.output must be a directory path";
+  if (compression !== undefined && !["none", "fast", "balanced", "maximum"].includes(compression as string))
+    return "distribution.compression must be none, fast, balanced, or maximum";
+  if (archiveShards !== undefined && (!Number.isInteger(archiveShards) ||
+      (archiveShards as number) < 1 || (archiveShards as number) > 64))
+    return "distribution.archiveShards must be an integer from 1 to 64";
   return undefined;
 }
 

@@ -32,6 +32,7 @@ import {packageContentKey, packageRetentionKey, refreshRuntimePackageIfMatching,
 import {debugPackagerHint} from "./package-tool-hint.js";
 import {distributionCoversLineage, distributionLineage, readReleaseLineage,
   recordReleaseLineage, releaseLineageFile, saveCompatibilityWarning} from "./release-lineage.js";
+import {addCharacter, addScene} from "./scaffold.js";
 import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
 
 import {
@@ -90,6 +91,8 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space"},
   pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space check verify-media"},
   run: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space"},
+  release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space"},
+  add: {values: "project from name chapter title", flags: ""},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync accept-removals"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
@@ -125,6 +128,13 @@ function parseOptions(command: string, args: readonly string[]): Options {
     const value = equals >= 0 ? argument.slice(equals + 1) : args[++index];
     if (value === undefined || value.length === 0 || value.startsWith("--")) throw new Error(`--${name} requires a value`);
     values.set(name, value);
+  }
+  if (command === "add" && !flags.has("help")) {
+    if (positional.length !== 2 || !["character", "scene"].includes(positional[0]!))
+      throw new Error("Use prismatix add character <alias> --from <folder> or prismatix add scene <id>");
+    if (positional[0] === "character" && !values.has("from"))
+      throw new Error("add character needs --from <folder of expression images>");
+    return {values, flags, positional};
   }
   if (positional.length > 1) throw new Error("Expected one project or save path; quote paths containing spaces");
   if (["plan-patch", "create-patch", "apply-patch", "create-overlay",
@@ -1671,8 +1681,27 @@ async function packageBranding(projectArgument: string | undefined): Promise<Pac
     icon, iconSha256};
 }
 
+// prismatix.json `distribution` may name the output folder, compression and
+// shard count so every build of a project packs the same way.
+async function applyDistributionDefaults(options: Options): Promise<void> {
+  const location = await resolveProjectPath(options.positional[0]);
+  if (!location.manifestExists || basename(location.projectPath) !== "prismatix.json") return;
+  const distribution = object(object(await readJson(location.projectPath))?.distribution);
+  if (distribution === undefined) return;
+  const defaults: Record<string, string | undefined> = {
+    output: typeof distribution.output === "string"
+      ? resolve(location.root, distribution.output) : undefined,
+    compression: typeof distribution.compression === "string" ? distribution.compression : undefined,
+    "archive-shards": typeof distribution.archiveShards === "number"
+      ? String(distribution.archiveShards) : undefined,
+  };
+  for (const [name, value] of Object.entries(defaults))
+    if (value !== undefined && !options.values.has(name)) options.values.set(name, value);
+}
+
 async function packProject(options: Options): Promise<{output: string; player: string;
   validatedOnly?: boolean; deferredMediaCount?: number}> {
+  await applyDistributionDefaults(options);
   let packager: string;
   let player: string;
   try {
@@ -1986,6 +2015,51 @@ async function packProject(options: Options): Promise<{output: string; player: s
     return {output, player: join(output, packagedPlayer)};
   } finally {
     await rm(temp, {recursive: true, force: true});
+  }
+}
+
+async function addCommand(options: Options): Promise<number> {
+  try {
+    const location = await resolveProjectPath(options.values.get("project"));
+    const [kind, name] = options.positional as [string, string];
+    const result = kind === "character"
+      ? await addCharacter(location.root, name, {from: options.values.get("from")!,
+        ...(options.values.has("name") ? {name: options.values.get("name")!} : {})})
+      : await addScene(location.root, name, {
+        ...(options.values.has("chapter") ? {chapter: options.values.get("chapter")!} : {}),
+        ...(options.values.has("title") ? {title: options.values.get("title")!} : {})});
+    process.stdout.write(machineOutput ? `${JSON.stringify({added: kind, name, ...result})}\n`
+      : [...result.created.map((path) => `Created ${path}`),
+        ...result.updated.map((path) => `Updated ${path}`), ""].join("\n"));
+    return 0;
+  } catch (error) {
+    printDiagnostics([diagnostic("PXCLI1240", "add failed", options.values.get("project"), String(error))]);
+    return 1;
+  }
+}
+
+// validate + build + pack + verify in one step, for a release candidate.
+async function releaseCommand(options: Options): Promise<number> {
+  try {
+    const packaged = await packProject(options);
+    progress({severity: "information", code: "PXCLI1230",
+      message: `Verifying the distribution in ${packaged.output}`});
+    const verified = await verifyPackagedContents(packaged.output, options);
+    const summary = {released: true, output: packaged.output, player: packaged.player,
+      archives: verified.archives, resources: verified.resources, rawBytes: verified.rawBytes};
+    process.stdout.write(machineOutput ? `${JSON.stringify(summary)}\n` : [
+      `Release ready: ${packaged.output}`,
+      `  Player: ${packaged.player}`,
+      `  ${verified.resources} resources in ${verified.archives} archive(s), ` +
+        `${verified.rawBytes >= 1024 ** 3 ? `${(verified.rawBytes / 1024 ** 3).toFixed(2)} GiB`
+          : `${(verified.rawBytes / 1024 ** 2).toFixed(1)} MiB`} before compression`,
+      `  Commit ${releaseLineageFile} so later releases keep loading these saves.`,
+      ""].join("\n"));
+    return 0;
+  } catch (error) {
+    printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure
+      ? error.diagnostics : [diagnostic("PXCLI1231", "Release failed", options.positional[0], String(error))]);
+    return 1;
   }
 }
 
@@ -2640,8 +2714,61 @@ async function inspectSaveCommand(options: Options): Promise<number> {
     return 1;
   }
 }
+// One line of purpose and the usual invocations for `prismatix <command> --help`.
+const commandHelp: Readonly<Record<string, readonly string[]>> = {
+  create: ["Create a new project with a starter story, title screen and pinned tools.",
+    "prismatix create my-game [--name \"My Game\"] [--id my-game] [--locale zh-TW] [--width 1920 --height 1080]"],
+  dev: ["Watch the project and replay it in Preview after every successful edit.",
+    "prismatix dev [project] [--runtime <engine-build-or-install>]"],
+  validate: ["Check Story, UI, catalog and resources without writing anything.",
+    "prismatix validate [project] [--runtime <dir>]"],
+  build: ["Build a playable distribution (or only the compiled artifact).",
+    "prismatix build [project] [--output <dir>] [--runtime <dir>] [--compression fast] [--archive-shards 4]",
+    "prismatix build [project] --artifact-only [--output <dir>]"],
+  pack: ["Package an already built artifact as a playable distribution.",
+    "prismatix pack [project] --artifact <dir> [--output <dir>] [--runtime <dir>]",
+    "prismatix pack [project] --artifact <dir> --check [--verify-media]"],
+  run: ["Build a distribution and start its Player.", "prismatix run [project] [--runtime <dir>]"],
+  release: ["Validate, build, pack and verify a release candidate in one step.",
+    "prismatix release [project] [--output <dir>] [--runtime <dir>]",
+    "Defaults for --output, --compression and --archive-shards come from prismatix.json distribution."],
+  add: ["Register a character from a folder of expression images, or add a scene to the story index.",
+    "prismatix add character <alias> --from <folder> [--name <display name>] [--project <dir>]",
+    "prismatix add scene <id> [--chapter <chapter-id>] [--title <title>] [--project <dir>]"],
+  augment: ["Add declared files to a built artifact without editing ownership by hand.",
+    "prismatix augment [project] --artifact <dir> --manifest <augmentation.json>"],
+  ids: ["Write or check the stable save identities of Story lines.", "prismatix ids [project] [--check|--write]"],
+  migrate: ["Upgrade an older project manifest.", "prismatix migrate [project] [--write] [--report <file>]"],
+  "inspect-save": ["Decode a player save for support.", "prismatix inspect-save <save> [--package <distribution>]"],
+  "verify-package": ["Verify every archive and resource hash of a distribution.",
+    "prismatix verify-package <distribution> [--runtime <dir>]"],
+  "plan-patch": ["Compare two distributions and report what a patch would carry.",
+    "prismatix plan-patch --base <old> --target <new> [--verify-contents]"],
+  "create-patch": ["Create an update bundle between two distributions.",
+    "prismatix create-patch --base <old> --target <new> --output <bundle>"],
+  "apply-patch": ["Apply an update bundle to a distribution.",
+    "prismatix apply-patch --base <old> --patch <bundle> (--output <dir> | --in-place)"],
+  "create-overlay": ["Create a signed patch.pdx overlay for an installed distribution.",
+    "prismatix create-overlay --base <distribution> --artifact <artifact> --output <patch.pdx> [--signing-key <key>]"],
+  "verify-overlay": ["Verify an overlay against its base distribution.",
+    "prismatix verify-overlay --base <distribution> --patch <patch.pdx> [--require-signature]"],
+  "overlay-keygen": ["Create an overlay signing key pair.", "prismatix overlay-keygen --private <file> --public <file>"],
+};
+
+function commandUsage(command: string): void {
+  const help = commandHelp[command];
+  const schema = commandOptions[command];
+  if (help === undefined || schema === undefined) { usage(); return; }
+  const [purpose, ...examples] = help;
+  const values = schema.values.split(" ").filter(Boolean).map((name) => `--${name} <value>`);
+  const flags = schema.flags.split(" ").filter(Boolean).map((name) => `--${name}`);
+  process.stderr.write([`prismatix ${command}: ${purpose}`, "", ...examples.map((line) => `  ${line}`), "",
+    `Options: ${[...values, ...flags, "--json"].join(" ")}`, ""].join("\n"));
+}
+
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|release|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("  prismatix <command> --help  Purpose, examples and options of one command\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
   process.stderr.write("  prismatix create-overlay --base <distribution> --artifact <published-artifact> --output <patch.pdx> [--signing-key <private-key>]  Patch without a target distribution\n");
   process.stderr.write("  prismatix create-overlay --base <distribution> --artifact <published-artifact> --check  Verify and count changes without writing a PDX\n");
@@ -3073,7 +3200,7 @@ async function main(): Promise<number> {
   let options: Options;
   try { options = parseOptions(command, args); }
   catch (error) { printDiagnostics([diagnostic("PXCLI0001", "Invalid command arguments", undefined, String(error))]); return 2; }
-  if (options.flags.has("help")) { usage(); return 0; }
+  if (options.flags.has("help")) { commandUsage(command); return 0; }
   try {
     const delegated = await projectTool(command, options, args);
     if (delegated !== undefined) return delegated;
@@ -3087,6 +3214,8 @@ async function main(): Promise<number> {
   if (command === "build") return buildCommand(options);
   if (command === "pack") return packCommand(options);
   if (command === "run") return runCommand(options);
+  if (command === "release") return releaseCommand(options);
+  if (command === "add") return addCommand(options);
   if (command === "augment") return augmentCommand(options);
   if (command === "ids") return idsCommand(options);
   if (command === "migrate") return migrateCommand(options);
