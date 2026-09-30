@@ -491,7 +491,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   if (!normalized.valid || normalized.value === undefined)
     return {diagnostics, valid: false};
   const projectPath = normalized.value.projectPath;
-  const project = normalized.value.project;
+  let project = normalized.value.project;
   const hostActionContract = project.settings?.["authoring.actionContract"] as
     HostActionContract | undefined;
   const hostActions = hostActionContract?.actions ?? [];
@@ -782,6 +782,25 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       diagnostics.push(...validateUiInputBindings(component, game,
         descriptor.source, input.documentSources?.[descriptor.source]));
     uiComponentDocuments.set(descriptor.source, component);
+  }
+  // The Player publishes hover.<name> only for names declared as UI data;
+  // declare every one a UI binds so tooltips need no manifest entry.
+  if (project.settings?.["authoring.uiContract"] === undefined) {
+    const hovered = new Set<string>();
+    for (const document of [...uiDocuments.values(), ...uiComponentDocuments.values()]) {
+      const nodes = (document as {nodes?: unknown}).nodes;
+      for (const node of Array.isArray(nodes) ? nodes : []) {
+        const bindings = (node as {bindings?: Record<string, {path?: unknown}>}).bindings ?? {};
+        for (const binding of Object.values(bindings))
+          if (typeof binding?.path === "string" && /^hover\.[A-Za-z_][A-Za-z0-9_]*$/u.test(binding.path))
+            hovered.add(binding.path);
+      }
+    }
+    const declared = (project.settings?.["player.uiData"] ?? {}) as Record<string, JsonValue>;
+    const missing = [...hovered].filter((path) => !Object.hasOwn(declared, path)).sort();
+    if (missing.length > 0)
+      project = {...project, settings: {...project.settings, "player.uiData": {
+        ...declared, ...Object.fromEntries(missing.map((path) => [path, false]))}}};
   }
   diagnostics.push(...validatePlayerUiBindings(project,
     new Map([...uiDocuments, ...uiComponentDocuments]), input.uiTypeRegistry,

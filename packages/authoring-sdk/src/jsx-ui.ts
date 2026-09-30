@@ -155,6 +155,10 @@ export interface UiNodeProps {
   readonly bindings?: UiBindings;
   /** Shorthand bindings; a `"!path"` string applies the `Not` formatter. */
   readonly bind?: Readonly<Record<string, string | UiBinding>>;
+  /** Visible only while the UI data path is true; `"!path"` negates it. */
+  readonly visibleWhen?: string;
+  /** Enabled only while the UI data path is true; `"!path"` negates it. */
+  readonly enabledWhen?: string;
   readonly onClick?: UiAction;
   readonly action?: string | UiAction;
   readonly accessibilityLabel?: string;
@@ -284,6 +288,11 @@ export interface TextureButtonProps extends ButtonProps {
   readonly pressedPath?: string;
   readonly disabledPath?: string;
   readonly scaleMode?: "Stretch" | "Fit" | "Fill" | "Original";
+  /**
+   * Shown while the pointer is over this button, positioned relative to the
+   * button. The button is wrapped in a `<name>Group` and needs a `name`.
+   */
+  readonly tooltip?: UiChild;
 }
 
 /** Native numeric range input with optional image rail and knob. */
@@ -671,8 +680,28 @@ function skinPaths(skin: TextureButtonProps["skin"]): {
   };
 }
 
+const layoutProps = ["layout", "position", "size", "x", "y", "width", "height", "margin",
+  "align", "fill", "anchor", "pivot"] as const;
+
 /** Image-state button without the generic Control runtimeType escape hatch. */
 export function TextureButton(props: TextureButtonProps): UiElement {
+  if (props.tooltip !== undefined) {
+    // The Player publishes hover.<name> while the pointer is over a named
+    // button; the tooltip rides beside the button inside one layout box.
+    const {tooltip, ...button} = props;
+    if (button.name === undefined) throw new TypeError("A TextureButton with a tooltip needs a name");
+    const box = Object.fromEntries(layoutProps.filter((key) => button[key] !== undefined)
+      .map((key) => [key, button[key]]));
+    const inner = {...button} as Record<string, unknown>;
+    for (const key of layoutProps) delete inner[key];
+    return Group({...box, name: `${button.name}Group`, mouseFilter: "Ignore",
+      ...(button.visibleWhen === undefined ? {} : {visibleWhen: button.visibleWhen}),
+      children: [
+        TextureButton({...inner, fill: true, visibleWhen: undefined} as unknown as TextureButtonProps),
+        Group({name: `${button.name}Tooltip`, fill: true, mouseFilter: "Ignore",
+          bind: {visible: `hover.${button.name}`}, children: tooltip}),
+      ]});
+  }
   const text = props.text ?? textualChildren(props.children);
   const {children: _children, skin, scaleMode, ...rest} = props;
   const derived = skinPaths(skin);
@@ -942,10 +971,20 @@ function nodeAppearance(props: UiNodeProps): UiAppearance | undefined {
 
 function nodeBindings(props: UiNodeProps): UiBindings {
   // `bind={{enabled: "!saveLoad.page1"}}` is the Not-formatted binding.
+  const parse = (value: string | UiBinding): UiBinding => typeof value !== "string" ? value
+    : value.startsWith("!") ? {path: value.slice(1), formatter: "Not"} : {path: value};
   const shorthand = Object.fromEntries(Object.entries(props.bind ?? {}).map(([key, value]) =>
-    [key, typeof value !== "string" ? value
-      : value.startsWith("!") ? {path: value.slice(1), formatter: "Not"} : {path: value}]));
-  return {...props.bindings, ...shorthand};
+    [key, parse(value)]));
+  // visibleWhen/enabledWhen are separate props so a helper can pass either
+  // without one `bind` object replacing the other.
+  const conditions: Record<string, UiBinding> = {};
+  for (const [property, value] of [["visible", props.visibleWhen], ["enabled", props.enabledWhen]] as const) {
+    if (value === undefined) continue;
+    if (props.bind?.[property] !== undefined || props.bindings?.[property] !== undefined)
+      throw new TypeError(`${property}When and a ${property} binding cannot both be set on ${props.name ?? "a node"}`);
+    conditions[property] = parse(value);
+  }
+  return {...props.bindings, ...shorthand, ...conditions};
 }
 
 function lowerDocument(element: UiElement, path?: string,

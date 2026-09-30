@@ -94,3 +94,30 @@ test("runtimeProperties with a typed prop, Control sliders and skin-shaped paths
     children: jsx(Control, {name: "Volume", runtimeType: "Slider", position: [0, 0], size: [200, 20]})}));
   assert.deepEqual(control.diagnostics.map(({code}) => code), ["PXSDKJSX1101"]);
 });
+
+test("visibleWhen and enabledWhen bind without one bind object replacing another", () => {
+  const node = compiled([jsx(TextureButton, {name: "Gallery", skin: "Assets/UI/bt_extra",
+    position: [0, 0], size: [128, 48], action: "extra.open",
+    visibleWhen: "title.visible", enabledWhen: "!profileFlags.locked"})]);
+  assert.deepEqual(node("Gallery").bindings, {
+    visible: {path: "title.visible"},
+    enabled: {path: "profileFlags.locked", formatter: "Not"},
+  });
+  const both = compileJsxUi(jsx(Scene, {name: "Both", width: 64, height: 64,
+    children: jsx(Text, {name: "Twice", text: "", visibleWhen: "a", bind: {visible: "b"}})}));
+  assert.equal(both.valid, false);
+  assert.match(both.diagnostics[0]?.details ?? "", /visibleWhen and a visible binding/u);
+});
+
+test("a TextureButton tooltip shows beside the button while hover.<name> is true", () => {
+  const node = compiled([jsx(TextureButton, {name: "Save", skin: "Assets/UI/mw/bt_save",
+    position: [780, 776], size: [96, 47], action: "save.open",
+    tooltip: jsx(Text, {name: "SaveHelp", text: "Save", position: [-100, -45], size: [300, 40]})})]);
+  const group = node("SaveGroup");
+  assert.deepEqual([group.layout.x, group.layout.y, group.layout.width, group.layout.height],
+    [780, 776, 96, 47]);
+  assert.equal(group.runtimeProperties.mouseFilter, "Ignore");
+  assert.equal(node("Save").parentId, group.id);
+  assert.deepEqual(node("SaveTooltip").bindings, {visible: {path: "hover.Save"}});
+  assert.equal(node("SaveHelp").parentId, node("SaveTooltip").id);
+});

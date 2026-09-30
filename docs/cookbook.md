@@ -522,6 +522,14 @@ about four hand-written state images that `skin` would derive (`PXSDKJSX1102`):
   showTransition={{seconds: 0.2, offset: [0, -50]}} hideTransition={{seconds: 0.2}} />
 ```
 
+`visibleWhen="profileFlags.cleared"` and `enabledWhen="!saveLoad.page1"` bind
+one condition each, so a helper can pass either without one `bind` object
+replacing the other. `tooltip={<Image path="Assets/UI/help-save.png"
+position={[-100, -45]} size={[313, 43]} />}` on a named `TextureButton` shows
+the element (positioned relative to the button) while the pointer is over it;
+the build declares the `hover.<name>` data it needs, so `player.uiData` needs
+no `hover.*` entries.
+
 `skin="stem"` uses `stem-normal.png`, `stem-hover.png` (also for pressed) and,
 with `skin={{base: "stem", states: ["hover", "pressed", "disabled"]}}`, the
 other states; an explicit `*Path` wins. Button sounds need no per-button

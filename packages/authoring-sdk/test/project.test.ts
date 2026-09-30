@@ -1430,3 +1430,21 @@ test("compileProject rejects unknown and unsupported-tier Story effects before p
     {graphicsTier:"gpu-effects"});
   assert.equal(gpu.valid, true, JSON.stringify(gpu.diagnostics));
 });
+
+test("compileProject declares every hover.<name> a UI binds as Player UI data", () => {
+  const hoverUi = {...ui, nodes: ui.nodes.map((node) =>
+    ({...node, bindings: {visible: {path: "hover.StartButton"}}}))};
+  const compile = (settings?: Record<string, unknown>) => compileProject({
+    project: {...project, ...(settings === undefined ? {} : {settings})},
+    documents: {"Story/story.pxindex": storyIndex, "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": hoverUi},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2, locale: "zh-TW", strings: {}}},
+  });
+  const result = compile();
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.artifact?.project.settings?.["player.uiData"], {"hover.StartButton": false});
+  const authored = compile({"player.uiData": {"hover.StartButton": true, "mine": 1}});
+  assert.deepEqual(authored.artifact?.project.settings?.["player.uiData"],
+    {"hover.StartButton": true, "mine": 1});
+});
