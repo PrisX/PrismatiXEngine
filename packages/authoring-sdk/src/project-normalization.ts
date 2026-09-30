@@ -1,4 +1,5 @@
 import {storyAssetRootsError, type StoryAssetRoots} from "./story-assets.js";
+import {storyMacroFilesError} from "./story-macros.js";
 import {validateDocument} from "./contracts.js";
 import {fnv1a64 as hash64} from "./fnv1a64.js";
 import {isSafeResourcePath} from "./resources.js";
@@ -55,6 +56,8 @@ export interface NormalizedProjectInput {
   readonly resourceIncludes: readonly string[];
   /** Author-only Story short-name roots; never serialized into project.pxproject. */
   readonly storyAssets?: StoryAssetRoots;
+  /** Author-only macro files every Story may call; never serialized into project.pxproject. */
+  readonly storyMacros?: readonly string[];
   /** Packaging branding; never serialized into project.pxproject. */
   readonly distribution?: ProjectDistribution;
 }
@@ -464,6 +467,11 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
   if (storyAssetsError !== undefined)
     return {diagnostics: [issue("PXBUILD1056", storyAssetsError, projectPath)], valid: false};
   const storyAssets = raw.storyAssets as StoryAssetRoots | undefined;
+  const storyMacrosError = raw.storyMacros === undefined ? undefined
+    : storyMacroFilesError(raw.storyMacros);
+  if (storyMacrosError !== undefined)
+    return {diagnostics: [issue("PXBUILD1120", storyMacrosError, projectPath)], valid: false};
+  const storyMacros = raw.storyMacros as readonly string[] | undefined;
   const distributionError = raw.distribution === undefined ? undefined
     : projectDistributionError(raw.distribution);
   if (distributionError !== undefined)
@@ -472,6 +480,7 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
   const runtimeSource = {...raw};
   delete runtimeSource.resourceIncludes;
   delete runtimeSource.storyAssets;
+  delete runtimeSource.storyMacros;
   delete runtimeSource.distribution;
   const name = typeof raw.name === "string" ? raw.name : "PrismatiX Game";
   const projectId = typeof raw.id === "string" ? raw.id : identifier(name);
@@ -588,6 +597,7 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
       storyPath,
       resourceIncludes: resourceIncludes ?? [],
       ...(storyAssets === undefined ? {} : {storyAssets}),
+      ...(storyMacros === undefined ? {} : {storyMacros}),
       ...(distribution === undefined ? {} : {distribution}),
     },
     diagnostics: validated.diagnostics,

@@ -158,14 +158,57 @@ something new):
   a call with a missing, extra or unknown value is `PXSTORY1195`. A body cannot
   hold labels, `[id]` or `[macro]` (`PXSTORY1193`): every call would repeat
   them.
-- Definitions are local to their Story file and may come after their calls.
-- Diagnostics and the source map point at the call; a syntax error inside the
-  expanded body names the macro and its body line in the diagnostic details.
+- Definitions are local to their Story file and may come after their calls,
+  unless they live in a shared macro file (below).
+- Diagnostics and the source map point at the call; the diagnostic details
+  name the macro, where it is defined and, for a syntax error inside the
+  expanded body, its body line.
 - Each expanded operation takes the call's identity plus its line in the body
   (`<call>/m0`, `<call>/m1`, ...). An `[id]` before the call or the file's
   `.pxids.json` entry for it pins the whole expansion, so saves and read-text
   marks survive edits elsewhere. Changing a macro's body renumbers the lines
   of every call, like editing those lines in place.
+
+Macros every scene repeats belong in shared macro files, listed in
+`prismatix.json` (author-only, like `storyAssets`):
+
+```json
+"storyMacros": ["Story/_macros.pxstory"]
+```
+
+```pxstory
+; Story/_macros.pxstory
+[macro scene_change bg rule=083r time=1000ms]
+[image.hide all]
+[hud visible=false]
+[bg black rule=%rule duration=%time]
+[wait %time]
+[hide all transition=false]
+[bg %bg transition=false]
+[transition %time rule=%rule]
+[endmacro]
+```
+
+```pxstory
+; Story/day1.pxstory
+[scene_change bg006a]
+[scene_change bg012 rule=wipe-left]
+```
+
+- Every Story in the project may call these macros. A shared macro file holds
+  only `[macro]` definitions, comments and blank lines; anything else is
+  `PXSTORY1196`, because it would never run. The file emits no operations
+  and is not a scene.
+- Names are unique across all shared files and may not be redefined by a
+  Story's own `[macro]` (`PXSTORY1191`, naming the first definition).
+- Calls behave exactly like calls to local macros: identities come from the
+  call, so editing or moving the shared file keeps saves valid, and the
+  diagnostics point at the call with the shared file and line in the
+  details (`in macro scene_change (Story/_macros.pxstory:2)`).
+- `storyMacros` lists 1-64 distinct project-relative `.pxstory` files
+  (`PXBUILD1120`); a listed file that does not exist is `PXBUILD1121`.
+  `compileStory` and `compileStoryProject` callers pass the result of
+  `createStoryMacroLibrary(files)` as `storyMacros`.
 
 ### Full-screen (NVL) text
 

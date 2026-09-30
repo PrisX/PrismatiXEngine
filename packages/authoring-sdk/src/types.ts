@@ -1,5 +1,6 @@
 import type {ProjectAssetDescriptor} from "./resources.js";
 import type {StoryAssetIndex} from "./story-assets.js";
+import type {StoryMacroLibrary} from "./story-macros.js";
 
 export type DiagnosticSeverity = "error" | "warning" | "information";
 
@@ -98,6 +99,8 @@ export interface StoryNode {
   readonly arguments?: readonly StoryArgument[];
   /** Inline `@speaker[...]` options that apply to one dialogue line. */
   readonly options?: readonly StoryArgument[];
+  /** Set on lines expanded from a macro: its name and where it is defined. */
+  readonly macroOrigin?: string;
 }
 
 export interface StoryDocument {
@@ -239,6 +242,8 @@ export interface StoryCompileContext {
   readonly resourceAssets?: readonly ProjectAssetDescriptor[];
   /** Short-name lookup for resources under the project's `storyAssets` roots. */
   readonly storyAssets?: StoryAssetIndex;
+  /** Project-wide macros from the `storyMacros` files; see createStoryMacroLibrary. */
+  readonly storyMacros?: StoryMacroLibrary;
 }
 
 export interface StoryCompileResult {

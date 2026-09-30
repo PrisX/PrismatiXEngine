@@ -1,7 +1,7 @@
 import {canonicalJson} from "./canonical-json.js";
 import {fnv1a64 as stableId} from "./fnv1a64.js";
 import {assetIdFromReference, canonicalResourceReference} from "./resources.js";
-import {expandStoryMacros} from "./story-macros.js";
+import {buildStoryMacroLibrary, expandStoryMacros, type StoryMacroLibrary} from "./story-macros.js";
 import {inspectTextMarkup} from "./story-text-markup.js";
 import type {StoryAssetCategory} from "./story-assets.js";
 import {parseStoryExpression} from "./story-expression.js";
@@ -9,6 +9,7 @@ import type {
   AuthoringDiagnostic,
   CharacterDocument,
   ExtensionCommand,
+  ExtensionManifest,
   ExtensionParameter,
   JsonValue,
   RuntimeIrOperation,
@@ -276,6 +277,9 @@ function continues(text: string): boolean {
   const trailing = /\\+$/u.exec(text)?.[0].length ?? 0;
   return trailing % 2 === 1;
 }
+
+/** Inline dialogue text tags; no command or macro may take these names. */
+const inlineTextTagNames = ["b", "i", "br", "font", "size", "color", "ruby"] as const;
 
 // Inline text tags no command shares a name with: a line opening with one is
 // prose (`[b]Loud[/b] she said.`), not a command.
@@ -578,18 +582,40 @@ function normalizeExtensionArguments(node: StoryNode, descriptor: ExtensionComma
   return finalErrors === initialErrors ? normalized : undefined;
 }
 
+/** Command names a macro may not take. Inline text tags too: a line opening
+ * with one is prose, not a call. */
+function reservedMacroNames(extensions: readonly ExtensionManifest[] | undefined): Set<string> {
+  return new Set([...builtinStoryCommands, ...Object.keys(builtinNamedArguments),
+    ...inlineTextTagNames,
+    ...(extensions ?? []).flatMap((extension) => extension.commands.map((command) => command.id))]);
+}
+
+/**
+ * Parses the project's `storyMacros` files into macros every Story can call
+ * (pass the result as `storyMacros` in the compile context). Diagnostics
+ * about the files themselves are returned here once, not per Story.
+ */
+export function createStoryMacroLibrary(
+  files: readonly {readonly path: string; readonly source: string}[],
+  extensions?: readonly ExtensionManifest[],
+): {readonly library: StoryMacroLibrary; readonly diagnostics: readonly AuthoringDiagnostic[]} {
+  return buildStoryMacroLibrary(files, {reserved: reservedMacroNames(extensions), parse: parseStory});
+}
+
 export function compileStory(document: StoryDocument, context: StoryCompileContext): StoryCompileResult {
   const diagnostics = [...document.diagnostics];
   const expansion = expandStoryMacros(document, {
     documentId: context.documentId,
-    // Inline text tags too: a line opening with one is prose, not a call.
-    reserved: new Set([...builtinStoryCommands, ...Object.keys(builtinNamedArguments),
-      "b", "i", "br", "font", "size", "color", "ruby",
-      ...(context.extensions ?? []).flatMap((extension) => extension.commands.map((command) => command.id))]),
+    reserved: reservedMacroNames(context.extensions),
     parse: parseStory,
+    ...(context.storyMacros === undefined ? {} : {shared: context.storyMacros}),
   });
   diagnostics.push(...expansion.diagnostics);
   const nodes = expansion.nodes;
+  // Expanded lines report at the call; name the macro definition as well.
+  const macroOrigins = new Map<SourceSpan, string>();
+  for (const node of nodes)
+    if (node.macroOrigin !== undefined) macroOrigins.set(node.span, node.macroOrigin);
   const labels = new Map<string, StoryNode>();
   for (const node of nodes) {
     if (node.kind !== "label" || node.name === undefined) continue;
@@ -1595,6 +1621,15 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       "PXSTORY1213",
       `Story id ${pendingAuthoredSourceId} is not followed by an observable operation`,
     ));
+  }
+
+  if (macroOrigins.size > 0) {
+    for (const [index, diagnostic] of diagnostics.entries()) {
+      const origin = diagnostic.span === undefined ? undefined : macroOrigins.get(diagnostic.span);
+      if (origin === undefined || diagnostic.details?.startsWith("in macro ")) continue;
+      diagnostics[index] = {...diagnostic, details: [`in macro ${origin}`, diagnostic.details]
+        .filter((part) => part !== undefined).join(": ")};
+    }
   }
 
   const seenSourceIds = new Set<string>();

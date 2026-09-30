@@ -1,4 +1,6 @@
 import {createStoryAssetIndex} from "./story-assets.js";
+import {createStoryMacroLibrary} from "./story.js";
+import type {StoryMacroLibrary} from "./story-macros.js";
 import {canonicalJson} from "./canonical-json.js";
 import {contractDocumentByteLimit, parseDocument, validateDocument} from "./contracts.js";
 import {normalizeProject} from "./project-normalization.js";
@@ -863,6 +865,23 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       ...includedResources.map((reference) => reference.value),
       ...resourceAssets.map((asset) => asset.source),
     ]);
+  // Shared macro files are parsed once for every scene and locale.
+  let storyMacros: StoryMacroLibrary | undefined;
+  if (normalized.value.storyMacros !== undefined) {
+    const files: {path: string; source: string}[] = [];
+    for (const [index, path] of normalized.value.storyMacros.entries()) {
+      const source = sourceFiles[path];
+      if (source === undefined)
+        diagnostics.push(locatedIssue("PXBUILD1121", "storyMacros file is missing",
+          projectPath, `/storyMacros/${index}`, path, path));
+      else files.push({path, source});
+    }
+    const built = createStoryMacroLibrary(files, extensions);
+    diagnostics.push(...built.diagnostics);
+    if (diagnostics.some((diagnostic) => diagnostic.severity === "error"))
+      return {diagnostics, valid: false};
+    storyMacros = built.library;
+  }
   const storyProgressCounts = {parse: 0, compile: 0};
   const globalStoryTotal = storyIndex.scenes.length *
     (1 + project.supportedLocales.filter((locale) => locale !== project.defaultLocale).length);
@@ -893,6 +912,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       resources: {...resourcePaths, ...localizedResources},
       resourceAssets,
       ...(storyAssets === undefined ? {} : {storyAssets}),
+      ...(storyMacros === undefined ? {} : {storyMacros}),
       ...(input.onStoryProgress === undefined ? {} : {onProgress: (event: StoryProjectProgress) => {
         storyProgressCounts[event.phase] += 1;
         input.onStoryProgress?.({...event,

@@ -946,6 +946,16 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
       rememberText(absolute, sourceFiles[mapPath]!);
     } else absentTextInputs.add(resolve(absolute));
   }
+  // Shared Story macro files (author-only `storyMacros`). The SDK validates
+  // the list and reports a missing file; never read an unsafe path.
+  for (const value of Array.isArray(authoredRaw.storyMacros) ? authoredRaw.storyMacros : []) {
+    if (typeof value !== "string" || !safeVirtualPath(value) || sourceFiles[value] !== undefined) continue;
+    const path = projectFile(root, value);
+    if (await regularFile(path)) {
+      sourceFiles[value] = await readBoundedText(path);
+      rememberText(path, sourceFiles[value]!);
+    } else absentTextInputs.add(resolve(path));
+  }
   for (const value of Array.isArray(raw.effects) ? raw.effects : []) {
     const descriptor = object(value);
     const manifest = typeof descriptor?.source === "string"

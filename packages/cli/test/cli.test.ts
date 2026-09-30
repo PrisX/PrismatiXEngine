@@ -783,6 +783,19 @@ test("validate and build use the same canonical project compiler", async () => {
   assert.equal((await stat(join(output, "Runtime/main.pxmap"))).isFile(), true);
 });
 
+test("validate reads shared storyMacros files and reports a missing one", async () => {
+  const value = await fixture();
+  const manifest = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
+  await write(value.project, JSON.stringify({...manifest, storyMacros: ["Story/_macros.pxstory"]}));
+  const missing = run(["validate", value.project]);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /PXBUILD1121/u);
+  await write(join(value.root, "Story/_macros.pxstory"), "[macro hello who]\n@%who Hello.\n[endmacro]\n");
+  await write(join(value.root, "Story/main.pxstory"), "[hello guide]\n[end]\n");
+  const validated = run(["validate", value.project]);
+  assert.equal(validated.status, 0, validated.stdout + validated.stderr);
+});
+
 test("resourceIncludes package unreferenced UI families and audio without artifact post-processing", async () => {
   const value = await fixture();
   const manifest = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
