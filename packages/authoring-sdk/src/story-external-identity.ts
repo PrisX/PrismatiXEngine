@@ -1,3 +1,4 @@
+import {canonicalJson} from "./canonical-json.js";
 import {parseStory} from "./story.js";
 import {fnv1a64 as hash64} from "./fnv1a64.js";
 import {stableSourceIdReport} from "./story-identity.js";
@@ -86,6 +87,20 @@ function fingerprint(node: StoryNode): string {
 function issue(code: string, message: string, path: string, node?: StoryNode): AuthoringDiagnostic {
   return {severity: "error", code, message, path,
     ...(node === undefined ? {} : {span: node.span})};
+}
+
+/**
+ * The sidecar text writers use: canonical JSON with one entry per line and
+ * no indentation, so it stays small and each changed operation is one diff
+ * line. Readers parse any JSON layout, including older pretty-printed files;
+ * the identity values are the same either way.
+ */
+export function serializeStoryIdentityMap(map: StoryIdentityMap): string {
+  const entries = map.entries.map((entry) => canonicalJson(entry, false).trimEnd());
+  const {entries: _entries, ...header} = map;
+  const rest = canonicalJson(header, false).trimEnd().slice(1);
+  return entries.length === 0 ? `{"entries":[],${rest}\n`
+    : `{"entries":[\n${entries.join(",\n")}\n],${rest}\n`;
 }
 
 export function validateStoryIdentityMap(value: unknown,

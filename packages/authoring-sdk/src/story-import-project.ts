@@ -3,7 +3,7 @@ import {contractDocumentByteLimit, validateDocument} from "./contracts.js";
 import {isSafeResourcePath} from "./resources.js";
 import {buildImportedStorySource, type ImportedStoryLine,
   type ImportedStorySourceOptions} from "./story-import.js";
-import type {StoryIdentityMap} from "./story-external-identity.js";
+import {serializeStoryIdentityMap, type StoryIdentityMap} from "./story-external-identity.js";
 import type {StoryIndexDocument} from "./story-project.js";
 import type {AuthoringDiagnostic, Result} from "./types.js";
 
@@ -141,7 +141,7 @@ export function assembleImportedStoryProject(
       }
       sources[locale] = source.path;
       files[source.path] = built.value.source;
-      files[`${source.path}.pxids.json`] = canonicalJson(built.value.identityMap);
+      files[`${source.path}.pxids.json`] = serializeStoryIdentityMap(built.value.identityMap);
     }
     for (const locale of Object.keys(scene.sources)) if (!locales.has(locale))
       diagnostics.push(issue("PXIMPORT1017", "Imported scene declares an unknown locale",

@@ -48,6 +48,7 @@ import {
   parseStory,
   projectDistributionError,
   readBoundedUtf8File,
+  serializeStoryIdentityMap,
   storyRequiresIdentityMap,
   StoryProjectCompilationCache,
   stableSourceIdReport,
@@ -2535,7 +2536,7 @@ async function syncExternalIdsCommand(collection: Awaited<ReturnType<typeof iden
     }
     const changed = JSON.stringify(synced.map) !== JSON.stringify(map);
     plans.push({value, mapPath, beforeHash: digest(source),
-      ...(changed ? {updatedText: `${JSON.stringify(synced.map)}\n`} : {}),
+      ...(changed ? {updatedText: serializeStoryIdentityMap(synced.map)} : {}),
       preserved: synced.preserved, added: synced.added, removed: synced.removed,
       addedOperations: synced.addedOperations, removedOperations: synced.removedOperations});
   }
@@ -2673,7 +2674,7 @@ async function externalIdsCommand(collection: Awaited<ReturnType<typeof identity
         {path: plan.value.virtualPath, documentId});
       if (!converted.valid || converted.map === undefined || converted.source === undefined)
         throw new Error(`Story identity map changed during preparation: ${plan.value.virtualPath}`);
-      await writeFile(plan.mapPath, `${JSON.stringify(converted.map)}\n`, {encoding: "utf8", flag: "wx"});
+      await writeFile(plan.mapPath, serializeStoryIdentityMap(converted.map), {encoding: "utf8", flag: "wx"});
       try {
         if (converted.source !== plan.value.source)
           await replaceTextWithBackup(plan.value.absolutePath, converted.source);
