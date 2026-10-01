@@ -349,6 +349,9 @@ test("Story project compiler fails closed for missing locale sources, scenes, la
     diagnostic.span.start.line === 2 &&
     diagnostic.span.start.column === "[jump scene=scene02 target=missing]".indexOf("missing") + 1));
   assert.ok(unresolved.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1307" && diagnostic.details === "aside"));
+  // Reported once, not again under the internal pxscene target name.
+  assert.deepEqual(unresolved.diagnostics.filter((diagnostic) =>
+    ["PXSTORY1117", "PXSTORY1118", "PXSTORY1119", "PXSTORY1215"].includes(diagnostic.code)), []);
 
   const missingScene = compileStoryProject({storyIndex, locale: "zh-TW", sourceFiles: {
     "zh-TW/ch01/scene01.pxstory": "*start\n[jump scene=absent]\n",
@@ -359,6 +362,8 @@ test("Story project compiler fails closed for missing locale sources, scenes, la
     diagnostic.span?.path === "zh-TW/ch01/scene01.pxstory" &&
     diagnostic.span.start.line === 2 &&
     diagnostic.span.start.column === "[jump scene=absent]".indexOf("absent") + 1));
+  assert.deepEqual(missingScene.diagnostics.filter((diagnostic) =>
+    ["PXSTORY1117", "PXSTORY1118", "PXSTORY1119", "PXSTORY1215"].includes(diagnostic.code)), []);
 });
 
 test("Story index diagnostics point to the exact authored JSON declaration", () => {

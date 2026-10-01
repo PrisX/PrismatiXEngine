@@ -505,7 +505,11 @@ function rewriteScene(
     if (targetScene === undefined) {
       diagnostics.push(issue("PXSTORY1304", `Unknown Story scene: ${targetSceneId}`,
         flow.scene?.span ?? node.span, targetSceneId));
-      nodes.push(node);
+      // Point the node at a stub so the scene compiler does not report the
+      // same mistake again under an internal target name.
+      const stub = sceneEntryTarget(targetSceneId);
+      externalTargets.add(stub);
+      nodes.push(replaceFlowTarget(node, flow, stub));
       continue;
     }
 
@@ -528,6 +532,7 @@ function rewriteScene(
           flow.target?.span ?? node.span,
           `${targetSceneId}:${authoredTarget}`,
         ));
+        externalTargets.add(sceneLabelTarget(targetSceneId, authoredTarget));
       }
       resolvedTarget = sceneLabelTarget(targetSceneId, authoredTarget);
     }
