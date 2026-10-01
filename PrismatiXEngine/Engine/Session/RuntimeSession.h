@@ -95,6 +95,9 @@ public:
         m_sourceMapPath = std::move(sourcePath);
         m_deferredSourceMapDocumentId.clear();
     }
+    // The authored source of one Runtime IR operation of the running program,
+    // loading a deferred source map on first use; nullptr when unknown.
+    [[nodiscard]] const sdk::SourceMapMapping* SourceMapping(std::string_view operationId);
     [[nodiscard]] std::shared_ptr<const vn::Program> RuntimeProgramIdentity() const {
         return m_runtimeProgramIdentity;
     }

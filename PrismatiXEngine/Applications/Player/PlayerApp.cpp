@@ -2,6 +2,7 @@
 #include "Applications/Player/PlayerControls.h"
 #include "Applications/Player/PlayerSupport.h"
 #include "Applications/Player/QaHooks.h"
+#include "Applications/Player/QaIpc.h"
 
 #include "Engine/Graphics/Screenshot.h"
 #include "Engine/Diagnostics/Diagnostic.h"
@@ -737,9 +738,10 @@ void PlayerApp::PublishLocaleStrings() {
 }
 
 bool PlayerApp::Init(int argc, char* argv[]) {
-    if constexpr (kQaHooks)
-        PX_LOG_WARN("PrismatiXPlayerQA reads PRISMATIX_E2E_* hooks; "
-                    "package games with PrismatiXPlayer");
+#if PRISMATIX_QA_HOOKS
+    PX_LOG_WARN("PrismatiXPlayerQA serves PRISMATIX_QA_IPC test requests; "
+                "package games with PrismatiXPlayer");
+#endif
     m_boot = LoadBootConfig();
     if (!m_boot.valid) return false;
     if (m_boot.packaged) {
@@ -761,9 +763,6 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         PX_LOG_INFO("Player user data directory={} legacySavesImported={}",
                     PathToUtf8(userData.Value()), imported.Value());
     }
-    if (const char* isolatedSaveDir = PX_QA_ENV("PRISMATIX_E2E_SAVE_DIR");
-        isolatedSaveDir && *isolatedSaveDir)
-        m_saveDirectory = std::filesystem::path(isolatedSaveDir);
     bool runtimeReady = m_runtime.Init(m_boot.config);
     if (!runtimeReady && m_boot.optionalPackApplied) {
         diag::Emit(diag::Diagnostic{
@@ -806,12 +805,6 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         (void)SaveSettingsIfWritable();
         (void)SaveProfileIfWritable();
     });
-    if (PX_QA_ENV("PRISMATIX_E2E_EXPECT_REMOVED_RESOURCE")) {
-        const bool hidden = !m_runtime.VFS().Exists(
-            "Content/Overlay/player-second.txt");
-        PX_LOG_INFO("Player E2E removed update resource hidden={}", hidden);
-        if (!hidden) return false;
-    }
 
     // Current packages use stable game-data identity. Manifests produced before
     // that contract remain self-consistent and use their historical key, while
@@ -1776,7 +1769,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_appState=AppState::BootSplash;
     const Status splashStarted=m_splash->Start(m_boot.splashes,m_settings.reducedMotion);
     if(!splashStarted)return false;
-    ConfigureE2EJourney();
+    StartQaIpc();
     return true;
 }
 
@@ -2033,16 +2026,6 @@ void PlayerApp::SplashFrame(const float dt) {
             (void)m_splash->Context().Update(neutral,width,height,0.0f);
         }
         m_splash->Context().Render(m_runtime.Renderer());
-        if(m_presentationE2E&&
-           m_splash->CurrentPhase()==ui::startup::SplashSequencePlayer::Phase::Holding){
-            const std::size_t index=m_splash->CurrentIndex();
-            if(index<m_presentationE2ESplashCaptured.size()&&
-               !m_presentationE2ESplashCaptured[index]){
-                (void)CapturePresentationE2EFrame(
-                    "splash-"+std::to_string(index+1));
-                m_presentationE2ESplashCaptured[index]=true;
-            }
-        }
         return;
     }
     // The route callback runs during Update(). Arrange and draw the title in
@@ -2129,10 +2112,6 @@ bool PlayerApp::CommitStartGame() {
     } else {
         m_session->VM().LoadScript(m_script);
     }
-    // QA hook: begin at a Story label without playing through the game.
-    if (m_pendingStoryEntry.empty())
-        if (const char* label = PX_QA_ENV("PRISMATIX_E2E_START_LABEL"); label && *label)
-            m_pendingStoryEntry = label;
     if (!m_pendingStoryEntry.empty()) {
         std::string entry = std::exchange(m_pendingStoryEntry, {});
         // A Story project keeps each scene's `*top` label as `<scene>:top`;
@@ -2214,12 +2193,6 @@ void PlayerApp::GameStartTransitionFrame(const float dt,
         m_runtime.Renderer().DrawRect(
             Rect{0,0,static_cast<float>(width),static_cast<float>(height)},
             Color{0,0,0,static_cast<std::uint8_t>(std::lround(alpha*255.0f))});
-    }
-    if(m_presentationE2E&&m_presentationE2EStage==2&&
-       !m_gameStartTransitionCommitted&&
-       m_gameStartTransitionElapsed>=0.55f){
-        (void)CapturePresentationE2EFrame("new-game-fade-out");
-        m_presentationE2EStage=3;
     }
 }
 
@@ -3372,52 +3345,7 @@ void PlayerApp::RenderUIWithScripts(const float opacity) {
     if (shaking) m_runtime.Renderer().PopTransform();
     if (m_scriptHost)
         m_scriptHost->RenderRetained(script::RenderPhase::AfterUI);
-    if (m_settingsSoundE2E && m_settingsSoundE2EStage == 3 &&
-        !m_routePreloadBatch &&
-        !m_runtime.Renderer().PresentationHoldActive()) {
-        if (const auto& transition = m_session->Routes().ActiveTransition();
-            transition && m_runtime.Renderer().ScreenEffectPlaying(transition->handle))
-            return;
-        const auto summary = graphics::CaptureFrameSummary(m_runtime.Renderer().Handle());
-        // The project's first and last voice profiles; the journey needs some.
-        const std::string firstProfile = m_voiceProfileIds.empty() ? "" : m_voiceProfileIds.front();
-        const std::string lastProfile = m_voiceProfileIds.empty() ? "" : m_voiceProfileIds.back();
-        const bool hasFirst = !firstProfile.empty() && FindUiControlNamed<ui::Slider>(
-            m_ui.Root(), "VoiceProfile_" + firstProfile) != nullptr;
-        const bool hasLast = !lastProfile.empty() && FindUiControlNamed<ui::Slider>(
-            m_ui.Root(), "VoiceProfile_" + lastProfile) != nullptr;
-        const bool captured = CapturePresentationE2EFrame("settings-sound");
-        const int originalMaster = m_runtime.Audio().MainVolume();
-        HandleUIAction({"set.mute.master", {}});
-        const bool muted = m_runtime.Audio().MainVolume() == 0;
-        HandleUIAction({"set.mute.master", {}});
-        const bool restored = m_runtime.Audio().MainVolume() == originalMaster;
-        HandleUIAction({"set.voiceProfile.value", firstProfile + ":64"});
-        const bool profileChanged = m_settings.voiceProfileVolumes[firstProfile] == 64;
-        HandleUIAction({"set.voiceProfile.mute", firstProfile});
-        const bool profileMuted = m_settings.voiceProfileMuted[firstProfile];
-        HandleUIAction({"set.voiceProfile.mute", firstProfile});
-        // PRISMATIX_E2E_TEST_VOICE names a voice file the TEST button must play;
-        // without it the journey does not check playback.
-        const char* testVoiceEnv = PX_QA_ENV("PRISMATIX_E2E_TEST_VOICE");
-        const std::string testVoice = testVoiceEnv ? testVoiceEnv : "";
-        bool testPlayed = true;
-        if (!testVoice.empty()) {
-            HandleUIAction({"voiceProfile.test", testVoice});
-            testPlayed = m_runtime.Audio().CaptureState().voice.path == testVoice;
-            m_runtime.Audio().StopVoice();
-        }
-        const bool passed = hasFirst && hasLast && captured &&
-            summary.Valid() && summary.sampledColors >= 8 && muted &&
-            restored && profileChanged && profileMuted && testPlayed;
-        PX_LOG_INFO("Player settings sound E2E {} colors={} first={} last={} mute={} test={}",
-                    passed ? "passed" : "failed", summary.sampledColors,
-                    hasFirst, hasLast, muted && restored,
-                    testVoice.empty() ? "unchecked" : testPlayed ? "true" : "false");
-        m_e2eFailed = !passed;
-        m_settingsSoundE2E = false;
-        m_quitRequested = true;
-    }
+
 }
 
 void PlayerApp::ScreensFrame(float dt) {
@@ -3432,8 +3360,6 @@ void PlayerApp::ScreensFrame(float dt) {
     }
     if (m_appState == AppState::Game) RenderStageWithScripts();
     RenderUIWithScripts();
-    CaptureE2EGalleryFrame();
-    CaptureUIRoutesE2EFrame();
 }
 
 void PlayerApp::TitleFrame(float dt) {
@@ -3441,17 +3367,7 @@ void PlayerApp::TitleFrame(float dt) {
     int w = 0, h = 0; m_runtime.Renderer().GetLogicalSize(w, h);
     (void)m_ui.Update(input, w, h,dt);
     RenderUIWithScripts();
-    if(m_presentationE2E&&m_presentationE2EStage==1){
-        const auto state=m_ui.CaptureRuntimeState();
-        // Titles without an entrance animation start after a short settle.
-        if(m_presentationE2ETitleSeenAt==0)m_presentationE2ETitleSeenAt=SDL_GetTicks();
-        if(state.animation?state.animation->position>=2.15f
-                          :SDL_GetTicks()-m_presentationE2ETitleSeenAt>=1500){
-            (void)CapturePresentationE2EFrame("title");
-            StartGame();
-            m_presentationE2EStage=2;
-        }
-    }
+
 }
 
 bool PlayerApp::VideoFrame(float dt) {
@@ -3853,32 +3769,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         SaveSlotInBackground(0);
         m_saveRequested = false;
     }
-    if(m_presentationE2E&&m_presentationE2EStage==3&&
-       !m_gameStartTransitionActive){
-        const auto stage=m_session->Stage().CaptureState();
-        const std::string background=m_session->Stage().BackgroundPath();
-        const std::string bgm=m_session->VM().CurrentBgm();
-        const auto& dialogue=m_session->Dialogue().State();
-        const bool visibleBackground=!background.empty()&&
-            background.find("画面_黒")==std::string::npos&&
-            background.find("black")==std::string::npos;
-        const bool settledActor=std::ranges::any_of(
-            stage.actors,[](const auto& actor){
-                return !actor.exiting&&actor.targetAlpha>=245.0f&&
-                       actor.alpha>=245.0f;
-            });
-        const bool targetReached=m_presentationE2ETargetOperationId.empty()||
-            m_session->VM().CurrentOperationId()==m_presentationE2ETargetOperationId;
-        if(targetReached&&visibleBackground&&settledActor&&!bgm.empty()&&
-           !dialogue.displayText.empty()){
-            (void)CapturePresentationE2EFrame("game");
-            PX_LOG_INFO(
-                "Player presentation E2E complete background={} actors={} actorAsset={} bgm={}",
-                background,stage.actors.size(),stage.actors.front().imagePath,bgm);
-            m_presentationE2E=false;
-            m_quitRequested=true;
-        }
-    }
+
 }
 
 void PlayerApp::MainLoop() {
@@ -3897,7 +3788,7 @@ void PlayerApp::MainLoop() {
             m_session->Routes().CurrentModalRoute().empty() &&
             (inputRoute == "hud" || inputRoute == "game");
         (void)input.SetBaseContext(gameInputContext ? "game" : "ui");
-        DriveE2EJourney();
+        PumpQaIpc();
 
         if (input.KeyPressed(SDL_SCANCODE_RETURN) &&
             (input.KeyDown(SDL_SCANCODE_LALT) || input.KeyDown(SDL_SCANCODE_RALT))) {
@@ -4065,7 +3956,7 @@ int PlayerApp::Run(int argc, char* argv[]) {
     }
     MainLoop();
     Shutdown();
-    return m_e2eFailed?2:0;
+    return 0;
 }
 
 }

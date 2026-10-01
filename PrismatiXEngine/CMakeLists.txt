@@ -428,13 +428,13 @@ endif()
 
 if(NOT EMSCRIPTEN)
 # PrismatiXPlayer is the shipped Player. PrismatiXPlayerQA is the same Player
-# with the PRISMATIX_E2E_* hooks (scripted journeys, save redirection, start
-# labels) compiled in; tests and QA packs use it, games never ship it.
+# with the QA IPC test interface (Applications/Player/QaIpc.h, driven by
+# `prismatix test`) compiled in; tests and QA packs use it, games never ship it.
 function(prismatix_add_player target qa_hooks)
     set(_player_sources
         Applications/PlayerMain.cpp
         Applications/Player/PlayerApp.cpp
-        Applications/Player/PlayerQaJourneys.cpp
+        Applications/Player/QaIpc.cpp
         Applications/Player/PlayerSettings.cpp
         Applications/Player/PlayerActions.cpp
     )
@@ -483,6 +483,9 @@ function(prismatix_add_player target qa_hooks)
     endif()
     if(WIN32)
         target_link_libraries(${target} PRIVATE sapi)
+        if(qa_hooks)
+            target_link_libraries(${target} PRIVATE ws2_32)
+        endif()
     endif()
     prismatix_configure_target(${target})
 endfunction()
@@ -880,6 +883,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
     prismatix_configure_target(PrismatiXPlayerCatalogNativeAcceptanceTests)
     add_dependencies(PrismatiXPlayerCatalogNativeAcceptanceTests
                      PrismatiXPlayerQA)
+    # The journey itself is Tests/journeys/catalog.mjs, run by `prismatix
+    # test` (packages/cli, built by `npm run build`) over the QA IPC.
+    find_program(PRISMATIX_NODE_EXECUTABLE node)
     add_test(
         NAME PrismatiX.Player.CatalogNativeAcceptance
         COMMAND PrismatiXPlayerCatalogNativeAcceptanceTests
@@ -887,7 +893,15 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Samples/CommercialVN/Content
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/NotoSansTC-Bold.ttf
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/logo.wav)
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/logo.wav
+                "${PRISMATIX_NODE_EXECUTABLE}"
+                ${CMAKE_CURRENT_SOURCE_DIR}/../packages/cli/dist/src/cli.js
+                ${CMAKE_CURRENT_SOURCE_DIR}/Tests/journeys/catalog.mjs)
+    if(NOT PRISMATIX_NODE_EXECUTABLE)
+        message(STATUS "Node.js not found; PrismatiX.Player.CatalogNativeAcceptance is disabled")
+        set_tests_properties(PrismatiX.Player.CatalogNativeAcceptance
+                             PROPERTIES DISABLED TRUE)
+    endif()
     # The shipped Player must not even contain the QA hook names.
     add_test(
         NAME PrismatiX.Player.ShippedWithoutQaHooks
@@ -1245,7 +1259,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
     get_property(PRISMATIX_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
     set_tests_properties(${PRISMATIX_REGISTERED_TESTS} PROPERTIES TIMEOUT 60)
     set_tests_properties(PrismatiX.Player.CatalogNativeAcceptance
-                         PROPERTIES TIMEOUT 120)
+                         PROPERTIES TIMEOUT 300)
     # The weekly RSS gate streams a real multi-GiB media entry. Regular runs
     # use 32 MiB through the identical path; only input size changes.
     set_tests_properties(PrismatiX.SDK.PackagerContract PROPERTIES TIMEOUT 600)

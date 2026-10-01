@@ -254,6 +254,17 @@ std::string ShellQuote(const std::filesystem::path& path) {
 #endif
 }
 
+// The catalog journey (Tests/journeys/catalog.mjs) runs through
+// `prismatix test`, which starts the packaged QA Player and drives it over
+// its QA IPC. main() fills this from the test's command line.
+struct JourneyDriver {
+    std::filesystem::path node;
+    std::filesystem::path cli;
+    std::filesystem::path journey;
+    std::filesystem::path output;
+};
+JourneyDriver g_driver;
+
 class AutomatedChildProcess {
 public:
     ~AutomatedChildProcess(){
@@ -267,30 +278,36 @@ public:
                const bool loadPreviousSave = false,
                const bool expectRemovedResource = false) {
         if(m_result.valid())return false;
+        // Player commands such as --optional-pack run the Player itself; a
+        // plain launch plays the catalog journey through the test runner.
+        const std::string program = arguments.empty()
+            ? ShellQuote(g_driver.node) + " " + ShellQuote(g_driver.cli) +
+                  " test " + ShellQuote(g_driver.journey) + " --player " +
+                  ShellQuote(executable) + " --data-root " +
+                  ShellQuote(userDataRoot) + " --working-directory " +
+                  ShellQuote(workingDirectory) + " --output " +
+                  ShellQuote(g_driver.output) + " --timeout 120000"
+            : ShellQuote(executable) + " " + std::string(arguments);
 #if defined(_WIN32)
         // A missing packaged DLL must fail the test without opening a system
         // error dialog on the developer's desktop.
         SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS |
                      SEM_NOGPFAULTERRORBOX);
         const std::string command="cd /d "+ShellQuote(workingDirectory)+
-            " && set \"PRISMATIX_PLAYER_DATA_ROOT="+userDataRoot.string()+
-            "\"&& set PRISMATIX_E2E_JOURNEY=catalog"+
+            " && set \"PRISMATIX_PLAYER_DATA_ROOT="+userDataRoot.string()+"\""+
             (loadPreviousSave ?
-                "&& set PRISMATIX_E2E_LOAD_PREVIOUS_SAVE=1" : "")+
+                "&& set PRISMATIX_TEST_LOAD_PREVIOUS_SAVE=1" : "")+
             (expectRemovedResource ?
-                "&& set PRISMATIX_E2E_EXPECT_REMOVED_RESOURCE=1" : "")+
-            "&& "+ShellQuote(executable)+
-            (arguments.empty() ? "" : " " + std::string(arguments));
+                "&& set PRISMATIX_TEST_EXPECT_REMOVED_RESOURCE=1" : "")+
+            "&& "+program;
 #else
         const std::string command="cd "+ShellQuote(workingDirectory)+
-            " && PRISMATIX_PLAYER_DATA_ROOT="+ShellQuote(userDataRoot)+
-            " PRISMATIX_E2E_JOURNEY=catalog "+
+            " && PRISMATIX_PLAYER_DATA_ROOT="+ShellQuote(userDataRoot)+" "+
             (loadPreviousSave ?
-                "PRISMATIX_E2E_LOAD_PREVIOUS_SAVE=1 " : "")+
+                "PRISMATIX_TEST_LOAD_PREVIOUS_SAVE=1 " : "")+
             (expectRemovedResource ?
-                "PRISMATIX_E2E_EXPECT_REMOVED_RESOURCE=1 " : "")+
-            ShellQuote(executable)+
-            (arguments.empty() ? "" : " " + std::string(arguments));
+                "PRISMATIX_TEST_EXPECT_REMOVED_RESOURCE=1 " : "")+
+            program;
 #endif
         m_result=std::async(std::launch::async,[command]{
             return std::system(command.c_str());
@@ -679,8 +696,9 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
 int main(int argc, char* argv[]) {
     px::test::Suite suite("PlayerCatalogNativeAcceptance");
     suite.Run("PackagedPlayerInputGalleryAndPersistence", [&] {
-        suite.Require(argc == 6,
-                      "test receives Player, Content root, font, image, and audio fixture paths");
+        suite.Require(argc == 9,
+                      "test receives Player, Content root, font, image, audio fixture, "
+                      "node, prismatix CLI and journey paths");
         const std::filesystem::path player =
             std::filesystem::absolute(std::filesystem::path(argv[1]));
         const std::filesystem::path contentRoot =
@@ -699,8 +717,16 @@ int main(int argc, char* argv[]) {
                       "native Gallery image fixture exists");
         suite.Require(std::filesystem::is_regular_file(audioSource),
                       "native localized audio fixture exists");
+        g_driver.node = std::filesystem::path(argv[6]);
+        g_driver.cli = std::filesystem::absolute(std::filesystem::path(argv[7]));
+        g_driver.journey = std::filesystem::absolute(std::filesystem::path(argv[8]));
+        suite.Require(std::filesystem::is_regular_file(g_driver.cli),
+                      "the prismatix CLI is built (npm run build in packages/cli)");
+        suite.Require(std::filesystem::is_regular_file(g_driver.journey),
+                      "the catalog journey script exists");
 
         px::test::TempDirectory fixture("player-catalog-native");
+        g_driver.output = fixture.path / "JourneyOutput";
         const auto root = fixture.path / "Project";
         const auto output = fixture.path / "Build/Game";
         CreateProjectFixture(root, contentRoot, fontSource, imageSource,

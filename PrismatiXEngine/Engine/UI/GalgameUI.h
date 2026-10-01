@@ -152,6 +152,9 @@ public:
     Status DefineUiData(std::string path, Variant value);
     /** Update host data after boot; declared UI values are checked before commit. */
     Status UpdateUiData(std::string_view path, const Variant& value);
+    [[nodiscard]] Result<Variant> ReadUiData(std::string_view path) const {
+        return m_viewModel.Read(path);
+    }
     /** Register a host formatter before mounting routes that reference it. */
     Status RegisterUiFormatter(Formatter formatter);
     /** Check and retain the author's host contract for later data updates. */

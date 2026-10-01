@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Applications/Player/QaIpc.h"
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Progression/ProfileRules.h"
@@ -189,13 +190,11 @@ private:
     bool VideoFrame(float dt);
     void PublishLocaleStrings();
     bool ApplyPlayerSettings(const nlohmann::json& settings);
-    void ConfigureE2EJourney();
-    void DriveE2EJourney();
-    void DriveBenchJourney();
-    void BenchCapture(std::string name);
-    void CaptureE2EGalleryFrame();
-    void CaptureUIRoutesE2EFrame();
-    bool CapturePresentationE2EFrame(std::string_view name);
+    // QA IPC (QaIpc.cpp): PrismatiXPlayerQA answers test requests at the
+    // start of each frame; both are empty in the shipped Player.
+    friend struct QaOps;
+    void StartQaIpc();
+    void PumpQaIpc();
 
     Runtime m_runtime;
     Boot m_boot;
@@ -425,75 +424,7 @@ private:
     std::optional<int> m_pendingScriptLoad;
 
     bool m_quitRequested = false;
-    enum class E2EStage {
-        Disabled,
-        AwaitTitle,
-        AwaitTitleAsync,
-        AwaitGameReady,
-        AwaitMenuAsync,
-        AwaitSaveScreen,
-        AwaitPostMenuGameReady,
-        VerifyReleaseF2,
-        AwaitGallery,
-        CaptureGallery,
-        CloseGallery,
-        AwaitOverlayClosed,
-        Complete,
-    };
-    E2EStage m_e2eStage = E2EStage::Disabled;
-    std::uint64_t m_e2eStartedAt = 0;
-    bool m_e2eFailed = false;
-    bool m_e2eLocaleSwitched = false;
-    bool m_e2eCustomTitleRouteSeen = false;
-    bool m_e2eCustomMenuRouteSeen = false;
-    bool m_saveLoadE2E = false;
-    std::uint64_t m_saveLoadE2EStartedAt = 0;
-    bool m_presentationE2E = false;
-    int m_presentationE2EStage = 0;
-    std::uint64_t m_presentationE2EStartedAt = 0;
-    std::string m_presentationE2ECaptureDir;
-    std::string m_presentationE2ETargetOperationId;
-    std::uint64_t m_presentationE2ETitleSeenAt=0;
-    std::vector<bool> m_presentationE2ESplashCaptured;
-    bool m_videoReturnE2E = false;
-    int m_videoReturnE2EStage = 0;
-    int m_videoReturnE2ESettledFrames = 0;
-    std::uint64_t m_videoReturnE2EStartedAt = 0;
-    std::uint64_t m_videoReturnE2EVideoAt = 0;
-    bool m_uiRoutesE2E = false;
-    bool m_uiRoutesE2EReadinessLogged = false;
-    std::size_t m_uiRoutesE2EIndex = 0;
-    bool m_uiRoutesE2EAwaitingCapture = false;
-    int m_uiRoutesE2ESaveConfirmStage = 0;
-    std::uint64_t m_uiRoutesE2EStartedAt = 0;
-    std::uint64_t m_uiRoutesE2ECaptureAt = 0;
-    bool m_uiActionsE2E = false;
-    int m_uiActionsE2EStage = 0;
-    std::uint64_t m_uiActionsE2EStartedAt = 0;
-    bool m_settingsFullscreenE2E = false;
-    int m_settingsFullscreenE2EStage = 0;
-    std::uint64_t m_settingsFullscreenE2EStartedAt = 0;
-    bool m_saveLoadConfirmE2E = false;
-    int m_saveLoadConfirmE2EStage = 0;
-    std::uint64_t m_saveLoadConfirmE2EStartedAt = 0;
-    bool m_settingsSoundE2E = false;
-    int m_settingsSoundE2EStage = 0;
-    std::uint64_t m_settingsSoundE2EStartedAt = 0;
-    bool m_incompatibleSaveE2E = false;
-    int m_incompatibleSaveE2EStage = 0;
-    std::uint64_t m_incompatibleSaveE2EStartedAt = 0;
-    bool m_benchE2E = false;
-    int m_benchStage = 0;
-    std::uint64_t m_benchStageAt = 0;
-    std::uint64_t m_benchSequence = 0;
-    std::size_t m_benchRouteIndex = 0;
-    int m_benchSettledFrames = 0;
-    std::uint64_t m_benchReadingShot = 0;
-    std::uint64_t m_benchCapturedEffect = 0;
-    bool m_benchChoiceCaptured = false;
-    bool m_benchDialogueCaptured = false;
-    int m_e2eClearCountBeforeF2 = 0;
-    std::optional<Variant> m_e2eSessionValueBeforeF2;
+    std::unique_ptr<QaSession> m_qa;
     accessibility::SpeechService m_speech;
     std::shared_ptr<accessibility::SemanticAdapter> m_accessibilityAdapter;
 };

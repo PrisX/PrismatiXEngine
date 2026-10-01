@@ -147,6 +147,14 @@ RuntimeSession::RuntimeSession(Services services)
         });
 }
 
+const sdk::SourceMapMapping* RuntimeSession::SourceMapping(
+    const std::string_view operationId) {
+    if (operationId.empty() || !EnsureSourceMapLoaded() || !m_sourceMap ||
+        m_sourceMap->documentId != m_vm.CurrentDocumentId())
+        return nullptr;
+    return m_sourceMap->Find(operationId);
+}
+
 bool RuntimeSession::EnsureSourceMapLoaded() {
     if (m_sourceMap) return true;
     if (m_sourceMapPath.empty()) return false;
