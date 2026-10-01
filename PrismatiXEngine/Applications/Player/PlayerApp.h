@@ -133,6 +133,24 @@ private:
     [[nodiscard]] ui::DialoguePresentation DialogueUI() const;
     [[nodiscard]] ui::SettingsPresentation SettingsUI() const;
     void HandleUIAction(const ui::GalgameAction& action);
+    // UI actions (PlayerActions.cpp): one handler per ui::kPlayerActions id.
+    using ActionHandler = void (*)(PlayerApp&, const ui::GalgameAction&);
+    [[nodiscard]] static const std::unordered_map<std::string_view, ActionHandler>&
+    ActionHandlers();
+    [[nodiscard]] bool RegisterUiActions();
+    [[nodiscard]] static std::string_view BusOf(std::string_view command);
+    [[nodiscard]] int BusVolume(std::string_view bus) const;
+    void SetBusVolume(std::string_view bus, int volume);
+    void ToggleBusMute(std::string_view bus);
+    void SetTextSpeed(int milliseconds);
+    void ResetSettings();
+    [[nodiscard]] bool MusicUnlocked(std::size_t index) const;
+    void PlayMusicAt(std::size_t index);
+    void StepMusic(int direction);
+    void ScrollNamedList(std::string_view controlName, std::string_view command);
+    void CloseAllModals();
+    void ActivateSlot(bool saveMode, const std::string& argument);
+    void ReturnToTitle();
     void RecordScriptVideoTerminal(std::uint64_t handle, std::string status,
                                    std::string error = {});
 

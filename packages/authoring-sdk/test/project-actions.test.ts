@@ -8,14 +8,14 @@ const extension: ExtensionManifest = {
   format: "PrismatiXExtension", schemaRevision: 2, language: "javascript",
   id: "music-extension", version: "1.0.0", requiredEngineVersion: "^0.2.0",
   entry: "Extensions/music.js", capabilities: ["ui", "audio"], commands: [],
-  actions: [{id: "music.play", parameters: [
+  actions: [{id: "jukebox.play", parameters: [
     {name: "media", type: "resource", required: true},
     {name: "volume", type: "number", range: {minimum: 0, maximum: 1}},
     {name: "mode", type: "string", enum: ["once", "loop"]},
   ]}],
 };
 
-const action = (arguments_: Record<string, unknown>) => ({id: "music.play", arguments: arguments_});
+const action = (arguments_: Record<string, unknown>) => ({id: "jukebox.play", arguments: arguments_});
 const validArguments = {media: {type: "resource", value: "Assets/Audio/theme.ogg"},
   volume: 1, mode: "loop"};
 
@@ -28,7 +28,7 @@ test("extension Action validation accepts typed UI arguments and dynamic signal 
     {onClick: action({media: {type: "resource", value: "22222222-2222-4222-8222-222222222222"}})},
     {onClick: {id: "player.dynamic", arguments: {anything: true}}},
   ], behaviorGraph: {nodes: [{id: "graph-action", kind: "action",
-    properties: {action: "music.play"}, arguments: {mode: "loop"}}],
+    properties: {action: "jukebox.play"}, arguments: {mode: "loop"}}],
     links: [{toNodeId: "graph-action", toPin: "arg:media"}]}};
   assert.deepEqual(validateUiActionUsage(document, [extension], "Content/UI/Title.pxui"), []);
 });
@@ -52,14 +52,14 @@ test("extension Action validation reports every invalid static argument before P
   assert.ok(diagnostics.every((diagnostic) => diagnostic.path === "Content/UI/Title.pxui"));
   assert.ok(diagnostics.some((diagnostic) => diagnostic.details?.includes("nodes[0].onClick")));
   const wrongVolume = diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1062" &&
-    diagnostic.details?.includes("nodes[0].onClick: music.play.volume"));
+    diagnostic.details?.includes("nodes[0].onClick: jukebox.play.volume"));
   assert.ok(wrongVolume?.span);
   assert.equal(source.slice(wrongVolume.span.start.offset, wrongVolume.span.end.offset), '"loud"');
   const missingMedia = diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1060" &&
-    diagnostic.details?.includes("nodes[0].onClick: music.play.media"));
+    diagnostic.details?.includes("nodes[0].onClick: jukebox.play.media"));
   assert.ok(missingMedia?.span);
   assert.equal(source.slice(missingMedia.span.start.offset, missingMedia.span.end.offset),
-    '"music.play"');
+    '"jukebox.play"');
   const stale = validateUiActionUsage(document, [extension],
     "Content/UI/Title.pxui", source.replace('"loud"', '"quiet"'));
   assert.ok(stale.every((diagnostic) => diagnostic.span === undefined));

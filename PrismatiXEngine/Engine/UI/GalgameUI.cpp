@@ -485,6 +485,10 @@ Status GalgameUI::RegisterActionCommand(std::string command,
                         argument = *value;
                     else if (const auto* integer = found->second.TryGet<std::int64_t>())
                         argument = std::to_string(*integer);
+                    else if (const auto* number = found->second.TryGet<double>())
+                        argument = std::to_string(std::llround(*number));
+                    else if (const auto* flag = found->second.TryGet<bool>())
+                        argument = *flag ? "true" : "false";
                 }
             }
             Emit(registered, std::move(argument));

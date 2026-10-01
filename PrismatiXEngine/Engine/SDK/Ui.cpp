@@ -1,4 +1,5 @@
 #include "Engine/SDK/Ui.h"
+#include "Engine/UI/Actions/PlayerActionContract.h"
 #include "Engine/Core/IndexedPropertyPath.h"
 
 #include <nlohmann/json.hpp>
@@ -420,13 +421,9 @@ const std::string* String(const UiValue* value) {
 }
 
 bool KnownAction(const std::string_view id) {
-    static const std::unordered_set<std::string_view> actions = {
-        "game.start", "app.quit", "overlay.close", "load.open", "save.open",
-        "gallery.open", "settings.open", "backlog.open", "choice.select",
-        "load.slot", "save.slot", "cg.view", "mode.auto", "mode.skip",
-        "set.skipread.toggle", "set.fullscreen.toggle", "animation.trigger",
-        "animation.bool", "animation.number", "animation.travel"};
-    if (actions.contains(id)) return true;
+    static const std::unordered_set<std::string_view> animationActions = {
+        "animation.trigger", "animation.bool", "animation.number", "animation.travel"};
+    if (ui::FindPlayerAction(id) || animationActions.contains(id)) return true;
     if (id.empty() || id.front() == '.' || id.back() == '.' ||
         id.find('.') == std::string_view::npos)
         return false;
@@ -446,25 +443,21 @@ bool KnownAction(const std::string_view id) {
 }
 
 bool ValidAction(const UiAction& action) {
-    static const std::unordered_set<std::string> noArguments = {
-        "game.start", "app.quit", "overlay.close", "load.open", "save.open",
-        "gallery.open", "settings.open", "backlog.open", "mode.auto", "mode.skip",
-        "set.skipread.toggle", "set.fullscreen.toggle"};
-    if (noArguments.contains(action.id)) return action.arguments.empty();
-    if (action.id == "choice.select" || action.id == "load.slot" ||
-        action.id == "save.slot") {
-        const char* name = action.id == "choice.select" ? "index" : "slot";
-        const auto found = action.arguments.find(name);
-        return action.arguments.size() == 1 && found != action.arguments.end() &&
-               (std::holds_alternative<std::int64_t>(found->second) ||
-                (std::holds_alternative<std::string>(found->second) &&
-                 (std::get<std::string>(found->second) == "$index" ||
-                  std::get<std::string>(found->second) == "$key")));
-    }
-    if (action.id == "cg.view") {
-        const auto found = action.arguments.find("resource");
-        return action.arguments.size() == 1 && found != action.arguments.end() &&
-               std::holds_alternative<std::string>(found->second);
+    if (const auto* spec = ui::FindPlayerAction(action.id)) {
+        if (spec->argument == ui::PlayerActionArgument::None) return action.arguments.empty();
+        const auto found = action.arguments.find(std::string(spec->argumentKey));
+        if (action.arguments.size() != 1 || found == action.arguments.end()) return false;
+        const UiValue& value = found->second;
+        switch (spec->argument) {
+        case ui::PlayerActionArgument::Integer:
+            if (const auto* text = std::get_if<std::string>(&value))
+                return *text == "$index" || *text == "$key";
+            return std::holds_alternative<std::int64_t>(value);
+        case ui::PlayerActionArgument::Boolean: return std::holds_alternative<bool>(value);
+        case ui::PlayerActionArgument::Text: return std::holds_alternative<std::string>(value);
+        case ui::PlayerActionArgument::None: break;
+        }
+        return false;
     }
     // Extension Action identity and parameter contracts are owned by the
     // versioned runtime ActionCatalog loaded from the extension manifest. The

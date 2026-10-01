@@ -13,6 +13,7 @@ export * from "./localization.js";
 export * from "./motion.js";
 export * from "./jsx-ui.js";
 export * from "./ui-actions.js";
+export * from "./player-actions.js";
 export * from "./project-resources.js";
 export * from "./project-actions.js";
 export * from "./project-normalization.js";

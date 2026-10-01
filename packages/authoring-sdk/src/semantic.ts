@@ -1,4 +1,5 @@
 import type {AuthoringDiagnostic} from "./types.js";
+import {playerActionNamespaces, playerActions} from "./player-actions.js";
 import {isSafeResourcePath} from "./resources.js";
 import {nativeJsonValueValid, nativeUiValueType} from "./ui-value.js";
 import {jsonPointerSpans} from "./json-source-spans.js";
@@ -261,23 +262,29 @@ const layoutOwningUiKinds = new Set(["stack", "hbox", "vbox", "grid"]);
 function validBuiltinUiAction(value: unknown, inItemTemplate = false): boolean {
   const action = object(value);
   if (action === undefined || typeof action.id !== "string") return true;
-  const args = object(action.arguments) ?? {};
-  const noArguments = new Set([
-    "game.start", "app.quit", "overlay.close", "load.open", "save.open",
-    "gallery.open", "settings.open", "backlog.open", "mode.auto", "mode.skip",
-    "set.skipread.toggle", "set.fullscreen.toggle",
-  ]);
-  if (noArguments.has(action.id)) return Object.keys(args).length === 0;
-  if (["choice.select", "load.slot", "save.slot"].includes(action.id)) {
-    const key = action.id === "choice.select" ? "index" : "slot";
-    return Object.keys(args).length === 1 &&
-      (typeof args[key] === "number" && Number.isSafeInteger(args[key]) ||
-        inItemTemplate && (args[key] === "$index" || args[key] === "$key"));
-  }
-  if (action.id === "cg.view")
-    return Object.keys(args).length === 1 && typeof args.resource === "string";
+  const spec = playerActions[action.id];
   // Extensions and project-specific actions are checked by their catalogs.
-  return true;
+  if (spec === undefined) return true;
+  const args = object(action.arguments) ?? {};
+  const keys = Object.keys(args);
+  if (spec.argument === undefined) return keys.length === 0;
+  if (keys.length !== 1 || keys[0] !== spec.argument.key) return false;
+  const argument = args[spec.argument.key];
+  switch (spec.argument.type) {
+    case "integer":
+      return typeof argument === "number" && Number.isSafeInteger(argument) ||
+        inItemTemplate && (argument === "$index" || argument === "$key");
+    case "boolean": return typeof argument === "boolean";
+    case "string": return typeof argument === "string";
+  }
+}
+
+/** A Player-namespace id that is not a Player action, e.g. "set.bgm.vaule". */
+function unknownPlayerAction(value: unknown): string | undefined {
+  const id = object(value)?.id;
+  if (typeof id !== "string" || id in playerActions) return undefined;
+  const namespace = id.slice(0, Math.max(0, id.indexOf(".")));
+  return playerActionNamespaces.has(namespace) ? id : undefined;
 }
 
 function componentValueMatches(valueType: unknown, value: unknown): boolean {
@@ -508,9 +515,17 @@ function uiSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
            properties.advance < 0 || properties.advance > 4096))
         diagnostics.push(issue("PXSDKUISPRITE1004", "SpriteText advance must be between 0 and 4096", path, node.id));
     }
-    if (!validBuiltinUiAction(node.onClick, inItemTemplate(node.id)))
+    const unknownAction = unknownPlayerAction(node.onClick);
+    if (unknownAction !== undefined)
+      diagnostics.push(issue("PXSDKUI1026", "UI action is not a Player action", path,
+        `${String(node.name ?? node.id)}: ${unknownAction}`));
+    else if (!validBuiltinUiAction(node.onClick, inItemTemplate(node.id))) {
+      const spec = playerActions[String(object(node.onClick)?.id)];
+      const expected = spec?.argument === undefined ? "no arguments"
+        : `arguments {${spec.argument.key}: ${spec.argument.type}}`;
       diagnostics.push(issue("PXSDKUI1025", "UI node typed action is invalid", path,
-        `${String(node.name ?? node.id)}: ${String(object(node.onClick)?.id)}`));
+        `${String(node.name ?? node.id)}: ${String(object(node.onClick)?.id)} takes ${expected}`));
+    }
     if (object(node.itemSource) !== undefined) {
       if (node.runtimeType !== "GridView" && node.runtimeType !== "ListView" &&
           node.runtimeType !== "PlacedItemsView")

@@ -32,7 +32,7 @@ test("TextureButton skin derives state images and explicit paths win", () => {
 
 test("a leading ! in bind shorthand applies the Not formatter", () => {
   const node = compiled([jsx(TextureButton, {name: "Page", skin: "Assets/UI/page",
-    position: [0, 0], size: [41, 47], action: "saveLoad.page",
+    position: [0, 0], size: [41, 47], action: "saveLoad.error.dismiss",
     bind: {enabled: "!saveLoad.page1", visible: "saveLoad.visible"}})]);
   assert.deepEqual(node("Page").bindings, {
     enabled: {path: "saveLoad.page1", formatter: "Not"},
@@ -166,3 +166,4 @@ test("Image region selects an atlas cell", () => {
     {type: "rect", x: 208, y: 192, width: 208, height: 96});
   assert.throws(() => jsx(Image, {name: "Bad", path: "a.png", region: [0, 0, -1, 4]}), /non-negative/u);
 });
+

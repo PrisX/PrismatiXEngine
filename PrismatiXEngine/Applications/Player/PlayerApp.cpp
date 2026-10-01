@@ -1497,53 +1497,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         m_runtime.Assets().PreloadTexture(
             std::string(path), graphics::AssetPreloadPriority::Normal);
     });
-    const std::vector<std::string> authoredUiCommands = {
-        "set.fullscreen.on", "set.fullscreen.off", "set.fullscreen.toggle",
-        "set.mute.master", "set.mute.bgm", "set.mute.se", "set.mute.voice",
-        "set.duck.on", "set.duck.off", "set.voiceCarry.on", "set.voiceCarry.off",
-        "set.voiceProfile.value",
-        "set.reducedmotion.on", "set.reducedmotion.off",
-        "settings.reset", "settings.noop",
-        "title.confirm.accept", "title.confirm.cancel",
-        "system.confirm.accept", "system.confirm.cancel",
-        "music.play", "music.previous", "music.stop", "music.resume",
-        "music.next", "music.about", "music.random",
-        "music.scroll.home", "music.scroll.up", "music.scroll.down",
-        "music.scroll.end", "replay.launch", "replay.page", "title.chapter3", "flowchart.select", "flowchart.jump",
-        "flowchart.filter", "flowchart.scroll.home", "flowchart.scroll.up",
-        "flowchart.scroll.down", "flowchart.scroll.end",
-    };
-    for (const auto& command : authoredUiCommands) {
-        if (const Status registered = m_ui.RegisterActionCommand(command);
-            !registered) {
-            for (const auto& diagnostic : registered.Diagnostics())
-                diag::Emit(diagnostic);
-            return false;
-        }
-    }
-    for (const char* command : {"dialog.accept", "dialog.cancel", "dialog.toggleSkip"}) {
-        if (const Status registered = m_ui.RegisterActionCommand(command); !registered) {
-            for (const auto& diagnostic : registered.Diagnostics()) diag::Emit(diagnostic);
-            return false;
-        }
-    }
-    for (const char* command : {"set.voiceProfile.mute", "voiceProfile.test",
-                                "audio.test.se", "option.set"}) {
-        if (const Status registered = m_ui.RegisterActionCommand(command, "argument");
-            !registered) {
-            for (const auto& diagnostic : registered.Diagnostics()) diag::Emit(diagnostic);
-            return false;
-        }
-    }
-    for (int page = 0; page < 8; ++page) {
-        if (const Status registered = m_ui.RegisterActionCommand(
-                "settings.page" + std::to_string(page));
-            !registered) {
-            for (const auto& diagnostic : registered.Diagnostics())
-                diag::Emit(diagnostic);
-            return false;
-        }
-    }
+    if (!RegisterUiActions()) return false;
     // The music room lists exactly player.musicTracks; nothing is guessed
     // from a folder of one sample project's file names.
     const auto validateUiAnimation =

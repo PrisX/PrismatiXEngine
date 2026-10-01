@@ -1982,16 +1982,16 @@ int main() {
     playerUi.SetActionSink([&customAction](const px::ui::GalgameAction& action) {
         customAction = action;
     });
-    Check(playerUi.RegisterActionCommand("music.play", "track").IsOk(),
+    Check(playerUi.RegisterActionCommand("jukebox.play", "track").IsOk(),
           "game-specific authored commands must register without an engine whitelist");
     px::ui::ActionInvocation playTrack;
-    playTrack.action = "music.play";
+    playTrack.action = "jukebox.play";
     playTrack.arguments.emplace("track", px::Variant("Assets/Audio/BGM/BGM01.wav"));
     Check(playerUi.Actions().Dispatch(std::move(playTrack)).IsOk(),
           "game-specific authored command must dispatch through the production Action dispatcher");
     px::Input customActionInput;
     (void)playerUi.Update(customActionInput, 1920, 1080, 0.016f);
-    Check(customAction && customAction->command == "music.play" &&
+    Check(customAction && customAction->command == "jukebox.play" &&
               customAction->argument == "Assets/Audio/BGM/BGM01.wav",
           "game-specific authored command must preserve its configured string argument");
 

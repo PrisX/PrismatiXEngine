@@ -1,6 +1,9 @@
 #include "Engine/UI/Actions/BuiltInActionProvider.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/UI/Actions/PlayerActionContract.h"
+
+#include <algorithm>
 
 namespace px::ui {
 namespace {
@@ -130,6 +133,24 @@ std::vector<ActionDescriptor> BuiltInActionDescriptors() {
                    {Argument("value", "Value", VariantType::Bool)}));
     add(Descriptor("set.selfvoicing.value", "Set Self Voicing", "Accessibility",
                    {Argument("value", "Value", VariantType::Bool)}));
+    // Every other stock Player action, typed from the shared contract.
+    for (const auto& spec : kPlayerActions) {
+        if (std::ranges::any_of(descriptors, [&](const ActionDescriptor& descriptor) {
+                return descriptor.id == spec.id;
+            }))
+            continue;
+        std::vector<ActionArgumentDescriptor> arguments;
+        if (spec.argument != PlayerActionArgument::None) {
+            const VariantType type = spec.argument == PlayerActionArgument::Integer
+                ? VariantType::Integer
+                : spec.argument == PlayerActionArgument::Boolean ? VariantType::Bool
+                                                                 : VariantType::String;
+            arguments.push_back(Argument(std::string(spec.argumentKey),
+                                         std::string(spec.argumentKey), type));
+        }
+        add(Descriptor(std::string(spec.id), std::string(spec.id),
+                       std::string(spec.category), std::move(arguments)));
+    }
     return descriptors;
 }
 

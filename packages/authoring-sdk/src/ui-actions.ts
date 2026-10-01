@@ -31,6 +31,8 @@ export const actions = {
     gallery: action("gallery.open"), extra: action("extra.open"), replay: action("replay.open"),
     music: action("music.open"), flowchart: action("flowchart.open"),
     settingsPage: (page: number) => action(`settings.page${page}`),
+    /** Any route declared in `uiEntryPoints`, such as a custom extras page. */
+    open: (route: string) => action("screen.open", {argument: route}),
   },
   save: {
     quick: action("save.quick"),

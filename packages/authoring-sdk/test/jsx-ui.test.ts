@@ -30,7 +30,7 @@ function Card(props: {readonly title: string}): UiElement {
     jsx(Text, {name: "CardTitle", children: props.title,
       bindings: {text: {path: "locale.card.title"}}}),
     jsx(Button, {name: "Confirm", children: "Confirm",
-      onClick: {id: "dialog.confirm", arguments: {source: "card"}}}),
+      onClick: {id: "card.confirm", arguments: {source: "card"}}}),
   ]});
 }
 
@@ -61,7 +61,7 @@ test("React-free JSX lowering produces canonical UI with deterministic node ids"
   assert.equal(card?.runtimeType, "VBoxContainer");
   assert.equal(title?.layout.mode, "container");
   assert.deepEqual(title?.bindings, {text: {path: "locale.card.title"}});
-  assert.deepEqual(button?.onClick, {id: "dialog.confirm", arguments: {source: "card"}});
+  assert.deepEqual(button?.onClick, {id: "card.confirm", arguments: {source: "card"}});
 });
 
 test("Modal authors a native focus scope, backdrop action, and blocking panel", () => {
