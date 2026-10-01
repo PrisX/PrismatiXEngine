@@ -212,6 +212,29 @@ sdk::UiDocument Hud() {
             root, 10 + index, "Quick" + std::to_string(index),
             Layout(744.0f + index * 80.0f, 530, 76, 28), actions[index].first,
             actions[index].second, 15, true));
+    // Story [input]: a prompt, a text field and OK, shown while the
+    // Player waits for a name.
+    constexpr char input[] = "72000000-0000-4000-8000-000000000020";
+    nodes.push_back(Fill(input, root, 20, "TextInputPanel",
+                         Layout(340, 250, 600, 190), kNvlPanel));
+    nodes.back().visible = false;
+    nodes.back().bindings.emplace("visible", sdk::UiPropertyBinding{"input.visible", {}});
+    nodes.back().accessibilityRole = "dialog";
+    nodes.back().accessibilityLabel = "Text input";
+    auto prompt = Label("72000000-0000-4000-8000-000000000021", input, 0, "Label",
+                        "TextInputPrompt", Layout(32, 24, 536, 34), "", 22);
+    prompt.bindings.emplace("text", sdk::UiPropertyBinding{"input.prompt", {}});
+    nodes.push_back(std::move(prompt));
+    auto field = Node("72000000-0000-4000-8000-000000000022", input, 1,
+                      sdk::UiNodeKind::Control, "LineEdit", "TextInput",
+                      Layout(32, 72, 536, 44), "textbox", "Text");
+    field.appearance.backgroundColor = kButton;
+    field.appearance.textColor = kText;
+    field.appearance.focusColor = kAccent;
+    nodes.push_back(std::move(field));
+    nodes.push_back(Button("72000000-0000-4000-8000-000000000023", input, 2,
+                           "TextInputAccept", Layout(448, 132, 120, 40), "OK",
+                           "input.accept", 18));
     return Document("70000000-0000-4000-8000-000000000002",
                     "PrismatiX Builtin HUD", std::move(nodes));
 }

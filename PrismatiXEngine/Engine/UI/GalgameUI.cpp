@@ -210,6 +210,9 @@ GalgameUI::GalgameUI() {
             std::string("saveLoad.confirm.") + property, Variant(false), true);
     (void)m_viewModel.Define("saveLoad.error.visible", Variant(false), true);
     (void)m_viewModel.Define("title.confirm.visible", Variant(false), true);
+    // Story [input]: the HUD's TextInput panel and its prompt.
+    (void)m_viewModel.Define("input.visible", Variant(false), true);
+    (void)m_viewModel.Define("input.prompt", Variant(std::string{}), true);
     for (const char* property : {"visible", "reset", "exit"})
         (void)m_viewModel.Define(
             std::string("system.confirm.") + property, Variant(false), true);

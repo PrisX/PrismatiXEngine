@@ -1337,6 +1337,10 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             }
             return true;
         }
+        if (t == "text_input") {
+            BeginTextInput(cmd);
+            return true;
+        }
         if (t == "auto_mode") {
             if (cmd.Get("mode") == "off") SetStoryAuto(std::nullopt);
             else {
@@ -2077,6 +2081,8 @@ bool PlayerApp::CommitStartGame() {
     }
     m_session->Backlog().Clear();
     m_autoMode = m_skipMode = m_hudHidden = false;
+    m_textInput.reset();
+    (void)m_ui.UpdateUiData("input.visible", Variant(false));
     SetStoryAuto(std::nullopt);
     m_skipDisabled = false;
     m_hudFadeSnap = true;
@@ -2395,6 +2401,8 @@ bool PlayerApp::LoadSlot(int slot) {
     m_script = candidateScript;
     m_appState = AppState::Game;
     m_autoMode = m_skipMode = m_hudHidden = false;
+    m_textInput.reset();
+    (void)m_ui.UpdateUiData("input.visible", Variant(false));
     m_skipDisabled = snap->skipDisabled;
     SetStoryAuto(snap->storyAuto ? std::optional<StoryAuto>(StoryAuto{
         snap->storyAutoSpeedMs, snap->storyAutoWaitMs, snap->storyAutoLocked}) : std::nullopt);
@@ -3689,7 +3697,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
             RenderUIWithScripts();
             return;
         }
-        if (!uiConsumed && (input.LeftClick() || advanceKey || nonKeyboardAdvance) &&
+        if (!uiConsumed && !m_textInput && (input.LeftClick() || advanceKey || nonKeyboardAdvance) &&
                m_session->VM().State() != vn::VMState::WaitingChoice) {
             advanceDialogue();
             advancedByClick = true;
@@ -4021,6 +4029,7 @@ void PlayerApp::MainLoop() {
         }
 
         GameFrame(dt, now);
+        SyncTextInput();
         m_runtime.EndFrame();
     }
 }

@@ -153,6 +153,20 @@ private:
     void CloseAllModals();
     void ActivateSlot(bool saveMode, const std::string& argument);
     void ReturnToTitle();
+    // Story [input]: the HUD's TextInput field asks for text, the VM waits,
+    // and input.accept stores it in the variable.
+    struct TextInputRequest {
+        std::string variable;
+        std::string fallback;
+        std::size_t maxLength = 32;
+        bool profile = false;
+    };
+    std::optional<TextInputRequest> m_textInput;
+    bool m_sdlTextInputActive = false;
+    void BeginTextInput(const vn::Command& command);
+    void FinishTextInput();
+    // Starts SDL text input (and the IME) only while a text field has focus.
+    void SyncTextInput();
     void RecordScriptVideoTerminal(std::uint64_t handle, std::string status,
                                    std::string error = {});
 

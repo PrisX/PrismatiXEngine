@@ -196,6 +196,74 @@ void PlayerApp::ActivateSlot(const bool saveMode, const std::string& argument) {
     }
 }
 
+void PlayerApp::BeginTextInput(const vn::Command& command) {
+    TextInputRequest request;
+    request.variable = command.Get("variable");
+    request.profile = command.Get("scope") == "profile";
+    request.fallback = command.Get("default");
+    if (const std::string limit = command.Get("maxLength"); !limit.empty())
+        request.maxLength = static_cast<std::size_t>(std::clamp(std::atoi(limit.c_str()), 1, 256));
+    auto* field = FindUiControlNamed<ui::LineEdit>(m_ui.Root(), "TextInput");
+    if (!field) {
+        diag::Emit(diag::Diagnostic{.severity = diag::Severity::Warning,
+                                    .code = "PXPLAYER5029",
+                                    .category = "Player.Input",
+                                    .message = "[input] needs a LineEdit named TextInput in the HUD; "
+                                               "the default value was used",
+                                    .details = request.variable});
+        m_session->Variables().SetValue(request.variable, Variant(request.fallback),
+            request.profile ? vn::VariableScope::Profile : vn::VariableScope::Session);
+        return;
+    }
+    m_autoMode = false;
+    m_skipMode = false;
+    field->SetText(request.fallback);
+    field->SetOnSubmitted([this](const std::string&) { HandleUIAction({"input.accept", {}}); });
+    (void)m_ui.UpdateUiData("input.prompt", Variant(command.Get("prompt")));
+    (void)m_ui.UpdateUiData("input.visible", Variant(true));
+    m_ui.FocusControl(field);
+    m_textInput = std::move(request);
+    m_session->VM().WaitExternal();
+    PX_LOG_INFO("Player text input started variable={}", m_textInput->variable);
+}
+
+void PlayerApp::FinishTextInput() {
+    if (!m_textInput) return;
+    const auto request = std::exchange(m_textInput, std::nullopt);
+    std::string text;
+    if (const auto* field = FindUiControlNamed<ui::LineEdit>(m_ui.Root(), "TextInput"))
+        text = field->Text();
+    // Trim surrounding spaces, then cut at maxLength code points.
+    constexpr std::string_view kSpace = " \t\r\n";
+    const auto first = text.find_first_not_of(kSpace);
+    text = first == std::string::npos ? std::string{}
+        : text.substr(first, text.find_last_not_of(kSpace) - first + 1);
+    std::size_t points = 0, end = 0;
+    while (end < text.size() && points < request->maxLength) {
+        ++points;
+        ++end;
+        while (end < text.size() && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80) ++end;
+    }
+    text.resize(end);
+    if (text.empty()) text = request->fallback;
+    m_session->Variables().SetValue(request->variable, Variant(text),
+        request->profile ? vn::VariableScope::Profile : vn::VariableScope::Session);
+    (void)m_ui.UpdateUiData("input.visible", Variant(false));
+    m_ui.FocusControl(nullptr);
+    PX_LOG_INFO("Player text input finished variable={}", request->variable);
+    m_session->VM().NotifyExternalDone();
+}
+
+void PlayerApp::SyncTextInput() {
+    const bool wanted = m_ui.TextFieldFocused();
+    if (wanted == m_sdlTextInputActive) return;
+    SDL_Window* window = m_runtime.GetWindow().Handle();
+    if (!window) return;
+    if (wanted) SDL_StartTextInput(window);
+    else SDL_StopTextInput(window);
+    m_sdlTextInputActive = wanted;
+}
+
 // One handler per action in ui::kPlayerActions. Init registers exactly the
 // Player-owned ids of that table and fails if this map and the table differ,
 // so a TSX action can never install fine and then do nothing when clicked.
@@ -234,6 +302,7 @@ PlayerApp::ActionHandlers() {
             }
         });
         on("hud.hide", [](PlayerApp& app, A) { app.m_hudHidden = true; });
+        on("input.accept", [](PlayerApp& app, A) { app.FinishTextInput(); });
         on("mode.auto", [](PlayerApp& app, A) {
             app.m_autoMode = !app.m_autoMode;
             if (app.m_autoMode) app.m_skipMode = false;
@@ -748,6 +817,11 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         bool active;
         ~MuteSync() { if (active) app->PublishMuteData(); }
     } muteSync{this, t.starts_with("set.") || t.starts_with("settings.")};
+    // A name prompt is modal: only its own button and quitting get through.
+    if (m_textInput && t != "input.accept" && t != "app.quit") {
+        muteSync.active = false;
+        return;
+    }
     const auto& handlers = ActionHandlers();
     const auto found = handlers.find(t);
     if (found == handlers.end()) {

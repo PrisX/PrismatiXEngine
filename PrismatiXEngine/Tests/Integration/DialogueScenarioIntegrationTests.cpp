@@ -404,7 +404,7 @@ void TestEveryCommandDescriptorContract() {
     px::vn::VM vm(vfs, audio, stage, dialogue, variables, backlog);
     const std::set<std::string> hostCommands{
         "ambience", "stopambience", "route", "animation", "screen_effect",
-        "screen_transition", "hud_visibility", "auto_mode", "skip_control",
+        "screen_transition", "hud_visibility", "auto_mode", "skip_control", "text_input",
         "nvl", "adv", "er", "nvl_clear",
     };
     std::vector<std::string> delegated;

@@ -2342,6 +2342,14 @@ private:
             return false;
         }
         m_session->SetExtensionCommandHandler([this](const px::vn::Command& command) {
+            // Preview has no name prompt: [input] stores its default and moves on.
+            if (command.type == "text_input") {
+                if (!m_session) return false;
+                m_session->Variables().SetValue(command.Get("variable"), px::Variant(command.Get("default")),
+                    command.Get("scope") == "profile" ? px::vn::VariableScope::Profile
+                                                      : px::vn::VariableScope::Session);
+                return true;
+            }
             if (command.type == "action" && m_scriptHost) {
                 const Json payload = Json::parse(command.Get("value"), nullptr, false);
                 if (payload.is_discarded() || !payload.is_object() || !payload.contains("id") || !payload["id"].is_string() || !payload.contains("arguments") || !payload["arguments"].is_object()) {

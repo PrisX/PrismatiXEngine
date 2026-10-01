@@ -740,6 +740,11 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = mode == "clear" ? "nvl_clear" : mode;
         } else if (operation.kind == "stopVoice") {
             command.type = "stopvoice";
+        } else if (operation.kind == "ui" && Argument(operation, "operation") == "input") {
+            // Story [input]: the Player asks for text and stores it in `variable`.
+            command.type = "text_input";
+            for (const char* name : {"variable", "prompt", "default", "maxLength", "scope"})
+                Add(command, name, Argument(operation, name));
         } else if (operation.kind == "ui") {
             command.type = "route";
             Add(command, "route", Argument(operation, "route"));

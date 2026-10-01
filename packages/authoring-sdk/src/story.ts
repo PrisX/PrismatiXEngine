@@ -1582,6 +1582,27 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         }
         break;
       }
+      case "input": {
+        // [input var=name prompt="..." default="..." max=16]: the Player asks
+        // for text and stores it in a string variable.
+        const variableName = named("var") ?? positional(0);
+        const maxLength = named("max") ?? "32";
+        const descriptor = variableName === undefined ? undefined : variables.get(variableName);
+        if (variableName === undefined || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(variableName))
+          diagnostics.push(error("PXSTORY1420", "input needs var= naming a variable", node.span));
+        else if (game !== undefined && descriptor === undefined)
+          diagnostics.push(error("PXSTORY1122", `Unknown game variable: ${variableName}`, node.span));
+        else if (descriptor !== undefined && descriptor.type !== "string")
+          diagnostics.push(error("PXSTORY1123", `input stores text, but ${variableName} is ${descriptor.type}`, node.span));
+        else if (!/^\d+$/u.test(maxLength) || Number(maxLength) < 1 || Number(maxLength) > 256)
+          diagnostics.push(error("PXSTORY1421", "input max must be an integer from 1 to 256", node.span));
+        else emit(node, "ui", {
+          route: "input", operation: "input", variable: variableName,
+          prompt: named("prompt") ?? "", default: named("default") ?? "", maxLength,
+          ...(descriptor === undefined ? {} : {scope: descriptor.scope}),
+        });
+        break;
+      }
       case "add": {
         const variableName = named("name") ?? positional(0);
         const amount = named("amount") ?? positional(1);
@@ -2022,7 +2043,7 @@ export interface StoryCommandCompletion {
   readonly parameters: readonly {readonly name: string; readonly required: boolean; readonly values?: readonly JsonValue[]}[];
 }
 
-const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "elseif", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "auto", "skip.stop", "skip.disable", "skip.enable", "macro", "endmacro", "endchoice", "var", "face", "credits", "endcredits"];
+const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "elseif", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "auto", "skip.stop", "skip.disable", "skip.enable", "macro", "endmacro", "endchoice", "var", "face", "credits", "endcredits", "input"];
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
   const builtins = builtinStoryCommands;

@@ -55,6 +55,8 @@ export const actions = {
   mode: {auto: action("mode.auto"), skip: action("mode.skip")},
   hud: {hide: action("hud.hide"), pinToolbar: action("hud.toolbar.pin")},
   voice: {replay: action("voice.replay")},
+  /** Stores the HUD TextInput field for a Story [input]. */
+  input: {accept: action("input.accept")},
   backlog: {
     voice: (index: number | ItemPlaceholder) => action("backlog.voice", {index}),
     rollback: (index: number | ItemPlaceholder) => action("backlog.rollback", {index}),

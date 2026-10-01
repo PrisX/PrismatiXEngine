@@ -681,6 +681,27 @@ export function ItemsList(props: Omit<ItemsViewProps, "columns">): UiElement {
     }});
 }
 
+export interface TextFieldProps extends UiNodeProps {
+  /** Initial text; a Story [input] replaces it with its default. */
+  readonly text?: string;
+  /** Hint shown while the field is empty. */
+  readonly placeholder?: string;
+}
+
+/**
+ * A single-line text field. Name it `TextInput` in the HUD and a Story
+ * `[input var=name]` uses it to ask the player for text; Enter or an
+ * `input.accept` button stores the text.
+ */
+export function TextField(props: TextFieldProps): UiElement {
+  const {text, placeholder, ...rest} = props;
+  return node("control", "LineEdit", {...rest, runtimeProperties: {
+    ...props.runtimeProperties,
+    ...(text === undefined ? {} : {text}),
+    ...(placeholder === undefined ? {} : {placeholder}),
+  }});
+}
+
 /** Runtime-keyed items at data-authored local rectangles; one item subtree. */
 export function ItemsPlaced(props: ItemsPlacedProps): UiElement {
   const {items, choiceLayout, ...rest} = props;

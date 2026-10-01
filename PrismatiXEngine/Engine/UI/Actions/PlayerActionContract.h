@@ -48,6 +48,8 @@ inline constexpr PlayerActionSpec kPlayerActions[] = {
     detail::Plain("game.continue", "Game"),
     detail::Plain("app.quit", "Game"),
     detail::Plain("hud.hide", "Game"),
+    // Stores the HUD TextInput field in the variable a Story [input] names.
+    detail::Plain("input.accept", "Game"),
     detail::Plain("mode.auto", "Game"),
     detail::Plain("mode.skip", "Game"),
     detail::With("choice.select", "index", detail::Integer, "Game"),

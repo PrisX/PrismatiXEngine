@@ -224,6 +224,14 @@ public:
     [[nodiscard]] bool SupportsSaveLoadConfirmation() const;
     Status SetSaveLoadConfirmation(SaveLoadPrompt prompt);
     [[nodiscard]] bool SupportsTitleConfirmation() const;
+    void FocusControl(Control* control) {
+        if (auto* router = m_context.InputRouting()) router->SetFocus(control);
+    }
+    /** True while the focused control takes typed text, such as a LineEdit. */
+    [[nodiscard]] bool TextFieldFocused() const {
+        const auto* router = m_context.InputRouting();
+        return router && router->Focused() && router->Focused()->CapturesTextInput();
+    }
     Status SetTitleConfirmation(bool visible);
     enum class SystemPrompt { None, Reset, Exit };
     [[nodiscard]] bool SupportsSystemConfirmation() const;

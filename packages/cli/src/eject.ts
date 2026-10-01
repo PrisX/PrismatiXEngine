@@ -51,6 +51,7 @@ function componentFor(node: UiNodeJson): string {
   if (node.kind === "label" && node.runtimeType === "RichTextLabel") return "RichTextLabel";
   if (node.kind === "button" && (node.runtimeType === undefined || node.runtimeType === "Button")) return "Button";
   if (node.kind === "control" && node.runtimeType === "Slider") return "Slider";
+  if (node.kind === "control" && node.runtimeType === "LineEdit") return "TextField";
   return "Control";
 }
 
