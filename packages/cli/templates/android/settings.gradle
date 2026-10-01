@@ -1,5 +1,5 @@
-// PrismatiX Android Player project template. UNVERIFIED: this project has
-// not been built into an APK or run on a device yet. See docs/android.md.
+// PrismatiX Android Player project template. Builds with Gradle 8.9+ and
+// JDK 17+; see docs/android.md.
 pluginManagement {
     repositories {
         google()

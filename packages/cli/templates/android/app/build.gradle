@@ -1,36 +1,75 @@
-// PrismatiX Android Player app module. UNVERIFIED: not yet built into an
-// APK or run on a device. See docs/android.md for the manual steps.
+// PrismatiX Android Player app module. `prismatix pack --target android`
+// copies this template, fills the inputs below and runs Gradle; see
+// docs/android.md for doing the same by hand.
 //
-// Inputs this module expects, all copied in by hand for now:
+// Inputs:
 //   src/main/jniLibs/arm64-v8a/libmain.so    PrismatiXPlayer (android-arm64 preset)
 //   src/main/jniLibs/arm64-v8a/libav*.so     FFmpeg shared libraries (LGPL)
 //   src/main/jniLibs/arm64-v8a/libsw*.so
-//   src/main/java/org/libsdl/app/*.java      SDL 3.4.x Java glue (same version as native SDL)
 //   src/main/assets/                         the packaged game: Package/ and *.pdx
+//   ../prismatix.properties                  optional; the keys read below
+//
+// src/main/java/org/libsdl/app/ is SDL's Java glue, copied unchanged from the
+// SDL source release that matches the native SDL in libmain.so (see
+// SDL_*_VERSION in SDLActivity.java). Update both together.
 plugins {
     id "com.android.application"
 }
 
+def prismatix = new Properties()
+def prismatixFile = rootProject.file("prismatix.properties")
+if (prismatixFile.isFile()) {
+    prismatixFile.withReader("UTF-8") { prismatix.load(it) }
+}
+def setting = { String name, String fallback -> prismatix.getProperty(name, fallback) }
+
+// Passwords never live in a file: prismatix.properties names environment
+// variables, and they are read here only when a keystore is configured.
+def requiredEnv = { String name ->
+    def value = name ? System.getenv(name) : null
+    if (value == null || value.isEmpty()) {
+        throw new GradleException("Environment variable ${name ?: '(unnamed)'} must hold the keystore password")
+    }
+    return value
+}
+def keystorePath = setting("keystore", "")
+
 android {
-    // Replace with the game's reverse-DNS identifier before release.
     namespace "com.prismatix.player"
     compileSdk 35
+    // Pinned so AGP uses the build-tools docs/android.md asks for instead of
+    // its own default version.
+    buildToolsVersion "35.0.0"
 
     defaultConfig {
-        applicationId "com.example.prismatixgame"
+        applicationId setting("applicationId", "com.example.prismatixgame")
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName "0.1.0"
+        versionCode setting("versionCode", "1").toInteger()
+        versionName setting("versionName", "0.1.0")
+        manifestPlaceholders = [screenOrientation: setting("screenOrientation", "sensorLandscape")]
         ndk {
             abiFilters "arm64-v8a"
+        }
+    }
+
+    signingConfigs {
+        if (!keystorePath.isEmpty()) {
+            release {
+                storeFile file(keystorePath)
+                storePassword requiredEnv(setting("storePasswordEnv", ""))
+                keyAlias setting("keyAlias", "")
+                keyPassword requiredEnv(setting("keyPasswordEnv", setting("storePasswordEnv", "")))
+            }
         }
     }
 
     buildTypes {
         release {
             minifyEnabled false
-            // Signing is configured by the developer; see docs/android.md.
+            if (!keystorePath.isEmpty()) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 
@@ -43,7 +82,7 @@ android {
         // PDX shards are already zstd-compressed, and the Player seeks inside
         // them. Stored (uncompressed) assets can be opened and seeked in
         // place; compressed ones would be inflated on every backward seek.
-        noCompress += ["pdx", "json"]
+        noCompress "pdx", "json"
     }
 
     packagingOptions {
@@ -51,6 +90,9 @@ android {
             // Keep .so files uncompressed and page-aligned so they load
             // straight from the APK.
             useLegacyPackaging false
+            // The android-arm64 build already strips libmain.so (symbols
+            // stay in its symbols/ folder), so AGP needs no NDK to do it.
+            keepDebugSymbols.add("**/*.so")
         }
     }
 }
