@@ -4,16 +4,39 @@
   "defaultLocale": "ja-JP",
   "storyIndex": "Story/story.pxindex",
   "gameCatalog": "Content/game.pxgame",
-  "resourceIncludes": ["Assets/bg", "Assets/rule", "Assets/bgm", "Assets/se", "Assets/voice"],
+  "resourceIncludes": [
+    "Assets/bg",
+    "Assets/rule",
+    "Assets/bgm",
+    "Assets/se",
+    "Assets/voice"
+  ],
   "storyAssets": {
-    "bg": ["Assets/bg"],
-    "rule": ["Assets/rule"],
-    "bgm": ["Assets/bgm"],
-    "se": ["Assets/se"],
-    "voice": ["Assets/voice"]
+    "bg": [
+      "Assets/bg"
+    ],
+    "rule": [
+      "Assets/rule"
+    ],
+    "bgm": [
+      "Assets/bgm"
+    ],
+    "se": [
+      "Assets/se"
+    ],
+    "voice": [
+      "Assets/voice"
+    ]
   },
   "characters": [
-    {"source": "Characters/guide.pxcharacter"},
-    {"source": "Characters/naoya.pxcharacter"}
+    {
+      "source": "Characters/guide.pxcharacter"
+    },
+    {
+      "source": "Characters/naoya.pxcharacter"
+    }
+  ],
+  "storyMacros": [
+    "Story/_macros.pxstory"
   ]
 }

@@ -1,4 +1,4 @@
-import {existsSync, readdirSync, statSync} from "node:fs";
+import {existsSync, readFileSync, readdirSync, statSync} from "node:fs";
 import {readFile} from "node:fs/promises";
 import {dirname, isAbsolute, join, relative, resolve, sep} from "node:path";
 
@@ -146,6 +146,8 @@ export class ProjectModel {
   private assetAliases: Record<string, string> = {};
   private localeResources = new Map<string, Record<string, string>>();
   storyAssetRoots: StoryAssetRoots | undefined;
+  /** prismatix.json `storyMacros`: files every scene may call macros from. */
+  storyMacroPaths: readonly string[] = [];
   storyAssets: StoryAssetIndex | undefined;
   resourceIncludes: readonly string[] = [];
   /** Files the build packages: resourceIncludes plus cataloged asset sources. */
@@ -346,6 +348,7 @@ export class ProjectModel {
 
     this.resourceIncludes = value.resourceIncludes;
     this.storyAssetRoots = value.storyAssets;
+    this.storyMacroPaths = (value as {storyMacros?: readonly string[]}).storyMacros ?? [];
     this.refreshFiles();
   }
 
@@ -400,14 +403,55 @@ export class ProjectModel {
   /** The Story compile context shared by the live and whole-project checks. */
   compileContext(locale: string, sourceFiles: Readonly<Record<string, string>>): StoryProjectCompileContext {
     if (this.storyIndex === undefined) throw new Error("project has no Story index");
+    // Open editors win over the files on disk.
+    const read = (path: string): string | undefined => {
+      if (sourceFiles[path] !== undefined) return sourceFiles[path];
+      try { return readFileSync(this.toFsPath(path), "utf8"); } catch { return undefined; }
+    };
+    // Newer SDK features are used only when the project's SDK provides them.
+    const api = this.sdk.sdk as Partial<Record<string, unknown>>;
+    let storyMacros: StoryProjectCompileContext["storyMacros"];
+    if (this.storyMacroPaths.length > 0 && typeof api.createStoryMacroLibrary === "function")
+      storyMacros = (api.createStoryMacroLibrary as (files: {path: string; source: string}[],
+        extensions: readonly ExtensionManifest[]) => {library: StoryProjectCompileContext["storyMacros"]})(
+        this.storyMacroPaths.map((path) => ({path, source: read(path) ?? ""})), this.extensions).library;
+    let portraits: StoryProjectCompileContext["portraits"];
+    if (typeof api.createStoryPortraitIndex === "function" &&
+        Object.values(sourceFiles).some((source) => /^[ \t]*\[\s*face\s/mu.test(source))) {
+      const documents: Record<string, unknown> = {};
+      for (const character of this.characterInfos) for (const expression of character.expressions) {
+        const path = expression.assetPath;
+        if (path === undefined || !path.endsWith(".pxportrait") || path in documents) continue;
+        const text = read(path);
+        const parsed = text === undefined ? undefined
+          : this.sdk.sdk.parseDocument<unknown>("portrait", text, path);
+        if (parsed?.valid === true) documents[path] = parsed.value;
+      }
+      portraits = (api.createStoryPortraitIndex as (documents: Record<string, unknown>) =>
+        StoryProjectCompileContext["portraits"])(documents);
+    }
+    let game = this.game;
+    if (game !== undefined && typeof api.collectStoryVariableDeclarations === "function" &&
+        typeof api.mergeStoryVariables === "function") {
+      const files = this.sceneSources(locale).flatMap((scene) => {
+        const source = read(scene.path);
+        return source === undefined ? [] : [{path: scene.path, source}];
+      });
+      const declared = (api.collectStoryVariableDeclarations as (files: {path: string; source: string}[]) =>
+        {declarations: unknown[]})(files);
+      game = (api.mergeStoryVariables as (game: GameDocument, declarations: unknown[]) =>
+        {game: GameDocument})(game, declared.declarations).game;
+    }
     return {
+      ...(storyMacros === undefined ? {} : {storyMacros}),
+      ...(portraits === undefined ? {} : {portraits}),
       storyIndex: this.storyIndex,
       storyIndexPath: this.storyIndexPath,
       locale,
       sourceFiles,
       documentId: this.projectId,
       characters: this.characters,
-      ...(this.game === undefined ? {} : {game: this.game}),
+      ...(game === undefined ? {} : {game}),
       extensions: this.extensions,
       resources: this.resourcesFor(locale),
       resourceAssets: this.resourceAssets,

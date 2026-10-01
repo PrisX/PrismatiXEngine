@@ -200,3 +200,9 @@ test("whole-project validation reports errors in every scene", async () => {
   assert.deepEqual(broken.diagnostics.map((diagnostic) => [diagnostic.code, diagnostic.span?.path]),
     [["PXSTORY1305", "Story/intro.pxstory"], ["PXSTORY1305", "Story/park.pxstory"]]);
 });
+
+test("shared storyMacros and Story [var] declarations are known to live checks", async () => {
+  const text = "*shared\n[night_bg]\n[var mood=0 scope=session type=integer]\n[set mood=1]\n[jump scene=intro target=stay]\n";
+  const result = await service.diagnostics(fixtureDocument(scenesRoot, "Story/park.pxstory", text));
+  assert.deepEqual(result.diagnostics.map((diagnostic) => diagnostic.code), []);
+});

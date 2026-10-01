@@ -1,0 +1,4 @@
+; Shared macros every scene may call.
+[macro night_bg]
+[bg night/street]
+[endmacro]
