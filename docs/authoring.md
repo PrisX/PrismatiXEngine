@@ -107,7 +107,24 @@ prismatix release my-game
 Command-line options still win over these defaults. `"linkMedia": true`
 hard-links the project's media into the build artifact instead of copying it
 when both are on the same volume, so a multi-GiB game is not stored twice
-(the artifact then shares those files with the project). Engine contributors can
+(the artifact then shares those files with the project).
+
+`"transcode"` makes distributions smaller: `build` and `pack` (not `dev`)
+store PNG as WebP and Ogg Vorbis/WAV as Opus or Vorbis under the same paths,
+which the Player recognises by content, so Story, UI and saves are unchanged.
+Alpha is kept exactly; a file that would grow or fails to decode ships as
+authored. Encodings are cached in `.prismatix/transcode-cache`, so only new or
+edited media is encoded again, and `--no-transcode` packs the originals:
+
+```json
+"transcode": {"images": {"format": "webp", "quality": 90},
+  "audio": {"format": "opus", "bitrate": 64},
+  "exclude": ["Assets/Music/**"]}
+```
+
+`quality` is 1-100 or `"lossless"`, `effort` (0-6, default 4) trades encode
+time for size, Opus `bitrate` is in kbit/s (default 96), and Vorbis takes
+`quality` from -1 to 10 instead. Engine contributors can
 pass a local build directory as `--runtime out/build/x64-release/PrismatiXEngine`.
 Scaffold the files you would otherwise write by hand, and see any command's
 options with `--help`:

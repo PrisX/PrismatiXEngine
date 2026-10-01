@@ -40,6 +40,7 @@ import {AndroidExportError, androidSettings, checkAndroidInputs, checkKeystoreEn
   claimAndroidOutput, collectAndroidOutputs, findAndroidSdk, findGradle, resolveAndroidPlayer,
   runGradle, stageGradleProject, templateSdlVersion} from "./android-export.js";
 import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
+import {transcodeMedia, type TranscodedFile} from "./media-transcode.js";
 
 import {
   assertLocalBuildFresh,
@@ -95,10 +96,10 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   create: {values: "name id locale width height template runtime", flags: ""},
   dev: {values: "runtime preview-host debounce ui-registry at", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
-  build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space"},
-  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target android-player gradle android-sdk", flags: "encrypt ignore-disk-space check verify-media debug"},
-  run: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space"},
-  release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space"},
+  build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space no-transcode"},
+  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target android-player gradle android-sdk", flags: "encrypt ignore-disk-space check verify-media debug no-transcode"},
+  run: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
+  release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: ""},
   eject: {values: "project runtime", flags: "force"},
   augment: {values: "artifact manifest", flags: ""},
@@ -430,6 +431,7 @@ function buildProgress(phase: string, current: number, total: number | undefined
     "reuse-artifact": "Keeping unchanged artifact",
     "verify-before-publish": "Rechecking existing output",
     "verify-reuse-source": "Checking reused media revision", publish: "Publishing artifact",
+    "transcode-scan": "Hashing media for distribution.transcode", transcode: "Transcoding media",
   };
   const label = labels[phase] ?? phase;
   const count = total === undefined ? `${current} files` : `${current}/${total}`;
@@ -1290,7 +1292,8 @@ interface ReusableArtifactInputs {
 /** Content comparison is only a no-op probe; a mismatch falls through to the
  * normal safe publisher. Timestamps and file sizes alone never establish it. */
 async function matchingArtifactFiles(loaded: LoadedProject, artifact: BuildArtifact,
-  previousInputs: readonly PublishedInput[]): Promise<ReadonlyMap<string, string> | undefined> {
+  previousInputs: readonly PublishedInput[],
+  transcoded?: ReadonlyMap<string, TranscodedFile>): Promise<ReadonlyMap<string, string> | undefined> {
   const generated = Object.entries(artifact.files);
   const total = generated.length + artifact.dependencies.length;
   if (previousInputs.length !== total) return undefined;
@@ -1325,6 +1328,9 @@ async function matchingArtifactFiles(loaded: LoadedProject, artifact: BuildArtif
     const compared = await Promise.all(batch.map(async dependency => {
       const old = previous.get(dependency.logicalPath);
       if (old === undefined || matching.has(dependency.logicalPath)) return undefined;
+      const encoded = transcoded?.get(dependency.logicalPath);
+      if (encoded !== undefined)
+        return encoded.size === old.size && encoded.fingerprint === old.fingerprint ? old : undefined;
       const source = projectFile(loaded.root, dependency.source);
       const info = await stat(source);
       if (!info.isFile() || info.size !== old.size) return undefined;
@@ -1345,7 +1351,8 @@ async function matchingArtifactFiles(loaded: LoadedProject, artifact: BuildArtif
 
 async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact, staging: string,
   reuse?: ReusableArtifactInputs,
-  linkedOutputFiles?: Map<string, PublishedInput>): Promise<{readonly files: number; readonly bytes: number}> {
+  linkedOutputFiles?: Map<string, PublishedInput>,
+  transcoded?: ReadonlyMap<string, TranscodedFile>): Promise<{readonly files: number; readonly bytes: number}> {
   const total = Object.keys(artifact.files).length + artifact.dependencies.length;
   const readyDirectories = new Map<string, Promise<void>>();
   const ensureDirectory = (directory: string): Promise<void> => {
@@ -1393,13 +1400,15 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
     const results = await Promise.allSettled(batch.map(async (dependency) => {
       const destination = projectFile(staging, dependency.logicalPath);
       await ensureDirectory(dirname(destination));
-      const source = projectFile(loaded.root, dependency.source);
+      // distribution.transcode puts a smaller encoding under the same path.
+      const encoded = transcoded?.get(dependency.logicalPath);
+      const source = encoded?.file ?? projectFile(loaded.root, dependency.source);
       const previous = reuse?.byUri.get(dependency.logicalPath);
       let reused = false;
       if (previous !== undefined) {
         const sourceInfo = await stat(source);
         if (sourceInfo.isFile() && sourceInfo.size === previous.size &&
-            await fingerprintFile(source) === previous.fingerprint) {
+            (encoded?.fingerprint ?? await fingerprintFile(source)) === previous.fingerprint) {
           const oldPath = projectFile(reuse!.root, dependency.logicalPath);
           try { await link(oldPath, destination); reused = true; }
           catch (error) {
@@ -1409,7 +1418,8 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
         }
       }
       let linkedSource = false;
-      if (!reused && linkMedia) {
+      // Cached encodings belong to the CLI, so they are always linked.
+      if (!reused && (linkMedia || encoded !== undefined)) {
         try { await link(source, destination); linkedSource = true; }
         catch (error) {
           if (!["EXDEV", "EPERM", "EOPNOTSUPP", "ENOSYS"].includes(
@@ -1445,7 +1455,7 @@ function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string
 async function buildProject(projectArgument: string | undefined, outputArgument: string | undefined,
   committedRevision?: number, registryOverride?: string, runtimeHint?: string,
   packagerPath?: string, storyCompilationCache?: StoryProjectCompilationCache,
-  previousBuild?: BuildResult): Promise<BuildResult> {
+  previousBuild?: BuildResult, transcodeTool?: () => Promise<string>): Promise<BuildResult> {
   buildProgress("load", 0, 1);
   const loaded = await loadProject(projectArgument);
   buildProgress("load", 1, 1, 0, true);
@@ -1483,8 +1493,11 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
     try { dependencies.add(projectFile(loaded.root, dependency.source)); }
     catch { /* Compiler paths are advisory. */ }
   }
+  const transcoded = transcodeTool === undefined ? undefined
+    : await transcodeArtifactMedia(loaded, compiled.artifact, transcodeTool);
   if (preflightInputs !== undefined) {
-    const matching = await matchingArtifactFiles(loaded, compiled.artifact, preflightInputs);
+    const matching = await matchingArtifactFiles(loaded, compiled.artifact, preflightInputs,
+      transcoded);
     if (matching !== undefined && await retainPublishedDirectoryIfMatching({
       output, projectRoot: loaded.root, protectedPaths,
       onProgress: value => buildProgress(value.phase, value.files, undefined,
@@ -1546,12 +1559,50 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
     onProgress: (value) => buildProgress(value.phase, value.files, undefined,
       value.bytes, value.done)}, async (staging) => {
     reused = await copyRuntimeInputs(loaded, compiled.artifact!, staging, reuse,
-      reuse !== undefined && resolve(reuse.root) === output ? linkedOutputFiles : undefined);
+      reuse !== undefined && resolve(reuse.root) === output ? linkedOutputFiles : undefined,
+      transcoded);
   });
   buildProgress("publish", 1, 1, 0, true);
   await saveStoryCompilationCache(loaded.root, effectiveStoryCompilationCache);
   return {root: loaded.root, artifact: compiled.artifact, output, dependencies,
     protectedPaths};
+}
+
+const mebibytes = (bytes: number): string => `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
+
+/** distribution.transcode for a distribution artifact; `dev` skips it. */
+async function transcodeArtifactMedia(loaded: LoadedProject, artifact: BuildArtifact,
+  tool: () => Promise<string>): Promise<ReadonlyMap<string, TranscodedFile> | undefined> {
+  const settings = (object(loaded.project)?.distribution as ProjectDistribution | undefined)?.transcode;
+  if (settings === undefined) return undefined;
+  const {files, summary} = await transcodeMedia({root: loaded.root, settings,
+    dependencies: artifact.dependencies,
+    sourcePath: (dependency) => projectFile(loaded.root, dependency.source), tool,
+    onProgress: (phase, current, total, bytes, done) => buildProgress(phase, current, total, bytes, done)});
+  const describe = (label: string, totals: typeof summary.images): string =>
+    `${totals.files} ${label} ${mebibytes(totals.inputBytes)} -> ${mebibytes(totals.outputBytes)}`;
+  progress({severity: "information", code: "PXCLI1230", phase: "transcode-summary",
+    images: summary.images, audio: summary.audio, encoded: summary.encoded,
+    cached: summary.cached, kept: summary.kept, failed: summary.failed.length,
+    message: `distribution.transcode: ${describe("images", summary.images)}, ` +
+      `${describe("audio files", summary.audio)} (${summary.encoded} encoded now, ` +
+      `${summary.cached} from cache, ${summary.kept} kept original)`});
+  if (summary.unavailable !== undefined)
+    progress({severity: "warning", code: "PXCLI1232", phase: "transcode-summary",
+      message: `Warning: media was not transcoded and ships as authored: ${summary.unavailable}`});
+  for (const failure of summary.failed.slice(0, 20))
+    progress({severity: "warning", code: "PXCLI1231", path: failure.path,
+      message: `Warning: ${failure.path} could not be transcoded and ships as authored: ${failure.detail}`});
+  if (summary.failed.length > 20)
+    progress({severity: "warning", code: "PXCLI1231",
+      message: `Warning: ${summary.failed.length - 20} more media files could not be transcoded`});
+  return files;
+}
+
+function transcodeToolFor(options: Options, packager?: string): (() => Promise<string>) | undefined {
+  if (options.flags.has("no-transcode")) return undefined;
+  return packager !== undefined ? async () => packager
+    : async () => (await discoverRuntimeTool("packager", runtimeOptions(options))).path;
 }
 
 async function buildCommand(options: Options): Promise<number> {
@@ -1568,7 +1619,8 @@ async function buildCommand(options: Options): Promise<number> {
   }
   try {
     const built = await buildProject(options.positional[0], options.values.get("output"),
-      undefined, options.values.get("ui-registry"), options.values.get("runtime"));
+      undefined, options.values.get("ui-registry"), options.values.get("runtime"),
+      undefined, undefined, undefined, transcodeToolFor(options));
     process.stdout.write(machineOutput ? `${JSON.stringify({built: true, output: built.output,
       runtimeIr: built.artifact.runtimeIrPath, sourceMap: built.artifact.sourceMapPath})}\n` : `Built Runtime artifact: ${built.output}\n`);
     return 0;
@@ -1792,7 +1844,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
     if (suppliedArtifact === undefined) {
       const built = await buildProject(options.positional[0], join(temp, "artifact"),
         undefined, options.values.get("ui-registry"), options.values.get("runtime"),
-        packager);
+        packager, undefined, undefined, transcodeToolFor(options, packager));
       root = built.root;
       artifactRoot = built.output;
       project = built.artifact.project;
@@ -2934,9 +2986,15 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "prismatix validate [project] [--runtime <dir>]"],
   build: ["Build a playable distribution (or only the compiled artifact).",
     "prismatix build [project] [--output <dir>] [--runtime <dir>] [--compression fast] [--archive-shards 4]",
-    "prismatix build [project] --artifact-only [--output <dir>]"],
+    "prismatix build [project] --artifact-only [--output <dir>]",
+    "",
+    "With distribution.transcode in prismatix.json, PNG is stored as WebP and Ogg/WAV as Opus or",
+    "Vorbis under the same paths; only new or changed media is encoded (cache: .prismatix/transcode-cache).",
+    "  \"transcode\": {\"images\": {\"format\": \"webp\", \"quality\": 90}, \"audio\": {\"format\": \"opus\", \"bitrate\": 96},",
+    "                \"exclude\": [\"Assets/UI/**\"]}   quality 1-100 or \"lossless\"; --no-transcode packs originals"],
   pack: ["Package an already built artifact as a playable distribution.",
     "prismatix pack [project] --artifact <dir> [--output <dir>] [--runtime <dir>]",
+    "prismatix pack [project] [--output <dir>] [--no-transcode]   builds first; see build --help for distribution.transcode",
     "prismatix pack [project] --artifact <dir> --check [--verify-media]",
     "prismatix pack [project] --target android --android-player <arm64-v8a dir> [--artifact <dir>] [--output <dir>]",
     "    [--gradle <gradle>] [--android-sdk <dir>] [--debug]   APK, plus an AAB when distribution.android.keystore is set;",

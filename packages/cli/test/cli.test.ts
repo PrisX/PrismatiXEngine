@@ -2112,6 +2112,114 @@ test("distribution.linkMedia hard-links project media into the artifact", async 
   } finally { await rm(parent, {recursive: true, force: true}); }
 });
 
+test("distribution.transcode stores smaller media under the same paths and caches encodings", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "prismatix-cli-transcode-"));
+  const root = join(parent, "small-game");
+  try {
+    await createStarter(root, {name: "Small", install: async (directory) => {
+      await writeFile(join(directory, "package-lock.json"), JSON.stringify({lockfileVersion: 3}));
+      await mkdir(join(directory, "node_modules", "@prismatix"), {recursive: true});
+      await symlink(resolve("."), join(directory, "node_modules", "@prismatix", "cli"), "junction");
+    }});
+    const tools = join(parent, "tools");
+    const packager = join(tools, "mock-packager.mjs");
+    const calls = join(tools, "calls.log");
+    // Encodes as "WEBP" + 8 source bytes; grow.png would grow and broken.png
+    // fails, so both must stay original. Each call is logged.
+    await write(packager, `
+      import {appendFileSync, readFileSync, writeFileSync} from "node:fs";
+      const [mode, path] = process.argv.slice(2);
+      if (mode !== "--transcode") process.exit(2);
+      const request = JSON.parse(readFileSync(path, "utf8"));
+      appendFileSync(${JSON.stringify(calls)}, JSON.stringify({images: request.images,
+        audio: request.audio, jobs: request.jobs.map((job) => job.source.replaceAll("\\\\", "/"))}) + "\\n");
+      request.jobs.forEach((job, index) => {
+        const input = readFileSync(job.source);
+        const event = {event: "transcoded", index, inputBytes: input.length};
+        if (job.source.endsWith("grow.png")) Object.assign(event, {result: "kept", reason: "larger"});
+        else if (job.source.endsWith("broken.png"))
+          Object.assign(event, {result: "kept", reason: "failed", detail: "image did not decode"});
+        else {
+          const output = Buffer.concat([Buffer.from("WEBP"), input.subarray(0, 8)]);
+          writeFileSync(job.output, output);
+          Object.assign(event, {result: "encoded", outputBytes: output.length});
+        }
+        console.log(JSON.stringify(event));
+      });
+      console.log(JSON.stringify({event: "completed", jobs: request.jobs.length}));
+    `);
+    const media = Buffer.alloc(4096, 7);
+    await write(join(root, "Assets", "extra", "grow.png"), "small");
+    await writeFile(join(root, "Assets", "extra", "broken.png"), media);
+    await mkdir(join(root, "Assets", "ui"), {recursive: true});
+    await writeFile(join(root, "Assets", "ui", "button.png"), media);
+    await writeFile(join(root, "Assets", "theme.ogg"), media);
+    const projectPath = join(root, "prismatix.json");
+    const manifest = JSON.parse(await readFile(projectPath, "utf8")) as Record<string, unknown>;
+    await writeFile(projectPath, JSON.stringify({...manifest, resourceIncludes: ["Assets"],
+      distribution: {transcode: {images: {format: "webp", quality: 80},
+        audio: {format: "opus", bitrate: 48}, exclude: ["Assets/ui/**"]}}}));
+    const artifact = join(parent, "artifact");
+    const build = (...extra: string[]) => run(["build", projectPath, "--artifact-only",
+      "--output", artifact, "--packager", packager, ...extra]);
+    const logged = async () => (await readFile(calls, "utf8")).trim().split("\n")
+      .map((line) => JSON.parse(line) as {images: unknown; audio: unknown; jobs: string[]});
+    const original = await readFile(join(root, "Assets", "window.png"));
+
+    const first = build();
+    assert.equal(first.status, 0, first.stderr);
+    const [call] = await logged();
+    assert.deepEqual(call!.images, {lossless: false, quality: 80, effort: 4});
+    assert.deepEqual(call!.audio, {codec: "opus", bitrate: 48000});
+    assert.deepEqual(call!.jobs.map((path) => path.slice(root.length + 1)).sort(), [
+      "Assets/extra/broken.png", "Assets/extra/grow.png", "Assets/guide.png", "Assets/theme.ogg",
+      "Assets/window.png"]);
+    const stored = await readFile(join(artifact, "Assets", "window.png"));
+    assert.deepEqual(stored, Buffer.concat([Buffer.from("WEBP"), original.subarray(0, 8)]),
+      "the logical path keeps its name and holds the smaller encoding");
+    assert.equal((await readFile(join(artifact, "Assets", "theme.ogg"))).subarray(0, 4).toString(), "WEBP");
+    for (const kept of ["Assets/extra/grow.png", "Assets/extra/broken.png", "Assets/ui/button.png"])
+      assert.deepEqual(await readFile(join(artifact, kept)), await readFile(join(root, kept)), kept);
+    assert.match(first.stderr, /"code":"PXCLI1231".*broken\.png/u);
+    const summary = first.stderr.split("\n").map((line) => {
+      try { return JSON.parse(line) as Record<string, unknown>; } catch { return {}; }
+    }).find((event) => event.code === "PXCLI1230");
+    assert.deepEqual(summary?.images, {files: 4, inputBytes: original.length +
+      (await stat(join(root, "Assets", "guide.png"))).size + 5 + 4096, outputBytes: 12 + 12 + 5 + 4096});
+
+    // Unchanged media comes from the cache, and the artifact is kept as is;
+    // only the failed file is tried again.
+    const second = build();
+    assert.equal(second.status, 0, second.stderr);
+    assert.deepEqual((await logged())[1]!.jobs.map((path) => path.slice(root.length + 1)),
+      ["Assets/extra/broken.png"]);
+    assert.match(second.stderr, /"phase":"reuse-artifact"/u);
+
+    // An edited file is encoded again and its stale cache entry is dropped.
+    const cacheEntries = async () => (await readdir(join(root, ".prismatix", "transcode-cache"),
+      {recursive: true})).filter((name) => name.endsWith(".json")).length;
+    const entriesBefore = await cacheEntries();
+    await writeFile(join(root, "Assets", "window.png"), Buffer.concat([original, Buffer.from("x")]));
+    const third = build();
+    assert.equal(third.status, 0, third.stderr);
+    assert.deepEqual((await logged())[2]!.jobs.map((path) => path.slice(root.length + 1)).sort(),
+      ["Assets/extra/broken.png", "Assets/window.png"]);
+    assert.equal(await cacheEntries(), entriesBefore);
+
+    const plain = build("--no-transcode");
+    assert.equal(plain.status, 0, plain.stderr);
+    assert.equal((await logged()).length, 3, "--no-transcode never calls the encoder");
+    assert.deepEqual(await readFile(join(artifact, "Assets", "window.png")),
+      await readFile(join(root, "Assets", "window.png")));
+
+    await writeFile(projectPath, JSON.stringify({...manifest,
+      distribution: {transcode: {images: {format: "avif"}}}}));
+    const invalid = build();
+    assert.notEqual(invalid.status, 0);
+    assert.match(invalid.stderr, /distribution\.transcode\.images\.format must be webp/u);
+  } finally { await rm(parent, {recursive: true, force: true}); }
+});
+
 function arm64Elf(): Buffer {
   const header = Buffer.alloc(64);
   header.writeUInt32BE(0x7f454c46, 0);
