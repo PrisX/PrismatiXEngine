@@ -402,6 +402,7 @@ function(prismatix_add_player target qa_hooks)
     set(_player_sources
         Applications/PlayerMain.cpp
         Applications/Player/PlayerApp.cpp
+        Applications/Player/PlayerQaJourneys.cpp
     )
     if(ANDROID)
         # UNVERIFIED on a device. SDL's Java glue (SDLActivity) loads the

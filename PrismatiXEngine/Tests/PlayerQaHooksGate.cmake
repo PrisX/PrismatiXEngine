@@ -6,7 +6,9 @@ foreach(variable SHIPPED QA)
         message(FATAL_ERROR "Missing Player executable: ${${variable}}")
     endif()
 endforeach()
-file(STRINGS "${SHIPPED}" shipped REGEX "PRISMATIX_E2E_[A-Z_]+")
+# The scripted journeys (PlayerQaJourneys.cpp) and their project-specific
+# route names must not ship either.
+file(STRINGS "${SHIPPED}" shipped REGEX "PRISMATIX_E2E_[A-Z_]+|flowchart-yoshino|UI routes E2E")
 if(shipped)
     message(FATAL_ERROR "PrismatiXPlayer still contains QA hooks: ${shipped}")
 endif()
