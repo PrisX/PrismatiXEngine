@@ -14,4 +14,13 @@ public class PrismatiXActivity extends SDLActivity {
     protected String[] getLibraries() {
         return new String[] {"main"};
     }
+
+    /**
+     * The manifest's screenOrientation (distribution.android.orientation)
+     * decides. SDL would otherwise switch a resizable window to FULL_USER
+     * and let a landscape game turn portrait.
+     */
+    @Override
+    public void setOrientationBis(int w, int h, boolean resizable, String hint) {
+    }
 }
