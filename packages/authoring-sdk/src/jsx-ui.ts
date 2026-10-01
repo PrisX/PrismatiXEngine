@@ -235,6 +235,8 @@ export interface ImageProps extends UiNodeProps {
   readonly scaleMode?: "Stretch" | "Fit" | "Fill" | "Original";
   readonly lockAspectRatio?: boolean;
   readonly opacity?: number;
+  /** Atlas cell `[x, y, width, height]` in image pixels; placed like a whole image of that size. */
+  readonly region?: readonly [x: number, y: number, width: number, height: number];
 }
 
 /** A layered, time-sampled .pxmotion clip rendered inside a UI layout box. */
@@ -697,13 +699,17 @@ export function ColorRect(props: ColorRectProps): UiElement {
 }
 
 export function Image(props: ImageProps): UiElement {
-  const {path, scaleMode, lockAspectRatio, opacity, ...rest} = props;
+  const {path, scaleMode, lockAspectRatio, opacity, region, ...rest} = props;
+  if (region !== undefined && region.some((value) => !Number.isFinite(value) || value < 0))
+    throw new TypeError(`Image ${props.name ?? ""} region needs four non-negative numbers`);
   return node("image", "TextureRect", {...rest, runtimeProperties: {
     ...props.runtimeProperties,
     ...(path === undefined ? {} : {path}),
     ...(scaleMode === undefined ? {} : {scaleMode}),
     ...(lockAspectRatio === undefined ? {} : {lockAspectRatio}),
     ...(opacity === undefined ? {} : {opacity}),
+    ...(region === undefined ? {} : {region: {type: "rect", x: region[0], y: region[1],
+      width: region[2], height: region[3]}}),
   }});
 }
 

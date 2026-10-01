@@ -282,9 +282,14 @@ public:
     [[nodiscard]] VerticalTextAlignment VerticalAlignment() const { return m_verticalAlignment; }
     void SetLockAspectRatio(bool value) { m_lockAspectRatio=value; }
     [[nodiscard]] bool LockAspectRatio() const { return m_lockAspectRatio; }
+    // A sub-rectangle of the image in source pixels (an atlas cell); an empty
+    // rectangle shows the whole image.
+    void SetRegion(Rect value) { m_region = value; }
+    [[nodiscard]] Rect Region() const { return m_region; }
 protected:
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
 private:
+    Rect m_region{};
     std::string m_path;
     std::string m_displayPath;
     SourceLoader m_loader;

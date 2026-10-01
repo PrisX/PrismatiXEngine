@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {Control, Group, Radio, Scene, Slider, Text, TextureButton, Toggle, compileJsxUi} from "../src/index.js";
+import {Control, Group, Image, Radio, Scene, Slider, Text, TextureButton, Toggle, compileJsxUi} from "../src/index.js";
 import {jsx, jsxs, type UiElement} from "../src/jsx-runtime.js";
 
 function compiled(children: readonly UiElement[]) {
@@ -157,4 +157,12 @@ test("typed action builders produce the Player's action ids and argument keys", 
   const node = compiled([jsx(TextureButton, {name: "Quick", skin: "Assets/UI/qsave",
     position: [0, 0], size: [96, 47], action: actions.save.quick})]);
   assert.deepEqual(node("Quick").onClick, {id: "save.quick", arguments: {}});
+});
+
+test("Image region selects an atlas cell", () => {
+  const node = compiled([jsx(Image, {name: "VoicePortrait", path: "Assets/conf/char.png",
+    region: [208, 192, 208, 96], position: [0, 0], size: [208, 96], scaleMode: "Original"})]);
+  assert.deepEqual(node("VoicePortrait").runtimeProperties.region,
+    {type: "rect", x: 208, y: 192, width: 208, height: 96});
+  assert.throws(() => jsx(Image, {name: "Bad", path: "a.png", region: [0, 0, -1, 4]}), /non-negative/u);
 });

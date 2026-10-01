@@ -727,6 +727,19 @@ Status RegisterBuiltinUITypes() {
     textureReference.editor.resourceFilter = "image";
     texture.properties.push_back(std::move(textureReference));
     auto scaleMode=StringProperty("scaleMode","Display",[](const Object& o){switch(As<TextureRect>(o)->ScaleMode()){case TextureScaleMode::Fit:return std::string("Fit");case TextureScaleMode::Fill:return std::string("Fill");case TextureScaleMode::Original:return std::string("Original");default:return std::string("Stretch");}},[](Object& o,std::string v){if(v=="Stretch")As<TextureRect>(o)->SetScaleMode(TextureScaleMode::Stretch);else if(v=="Fit")As<TextureRect>(o)->SetScaleMode(TextureScaleMode::Fit);else if(v=="Fill")As<TextureRect>(o)->SetScaleMode(TextureScaleMode::Fill);else if(v=="Original")As<TextureRect>(o)->SetScaleMode(TextureScaleMode::Original);else return TypeError("scaleMode expects Stretch, Fit, Fill, or Original");return Status::Ok();});scaleMode.editor.displayName="Scale mode";scaleMode.editor.enumChoices={"Stretch","Fit","Fill","Original"};texture.properties.push_back(std::move(scaleMode));
+    PropertyInfo textureRegion{"region", "Content", VariantType::Rect,
+        PropertyFlags::Editable | PropertyFlags::Serializable | PropertyFlags::Bindable, Variant(Rect{}),
+        [](const Object& o) { return Variant(As<TextureRect>(o)->Region()); },
+        [](Object& o, const Variant& v) {
+            const auto* rect = v.TryGet<Rect>();
+            if (!rect || rect->x < 0 || rect->y < 0 || rect->w < 0 || rect->h < 0)
+                return TypeError("region expects a non-negative Rect in image pixels");
+            As<TextureRect>(o)->SetRegion(*rect);
+            return Status::Ok();
+        }};
+    textureRegion.editor.displayName = "Region";
+    textureRegion.editor.description = "Atlas cell in image pixels; empty shows the whole image.";
+    texture.properties.push_back(std::move(textureRegion));
     texture.properties.push_back(BoolProperty("lockAspectRatio","Layout",[](const Object& o){return As<TextureRect>(o)->LockAspectRatio();},[](Object& o,bool v){As<TextureRect>(o)->SetLockAspectRatio(v);return Status::Ok();}));
     auto textureH=StringProperty("horizontalAlignment","Display",[](const Object& o){switch(As<TextureRect>(o)->HorizontalAlignment()){case HorizontalTextAlignment::Left:return std::string("Left");case HorizontalTextAlignment::Right:return std::string("Right");default:return std::string("Center");}},[](Object& o,std::string v){if(v=="Left")As<TextureRect>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Left);else if(v=="Center")As<TextureRect>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Center);else if(v=="Right")As<TextureRect>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Right);else return TypeError("horizontalAlignment expects Left, Center, or Right");return Status::Ok();});textureH.editor.displayName="Horizontal alignment";textureH.editor.enumChoices={"Left","Center","Right"};texture.properties.push_back(std::move(textureH));
     auto textureV=StringProperty("verticalAlignment","Display",[](const Object& o){switch(As<TextureRect>(o)->VerticalAlignment()){case VerticalTextAlignment::Top:return std::string("Top");case VerticalTextAlignment::Bottom:return std::string("Bottom");default:return std::string("Center");}},[](Object& o,std::string v){if(v=="Top")As<TextureRect>(o)->SetVerticalAlignment(VerticalTextAlignment::Top);else if(v=="Center")As<TextureRect>(o)->SetVerticalAlignment(VerticalTextAlignment::Center);else if(v=="Bottom")As<TextureRect>(o)->SetVerticalAlignment(VerticalTextAlignment::Bottom);else return TypeError("verticalAlignment expects Top, Center, or Bottom");return Status::Ok();});textureV.editor.displayName="Vertical alignment";textureV.editor.enumChoices={"Top","Center","Bottom"};texture.properties.push_back(std::move(textureV));

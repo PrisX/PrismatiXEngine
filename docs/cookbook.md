@@ -740,6 +740,11 @@ about four hand-written state images that `skin` would derive (`PXSDKJSX1102`):
   showTransition={{seconds: 0.2, offset: [0, -50]}} hideTransition={{seconds: 0.2}} />
 ```
 
+`<Image path="Assets/UI/conf/char.png" region={[208, 192, 208, 96]} />` shows
+one cell of an atlas (in image pixels) as if it were a whole image of that
+size, so sprite sheets need neither pre-cut files nor a clipping group with a
+negative offset.
+
 `visibleWhen="profileFlags.cleared"` and `enabledWhen="!saveLoad.page1"` bind
 one condition each, so a helper can pass either without one `bind` object
 replacing the other. `tooltip={<Image path="Assets/UI/help-save.png"

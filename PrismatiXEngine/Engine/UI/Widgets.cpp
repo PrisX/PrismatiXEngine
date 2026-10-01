@@ -657,6 +657,29 @@ void TextureRect::DrawSelf(graphics::Renderer2D& renderer, const Theme&) {
         }
         renderer.PopClip();
     } else if (!m_displayPath.empty() && renderer.ImageReady(m_displayPath)) {
+        if (m_region.w > 0 && m_region.h > 0) {
+            // An atlas cell is placed like a whole image of the cell's size.
+            const Rect bounds = LayoutRect();
+            float scaleX = bounds.w / m_region.w;
+            float scaleY = bounds.h / m_region.h;
+            if (m_scaleMode == TextureScaleMode::Fit) scaleX = scaleY = std::min(scaleX, scaleY);
+            else if (m_scaleMode == TextureScaleMode::Fill) scaleX = scaleY = std::max(scaleX, scaleY);
+            else if (m_scaleMode == TextureScaleMode::Original) scaleX = scaleY = 1.0f;
+            const float width = m_region.w * scaleX;
+            const float height = m_region.h * scaleY;
+            float x = bounds.x, y = bounds.y;
+            if (m_scaleMode != TextureScaleMode::Stretch) {
+                if (m_horizontalAlignment == HorizontalTextAlignment::Center) x += (bounds.w - width) * 0.5f;
+                else if (m_horizontalAlignment == HorizontalTextAlignment::Right) x += bounds.w - width;
+                if (m_verticalAlignment == VerticalTextAlignment::Center) y += (bounds.h - height) * 0.5f;
+                else if (m_verticalAlignment == VerticalTextAlignment::Bottom) y += bounds.h - height;
+            }
+            renderer.PushClip(bounds);
+            renderer.DrawImageRegion(m_displayPath, m_region, {x, y, width, height},
+                                     static_cast<std::uint8_t>(m_opacity * 255.0f));
+            renderer.PopClip();
+            return;
+        }
         renderer.DrawImageInRect(m_displayPath,LayoutRect(),ToScaleMode(m_scaleMode),
             Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),static_cast<std::uint8_t>(m_opacity*255.0f));
     }
