@@ -3,6 +3,14 @@
   "$id":"https://prismatix.dev/contracts/project.schema.json",
   "type":"object","additionalProperties":false,
   "required":["format","schemaRevision","id","name","version","contentVersion","saveVersion","resolution","entry","defaultLocale","supportedLocales","storyIndex","gameCatalog","extensions","uiEntryPoints"],
+  "$defs":{
+    "profileCondition":{"oneOf":[
+      {"type":"string","minLength":1,"maxLength":256},
+      {"type":"object","additionalProperties":false,"required":["all"],"properties":{"all":{"type":"array","minItems":1,"maxItems":64,"items":{"$ref":"#/$defs/profileCondition"}}}},
+      {"type":"object","additionalProperties":false,"required":["any"],"properties":{"any":{"type":"array","minItems":1,"maxItems":64,"items":{"$ref":"#/$defs/profileCondition"}}}},
+      {"type":"object","additionalProperties":false,"required":["not"],"properties":{"not":{"$ref":"#/$defs/profileCondition"}}}
+    ]}
+  },
   "properties":{
     "format":{"const":"PrismatiXProject"},"schemaRevision":{"const":2},
     "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
@@ -28,7 +36,17 @@
       "player.uiData":{"type":"object","maxProperties":256,"propertyNames":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$","maxLength":512},"additionalProperties":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}},
       "authoring.uiContract":{"type":"object","additionalProperties":false,"required":["format","schemaRevision","roots"],"properties":{"format":{"const":"PrismatiXUiContract"},"schemaRevision":{"const":1},"roots":{"type":"array","maxItems":256,"uniqueItems":true,"items":{"type":"string","maxLength":512}},"values":{"type":"object","maxProperties":1024,"propertyNames":{"type":"string","maxLength":512},"additionalProperties":{"enum":["null","boolean","integer","number","string","object","array"]}},"formatters":{"type":"object","maxProperties":128,"additionalProperties":{"type":"object","additionalProperties":false,"required":["input","output"],"properties":{"input":{"enum":["null","boolean","integer","number","string","object","array"]},"output":{"enum":["null","boolean","integer","number","string","object","array"]}}}}}},
       "authoring.actionContract":{"type":"object","additionalProperties":false,"required":["format","schemaRevision","actions"],"properties":{"format":{"const":"PrismatiXActionContract"},"schemaRevision":{"const":1},"actions":{"type":"array","maxItems":256,"items":{"type":"object","additionalProperties":false,"required":["id","parameters","safety"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"parameters":{"type":"array","maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["name","type"],"properties":{"name":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"type":{"enum":["boolean","integer","number","string","resource"]},"required":{"type":"boolean"}}}},"safety":{"$ref":"https://prismatix.dev/contracts/extension.schema.json#/$defs/safety"}}}}}},
-      "player.titleBgm":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
+      "player.titleBgm":{"oneOf":[{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["path"],"properties":{"when":{"$ref":"#/$defs/profileCondition"},"path":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"}}}}]},
+      "player.titleBgmAfter":{"type":"object","additionalProperties":false,"required":["flag","path"],"properties":{"flag":{"type":"string","minLength":1,"maxLength":256},"path":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"}}},
+      "player.profileUiData":{"type":"object","maxProperties":256,"propertyNames":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$","maxLength":512},"additionalProperties":{"oneOf":[{"$ref":"#/$defs/profileCondition"},{"type":"object","additionalProperties":false,"required":["cases"],"properties":{"cases":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["when","value"],"properties":{"when":{"$ref":"#/$defs/profileCondition"},"value":{"type":"integer"}}}},"default":{"type":"integer"}}}]}},
+      "player.musicTracks":{"type":"array","maxItems":256,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"}},
+      "player.fonts":{"type":"array","maxItems":64,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"}},
+      "player.uiFont":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
+      "player.saveLayout":{"type":"object","additionalProperties":false,"properties":{"pages":{"type":"integer","minimum":1,"maximum":100},"slotsPerPage":{"type":"integer","minimum":1,"maximum":32},"firstSlot":{"type":"integer","minimum":0,"maximum":999}}},
+      "player.defaultVolumes":{"type":"object","additionalProperties":false,"properties":{"master":{"type":"number","minimum":0,"maximum":100},"bgm":{"type":"number","minimum":0,"maximum":100},"se":{"type":"number","minimum":0,"maximum":100},"voice":{"type":"number","minimum":0,"maximum":100}}},
+      "player.voiceProfiles":{"type":"object","additionalProperties":false,"properties":{"ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}},"fallbackByFilePrefix":{"type":"object","maxProperties":256,"propertyNames":{"type":"string","minLength":1,"maxLength":64},"additionalProperties":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}}}},
+      "player.dockArea":{"type":"object","additionalProperties":false,"properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number","minimum":0},"height":{"type":"number","minimum":0}}},
+      "player.choiceLayout":{"type":"object","additionalProperties":false,"properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number","minimum":0},"height":{"type":"number","minimum":0},"halfPitch":{"type":"number"},"offsets":{"type":"object","maxProperties":64,"propertyNames":{"pattern":"^[1-9][0-9]?$"},"additionalProperties":{"type":"array","maxItems":64,"items":{"type":"number"}}}}},
       "player.touchProfile":{"enum":["auto","on","off"]},
       "player.uiHoverSound":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
       "player.uiActivateSound":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},

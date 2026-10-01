@@ -322,14 +322,14 @@ test("compileProject validates extension UI Actions and packages typed resource 
     capabilities: ["ui", "audio"],
     safety: {previewSafe: true, deterministic: true, seekSafe: true,
       rollbackSafe: true}, commands: [],
-    actions: [{id: "music.play", parameters: [
+    actions: [{id: "jukebox.play", parameters: [
       {name: "media", type: "resource", required: true},
       {name: "volume", type: "number", range: {minimum: 0, maximum: 1}},
     ]}],
   };
   const uiWithAction = (arguments_: Record<string, unknown>) =>
     ({...ui, nodes: [{...ui.nodes[0],
-      onClick: {id: "music.play", arguments: arguments_}}]});
+      onClick: {id: "jukebox.play", arguments: arguments_}}]});
   const compile = (arguments_: Record<string, unknown>, manifest: unknown = extension) => compileProject({
     project: {...project, extensions: [extensionPath]},
     documents: {"Story/story.pxindex": storyIndex,
@@ -370,7 +370,7 @@ test("compileProject validates extension UI Actions and packages typed resource 
     '"Assets/Audio/theme.ogg"');
 
   const defaulted = compile({volume: 0.5}, {...extension, actions: [{
-    id: "music.play", parameters: [
+    id: "jukebox.play", parameters: [
       {name: "media", type: "resource", required: true,
         default: "Assets/Audio/default.ogg"},
       {name: "volume", type: "number", range: {minimum: 0, maximum: 1}},
@@ -467,7 +467,7 @@ test("compileProject collects UI runtime texture dependencies", () => {
     nodes: [{
       ...ui.nodes[0],
       runtimeType: "TextureButton",
-      onClick: {id: "music.play", arguments: {
+      onClick: {id: "jukebox.play", arguments: {
         argument: "Assets/Audio/theme.wav",
         label: "chapter/route.without-a-resource-extension/",
       }},
@@ -514,7 +514,7 @@ test("missing UI dependencies point to their authored values only for matching s
   const authored = {...ui, nodes: [{...ui.nodes[0],
     runtimeType: "TextureButton",
     runtimeProperties: {normalPath: "Assets/UI/missing.png"},
-    onClick: {id: "music.play", arguments: {
+    onClick: {id: "jukebox.play", arguments: {
       argument: "Assets/Audio/missing.ogg"}},
   }]};
   const source = JSON.stringify(authored, null, 2);
@@ -820,6 +820,69 @@ test("compileProject checks Player option bindings and confirmations", () => {
   assert.equal(twice.valid, true, JSON.stringify(twice.diagnostics));
   assert.deepEqual(twice.diagnostics.filter((item) => item.code === "PXBUILD1105")
     .map((item) => item.severity), ["warning"]);
+});
+
+test("compileProject checks profile rules, flags replaced settings and unknown Player keys", () => {
+  const compile = (settings: unknown, resourceExists?: (path: string) => boolean) => compileProject({
+    project: {...project, settings},
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+    ...(resourceExists === undefined ? {} : {resourceExists}),
+  });
+  const settings = {
+    "player.titleBgm": [{when: {all: ["clear_a", {not: "clear_b"}]}, path: "Assets/Music/after.ogg"},
+      {path: "Assets/Music/one.ogg"}],
+    "player.profileUiData": {
+      "title.extraOpen": {any: ["clear_a", "clear_b"]},
+      "title.ending": {cases: [{when: "clear_b", value: 2}, {when: "clear_a", value: 1}], default: 0},
+    },
+  };
+  const valid = compile(settings);
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  assert.deepEqual(valid.diagnostics.filter((item) => item.severity === "warning"), []);
+  const packaged = new Set(valid.artifact?.dependencies.map((dependency) => dependency.source));
+  assert.ok(packaged.has("Assets/Music/after.ogg"));
+  const missing = compile(settings, (path) => path !== "Assets/Music/after.ogg");
+  assert.ok(missing.diagnostics.some((item) => item.code === "PXBUILD1044" &&
+    item.path === "Assets/Music/after.ogg"), JSON.stringify(missing.diagnostics));
+  for (const invalid of [
+    {"player.profileUiData": {"title.x": {every: ["a"]}}},
+    {"player.profileUiData": {"title.x": {cases: [{when: "a"}]}}},
+    {"player.titleBgm": [{when: "a"}]},
+    {"player.saveLayout": {pages: 0}},
+  ]) assert.equal(compile(invalid).valid, false, JSON.stringify(invalid));
+  const old = compile({"player.titleBgmAfter": {flag: "clear_a", path: "Assets/Music/after.ogg"},
+    "player.choiceLayout": {x: 0, y: 400, width: 1280, height: 60, halfPitch: 40},
+    "player.titelBgm": "Assets/Music/one.ogg"});
+  assert.equal(old.valid, true, JSON.stringify(old.diagnostics));
+  assert.deepEqual(old.diagnostics.map(({code, severity}) => [code, severity]).sort(), [
+    ["PXBUILD1109", "warning"], ["PXBUILD1109", "warning"], ["PXBUILD1110", "warning"]]);
+  assert.match(old.diagnostics.find((item) => item.code === "PXBUILD1110")!.message,
+    /did you mean player\.titleBgm\?/u);
+});
+
+test("every player.* key the C++ Player reads is in the project schema", async (t) => {
+  const {readFile} = await import("node:fs/promises");
+  const {contractSchemas} = await import("../src/generated/contracts.js");
+  let source: string;
+  try {
+    source = await readFile(new URL(
+      "../../../../PrismatiXEngine/Applications/Player/PlayerSettings.cpp", import.meta.url), "utf8");
+  } catch {
+    t.skip("engine sources are not beside this package");
+    return;
+  }
+  const read = new Set([...source.matchAll(/find\("(player\.[A-Za-z]+)"\)/gu)].map((match) => match[1]!));
+  for (const match of source.matchAll(/"(player\.ui[A-Za-z]+Sound)"/gu)) read.add(match[1]!);
+  const schema = contractSchemas["project.schema.json"] as {
+    properties: {settings: {properties: Record<string, unknown>}};
+  };
+  const declared = new Set(Object.keys(schema.properties.settings.properties)
+    .filter((key) => key.startsWith("player.")));
+  assert.deepEqual([...read].sort(), [...declared].sort());
 });
 
 test("compileProject validates portraits referenced outside Story and collects every layer", () => {

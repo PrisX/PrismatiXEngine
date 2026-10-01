@@ -2,6 +2,7 @@
 
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfile.h"
+#include "Engine/Progression/ProfileRules.h"
 #include "Engine/Progression/SaveSystem.h"
 #include "Engine/SDK/Motion.h"
 #include "Engine/Script/ScriptHost.h"
@@ -98,6 +99,7 @@ private:
     void FinishBootPresentation();
     [[nodiscard]] const std::string& TitleBgmPath() const;
     void RefreshTitleProgressUi();
+    [[nodiscard]] progress::ProfileFlagReader ProfileFlags() const;
     [[nodiscard]] bool TitleVisualsReady();
     void SplashFrame(float dt);
     void PlayMotionMarker(const sdk::MotionAudioMarker& marker);
@@ -311,9 +313,10 @@ private:
     std::vector<std::string> m_supportedLocales;
     std::unordered_map<std::string, std::string> m_uiAssets;
     std::unordered_map<std::string, std::string> m_uiComponents;
-    std::string m_titleBgm;
-    std::string m_titleBgmAfterFlag;
-    std::string m_titleBgmAfterPath;
+    // player.titleBgm rules, first match wins (player.titleBgmAfter adds one).
+    std::vector<progress::ProfileChoice> m_titleBgmRules;
+    // player.profileUiData: UI data computed from global profile flags.
+    std::vector<progress::ProfileUiDatum> m_profileUiData;
     std::vector<std::string> m_titleVoices;
     std::string m_defaultUiHoverSound;
     std::string m_defaultUiActivateSound;

@@ -697,42 +697,30 @@ void PlayerApp::RecordScriptVideoTerminal(const std::uint64_t handle,
 }
 
 const std::string& PlayerApp::TitleBgmPath() const {
-    if (!m_titleBgmAfterPath.empty() &&
-        ProfileFlagEnabled(m_profile.Variable(m_titleBgmAfterFlag)))
-        return m_titleBgmAfterPath;
-    return m_titleBgm;
+    static const std::string none;
+    const auto* path = progress::FirstMatchingChoice(m_titleBgmRules, ProfileFlags());
+    return path ? *path : none;
 }
 
-void PlayerApp::RefreshTitleProgressUi() {
-    const auto flag = [this](const char* name) {
-        return ProfileFlagEnabled(m_profile.Variable(name));
-    };
-    // titleflag.lua chooses the most advanced chapter milestone first.
-    const int tier = flag("g_clear_5") ? 7 : flag("g_clear_4") ? 6 :
-        flag("g_clear_ani") ? 5 : flag("g_clear_2") ? 4 :
-        flag("g_clear_1") ? 3 : flag("g_clearop") ? 2 : 0;
-    const std::array chapterKeys = {"op", "i", "ii", "iii", "iv", "v", "vi"};
-    const std::array thresholds = {2, 2, 3, 4, 5, 6, 7};
-    for (std::size_t index = 0; index < chapterKeys.size(); ++index)
-        (void)m_ui.UpdateUiData(
-            std::string("title.chapter.") + chapterKeys[index],
-            Variant(tier >= thresholds[index]));
+progress::ProfileFlagReader PlayerApp::ProfileFlags() const {
+    return [this](const std::string& name) { return m_profile.Variable(name); };
+}
 
-    const int variant = flag("g_clear_mar") && flag("g_clear_6") && flag("g_append") ? 9 :
-        (flag("g_clear_mar") && flag("g_start_ani")) ||
-        (flag("g_clear_ani") && flag("g_start_mar")) ? 8 :
-        !flag("g_clear_mar") && flag("g_start_ani") ? 7 :
-        (flag("g_clear_zyp") && flag("g_start_mar")) ||
-        (flag("g_clear_mar") && flag("g_start_zyp")) ? 6 :
-        !flag("g_clear_zyp") && flag("g_start_mar") ? 5 :
-        !flag("g_clear_mar") && flag("g_start_zyp") ? 4 :
-        (flag("g_clear_oly") && flag("g_start_pic")) ||
-        (flag("g_clear_pic") && flag("g_start_oly")) ? 3 :
-        !flag("g_clear_oly") && flag("g_start_pic") ? 2 :
-        !flag("g_clear_pic") && flag("g_start_oly") ? 1 : 0;
-    for (int index = 1; index <= 9; ++index)
-        (void)m_ui.UpdateUiData("title.chapter3Case" + std::to_string(index),
-                                Variant(index == variant));
+// player.profileUiData: title-screen states and the like, recomputed from
+// the global profile whenever the title is shown.
+void PlayerApp::RefreshTitleProgressUi() {
+    const auto flags = ProfileFlags();
+    for (const auto& datum : m_profileUiData) {
+        const std::int64_t value = datum.Evaluate(flags);
+        if (datum.condition) {
+            (void)m_ui.UpdateUiData(datum.key, Variant(value != 0));
+            continue;
+        }
+        (void)m_ui.UpdateUiData(datum.key, Variant(value));
+        for (const std::int64_t candidate : datum.Values())
+            (void)m_ui.UpdateUiData(datum.key + ".is" + std::to_string(candidate),
+                                    Variant(candidate == value));
+    }
 }
 
 // Locale strings are UI data too: a TSX `textKey="save.error"` binds its text
@@ -1647,20 +1635,6 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     for (int page = 1; page <= m_savePages; ++page) {
         if (const Status defined = m_ui.DefineUiData(
                 "saveLoad.page" + std::to_string(page), Variant(page == 1)); !defined) {
-            for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
-            return false;
-        }
-    }
-    for (const char* chapter : {"op", "i", "ii", "iii", "iv", "v", "vi"}) {
-        if (const Status defined = m_ui.DefineUiData(
-                std::string("title.chapter.") + chapter, Variant(false)); !defined) {
-            for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
-            return false;
-        }
-    }
-    for (int variant = 1; variant <= 9; ++variant) {
-        if (const Status defined = m_ui.DefineUiData(
-                "title.chapter3Case" + std::to_string(variant), Variant(false)); !defined) {
             for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
             return false;
         }

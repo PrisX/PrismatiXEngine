@@ -1105,6 +1105,10 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
         PrismatiX.Unit.Platform.TouchGestures
         "unit;platform;input;touch;android" PrismatiXRuntime)
     prismatix_add_simple_test(
+        PrismatiXProfileRulesTests
+        Tests/Unit/Runtime/ProfileRulesTests.cpp
+        PrismatiX.Unit.Runtime.ProfileRules "unit;runtime;settings" PrismatiXRuntime)
+    prismatix_add_simple_test(
         PrismatiXJobSystemTests
         Tests/Unit/Core/JobSystemTests.cpp
         PrismatiX.Unit.Core.JobSystem "unit;core;jobs;threads" PrismatiXRuntime)

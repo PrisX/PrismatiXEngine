@@ -2386,6 +2386,63 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     "type": "object"
   },
   "project.schema.json": {
+    "$defs": {
+      "profileCondition": {
+        "oneOf": [
+          {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "all": {
+                "items": {
+                  "$ref": "#/$defs/profileCondition"
+                },
+                "maxItems": 64,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "all"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "any": {
+                "items": {
+                  "$ref": "#/$defs/profileCondition"
+                },
+                "maxItems": 64,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "any"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "not": {
+                "$ref": "#/$defs/profileCondition"
+              }
+            },
+            "required": [
+              "not"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
     "$id": "https://prismatix.dev/contracts/project.schema.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -2764,6 +2821,43 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             ],
             "type": "object"
           },
+          "player.choiceLayout": {
+            "additionalProperties": false,
+            "properties": {
+              "halfPitch": {
+                "type": "number"
+              },
+              "height": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "offsets": {
+                "additionalProperties": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "maxItems": 64,
+                  "type": "array"
+                },
+                "maxProperties": 64,
+                "propertyNames": {
+                  "pattern": "^[1-9][0-9]?$"
+                },
+                "type": "object"
+              },
+              "width": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              }
+            },
+            "type": "object"
+          },
           "player.confirmations": {
             "additionalProperties": {
               "additionalProperties": false,
@@ -2795,6 +2889,66 @@ export const contractSchemas: Readonly<Record<string, object>> = {
               ]
             },
             "type": "object"
+          },
+          "player.defaultVolumes": {
+            "additionalProperties": false,
+            "properties": {
+              "bgm": {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "number"
+              },
+              "master": {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "number"
+              },
+              "se": {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "number"
+              },
+              "voice": {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "type": "object"
+          },
+          "player.dockArea": {
+            "additionalProperties": false,
+            "properties": {
+              "height": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "width": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              }
+            },
+            "type": "object"
+          },
+          "player.fonts": {
+            "items": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "player.musicTracks": {
+            "items": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            },
+            "maxItems": 256,
+            "type": "array"
           },
           "player.options": {
             "additionalProperties": {
@@ -2943,6 +3097,76 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             },
             "type": "object"
           },
+          "player.profileUiData": {
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/profileCondition"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cases": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "value": {
+                            "type": "integer"
+                          },
+                          "when": {
+                            "$ref": "#/$defs/profileCondition"
+                          }
+                        },
+                        "required": [
+                          "when",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 64,
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "default": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "cases"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "maxProperties": 256,
+            "propertyNames": {
+              "maxLength": 512,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "player.saveLayout": {
+            "additionalProperties": false,
+            "properties": {
+              "firstSlot": {
+                "maximum": 999,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "pages": {
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "slotsPerPage": {
+                "maximum": 32,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
           "player.splashes": {
             "items": {
               "additionalProperties": false,
@@ -3011,7 +3235,49 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "type": "array"
           },
           "player.titleBgm": {
-            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            "oneOf": [
+              {
+                "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+              },
+              {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "path": {
+                      "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+                    },
+                    "when": {
+                      "$ref": "#/$defs/profileCondition"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 64,
+                "minItems": 1,
+                "type": "array"
+              }
+            ]
+          },
+          "player.titleBgmAfter": {
+            "additionalProperties": false,
+            "properties": {
+              "flag": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "path": {
+                "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+              }
+            },
+            "required": [
+              "flag",
+              "path"
+            ],
+            "type": "object"
           },
           "player.titleVoiceVariants": {
             "items": {
@@ -3047,8 +3313,39 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             },
             "type": "object"
           },
+          "player.uiFont": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+          },
           "player.uiHoverSound": {
             "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+          },
+          "player.voiceProfiles": {
+            "additionalProperties": false,
+            "properties": {
+              "fallbackByFilePrefix": {
+                "additionalProperties": {
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                  "type": "string"
+                },
+                "maxProperties": 256,
+                "propertyNames": {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "ids": {
+                "items": {
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                  "type": "string"
+                },
+                "maxItems": 256,
+                "type": "array",
+                "uniqueItems": true
+              }
+            },
+            "type": "object"
           }
         },
         "type": "object"
@@ -4973,7 +5270,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
   "motion.schema.json": "300c1bbdeb16abf4faa8014afa81800e8d72a1e7f1f6d06d309cf53ba2980f01",
   "portrait.schema.json": "658421c74dacc9d8247b64c6a00389c069b7516f57f863f399160161a1207f16",
-  "project.schema.json": "1fca62abb41564212ee1d02390ab235990ab7424e65c3c8e8f43f715a0d829fb",
+  "project.schema.json": "fe862007c26a6fcc6448ed731f87968a3889b69233863f204427aa069cf987e4",
   "runtime-ir.schema.json": "9ba844df82d20eee89b8d4fb178c03b4e386170bc251f2a7c2509ca2b0f948ee",
   "save-migration.schema.json": "b66062b76495dfec0ec9dc1a9c7f0bfc1c49967a5748b2a48f7e186c9cf8533e",
   "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",

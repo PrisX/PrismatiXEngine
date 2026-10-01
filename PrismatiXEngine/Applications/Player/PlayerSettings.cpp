@@ -9,6 +9,7 @@
 #include "Engine/IO/PackageVerifier.h"
 #include "Engine/Progression/AwaitedWork.h"
 #include "Engine/Progression/GlobalProfileStore.h"
+#include "Engine/Progression/ProfileRules.h"
 #include "Engine/Progression/UserDataLocation.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Script/ScriptFrameScheduler.h"
@@ -88,22 +89,78 @@ bool PlayerApp::ApplyPlayerSettings(const nlohmann::json& settingsObject) {
             return false;
         }
     }
-    if (const auto titleBgm = settings->find("player.titleBgm");
-        titleBgm != settings->end() && titleBgm->is_string()) {
-        const auto safe = SafeVfsRelativePath(titleBgm->get<std::string>());
-        if (safe && m_runtime.VFS().Exists(*safe)) m_titleBgm = *safe;
+    const auto badSetting = [](const char* key, std::string message) {
+        diag::Emit(diag::Diagnostic{.severity = diag::Severity::Fatal,
+                                    .code = "PXPLAYER5028",
+                                    .category = "Player.Settings",
+                                    .message = std::move(message),
+                                    .details = key});
+        return false;
+    };
+    const auto existingPath = [this](const nlohmann::json& value) -> std::optional<std::string> {
+        if (!value.is_string()) return std::nullopt;
+        auto safe = SafeVfsRelativePath(value.get<std::string>());
+        if (!safe || !m_runtime.VFS().Exists(*safe)) return std::nullopt;
+        return safe;
+    };
+    // player.titleBgm: a path, or rules [{"when"?: condition, "path"}].
+    if (const auto titleBgm = settings->find("player.titleBgm"); titleBgm != settings->end()) {
+        if (titleBgm->is_string()) {
+            if (auto path = existingPath(*titleBgm))
+                m_titleBgmRules.push_back({std::nullopt, std::move(*path)});
+        } else if (titleBgm->is_array() && titleBgm->size() <= 64) {
+            for (const auto& rule : *titleBgm) {
+                const auto path = rule.is_object() ? rule.find("path") : rule.end();
+                if (path == rule.end())
+                    return badSetting("player.titleBgm", "player.titleBgm rules need a path");
+                progress::ProfileChoice choice;
+                if (const auto when = rule.find("when"); when != rule.end()) {
+                    choice.when = progress::ParseProfileCondition(*when);
+                    if (!choice.when)
+                        return badSetting("player.titleBgm", "player.titleBgm has an invalid when condition");
+                }
+                if (auto existing = existingPath(*path)) {
+                    choice.value = std::move(*existing);
+                    m_titleBgmRules.push_back(std::move(choice));
+                }
+            }
+        } else {
+            return badSetting("player.titleBgm", "player.titleBgm must be a path or a list of rules");
+        }
     }
+    // Older single-flag form, checked before the other rules.
     if (const auto alternate = settings->find("player.titleBgmAfter");
         alternate != settings->end() && alternate->is_object()) {
         const auto flag = alternate->find("flag");
         const auto path = alternate->find("path");
-        if (flag != alternate->end() && flag->is_string() &&
-            path != alternate->end() && path->is_string()) {
-            const auto safe = SafeVfsRelativePath(path->get<std::string>());
-            if (safe && m_runtime.VFS().Exists(*safe)) {
-                m_titleBgmAfterFlag = flag->get<std::string>();
-                m_titleBgmAfterPath = *safe;
+        if (flag != alternate->end() && flag->is_string() && path != alternate->end())
+            if (auto existing = existingPath(*path))
+                m_titleBgmRules.insert(m_titleBgmRules.begin(),
+                    {progress::ParseProfileCondition(*flag), std::move(*existing)});
+    }
+    if (const auto data = settings->find("player.profileUiData"); data != settings->end()) {
+        if (!data->is_object() || data->size() > 256)
+            return badSetting("player.profileUiData", "player.profileUiData must be an object");
+        for (auto item = data->begin(); item != data->end(); ++item) {
+            auto datum = progress::ParseProfileUiDatum(item.key(), item.value());
+            if (!datum)
+                return badSetting("player.profileUiData",
+                                  "player.profileUiData." + item.key() + " is not a valid rule");
+            std::vector<std::pair<std::string, Variant>> defaults;
+            if (datum->condition) {
+                defaults.emplace_back(datum->key, Variant(false));
+            } else {
+                defaults.emplace_back(datum->key, Variant(datum->fallback));
+                for (const std::int64_t value : datum->Values())
+                    defaults.emplace_back(datum->key + ".is" + std::to_string(value),
+                                          Variant(value == datum->fallback));
             }
+            for (auto& [key, value] : defaults)
+                if (const Status defined = m_ui.DefineUiData(key, std::move(value)); !defined) {
+                    for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
+                    return false;
+                }
+            m_profileUiData.push_back(std::move(*datum));
         }
     }
     if (const auto tracks = settings->find("player.musicTracks");

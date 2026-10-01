@@ -10,6 +10,8 @@ import {createJsonSourceLocator, jsonPointerSpans} from "./json-source-spans.js"
 import {validateHostActionContract, validateUiActionUsage,
   type HostActionContract} from "./project-actions.js";
 import {validatePlayerUiBindings} from "./project-ui-bindings.js";
+import {closestName} from "./player-ui-contract.js";
+import {contractSchemas} from "./generated/contracts.js";
 import {createStoryPortraitIndex, type LayeredPortraitDocument,
   type StoryPortraitIndex} from "./portrait.js";
 import type {MotionDocument} from "./motion.js";
@@ -1243,6 +1245,34 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   // Every path the Player reads from settings must be packaged: a missing
   // music track stops the Player at boot, and a missing font or title theme
   // would otherwise be dropped silently in favour of the default.
+  const titleBgm = settings["player.titleBgm"];
+  if (Array.isArray(titleBgm))
+    for (const [index, rule] of titleBgm.entries())
+      if (rule !== null && typeof rule === "object" && !Array.isArray(rule))
+        addResourceRef((rule as Record<string, JsonValue>).path,
+          `settings.player.titleBgm[${index}].path`, projectPath,
+          `/settings/player.titleBgm/${index}/path`);
+  // Older shapes that still work but have a more general replacement.
+  const replacedSettings: Record<string, string> = {
+    "player.titleBgmAfter": "use player.titleBgm rules: [{\"when\": flag, \"path\": ...}, {\"path\": ...}]",
+    "player.choiceLayout": "set choiceLayout on the HUD's ItemsPlaced that lists dialogue.choices",
+    "player.dockArea": "put a DockArea control in the HUD",
+  };
+  for (const [key, replacement] of Object.entries(replacedSettings))
+    if (key in settings)
+      diagnostics.push({...locatedIssue("PXBUILD1109", `${key} is deprecated; ${replacement}`,
+        projectPath, `/settings/${pointerSegment(key)}`, key, `settings.${key}`),
+      severity: "warning"});
+  const knownPlayerSettings = new Set(Object.keys((contractSchemas["project.schema.json"] as {
+    properties: {settings: {properties: Record<string, unknown>}};
+  }).properties.settings.properties).filter((key) => key.startsWith("player.")));
+  for (const key of Object.keys(settings))
+    if (key.startsWith("player.") && !knownPlayerSettings.has(key)) {
+      const suggestion = closestName(key, [...knownPlayerSettings]);
+      diagnostics.push({...locatedIssue("PXBUILD1110",
+        `The Player does not read ${key}${suggestion === undefined ? "" : `; did you mean ${suggestion}?`}`,
+        projectPath, `/settings/${pointerSegment(key)}`, key, `settings.${key}`), severity: "warning"});
+    }
   for (const key of ["player.titleBgm", "player.uiHoverSound", "player.uiActivateSound",
     "player.uiCancelSound", "player.uiFont"]) {
     const value = settings[key];

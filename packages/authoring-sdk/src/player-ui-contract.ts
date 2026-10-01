@@ -99,6 +99,21 @@ function object(value: unknown): JsonObject | undefined {
     ? value as JsonObject : undefined;
 }
 
+// player.profileUiData publishes a boolean per condition, and an integer plus
+// `.is<N>` booleans per {cases} entry.
+function profileUiDataPaths(data: JsonObject): string[] {
+  return Object.entries(data).flatMap(([key, rule]) => {
+    const cases = object(rule)?.cases;
+    if (!Array.isArray(cases)) return [key];
+    const values = new Set([Number(object(rule)?.default ?? 0)]);
+    for (const item of cases) {
+      const value = object(item)?.value;
+      if (typeof value === "number") values.add(value);
+    }
+    return [key, ...[...values].map((value) => `${key}.is${value}`)];
+  });
+}
+
 function range(prefix: string, count: number): string[] {
   return Array.from({length: count}, (_, index) => `${prefix}${index + 1}`);
 }
@@ -125,8 +140,7 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
     ...["visible", "reset", "exit"].map((field) => `system.confirm.${field}`),
     ...range("settings.page", 4), ...range("replay.page", 4),
     ...range("saveLoad.page", Number.isSafeInteger(pages) && pages > 0 ? pages : 1),
-    ...["op", "i", "ii", "iii", "iv", "v", "vi"].map((chapter) => `title.chapter.${chapter}`),
-    ...range("title.chapter3Case", 9),
+    ...profileUiDataPaths(object(settings["player.profileUiData"]) ?? {}),
     ...Array.from({length: 24}, (_, index) =>
       `sceneUnlocked.scene${String(index + 1).padStart(2, "0")}`),
     ...stems.map((stem) => `musicUnlocked.${stem}`),
@@ -147,7 +161,8 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
   ]);
 }
 
-function closest(value: string, candidates: Iterable<string>): string | undefined {
+/** The candidate within three edits of `value`, for "did you mean" hints. */
+export function closestName(value: string, candidates: Iterable<string>): string | undefined {
   let best: string | undefined;
   let bestDistance = Infinity;
   for (const candidate of candidates) {
@@ -262,14 +277,14 @@ export function validatePlayerUiContract(input: PlayerUiContractInput,
           if (!itemFields[itemSource]!.includes(field))
             diagnostics.push({severity: "error", code: "PXBUILD1102",
               message: `${itemSource} items have no field ${field}` +
-                (closest(field, itemFields[itemSource]!) === undefined ? ""
-                  : `; did you mean ${closest(field, itemFields[itemSource]!)}?`),
+                (closestName(field, itemFields[itemSource]!) === undefined ? ""
+                  : `; did you mean ${closestName(field, itemFields[itemSource]!)}?`),
               path, details: `nodes[${index}].bindings.${property}:${bound}`});
           continue;
         }
         const root = bound.split(/[.[]/u)[0]!;
         if (!reservedRoots.has(root) || known.has(bound) || isAuthored(bound)) continue;
-        const suggestion = closest(bound, known);
+        const suggestion = closestName(bound, known);
         diagnostics.push({severity: "error", code: "PXBUILD1100",
           message: `The Player publishes no UI data at ${bound}` +
             (suggestion === undefined ? "" : `; did you mean ${suggestion}?`),
