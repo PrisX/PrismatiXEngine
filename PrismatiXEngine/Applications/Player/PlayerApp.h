@@ -170,9 +170,12 @@ private:
     bool m_profileDirty = false;
     bool m_profileUrgent = false;
     std::uint64_t m_profileDirtySince = 0;
-    std::future<bool> m_profileWrite;
-    std::future<bool> m_settingsWrite;
-    std::future<bool> m_saveWrite;
+    // Settings, profile and save writes share one strand: they run on the
+    // engine's worker pool one at a time, in the order they were requested.
+    jobs::JobSystem::Strand m_persistenceWrites;
+    jobs::Job<bool> m_profileWrite;
+    jobs::Job<bool> m_settingsWrite;
+    jobs::Job<bool> m_saveWrite;
     int m_saveWriteSlot = 0;
     bool m_settingsWritable = true;
     // Settings a fresh install and "reset" start from: engine defaults with the

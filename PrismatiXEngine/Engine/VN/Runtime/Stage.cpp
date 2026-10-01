@@ -214,7 +214,11 @@ const Stage::LayeredPortrait* Stage::ResolveLayeredPortrait(
     if(m_invalidLayeredPortraits.contains(path))return nullptr;
     std::optional<std::string> text;
     if(const auto read=m_portraitReads.find(path);read!=m_portraitReads.end()){
-        text=read->second.get();
+        try{
+            text=read->second.get();
+        }catch(const std::exception&){
+            text=m_assets.ReadTextAsset(path);
+        }
         m_portraitReads.erase(read);
     }else text=m_assets.ReadTextAsset(path);
     auto portrait=text ? sdk::ParseLayeredPortrait(*text) : std::nullopt;
@@ -241,8 +245,8 @@ void Stage::PreloadCharacter(const std::string& imagePath) {
        !m_invalidLayeredPortraits.contains(imagePath)){
         const auto read=m_portraitReads.find(imagePath);
         if(read==m_portraitReads.end()){
-            m_portraitReads.emplace(imagePath,std::async(std::launch::async,
-                [assets=&m_assets,imagePath]{return assets->ReadTextAsset(imagePath);}).share());
+            m_portraitReads.emplace(imagePath,jobs::JobSystem::Shared().Submit(
+                [assets=&m_assets,imagePath]{return assets->ReadTextAsset(imagePath);}));
             return;
         }
         if(read->second.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return;
@@ -522,8 +526,7 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
     }
     RuleState& rs = m_ruleState;
     try {
-        rs.preparing = std::async(
-            std::launch::async,
+        rs.preparing = jobs::JobSystem::Shared().Submit(
             [decode = m_assets.SurfaceDecoder(), oldBackgroundPath, rulePath, w, h,
              cachedMask]() {
                 return PrepareRuleTransition(decode, oldBackgroundPath, rulePath, w, h,
@@ -589,7 +592,12 @@ void Stage::FinishRulePreparation(const bool wait) {
     if (!rs.active || rs.ready || !rs.preparing.valid() ||
         (!wait && rs.preparing.wait_for(std::chrono::seconds(0)) != std::future_status::ready))
         return;
-    RulePreparation prepared = rs.preparing.get();
+    RulePreparation prepared;
+    try {
+        prepared = rs.preparing.get();
+    } catch (const std::exception& error) {
+        prepared.error = error.what();
+    }
     if (prepared.mask) {
         const std::string key = rs.rulePath + "@" + std::to_string(rs.w) + "x" +
                                 std::to_string(rs.h);
@@ -627,9 +635,10 @@ void Stage::FinishRulePreparation(const bool wait) {
 
 void Stage::EndRuleTransition() {
     if (m_ruleState.gpu) m_renderer.ReleaseRuleMask();
-    // A worker still decoding cannot be cancelled; retire it instead of
-    // blocking this frame in the future's destructor.
-    if (m_ruleState.preparing.valid())
+    // A preparation that has not started is cancelled. One already
+    // decoding is retired instead of blocking this frame until it ends.
+    if (m_ruleState.preparing.valid() && !m_ruleState.preparing.Cancel() &&
+        !m_ruleState.preparing.Ready())
         m_retiredRulePreparations.push_back(std::move(m_ruleState.preparing));
     m_ruleState = RuleState{};
 }
@@ -1564,9 +1573,8 @@ void Stage::Update(float dt) {
     m_renderer.SetCameraOffset(static_cast<int>(std::lround(m_cameraX + shakeX)),
                                static_cast<int>(std::lround(m_cameraY + shakeY)));
 
-    std::erase_if(m_retiredRulePreparations, [](const std::future<RulePreparation>& work) {
-        return work.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
-    });
+    std::erase_if(m_retiredRulePreparations,
+                  [](const jobs::Job<RulePreparation>& work) { return work.Ready(); });
     if (m_ruleState.active && !m_ruleState.ready) FinishRulePreparation();
     // Fades hold while the incoming texture decodes (bounded, so a missing
     // decode result can never freeze the Stage) instead of popping in

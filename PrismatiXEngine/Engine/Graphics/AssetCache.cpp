@@ -353,8 +353,7 @@ void AssetCache::LaunchQueuedTextures() {
 
         ++started;
         try {
-            auto future = std::async(
-                std::launch::async,
+            auto future = jobs::JobSystem::Shared().Submit(
                 [vfs = &m_vfs, path = task.path,
                  limit = m_imageDecodeByteLimit]() -> DecodeResult {
                     auto input = ReadImageInput(*vfs, path);
@@ -698,7 +697,11 @@ TTF_Font* AssetCache::Font(const std::string& styledPath, int size, int outline)
         std::optional<io::Bytes> bytes;
         if (auto pending = m_fontFileLoads.find(candidate);
             pending != m_fontFileLoads.end()) {
-            bytes = pending->second.get();
+            try {
+                bytes = pending->second.get();
+            } catch (const std::exception&) {
+                bytes = m_vfs.Read(candidate);
+            }
             m_fontFileLoads.erase(pending);
         } else {
             bytes = m_vfs.Read(candidate);
@@ -755,8 +758,8 @@ void AssetCache::PrefetchFontFile(const std::string& path) {
         return;
     try {
         m_fontFileLoads.emplace(
-            path, std::async(std::launch::async,
-                             [vfs = &m_vfs, path] { return vfs->Read(path); }));
+            path, jobs::JobSystem::Shared().Submit(
+                      [vfs = &m_vfs, path] { return vfs->Read(path); }));
     } catch (const std::exception&) {
         // Font() falls back to a synchronous read.
     }
@@ -812,7 +815,9 @@ void AssetCache::DestroyFonts() {
 void AssetCache::Clear() {
     BeginAssetSession();
     for (auto& pending : m_pendingTextures) {
-        if (!pending.future.valid()) continue;
+        // A decode no worker has started is dropped; a running one owns a
+        // surface that must be freed here.
+        if (!pending.future.valid() || pending.future.Cancel()) continue;
         try {
             DecodeResult decoded = pending.future.get();
             if (decoded.surface) SDL_DestroySurface(decoded.surface);

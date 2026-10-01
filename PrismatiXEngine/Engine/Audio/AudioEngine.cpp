@@ -117,19 +117,23 @@ void AudioEngine::Prefetch(const std::string& path) {
     if (!m_initialized || path.empty() || path == m_voicePath ||
         m_prefetched.contains(path) || m_audio.contains(path))
         return;
-    std::erase_if(m_retiredPrefetches, [](const auto& read) {
-        return read.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
-    });
+    std::erase_if(m_retiredPrefetches, [](const auto& read) { return read.Ready(); });
     constexpr std::size_t kMaxPrefetched = 16;
     while (m_prefetchOrder.size() >= kMaxPrefetched) {
         const auto evicted = m_prefetched.find(m_prefetchOrder.front());
-        m_retiredPrefetches.push_back(std::move(evicted->second));
+        // Skipping fast through voiced lines evicts reads that never
+        // started; those are cancelled, and only running reads are kept.
+        if (!evicted->second.Cancel() && !evicted->second.Ready())
+            m_retiredPrefetches.push_back(std::move(evicted->second));
         m_prefetched.erase(evicted);
         m_prefetchOrder.pop_front();
     }
-    m_prefetched.emplace(path, std::async(std::launch::async, [this, path] {
-        return m_vfs.Read(path);
-    }).share());
+    try {
+        m_prefetched.emplace(path, jobs::JobSystem::Shared().Submit(
+                                       [vfs = &m_vfs, path] { return vfs->Read(path); }));
+    } catch (const std::exception&) {
+        return;  // ReadAudioFile falls back to a synchronous read.
+    }
     m_prefetchOrder.push_back(path);
 }
 
@@ -141,7 +145,12 @@ std::optional<io::Bytes> AudioEngine::ReadAudioFile(const std::string& path) {
         return m_vfs.Read(path);
     }
     const std::uint64_t started = SDL_GetTicksNS();
-    auto bytes = found->second.get();
+    std::optional<io::Bytes> bytes;
+    try {
+        bytes = found->second.get();
+    } catch (const std::exception&) {
+        bytes = m_vfs.Read(path);
+    }
     if (const std::uint64_t ms = (SDL_GetTicksNS() - started) / 1'000'000;
         ms >= 2 && diag::FrameProfiler::Instance().Enabled())
         diag::FrameProfiler::Instance().Note("audio-read-wait:" + std::to_string(ms) + "ms");
@@ -258,8 +267,7 @@ std::size_t AudioEngine::TrimReclaimable() {
     EvictAudio(0);
     std::size_t released = before - m_audio.size();
     for (auto it = m_prefetched.begin(); it != m_prefetched.end();) {
-        if (it->second.wait_for(std::chrono::seconds(0)) ==
-            std::future_status::ready) {
+        if (it->second.Ready()) {
             std::erase(m_prefetchOrder, it->first);
             it = m_prefetched.erase(it);
             ++released;
@@ -267,9 +275,8 @@ std::size_t AudioEngine::TrimReclaimable() {
             ++it;
         }
     }
-    released += std::erase_if(m_retiredPrefetches, [](const auto& read) {
-        return read.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
-    });
+    released += std::erase_if(m_retiredPrefetches,
+                              [](const auto& read) { return read.Ready(); });
     PX_LOG_INFO("AudioEngine trimmed reclaimable entries={}", released);
     return released;
 }

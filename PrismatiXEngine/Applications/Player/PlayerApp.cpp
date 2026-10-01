@@ -2407,8 +2407,7 @@ void PlayerApp::FlushProfileIfDue() {
     if (!m_profile.TryToJson(encoded)) return;
     m_profileDirty = false;
     m_profileUrgent = false;
-    m_profileWrite = std::async(
-        std::launch::async,
+    m_profileWrite = m_persistenceWrites.Submit(
         [path = PathToUtf8(m_saveDirectory / "profile.dat"),
          text = encoded.dump(), key = m_saveKey] {
             return progress::SaveJsonText(path, text, &key);
@@ -2433,8 +2432,7 @@ void PlayerApp::SaveSettingsInBackground() {
     // Input bindings are captured here, on the thread that owns Input.
     progress::GameSettings snapshot = m_settings;
     snapshot.CaptureInputBindings(m_runtime.GetInput());
-    m_settingsWrite = std::async(
-        std::launch::async,
+    m_settingsWrite = m_persistenceWrites.Submit(
         [snapshot = std::move(snapshot),
          path = PathToUtf8(m_saveDirectory / "config.dat"), key = m_saveKey,
          fallback = m_saveFallbackKeys] {
@@ -3047,8 +3045,7 @@ void PlayerApp::SaveSlotInBackground(const int slot) {
     SDL_Surface* frame =
         graphics::CaptureFrameSurface(m_runtime.Renderer().Handle());
     m_saveWriteSlot = slot;
-    m_saveWrite = std::async(
-        std::launch::async,
+    m_saveWrite = m_persistenceWrites.Submit(
         [this, slot, frame, snap = std::move(*captured)]() mutable {
             snap.thumbnailPng = graphics::EncodeThumbnailPng(frame, 256, 144);
             return m_saves.Save(slot, snap);

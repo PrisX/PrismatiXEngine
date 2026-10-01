@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Core/JobSystem.h"
 #include "Engine/Core/Variant.h"
 #include "Engine/Core/Result.h"
 #include "Engine/Graphics/CustomEffect.h"
@@ -439,7 +440,7 @@ private:
         // GPU path: the rule shader masks the resident outgoing texture, so
         // nothing is decoded on the CPU or uploaded per frame.
         bool gpu = false;
-        std::future<RulePreparation> preparing;
+        jobs::Job<RulePreparation> preparing;
         std::string oldBackgroundPath;
         std::string newBackgroundPath;
         std::string rulePath;
@@ -573,7 +574,7 @@ private:
     RuleState m_ruleState;
     // Recently used rule masks by "path@WxH"; transitions reuse a few rules.
     std::vector<std::pair<std::string, std::shared_ptr<const RuleMask>>> m_ruleMasks;
-    std::vector<std::future<RulePreparation>> m_retiredRulePreparations;
+    std::vector<jobs::Job<RulePreparation>> m_retiredRulePreparations;
     // Seconds a background change has waited for its texture decode.
     float m_bgWait = 0.0f;
     // A non-transition change waiting behind the old image for its decode.
@@ -615,7 +616,7 @@ private:
     std::unordered_map<std::string, LayeredPortrait> m_layeredPortraits;
     std::unordered_map<std::string, bool> m_invalidLayeredPortraits;
     // Descriptors lookahead is reading on a worker thread.
-    std::unordered_map<std::string, std::shared_future<std::optional<std::string>>> m_portraitReads;
+    std::unordered_map<std::string, jobs::Job<std::optional<std::string>>> m_portraitReads;
     std::uint64_t m_portraitAssetSession = 0;
 };
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Core/JobSystem.h"
 #include "Engine/Graphics/Texture.h"
 #include "Engine/IO/VFS.h"
 
@@ -186,7 +187,7 @@ private:
         std::uint64_t session = 0;
         bool cacheRequest = false;
         std::vector<AssetPreloadBatchId> batches;
-        std::future<DecodeResult> future;
+        jobs::Job<DecodeResult> future;
     };
 
     struct BatchState {
@@ -205,7 +206,7 @@ private:
     // face shares one read: CJK fonts are tens of megabytes, and re-reading
     // and verifying them per size stalled the frame on each new text size.
     std::unordered_map<std::string, std::shared_ptr<io::Bytes>> m_fontFiles;
-    std::unordered_map<std::string, std::future<std::optional<io::Bytes>>> m_fontFileLoads;
+    std::unordered_map<std::string, jobs::Job<std::optional<io::Bytes>>> m_fontFileLoads;
     std::vector<std::string> m_fontFallbackChain;
     bool m_configuringFontFallbacks = false;
     std::uint64_t m_frame = 0;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Core/JobSystem.h"
 #include "Engine/IO/VFS.h"
 
 #include <array>
@@ -313,10 +314,12 @@ private:
     std::string m_ambiencePath;
     bool m_ambienceLoop = false;
     std::uint64_t m_useCounter = 0;
-    std::unordered_map<std::string, std::shared_future<std::optional<io::Bytes>>> m_prefetched;
+    std::unordered_map<std::string, jobs::Job<std::optional<io::Bytes>>> m_prefetched;
     std::deque<std::string> m_prefetchOrder;
-    // Evicted reads still in flight; dropping one would block until it ends.
-    std::vector<std::shared_future<std::optional<io::Bytes>>> m_retiredPrefetches;
+    // Evicted reads that were already running when evicted; dropping one
+    // would block until it ends. Queued reads are cancelled instead, so this
+    // holds at most one entry per worker thread.
+    std::vector<jobs::Job<std::optional<io::Bytes>>> m_retiredPrefetches;
     AudioEntry m_voiceAudio;  // current voice line only (not cached)
     bool m_suspended = false;
     std::vector<MIX_Track*> m_suspendedTracks;

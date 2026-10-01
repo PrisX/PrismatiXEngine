@@ -34,7 +34,7 @@ struct RuntimeConfig {
     bool resizable = true;
     Color clearColor = Color{ 12, 14, 20, 255 };
     // Platform composition capability. Single-thread targets use deterministic
-    // main-thread texture preload instead of std::async.
+    // main-thread texture preload instead of the worker pool.
     bool asyncAssetPreload = true;
     std::string graphicsTier = "basic";
     std::vector<graphics::CustomEffectDescriptor> customEffects;
