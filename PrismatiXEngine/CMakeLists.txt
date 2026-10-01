@@ -380,8 +380,8 @@ if(NOT EMSCRIPTEN)
             Engine/Accessibility/PlatformSemanticAdapterMac.mm
             PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     elseif(ANDROID)
-        # UNVERIFIED: SDL3's static Android build normally exports these
-        # through its CMake config; listed so a static link cannot miss them.
+        # SDL3's static CMake config also exports these; listed so a
+        # static link cannot miss them.
         target_link_libraries(PrismatiXRuntimePlatformNative PUBLIC
             android log)
     elseif(UNIX)
@@ -392,6 +392,38 @@ if(NOT EMSCRIPTEN)
     add_library(PrismatiXRuntime INTERFACE)
     target_link_libraries(PrismatiXRuntime INTERFACE
         PrismatiXRuntimePlatformNative)
+endif()
+
+if(ANDROID)
+    # FFmpeg is LGPL and must ship as replaceable shared libraries.
+    set(PRISMATIX_ANDROID_SHARED_LIBRARIES)
+    foreach(_library IN LISTS FFMPEG_LIBRARIES)
+        if(_library MATCHES "\\.so$" AND EXISTS "${_library}")
+            list(APPEND PRISMATIX_ANDROID_SHARED_LIBRARIES "${_library}")
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES PRISMATIX_ANDROID_SHARED_LIBRARIES)
+    if(NOT PRISMATIX_ANDROID_SHARED_LIBRARIES)
+        message(FATAL_ERROR "The Android Player needs FFmpeg as shared libraries "
+            "(vcpkg/triplets/arm64-android-prismatix.cmake); found: ${FFMPEG_LIBRARIES}")
+    endif()
+    # SDLActivity refuses to start when its Java glue and the native SDL
+    # differ, so catch a mismatch with the template's copy at configure time.
+    set(_sdl_activity "${CMAKE_SOURCE_DIR}/packages/cli/templates/android/app/src/main/java/org/libsdl/app/SDLActivity.java")
+    file(STRINGS "${_sdl_activity}" _sdl_java_versions
+        REGEX "SDL_(MAJOR|MINOR|MICRO)_VERSION = [0-9]+;")
+    set(_sdl_java_version)
+    foreach(_part IN ITEMS MAJOR MINOR MICRO)
+        string(REGEX MATCH "SDL_${_part}_VERSION = ([0-9]+)" _match "${_sdl_java_versions}")
+        list(APPEND _sdl_java_version "${CMAKE_MATCH_1}")
+    endforeach()
+    list(JOIN _sdl_java_version "." _sdl_java_version)
+    if(NOT _sdl_java_version STREQUAL SDL3_VERSION)
+        message(FATAL_ERROR "Native SDL is ${SDL3_VERSION} but the Android template's "
+            "Java glue is ${_sdl_java_version}. Copy android-project/app/src/main/java/org/ "
+            "from the SDL ${SDL3_VERSION} source release into "
+            "packages/cli/templates/android/app/src/main/java/.")
+    endif()
 endif()
 
 if(NOT EMSCRIPTEN)
@@ -407,20 +439,37 @@ function(prismatix_add_player target qa_hooks)
         Applications/Player/PlayerActions.cpp
     )
     if(ANDROID)
-        # UNVERIFIED on a device. SDL's Java glue (SDLActivity) loads the
-        # game as libmain.so and calls its SDL_main; see docs/android.md.
-        # The shipped and QA Players both use that name, so they build into
-        # separate directories.
+        # SDL's Java glue (SDLActivity) loads the game as libmain.so and
+        # calls its SDL_main; see docs/android.md. The shipped and QA Players
+        # both use that name, so they build into separate directories. Each
+        # directory gets everything the APK's lib/<abi>/ needs (libmain.so
+        # plus the shared FFmpeg libraries) and prismatix-player.json, which
+        # `prismatix pack --target android` checks.
         add_library(${target} SHARED ${_player_sources})
         if(qa_hooks)
             set(_player_variant qa)
         else()
             set(_player_variant shipped)
         endif()
+        set(_player_dir
+            "${CMAKE_BINARY_DIR}/android/${_player_variant}/${CMAKE_ANDROID_ARCH_ABI}")
         set_target_properties(${target} PROPERTIES
             OUTPUT_NAME main
-            LIBRARY_OUTPUT_DIRECTORY
-                "${CMAKE_BINARY_DIR}/android/${_player_variant}/${CMAKE_ANDROID_ARCH_ABI}")
+            LIBRARY_OUTPUT_DIRECTORY "${_player_dir}")
+        file(WRITE "${_player_dir}/prismatix-player.json"
+            "{\"format\": \"PrismatiXAndroidPlayer\", \"variant\": \"${_player_variant}\", "
+            "\"abi\": \"${CMAKE_ANDROID_ARCH_ABI}\", \"sdlVersion\": \"${SDL3_VERSION}\"}\n")
+        # The APK gets a stripped libmain.so (the unstripped one is ~250 MB);
+        # symbols/<abi>/libmain.so keeps the debug info for ndk-stack.
+        set(_symbols_dir
+            "${CMAKE_BINARY_DIR}/android/${_player_variant}/symbols/${CMAKE_ANDROID_ARCH_ABI}")
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${_symbols_dir}"
+            COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${target}>" "${_symbols_dir}/"
+            COMMAND "${CMAKE_STRIP}" --strip-unneeded "$<TARGET_FILE:${target}>"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                ${PRISMATIX_ANDROID_SHARED_LIBRARIES} "${_player_dir}"
+            VERBATIM)
     else()
         add_executable(${target} ${_player_sources})
     endif()
