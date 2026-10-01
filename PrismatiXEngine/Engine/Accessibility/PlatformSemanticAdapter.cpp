@@ -1083,8 +1083,18 @@ std::string_view PlatformAccessibilityBackend() { return "Windows UI Automation"
 #elif !defined(__APPLE__) && (!defined(__linux__) || defined(__ANDROID__))
 
 namespace px::accessibility {
+namespace {
+// Android and other targets without a bridge yet: the Player still boots,
+// and the UI skips building snapshots nobody reads.
+class NoPlatformSemanticAdapter final : public SemanticAdapter {
+public:
+    void Publish(const SemanticTree&) override {}
+    [[nodiscard]] bool NeedsPublish() const override { return false; }
+};
+}  // namespace
+
 std::shared_ptr<SemanticAdapter> CreatePlatformSemanticAdapter(SDL_Window*) {
-    return {};
+    return std::make_shared<NoPlatformSemanticAdapter>();
 }
 std::string_view PlatformAccessibilityBackend() { return "unavailable"; }
 }  // namespace px::accessibility
