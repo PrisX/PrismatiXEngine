@@ -611,7 +611,7 @@ Each Player directory is self-contained:
   `lib*.so` files and `prismatix-player.json`. Pass this folder to the CLI.
 - `android/shipped/symbols/arm64-v8a/libmain.so`: unstripped, for
   `ndk-stack`.
-- `android/qa/...`: the QA Player with `PRISMATIX_E2E_*` hooks. The CLI
+- `android/qa/...`: the QA Player with the QA IPC server. The CLI
   refuses to ship it.
 
 Notes from the first build:

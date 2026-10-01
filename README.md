@@ -41,6 +41,7 @@ Each command explains itself with `prismatix <command> --help`. Others you will 
 | `pack --target android` | Builds an APK and AAB with the Android Player (experimental, see the shipping guide) |
 | `ids --sync` | Reviews save identities after adding or removing Story lines |
 | `create-patch`, `create-overlay` | Signed single-file updates for a shipped game |
+| `test` | Runs `tests/journeys/*.ts` against a QA pack (see below) |
 
 The `@prismatix/*` packages are release candidates and are not on the public npm
 registry yet. The [0.2.0 delivery contract](docs/releases/0.2.0.md) lists the
@@ -82,7 +83,8 @@ Shared macros, `[if]`/`[elseif]`, conditional and block choices, inline
 The `actions.*` builders are typed against the Player's action table, so a
 misspelled action or a wrong argument fails `validate`. Screen states that depend
 on what the player has cleared are rules in `prismatix.json`
-(`player.profileUiData`), not code.
+(`player.profileUiData`), not code. `distribution.transcode` stores PNG as WebP
+and Ogg as Opus in builds, which cut Sakura no Uta's media from 7.6 to 2.1 GiB.
 
 ## Guides
 
@@ -110,8 +112,19 @@ With a non-English MSVC, set `VSLANG=1033` so Ninja records header dependencies;
 `ninja -C out/build/<preset> -t deps` shows what was recorded.
 
 The build makes two Players. Games ship `PrismatiXPlayer`; `PrismatiXPlayerQA`
-adds hooks for automated QA and must never be released (a test checks that the
-shipped Player contains none of them).
+adds a local IPC server for automated QA and must never be released (a test
+checks that the shipped Player contains none of it). Pack a QA build with
+`--player <build>/PrismatiXPlayerQA.exe` and drive it with journey scripts:
+
+```ts
+// tests/journeys/choice.ts, run with `prismatix test`
+export default async (px) => {
+  await px.click("Start");
+  await px.jump("chapter1:crossroads");
+  await px.choose(0);
+  await px.screenshot("after-choice.png");
+};
+```
 
 ```text
 PrismatiXEngine/

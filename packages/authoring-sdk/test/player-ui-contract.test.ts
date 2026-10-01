@@ -124,9 +124,7 @@ test("the contract names every control the C++ Player looks up by a literal name
   for (const source of sources)
     for (const match of source.matchAll(/Named(?:<[^>]*>)?\s*\([^;"]*?"([A-Za-z_]+)"/gu))
       looked.add(match[1]!);
-  // Controls only the Player's built-in QA journeys click.
-  const qaOnly = new Set(["btyosButton", "music_SongOpButton", "yoshinoButton", "ConfirmNoButton"]);
-  const missing = [...looked].filter((name) => !qaOnly.has(name) &&
+  const missing = [...looked].filter((name) =>
     !names.has(name) && !prefixes.some((prefix) => name.startsWith(prefix)));
   assert.deepEqual(missing, []);
 });
