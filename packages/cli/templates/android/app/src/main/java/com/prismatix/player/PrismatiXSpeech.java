@@ -4,7 +4,7 @@ import android.content.Context;
 import android.speech.tts.TextToSpeech;
 
 /**
- * Text-to-speech for the Player's self-voicing (accessibility.speech). The
+ * Text-to-speech for the Player's self-voicing setting. The
  * native SpeechService creates one instance through JNI and calls speak()
  * and stop() from the SDL thread; TextToSpeech is thread-safe for those.
  *
