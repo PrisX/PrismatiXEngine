@@ -13,6 +13,9 @@
 
 namespace px::player {
 
+// The save slot the Player writes automatically (autosave, background save).
+inline constexpr int kAutoSaveSlot = -1;
+
 // Player operations `player.confirmations` may ask before.
 inline constexpr std::string_view kConfirmableOperations[] = {
     "quickSave", "quickLoad", "save", "overwrite", "load", "returnToTitle",
