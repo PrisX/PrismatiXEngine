@@ -6,6 +6,19 @@ Sakura-no-Uta 是目前最大的真實使用案例：352 個場景、6.5 萬句�
 
 優先度：**P0** 發行前必修 · **P1** 發行後第一輪 · **P2** 改善體驗。工作量：**S**（一天內）· **M**（數天）· **L**（一週以上）。
 
+## 處理進度（2026-10-01 更新）
+
+每個項目的細節寫在對應的 commit message（`Addresses <task>` 那一行）。
+
+| 狀態 | 任務 |
+| --- | --- |
+| 已完成 | T1、T2、T3、T4、T7、T20 · U1–U8、U10 · S1–S6、S8 · W1–W7 · A1（IO 抽象、生命週期）、A2 的觸控操作 · Sakura 專案清理 |
+| 部分完成 | **T5**：QA journey、設定解析、UI action 已拆出，`PlayerApp.cpp` 從 6,270 行降到 4,134 行；action 的表格式分派還沒做。<br>**T6**：移除了寫死的曲名清單；從 schema 產生設定解析器還沒做。<br>**T8**：`distribution.linkMedia` 避免第二份素材副本；素材重新編碼還沒做。<br>**U9**：工具列判定區改由 HUD 的 `DockArea` 控制項決定；選項列的位置仍在 `player.choiceLayout`，因為那是 Player 依選項數量計算的。<br>**S7**：`[credits]` 已完成；`[input]` 需要 Player 文字輸入畫面，還沒做。 |
+| 已寫好、尚未驗證 | **A0**：Android 的 CMake preset、vcpkg triplet、Gradle 範本，以及 `docs/android.md`。需要 NDK 與實機。 |
+| 未開始 | **A3**：Play Asset Delivery、ASTC 紋理、TalkBack。<br>**W8**：官方匯入器套件。<br>`prismatix dev` 經由 IPC 驅動的測試介面（T20 的後半）。 |
+
+順手修掉的既有問題：master 上原本失敗的原生測試、CLI 測試和 clean-install gate；CommercialVN sample 無法編譯、也無法在 Preview 啟動；內建 Settings 畫面的 sibling order 重複；一筆跨場景錯誤被報兩次。
+
 ---
 
 ## 0. 總評
