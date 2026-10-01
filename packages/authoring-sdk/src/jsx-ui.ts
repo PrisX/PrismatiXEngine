@@ -155,6 +155,8 @@ export interface UiNodeProps {
   readonly bindings?: UiBindings;
   /** Shorthand bindings; a `"!path"` string applies the `Not` formatter. */
   readonly bind?: Readonly<Record<string, string | UiBinding>>;
+  /** Shows the current locale's `strings[textKey]`, following language changes. */
+  readonly textKey?: string;
   /** Visible only while the UI data path is true; `"!path"` negates it. */
   readonly visibleWhen?: string;
   /** Enabled only while the UI data path is true; `"!path"` negates it. */
@@ -1061,6 +1063,11 @@ function nodeBindings(props: UiNodeProps): UiBindings {
     if (props.bind?.[property] !== undefined || props.bindings?.[property] !== undefined)
       throw new TypeError(`${property}When and a ${property} binding cannot both be set on ${props.name ?? "a node"}`);
     conditions[property] = parse(value);
+  }
+  if (props.textKey !== undefined) {
+    if (props.bind?.text !== undefined || props.bindings?.text !== undefined)
+      throw new TypeError(`textKey and a text binding cannot both be set on ${props.name ?? "a node"}`);
+    conditions.text = {path: `strings.${props.textKey}`};
   }
   return {...props.bindings, ...shorthand, ...conditions};
 }

@@ -694,6 +694,7 @@ bool PlayerApp::LoadLocale(std::string locale, const bool refreshPresentation) {
         runtimeProgram ? runtimeProgram->documentId : std::string{});
 
     m_langTable = std::move(candidate);
+    PublishLocaleStrings();
     m_settings.language = std::move(locale);
     m_session->VM().SetCharacterLocale(m_settings.language);
     m_script = runtimePath;
@@ -800,6 +801,19 @@ void PlayerApp::RefreshTitleProgressUi() {
     for (int index = 1; index <= 9; ++index)
         (void)m_ui.UpdateUiData("title.chapter3Case" + std::to_string(index),
                                 Variant(index == variant));
+}
+
+// Locale strings are UI data too: a TSX `textKey="save.error"` binds its text
+// to strings.save.error, and switching language updates every bound label.
+void PlayerApp::PublishLocaleStrings() {
+    for (const auto& [key, text] : m_langTable) {
+        const std::string path = "strings." + key;
+        if (m_uiStringPaths.contains(path)) (void)m_ui.UpdateUiData(path, Variant(text));
+        else if (m_ui.DefineUiData(path, Variant(text))) m_uiStringPaths.insert(path);
+    }
+    for (const auto& path : m_uiStringPaths)
+        if (!m_langTable.contains(path.substr(std::string_view("strings.").size())))
+            (void)m_ui.UpdateUiData(path, Variant(std::string{}));
 }
 
 bool PlayerApp::Init(int argc, char* argv[]) {
@@ -3448,9 +3462,19 @@ void PlayerApp::WarpCursorTo(const float logicalX, const float logicalY) {
 
 void PlayerApp::PublishDock() {
     const auto& input = m_runtime.GetInput();
-    const bool inside = m_dockArea.valid &&
-        input.MouseX() >= m_dockArea.x && input.MouseX() < m_dockArea.x + m_dockArea.width &&
-        input.MouseY() >= m_dockArea.y && input.MouseY() < m_dockArea.y + m_dockArea.height;
+    // An unpinned toolbar shows while the pointer is over the HUD control
+    // named DockArea (usually an invisible rectangle), or player.dockArea.
+    bool valid = m_dockArea.valid;
+    float x = m_dockArea.x, y = m_dockArea.y, width = m_dockArea.width, height = m_dockArea.height;
+    if (!m_dockPinned)
+        if (const auto* region = FindUiControlNamed<ui::Control>(m_ui.Root(), "DockArea")) {
+            const Rect rect = region->LayoutRect();
+            valid = true;
+            x = rect.x; y = rect.y; width = rect.w; height = rect.h;
+        }
+    const bool inside = valid &&
+        input.MouseX() >= x && input.MouseX() < x + width &&
+        input.MouseY() >= y && input.MouseY() < y + height;
     const bool shown = m_dockPinned || !m_choiceTexts.empty() || inside;
     if (shown == m_dockShown) return;
     m_dockShown = shown;

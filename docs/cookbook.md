@@ -811,7 +811,7 @@ adds a millisecond; auto-reading waits 600 ms at 100 and 6.6 s at 0.
 | `keepSkipAfterChoice`, `keepAutoAfterChoice` | non-zero: resume skip / auto-reading after a choice |
 | `cursorHideDelay` | hide an idle cursor after this many milliseconds; 0 never hides it |
 | `dialogCursorWarp` | non-zero: move the cursor onto the control named `DialogYes` when a dialog opens |
-| `dockPinned` | 0: the HUD toolbar (`hud.dockShown`) shows only while the pointer is in `player.dockArea` or a choice is up |
+| `dockPinned` | 0: the HUD toolbar (`hud.dockShown`) shows only while the pointer is over the HUD control named `DockArea` (or `player.dockArea`) or a choice is up |
 | `messageFace` | 0: never show message-window faces; 2: only while the speaker is off stage; otherwise always |
 
 Behaviours no option binds keep their defaults (the toolbar is pinned, the
@@ -892,6 +892,22 @@ game window use. Changing either value rebuilds the package; the in-place
 runtime refresh is skipped for branded executables.
 
 ## Localization, voice and release updates
+
+UI text follows the language too: `textKey` binds a label to the current
+locale's `strings` entry and updates it when the player switches language.
+
+```tsx
+<Text name="LoadError" textKey="save.incompatible" text="This save cannot be loaded." />
+```
+
+```json
+{"format": "PrismatiXLocale", "schemaRevision": 2, "locale": "ja-JP",
+ "strings": {"save.incompatible": "このセーブデータは読み込めません。"}}
+```
+
+The Player publishes every locale string as `strings.<key>` UI data; `text`
+is shown until the locale loads. `prismatix validate` reports a key that no
+locale defines (`PXBUILD1100`).
 
 Declare locale resources and `fontChain` in `Content/Localization/<locale>.json`. The starter already includes its Traditional Chinese font. Validate every locale's images/voices and test real text rendering. The Player's live language change requires aligned document/operation identities and types; splitting or merging translated dialogue is not automatically a valid live-switch mapping. Keep topology aligned or redesign the scene/update and test its save anchors. Do not silently omit missing voice to make validation pass.
 

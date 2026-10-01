@@ -130,3 +130,20 @@ test("the contract names every control the C++ Player looks up by a literal name
     !names.has(name) && !prefixes.some((prefix) => name.startsWith(prefix)));
   assert.deepEqual(missing, []);
 });
+
+test("textKey binds locale strings, and an unknown key is reported", () => {
+  const title = document([
+    jsx(Text, {name: "Dialogue", text: "", position: [0, 0], size: [200, 20]}),
+    jsx(Text, {name: "Error", text: "Cannot load", textKey: "save.incompatible",
+      position: [0, 30], size: [200, 20]}),
+    jsx(Text, {name: "Typo", text: "", textKey: "save.incompatable", position: [0, 60], size: [200, 20]}),
+  ]);
+  const error = title.nodes.find((node) => node.name === "Error")!;
+  assert.deepEqual(error.bindings, {text: {path: "strings.save.incompatible"}});
+  assert.equal(error.text, "Cannot load");
+  const diagnostics = validatePlayerUiContract({uiEntryPoints: {hud: "Content/UI/HUD.tsx"},
+    localeStrings: ["save.incompatible"]}, new Map([["Content/UI/HUD.pxui", title as never]]));
+  assert.deepEqual(diagnostics.map(({code, message}) => [code, message]), [
+    ["PXBUILD1100", "The Player publishes no UI data at strings.save.incompatable; did you mean strings.save.incompatible?"],
+  ]);
+});

@@ -24,6 +24,7 @@ const namedNodes: Readonly<Record<string, Readonly<Record<string, readonly strin
     NoticePanel: ["EdgeRevealContainer"], EdgeToolbar: ["EdgeRevealContainer"],
     ChapterNumber: ["SpriteText"], ChapterBanner: anyType, ChoiceList: anyType,
     Face: ["TextureRect"], NVLPanel: anyType, ADVPanel: anyType, MessageWindow: anyType,
+    DockArea: anyType,
   },
   save: saveLoadNodes,
   load: saveLoadNodes,
@@ -64,7 +65,7 @@ const itemFields: Readonly<Record<string, readonly string[]>> = {
 
 const reservedRoots = new Set(["dialogue", "chapter", "music", "saveLoad", "gallery", "backlog",
   "settings", "title", "system", "replay", "profileFlags", "musicUnlocked", "sceneUnlocked",
-  "dialog", "options"]);
+  "dialog", "options", "strings"]);
 
 /** Player operations `player.confirmations` may ask before. */
 export const confirmableOperations = ["quickSave", "quickLoad", "save", "overwrite", "load",
@@ -89,6 +90,8 @@ export interface PlayerUiContractInput {
   readonly settings?: Readonly<Record<string, JsonValue>>;
   /** Profile-scoped catalog variables published as `profileFlags.<name>`. */
   readonly profileVariables?: readonly string[];
+  /** Locale string keys, published as `strings.<key>`. */
+  readonly localeStrings?: readonly string[];
 }
 
 function object(value: unknown): JsonObject | undefined {
@@ -128,6 +131,7 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
       `sceneUnlocked.scene${String(index + 1).padStart(2, "0")}`),
     ...stems.map((stem) => `musicUnlocked.${stem}`),
     ...(input.profileVariables ?? []).map((name) => `profileFlags.${name}`),
+    ...(input.localeStrings ?? []).map((key) => `strings.${key}`),
     "dialogue.nvl", "dialogue.face", "dialog.visible", "dialog.skipNext",
     ...playerDialogKinds(settings).map((kind) => `dialog.kind.${kind}`),
     ...["master", "bgm", "se", "voice"].map((bus) => `settings.muted.${bus}`),

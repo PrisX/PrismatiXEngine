@@ -171,13 +171,15 @@ export function validatePlayerUiBindings(project: ProjectDocument,
   registry?: UiTypeRegistryMetadata,
   documentSources?: Readonly<Record<string, string>>,
   projectSource?: {readonly path: string; readonly text: string},
-  profileVariables?: readonly string[]): readonly AuthoringDiagnostic[] {
+  profileVariables?: readonly string[],
+  localeStrings?: readonly string[]): readonly AuthoringDiagnostic[] {
   const data = object(project.settings?.["player.uiData"]);
   const contractValue = project.settings?.["authoring.uiContract"];
   // A declared authoring.uiContract describes a non-Player host.
   const hostDiagnostics = contractValue !== undefined ? [] : validatePlayerUiContract({uiEntryPoints: project.uiEntryPoints,
     ...(project.settings === undefined ? {} : {settings: project.settings}),
-    ...(profileVariables === undefined ? {} : {profileVariables})}, uiDocuments);
+    ...(profileVariables === undefined ? {} : {profileVariables}),
+    ...(localeStrings === undefined ? {} : {localeStrings})}, uiDocuments);
   const source = projectSource ?? (documentSources?.["project.pxproject"] === undefined
     ? undefined : {path: "project.pxproject", text: documentSources["project.pxproject"]});
   let contractSpans: ReadonlyMap<string, SourceSpan> | undefined;

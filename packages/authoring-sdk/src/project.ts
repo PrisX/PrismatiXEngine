@@ -823,7 +823,11 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     new Map([...uiDocuments, ...uiComponentDocuments]), input.uiTypeRegistry,
     input.documentSources, input.projectSource,
     game?.variables.filter((variable) => variable.scope === "profile")
-      .map((variable) => variable.name)));
+      .map((variable) => variable.name),
+    [...new Set(Object.values(locales).flatMap((locale) => {
+      const strings = (locale as {strings?: unknown} | null)?.strings;
+      return strings !== null && typeof strings === "object" ? Object.keys(strings) : [];
+    }))]));
   if (storyIndex !== undefined && storyIndex.entryScene !== project.entry.story) {
     diagnostics.push(locatedIssue("PXBUILD1005", "Project entry.story must match storyIndex.entryScene",
       project.storyIndex, "/entry/story", project.entry.story, project.entry.story,

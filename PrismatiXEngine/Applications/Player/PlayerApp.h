@@ -21,6 +21,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <chrono>
 #include <string>
 #include <string_view>
@@ -150,6 +151,7 @@ private:
     void ProcessScriptSafePoint();
     // Returns true when it consumed the frame (a movie is on screen).
     bool VideoFrame(float dt);
+    void PublishLocaleStrings();
     void ConfigureE2EJourney();
     void DriveE2EJourney();
     void DriveBenchJourney();
@@ -280,6 +282,7 @@ private:
     std::unique_ptr<script::ScriptHost> m_scriptHost;
     script::ScriptServices m_scriptServices;
     std::unordered_map<std::string, std::string> m_langTable;
+    std::set<std::string> m_uiStringPaths;
     std::string m_defaultLocale = "zh-TW";
     std::vector<std::string> m_supportedLocales;
     std::unordered_map<std::string, std::string> m_uiAssets;
