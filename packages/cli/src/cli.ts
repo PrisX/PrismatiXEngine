@@ -88,7 +88,7 @@ const maxDocumentBytes = 16 * 1024 * 1024;
 const machineOutput = process.argv.includes("--json");
 
 const commandOptions: Readonly<Record<string, {values: string; flags: string}>> = {
-  create: {values: "name id locale width height", flags: ""},
+  create: {values: "name id locale width height template runtime", flags: ""},
   dev: {values: "runtime preview-host debounce ui-registry at", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space"},
@@ -475,6 +475,13 @@ async function createCommand(options: Options): Promise<number> {
       width: integerOption(options, "width", 1280, 1, 16384),
       height: integerOption(options, "height", 720, 1, 16384),
     });
+    // The "adv" template starts from editable copies of the stock screens
+    // a typical ADV game restyles first.
+    const template = options.values.get("template") ?? "minimal";
+    if (template === "adv")
+      await ejectBuiltinUi(result.root, ["hud", "save", "load", "settings", "backlog"],
+        await builtinUiDirectory(options), true);
+    else if (template !== "minimal") throw new Error("--template must be minimal or adv");
     process.stdout.write(machineOutput ? `${JSON.stringify({created: true, ...result,
       next: [`prismatix dev ${JSON.stringify(target)}`]})}\n` :
       `Created ${result.root}\nEdit Story/main.pxstory, then run: prismatix dev ${JSON.stringify(target)}\n`);
@@ -2792,7 +2799,8 @@ async function inspectSaveCommand(options: Options): Promise<number> {
 // One line of purpose and the usual invocations for `prismatix <command> --help`.
 const commandHelp: Readonly<Record<string, readonly string[]>> = {
   create: ["Create a new project with a starter story, title screen and pinned tools.",
-    "prismatix create my-game [--name \"My Game\"] [--id my-game] [--locale zh-TW] [--width 1920 --height 1080]"],
+    "prismatix create my-game [--name \"My Game\"] [--id my-game] [--locale zh-TW] [--width 1920 --height 1080]",
+    "prismatix create my-game --template adv   (also editable HUD, Save, Load, Settings and Backlog TSX)"],
   dev: ["Watch the project and replay it in Preview after every successful edit.",
     "prismatix dev [project] [--runtime <engine-build-or-install>]",
     "prismatix dev [project] --at chapter2:120 | --at chapter2:after_school | --at Story/zh-TW/chapter2.pxstory:120"],

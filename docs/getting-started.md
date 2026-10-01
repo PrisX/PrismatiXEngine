@@ -99,7 +99,8 @@ prismatix eject ui hud
 prismatix release --help
 ```
 
-`eject ui <route>` (or `all`) copies a stock Player screen (`title`, `hud`,
+`prismatix create my-game --template adv` starts with the HUD, Save, Load,
+Settings and Backlog already ejected this way. `eject ui <route>` (or `all`) copies a stock Player screen (`title`, `hud`,
 `backlog`, `save`, `load`, `gallery`, `settings`, `video`) into
 `Content/UI/<Route>.tsx`, scaled to the project's resolution, and registers it
 in `uiEntryPoints`. It lowers to exactly the built-in screen, so you start from
