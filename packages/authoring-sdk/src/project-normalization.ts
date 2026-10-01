@@ -71,6 +71,27 @@ export interface ProjectDistribution {
   readonly executableName?: string;
   readonly icon?: string;
   readonly android?: ProjectAndroidDistribution;
+  readonly transcode?: ProjectTranscode;
+}
+
+/**
+ * Smaller encodings for distribution builds (`prismatix build`/`pack`, not
+ * `dev`). Files keep their logical paths: the Player recognises WebP and Ogg
+ * Opus by content, so a ".png" may hold WebP and a ".ogg" may hold Opus.
+ * `exclude` globs (`*`, `**`, `?`) match project-relative paths.
+ */
+export interface ProjectTranscode {
+  readonly images?: {
+    readonly format: "webp";
+    /** 1-100 for lossy colour with exact alpha, or "lossless" (default 90). */
+    readonly quality?: number | "lossless";
+    /** 0 (fastest) to 6 (smallest), default 4. */
+    readonly effort?: number;
+  };
+  readonly audio?:
+    | {readonly format: "opus"; /** kbit/s, 6-256, default 96. */ readonly bitrate?: number}
+    | {readonly format: "vorbis"; /** oggenc scale -1 to 10, default 4. */ readonly quality?: number};
+  readonly exclude?: readonly string[];
 }
 
 /**
@@ -98,8 +119,8 @@ const reservedFileNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 export function projectDistributionError(value: unknown): string | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return "distribution must be an object";
-  const {executableName, icon, output, compression, archiveShards, linkMedia, android, ...rest} =
-    value as Record<string, unknown>;
+  const {executableName, icon, output, compression, archiveShards, linkMedia, android, transcode,
+    ...rest} = value as Record<string, unknown>;
   const extra = Object.keys(rest);
   if (extra.length > 0) return `distribution does not support ${extra.join(", ")}`;
   if (executableName !== undefined && (typeof executableName !== "string" ||
@@ -122,7 +143,66 @@ export function projectDistributionError(value: unknown): string | undefined {
     return "distribution.archiveShards must be an integer from 1 to 64";
   if (linkMedia !== undefined && typeof linkMedia !== "boolean")
     return "distribution.linkMedia must be true or false";
+  if (transcode !== undefined) {
+    const error = transcodeError(transcode);
+    if (error !== undefined) return error;
+  }
   return android === undefined ? undefined : androidDistributionError(android);
+}
+
+const plainObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+const integerIn = (value: unknown, minimum: number, maximum: number): boolean =>
+  Number.isInteger(value) && (value as number) >= minimum && (value as number) <= maximum;
+
+function transcodeError(value: unknown): string | undefined {
+  if (!plainObject(value)) return "distribution.transcode must be an object";
+  const {images, audio, exclude, ...rest} = value;
+  const extra = Object.keys(rest);
+  if (extra.length > 0) return `distribution.transcode does not support ${extra.join(", ")}`;
+  if (images === undefined && audio === undefined)
+    return "distribution.transcode needs images, audio or both";
+  if (images !== undefined) {
+    if (!plainObject(images)) return "distribution.transcode.images must be an object";
+    const {format, quality, effort, ...imageRest} = images;
+    const imageExtra = Object.keys(imageRest);
+    if (imageExtra.length > 0)
+      return `distribution.transcode.images does not support ${imageExtra.join(", ")}`;
+    if (format !== "webp") return "distribution.transcode.images.format must be webp";
+    if (quality !== undefined && quality !== "lossless" && !integerIn(quality, 1, 100))
+      return "distribution.transcode.images.quality must be an integer from 1 to 100 or \"lossless\"";
+    if (effort !== undefined && !integerIn(effort, 0, 6))
+      return "distribution.transcode.images.effort must be an integer from 0 to 6";
+  }
+  if (audio !== undefined) {
+    if (!plainObject(audio)) return "distribution.transcode.audio must be an object";
+    const {format, bitrate, quality, ...audioRest} = audio;
+    const audioExtra = Object.keys(audioRest);
+    if (audioExtra.length > 0)
+      return `distribution.transcode.audio does not support ${audioExtra.join(", ")}`;
+    if (format === "opus") {
+      if (quality !== undefined)
+        return "distribution.transcode.audio.quality applies to vorbis; opus takes bitrate";
+      if (bitrate !== undefined && !integerIn(bitrate, 6, 256))
+        return "distribution.transcode.audio.bitrate must be an integer from 6 to 256 (kbit/s)";
+    } else if (format === "vorbis") {
+      if (bitrate !== undefined)
+        return "distribution.transcode.audio.bitrate applies to opus; vorbis takes quality";
+      if (quality !== undefined && (typeof quality !== "number" || !Number.isFinite(quality) ||
+          quality < -1 || quality > 10))
+        return "distribution.transcode.audio.quality must be a number from -1 to 10";
+    } else {
+      return "distribution.transcode.audio.format must be opus or vorbis";
+    }
+  }
+  if (exclude !== undefined && (!Array.isArray(exclude) || exclude.length > 256 ||
+      !exclude.every((pattern) => typeof pattern === "string" && pattern.length > 0 &&
+        pattern.length <= 512 && !pattern.includes("\\") && !pattern.startsWith("/") &&
+        !pattern.includes(":") && !pattern.split("/").includes("..") &&
+        !/[\u0000-\u001f]/.test(pattern))))
+    return "distribution.transcode.exclude must be at most 256 project-relative glob patterns " +
+      "using / separators";
+  return undefined;
 }
 
 const plainText = (value: unknown, maxBytes: number): value is string =>

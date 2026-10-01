@@ -183,6 +183,34 @@ test("distribution.android validates identity, icon and password-free keystore s
   assert.match(leaked.diagnostics[0]?.message ?? "", /must not contain keyPassword/u);
 });
 
+test("distribution.transcode validates image, audio and exclude settings", () => {
+  for (const transcode of [
+    {images: {format: "webp"}},
+    {images: {format: "webp", quality: "lossless", effort: 6}, exclude: ["Assets/UI/**"]},
+    {audio: {format: "opus", bitrate: 64}},
+    {images: {format: "webp", quality: 85}, audio: {format: "vorbis", quality: -1}},
+  ]) {
+    const normalized = normalizeProject({project: {name: "Small", distribution: {transcode}},
+      sourceFiles: {"Story/main.pxstory": "こんにちは。\n"}});
+    assert.equal(normalized.valid, true, JSON.stringify(normalized.diagnostics));
+    assert.deepEqual(normalized.value?.distribution?.transcode, transcode);
+    assert.equal("distribution" in (normalized.value?.project ?? {}), false);
+  }
+  for (const invalid of [true, {}, {video: {}}, {images: {}}, {images: {format: "avif"}},
+    {images: {format: "webp", quality: 0}}, {images: {format: "webp", quality: 90.5}},
+    {images: {format: "webp", quality: "best"}}, {images: {format: "webp", effort: 7}},
+    {images: {format: "webp", alpha: false}}, {audio: {format: "mp3"}},
+    {audio: {format: "opus", bitrate: 512}}, {audio: {format: "opus", quality: 5}},
+    {audio: {format: "vorbis", quality: 11}}, {audio: {format: "vorbis", bitrate: 96}},
+    {images: {format: "webp"}, exclude: "Assets/UI/**"},
+    {images: {format: "webp"}, exclude: ["../Assets/**"]},
+    {images: {format: "webp"}, exclude: ["Assets\\UI\\*.png"]},
+    {images: {format: "webp"}, exclude: ["/Assets/**"]}, {images: {format: "webp"}, exclude: [""]}]) {
+    const result = normalizeProject({project: {name: "Small", distribution: {transcode: invalid}}});
+    assert.deepEqual(result.diagnostics.map(({code}) => code), ["PXBUILD1065"], JSON.stringify(invalid));
+  }
+});
+
 test("project compile resolves storyAssets against included resources", () => {
   const result = compileProject({
     project: {name: "Roots", resourceIncludes: ["Assets"], storyAssets: {bg: ["Assets/bg"]}},
