@@ -22,6 +22,7 @@ import {augmentArtifact} from "./artifact-augment.js";
 import {assessPackageDiskSpace, availableBytesForOutput, formatDiskBytes} from "./disk-space.js";
 import {createStarter} from "./starter.js";
 import {migrateCommand} from "./migration.js";
+import {importCommand, importFormats} from "./importers/command.js";
 import {inspectSaveWithRuntime} from "./save-inspection.js";
 import {planPackagePatch} from "./package-diff.js";
 import {applyDistributionPatch, createDistributionPatch,
@@ -108,6 +109,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   "create-overlay": {values: "base target artifact updates-dir output signing-key optional-id runtime packager player", flags: "check"},
   "verify-overlay": {values: "base updates-dir patch runtime packager", flags: "require-signature"},
   "overlay-keygen": {values: "private public runtime packager", flags: ""},
+  import: {values: "config", flags: "long-forms"},
 };
 function parseOptions(command: string, args: readonly string[]): Options {
   const schema = commandOptions[command];
@@ -143,6 +145,13 @@ function parseOptions(command: string, args: readonly string[]): Options {
       throw new Error("Use prismatix add character <alias> --from <folder> or prismatix add scene <id>");
     if (positional[0] === "character" && !values.has("from"))
       throw new Error("add character needs --from <folder of expression images>");
+    return {values, flags, positional};
+  }
+  if (command === "import" && !flags.has("help")) {
+    if (positional.length < 2 || positional.length > 3)
+      throw new Error("Use prismatix import <format> <source> [project]; quote paths containing spaces");
+    if (!importFormats.includes(positional[0]!))
+      throw new Error(`Unknown import format ${positional[0]}; expected ${importFormats.join(", ")}`);
     return {values, flags, positional};
   }
   if (positional.length > 1) throw new Error("Expected one project or save path; quote paths containing spaces");
@@ -2852,6 +2861,17 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
   "verify-overlay": ["Verify an overlay against its base distribution.",
     "prismatix verify-overlay --base <distribution> --patch <patch.pdx> [--require-signature]"],
   "overlay-keygen": ["Create an overlay signing key pair.", "prismatix overlay-keygen --private <file> --public <file>"],
+  import: ["Translate another engine's game into this project's Story, characters, gallery and portraits.",
+    "prismatix import artemis <extracted-game> [project] [--config <file>] [--long-forms]",
+    "",
+    "<extracted-game> holds script/*.ast and system/table/list_windows.tbl. The project's assets.original",
+    "folder (default Assets/Original) must already mirror the game's image/, sound/ and movie files.",
+    "Game-specific tables (act presets, movie names, replay scenes, chapters, story asset roots, input",
+    "actions) come from <project>/artemis-import.json; stock Artemis tags need none of it.",
+    "Writes Story/<locale>/*.pxstory with .pxids.json sidecars, the story index, Characters/, layered",
+    "portraits, the game catalog, prismatix.json characters/storyAssets and a conversion report.",
+    "Re-running keeps earlier save IDs when only command spellings changed; --long-forms spells every",
+    "argument by name, as the first importers did."],
 };
 
 function commandUsage(command: string): void {
@@ -2866,7 +2886,7 @@ function commandUsage(command: string): void {
 }
 
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|release|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|release|augment|ids|migrate|import|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen> [project-or-save-or-distribution] [options]\n");
   process.stderr.write("  prismatix <command> --help  Purpose, examples and options of one command\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
   process.stderr.write("  prismatix create-overlay --base <distribution> --artifact <published-artifact> --output <patch.pdx> [--signing-key <private-key>]  Patch without a target distribution\n");
@@ -3250,7 +3270,9 @@ async function projectTool(command: string, options: Options, args: string[]): P
     "create-patch", "apply-patch", "create-overlay", "verify-overlay",
     "overlay-keygen"]
     .includes(command)) return undefined;
-  const location = await resolveProjectPath(options.positional[0]);
+  // `import <format> <source> [project]` delegates to the target project's CLI.
+  const location = await resolveProjectPath(
+    command === "import" ? options.positional[2] : options.positional[0]);
   const manifestPath = join(location.root, "package.json");
   if (!await regularFile(manifestPath)) return launcherStopRequested ? 130 : undefined;
   const manifest = object(await readJson(manifestPath));
@@ -3319,6 +3341,7 @@ async function main(): Promise<number> {
   if (command === "augment") return augmentCommand(options);
   if (command === "ids") return idsCommand(options);
   if (command === "migrate") return migrateCommand(options);
+  if (command === "import") return importCommand(options);
   if (command === "inspect-save") return inspectSaveCommand(options);
   if (command === "plan-patch") return planPatchCommand(options);
   if (command === "verify-package") return verifyPackageCommand(options);
