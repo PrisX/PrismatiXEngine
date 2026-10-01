@@ -2089,3 +2089,25 @@ test("the PrismaFamily V1 to V2 release journey stays on public authoring inputs
   assert.equal((await stat(join(root, "author-v1/project.pxproject"))).isFile(), true);
   assert.equal((await stat(join(root, "author-v2/project.pxproject"))).isFile(), true);
 });
+
+test("distribution.linkMedia hard-links project media into the artifact", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "prismatix-cli-link-media-"));
+  const root = join(parent, "linked-game");
+  try {
+    await createStarter(root, {name: "Linked", install: async (directory) => {
+      await writeFile(join(directory, "package-lock.json"), JSON.stringify({lockfileVersion: 3}));
+      await mkdir(join(directory, "node_modules", "@prismatix"), {recursive: true});
+      await symlink(resolve("."), join(directory, "node_modules", "@prismatix", "cli"), "junction");
+    }});
+    const projectPath = join(root, "prismatix.json");
+    const manifest = JSON.parse(await readFile(projectPath, "utf8")) as Record<string, unknown>;
+    await writeFile(projectPath, JSON.stringify({...manifest, distribution: {linkMedia: true}}));
+    const artifact = join(parent, "artifact");
+    const built = run(["build", projectPath, "--artifact-only", "--output", artifact]);
+    assert.equal(built.status, 0, built.stderr);
+    const media = await stat(join(artifact, "Assets", "window.png"));
+    assert.ok(media.nlink >= 2, "the artifact shares the project's image instead of copying it");
+    await writeFile(projectPath, JSON.stringify({...manifest, distribution: {linkMedia: "yes"}}));
+    assert.notEqual(run(["build", projectPath, "--artifact-only", "--output", join(parent, "bad")]).status, 0);
+  } finally { await rm(parent, {recursive: true, force: true}); }
+});

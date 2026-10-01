@@ -78,7 +78,7 @@ const reservedFileNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 export function projectDistributionError(value: unknown): string | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return "distribution must be an object";
-  const {executableName, icon, output, compression, archiveShards, ...rest} =
+  const {executableName, icon, output, compression, archiveShards, linkMedia, ...rest} =
     value as Record<string, unknown>;
   const extra = Object.keys(rest);
   if (extra.length > 0) return `distribution does not support ${extra.join(", ")}`;
@@ -100,6 +100,8 @@ export function projectDistributionError(value: unknown): string | undefined {
   if (archiveShards !== undefined && (!Number.isInteger(archiveShards) ||
       (archiveShards as number) < 1 || (archiveShards as number) > 64))
     return "distribution.archiveShards must be an integer from 1 to 64";
+  if (linkMedia !== undefined && typeof linkMedia !== "boolean")
+    return "distribution.linkMedia must be true or false";
   return undefined;
 }
 

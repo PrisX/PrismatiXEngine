@@ -87,7 +87,10 @@ the project should use in `prismatix.json` instead of repeating flags:
 prismatix release my-game
 ```
 
-Command-line options still win over these defaults. Engine contributors can
+Command-line options still win over these defaults. `"linkMedia": true`
+hard-links the project's media into the build artifact instead of copying it
+when both are on the same volume, so a multi-GiB game is not stored twice
+(the artifact then shares those files with the project). Engine contributors can
 pass a local build directory as `--runtime out/build/x64-release/PrismatiXEngine`.
 Scaffold the files you would otherwise write by hand, and see any command's
 options with `--help`:

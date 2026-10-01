@@ -1359,6 +1359,11 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
   // opening thousands of files at once. Await every task in a failed batch
   // before publication removes staging, so no copy can outlive its directory.
   const copyBatchSize = 8;
+  // distribution.linkMedia: hard-link media from the project into the
+  // artifact instead of copying it (same volume only), so a multi-GiB game
+  // is not stored twice. The artifact then shares those files with the
+  // project; editing one in place changes both, as a rebuild would.
+  const linkMedia = object(object(loaded.project)?.distribution)?.linkMedia === true;
   for (let start = 0; start < artifact.dependencies.length; start += copyBatchSize) {
     const batch = artifact.dependencies.slice(start, start + copyBatchSize);
     const results = await Promise.allSettled(batch.map(async (dependency) => {
@@ -1379,7 +1384,15 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
           }
         }
       }
-      if (!reused) await copyFile(source, destination);
+      let linkedSource = false;
+      if (!reused && linkMedia) {
+        try { await link(source, destination); linkedSource = true; }
+        catch (error) {
+          if (!["EXDEV", "EPERM", "EOPNOTSUPP", "ENOSYS"].includes(
+            (error as NodeJS.ErrnoException).code ?? "")) throw error;
+        }
+      }
+      if (!reused && !linkedSource) await copyFile(source, destination);
       if (reused && linkedOutputFiles !== undefined) {
         linkedOutputFiles.set(dependency.logicalPath, previous!);
       }
