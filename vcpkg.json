@@ -3,7 +3,15 @@
   "version": "0.2.0",
   "dependencies": [
     "fmt",
-    "sdl3",
+    {
+      "name": "sdl3",
+      "features": [
+        {
+          "name": "vulkan",
+          "platform": "android"
+        }
+      ]
+    },
     {
       "name": "sdl3-shadercross",
       "host": true
