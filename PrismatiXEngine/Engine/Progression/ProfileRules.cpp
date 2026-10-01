@@ -19,7 +19,11 @@ std::optional<ProfileCondition> ParseProfileCondition(const nlohmann::json& valu
         return ProfileCondition{ProfileCondition::Kind::Flag, flag, {}};
     }
     if (!value.is_object() || value.size() != 1) return std::nullopt;
-    const auto& [name, operand] = *value.items().begin();
+    // Not `*value.items().begin()`: that dereferences a temporary proxy, and
+    // the bindings dangle (it crashed under the NDK's libc++).
+    const auto entry = value.begin();
+    const std::string& name = entry.key();
+    const nlohmann::json& operand = entry.value();
     if (name == "not") {
         auto child = ParseProfileCondition(operand, depth + 1);
         if (!child) return std::nullopt;
