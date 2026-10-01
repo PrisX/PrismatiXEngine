@@ -327,8 +327,11 @@ private:
     [[nodiscard]] bool HasCurrentEvent(std::uint64_t eventId) const;
     [[nodiscard]] bool ActionActive(std::string_view action) const;
     [[nodiscard]] bool EventDefaultSuppressed(const InputEvent& event) const;
-    [[nodiscard]] std::uint64_t AppendEvent(
-        InputEvent event, EventSource source = {});
+    // Two overloads instead of `EventSource source = {}`: Clang rejects a
+    // default argument that needs a nested class's member initializers
+    // inside the enclosing class definition (CWG 1397).
+    [[nodiscard]] std::uint64_t AppendEvent(InputEvent event);
+    [[nodiscard]] std::uint64_t AppendEvent(InputEvent event, EventSource source);
     void AppendActionEventsForKey(int scancode);
     void AppendActionEventsForGamepadButton(int button);
     void AppendPointerDefaultActions(PointerButton button,

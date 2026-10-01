@@ -112,6 +112,15 @@ endif()
 
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
+# The NDK r27 libc++ (LLVM 18) still ships std::jthread and std::stop_token
+# as experimental. -fexperimental-library enables them and links the NDK's
+# libc++experimental.a; the Player links libc++ statically, so the unstable
+# ABI never crosses a library boundary.
+if(ANDROID)
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-fexperimental-library>")
+    add_link_options(-fexperimental-library)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -124,6 +133,18 @@ else()
     find_package(SDL3 CONFIG REQUIRED)
     find_package(SDL3_image CONFIG REQUIRED)
     find_package(SDL3_ttf CONFIG REQUIRED)
+    if(ANDROID AND TARGET harfbuzz::harfbuzz)
+        # vcpkg's harfbuzz.pc lists -lc++, which the NDK resolves to
+        # libc++_shared.so. The Player links libc++ statically
+        # (ANDROID_STL=c++_static); a second, shared C++ runtime would also
+        # have to ship in the APK. Drop it from SDL_ttf's harfbuzz target.
+        get_target_property(_harfbuzz_libraries harfbuzz::harfbuzz INTERFACE_LINK_LIBRARIES)
+        if(_harfbuzz_libraries)
+            list(REMOVE_ITEM _harfbuzz_libraries c++ c++_shared stdc++)
+            set_target_properties(harfbuzz::harfbuzz PROPERTIES
+                INTERFACE_LINK_LIBRARIES "${_harfbuzz_libraries}")
+        endif()
+    endif()
     find_package(SDL3_mixer CONFIG REQUIRED)
     if(NOT ANDROID)
         # The offline shader compiler library is host-only. Android builds

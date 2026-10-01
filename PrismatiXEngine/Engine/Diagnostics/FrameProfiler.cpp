@@ -1,5 +1,6 @@
 #include "Engine/Diagnostics/FrameProfiler.h"
 
+#include "Engine/Core/NumberParsing.h"
 #include "Engine/Support/Logger.h"
 
 #include <SDL3/SDL.h>
@@ -29,8 +30,7 @@ FrameProfiler::FrameProfiler() {
     if (!m_enabled) return;
     const std::string_view text(value);
     double threshold = 0.0;
-    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), threshold);
-    if (parsed.ec == std::errc{} && threshold > 1.0) m_hitchMs = threshold;
+    if (ParseFiniteDouble(text, threshold) && threshold > 1.0) m_hitchMs = threshold;
     PX_LOG_INFO("Frame profiler enabled hitchMs={}", m_hitchMs);
 }
 

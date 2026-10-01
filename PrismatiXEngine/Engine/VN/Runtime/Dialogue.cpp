@@ -1,5 +1,6 @@
 #include "Engine/VN/Runtime/Dialogue.h"
 
+#include "Engine/Core/NumberParsing.h"
 #include "Engine/Text/Typography.h"
 
 #include <algorithm>
@@ -26,10 +27,7 @@ struct RevealTag {
 
 std::optional<double> ParseNumber(const std::string_view value) {
     double number = 0.0;
-    const auto result = std::from_chars(value.data(), value.data() + value.size(), number);
-    if (result.ec != std::errc{} || result.ptr != value.data() + value.size() ||
-        !std::isfinite(number) || number < 0.0)
-        return std::nullopt;
+    if (!ParseFiniteDouble(value, number) || number < 0.0) return std::nullopt;
     return number;
 }
 

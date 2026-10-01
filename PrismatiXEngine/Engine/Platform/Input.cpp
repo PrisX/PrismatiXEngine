@@ -787,6 +787,10 @@ bool Input::HasCurrentEvent(const std::uint64_t eventId) const {
     });
 }
 
+std::uint64_t Input::AppendEvent(InputEvent event) {
+    return AppendEvent(std::move(event), EventSource{});
+}
+
 std::uint64_t Input::AppendEvent(InputEvent event, const EventSource source) {
     event.id = m_nextEventId++;
     event.frame = m_frameSequence;

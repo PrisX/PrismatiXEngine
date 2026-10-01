@@ -1,4 +1,5 @@
 #include "Engine/Text/Typography.h"
+#include "Engine/Core/NumberParsing.h"
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -58,11 +59,10 @@ void ApplyStyleTag(TextRunStyle& style, const StyleTag& tag) {
     else if (tag.name == "size") {
         const bool relative = tag.value.ends_with('%');
         const auto digits = relative ? tag.value.substr(0, tag.value.size() - 1) : tag.value;
-        float amount = 0.0f;
-        const auto result = std::from_chars(digits.data(), digits.data() + digits.size(), amount);
-        if (result.ec != std::errc{} || result.ptr != digits.data() + digits.size() ||
-            !std::isfinite(amount) || amount <= 0.0f)
-            return;
+        double parsed = 0.0;
+        if (!ParseFiniteDouble(digits, parsed)) return;
+        const float amount = static_cast<float>(parsed);
+        if (!std::isfinite(amount) || amount <= 0.0f) return;
         if (relative) style.scale *= std::clamp(amount / 100.0f, 0.1f, 4.0f);
         else { style.size = std::clamp(static_cast<int>(std::lround(amount)), 1, 400); style.scale = 1.0f; }
     }
