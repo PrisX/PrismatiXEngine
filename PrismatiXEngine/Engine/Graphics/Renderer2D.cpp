@@ -1198,6 +1198,16 @@ Rect Renderer2D::DrawImageAuto(const std::string& path, DisplayMode mode, std::u
     return dst;
 }
 
+namespace {
+// Text that cannot be drawn would otherwise just be missing on screen.
+void WarnTextOnce(const char* what, const std::string& detail) {
+    static bool warned = false;
+    if (warned) return;
+    warned = true;
+    PX_LOG_WARN("Renderer2D: text {}: {}", what, detail);
+}
+}  // namespace
+
 const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, const std::string& fontPath, int size, Color color, int outline, int wrap, HorizontalAlignment alignment, const text::TextOrientation orientation) {
     const int ss = m_effectiveTextSupersample;
     const std::string key = MakeKey(text, fontPath, size, color, outline, wrap, ss,static_cast<int>(alignment),m_textLayout.Locale()) +
@@ -1217,6 +1227,7 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
 
     TTF_Font* font = m_assets.Font(fontPath, size * ss, outline * ss);
     if (!font || text.empty()) {
+        if (!font) WarnTextOnce("font unavailable", fontPath);
         return nullptr;
     }
     m_textLayout.ConfigureFont(font, text);
@@ -1228,9 +1239,9 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
     TTF_SetFontWrapAlignment(font,wrapAlignment);
     SDL_Surface* surface=wrap>0?TTF_RenderText_Blended_Wrapped(font,text.c_str(),text.size(),col,wrap*ss):TTF_RenderText_Blended(font,text.c_str(),text.size(),col);
     TTF_SetFontWrapAlignment(font,TTF_HORIZONTAL_ALIGN_LEFT);
-    if(!surface)return nullptr;
+    if(!surface){WarnTextOnce("rasterizing failed",SDL_GetError());return nullptr;}
     CachedText entry;
-    entry.texture=SDL_CreateTextureFromSurface(m_renderer,surface);entry.w=surface->w/ss;entry.h=surface->h/ss;SDL_DestroySurface(surface);if(!entry.texture)return nullptr;SDL_SetTextureBlendMode(entry.texture,SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(entry.texture,SDL_SCALEMODE_LINEAR);
+    entry.texture=SDL_CreateTextureFromSurface(m_renderer,surface);entry.w=surface->w/ss;entry.h=surface->h/ss;SDL_DestroySurface(surface);if(!entry.texture){WarnTextOnce("texture upload failed",SDL_GetError());return nullptr;}SDL_SetTextureBlendMode(entry.texture,SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(entry.texture,SDL_SCALEMODE_LINEAR);
 
     auto [it, _] = m_textCache.emplace(key, entry);
     return &it->second;
