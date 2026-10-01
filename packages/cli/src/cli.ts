@@ -41,6 +41,7 @@ import {AndroidExportError, androidSettings, checkAndroidInputs, checkKeystoreEn
   runGradle, stageGradleProject, templateSdlVersion} from "./android-export.js";
 import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
 import {transcodeMedia, type TranscodedFile} from "./media-transcode.js";
+import {testCommand, testHelp} from "./test-command.js";
 
 import {
   assertLocalBuildFresh,
@@ -114,6 +115,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   "verify-overlay": {values: "base updates-dir patch runtime packager", flags: "require-signature"},
   "overlay-keygen": {values: "private public runtime packager", flags: ""},
   import: {values: "config", flags: "long-forms"},
+  test: {values: "project package player output timeout data-root working-directory", flags: "keep-data"},
 };
 function parseOptions(command: string, args: readonly string[]): Options {
   const schema = commandOptions[command];
@@ -158,6 +160,7 @@ function parseOptions(command: string, args: readonly string[]): Options {
       throw new Error(`Unknown import format ${positional[0]}; expected ${importFormats.join(", ")}`);
     return {values, flags, positional};
   }
+  if (command === "test") return {values, flags, positional};
   if (positional.length > 1) throw new Error("Expected one project or save path; quote paths containing spaces");
   if (["plan-patch", "create-patch", "apply-patch", "create-overlay",
     "verify-overlay", "overlay-keygen"].includes(command) &&
@@ -3026,6 +3029,7 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
   "verify-overlay": ["Verify an overlay against its base distribution.",
     "prismatix verify-overlay --base <distribution> --patch <patch.pdx> [--require-signature]"],
   "overlay-keygen": ["Create an overlay signing key pair.", "prismatix overlay-keygen --private <file> --public <file>"],
+  test: testHelp,
   import: ["Translate another engine's game into this project's Story, characters, gallery and portraits.",
     "prismatix import artemis <extracted-game> [project] [--config <file>] [--long-forms]",
     "",
@@ -3051,7 +3055,7 @@ function commandUsage(command: string): void {
 }
 
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|add|eject|dev|validate|build|pack|run|release|import|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("Usage: prismatix <create|add|eject|dev|validate|build|pack|run|release|import|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen|test> [project-or-save-or-distribution] [options]\n");
   process.stderr.write("  prismatix <command> --help  Purpose, examples and options of one command\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
   process.stderr.write("  prismatix create-overlay --base <distribution> --artifact <published-artifact> --output <patch.pdx> [--signing-key <private-key>]  Patch without a target distribution\n");
@@ -3431,9 +3435,11 @@ function patchProgress(value: DistributionPatchProgress): void {
 
 async function projectTool(command: string, options: Options, args: string[]): Promise<number | undefined> {
   if (launcherStopRequested) return 130;
+  // test drives a packaged Player over its QA IPC; it never builds with the
+  // project's SDK, so it does not hand over to the project's pinned CLI.
   if (["create", "inspect-save", "plan-patch", "verify-package",
     "create-patch", "apply-patch", "create-overlay", "verify-overlay",
-    "overlay-keygen"]
+    "overlay-keygen", "test"]
     .includes(command)) return undefined;
   // `import <format> <source> [project]` delegates to the target project's CLI.
   const location = await resolveProjectPath(
@@ -3515,6 +3521,7 @@ async function main(): Promise<number> {
   if (command === "create-overlay" || command === "verify-overlay")
     return overlayCommand(command, options);
   if (command === "overlay-keygen") return overlayKeygenCommand(options);
+  if (command === "test") return testCommand(options);
   usage(); return 2;
 }
 

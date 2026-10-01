@@ -3,6 +3,10 @@
   "version": "0.2.0",
   "type": "module",
   "bin": {"prismatix": "./dist/src/cli.js"},
+  "exports": {
+    "./test": {"types": "./dist/src/qa-client.d.ts", "default": "./dist/src/qa-client.js"},
+    "./package.json": "./package.json"
+  },
   "files": ["dist/src", "templates", "runtime"],
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../authoring-sdk/dist/src/build-freshness.js --stamp .",
