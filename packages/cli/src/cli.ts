@@ -174,9 +174,12 @@ function parseOptions(command: string, args: readonly string[]): Options {
     throw new Error("--previous-package cannot be used with pack --check");
   if (flags.has("verify-media") && !flags.has("check"))
     throw new Error("--verify-media requires pack --check");
-  if (values.has("target") && !["desktop", "android"].includes(values.get("target")!))
+  // pack's --target names a platform; the patch and overlay commands use
+  // --target for a distribution path.
+  if (command === "pack" && values.has("target") &&
+      !["desktop", "android"].includes(values.get("target")!))
     throw new Error("--target must be desktop or android");
-  const android = values.get("target") === "android";
+  const android = command === "pack" && values.get("target") === "android";
   for (const name of ["android-player", "gradle", "android-sdk"])
     if (values.has(name) && !android) throw new Error(`--${name} requires --target android`);
   if (flags.has("debug") && !android) throw new Error("--debug requires --target android");
