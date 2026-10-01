@@ -1,4 +1,5 @@
 #include "Engine/Progression/ProfileRules.h"
+#include "Engine/UI/VirtualizedView.h"
 #include "Tests/TestSupport/TestHarness.h"
 
 #include <map>
@@ -65,6 +66,15 @@ int main() {
         suite.Equal("title.ogg", *FirstMatchingChoice(rules, flags.Reader()), "fallback rule");
         flags.values["clear"] = Variant(true);
         suite.Equal("after.ogg", *FirstMatchingChoice(rules, flags.Reader()), "flagged rule");
+    });
+
+    suite.Run("ChoiceRows", [&] {
+        const auto rows = px::ui::ParseChoiceRows("2:-1,1;3:-1.5,0,1.5");
+        suite.Require(rows.has_value(), "rows parse");
+        suite.Expect(rows->at(3) == std::vector<double>{-1.5, 0.0, 1.5}, "offsets keep their order");
+        for (const char* bad : {"2:-1", "0:", "2:a,b", "2:1,2;2:1,2", "x"})
+            suite.Expect(!px::ui::ParseChoiceRows(bad), bad);
+        suite.Expect(px::ui::ParseChoiceRows("")->empty(), "empty means no rows");
     });
 
     return suite.Finish();

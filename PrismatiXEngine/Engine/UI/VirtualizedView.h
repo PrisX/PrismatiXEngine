@@ -4,6 +4,9 @@
 #include "Engine/UI/Control.h"
 
 #include <functional>
+#include <map>
+#include <string>
+#include <string_view>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -112,6 +115,28 @@ public:
     explicit PlacedItemsView(std::string name = "PlacedItemsView")
         : VirtualizedView(std::move(name)) { EnablePlacedItems(); }
     [[nodiscard]] std::string_view TypeName() const override { return "PlacedItemsView"; }
+
+    // Where the stock Player places story choices when this view lists
+    // `dialogue.choices`: each choice is a `choiceArea`-sized bar moved down
+    // by `choicePitch` times its offset. `choiceRows` holds one row of
+    // offsets per choice count, "2:-1,1;3:-1.5,0,1.5"; a count without a row
+    // centres the choices one pitch apart.
+    [[nodiscard]] const Rect& ChoiceArea() const { return m_choiceArea; }
+    void SetChoiceArea(const Rect& area) { m_choiceArea = area; }
+    [[nodiscard]] float ChoicePitch() const { return m_choicePitch; }
+    void SetChoicePitch(const float pitch) { m_choicePitch = pitch; }
+    [[nodiscard]] const std::string& ChoiceRows() const { return m_choiceRows; }
+    void SetChoiceRows(std::string rows) { m_choiceRows = std::move(rows); }
+    [[nodiscard]] bool HasChoiceLayout() const { return m_choiceArea.w > 0 && m_choiceArea.h > 0; }
+
+private:
+    Rect m_choiceArea{};
+    float m_choicePitch = 0.0f;
+    std::string m_choiceRows;
 };
+
+/** Parses `choiceRows` ("2:-1,1;3:-1.5,0,1.5"); nullopt when malformed. */
+[[nodiscard]] std::optional<std::map<std::size_t, std::vector<double>>>
+ParseChoiceRows(std::string_view rows);
 
 }  // namespace px::ui

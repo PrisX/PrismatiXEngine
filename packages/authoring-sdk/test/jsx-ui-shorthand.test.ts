@@ -167,3 +167,18 @@ test("Image region selects an atlas cell", () => {
   assert.throws(() => jsx(Image, {name: "Bad", path: "a.png", region: [0, 0, -1, 4]}), /non-negative/u);
 });
 
+test("ItemsPlaced choiceLayout lowers to the choice properties the Player reads", async () => {
+  const {ItemsPlaced, Group} = await import("../src/index.js");
+  const result = compileJsxUi(jsx(Scene, {name: "HUD", width: 1920, height: 1080,
+    children: jsx(ItemsPlaced, {name: "ChoiceList", size: [1920, 1080],
+      items: {path: "dialogue.choices", key: "key", placement: "rect"},
+      choiceLayout: {area: [0, 497, 1920, 86], pitch: 60, rows: {2: [-1, 1], 3: [-1.5, 0, 1.5]}},
+      children: jsx(Group, {name: "ChoiceTemplate", size: [1920, 86]})})}), {kind: "scene"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const list = result.value!.nodes.find((node) => node.name === "ChoiceList")!;
+  assert.deepEqual(list.runtimeProperties, {
+    choiceArea: {type: "rect", x: 0, y: 497, width: 1920, height: 86},
+    choicePitch: 60, choiceRows: "2:-1,1;3:-1.5,0,1.5"});
+  assert.throws(() => ItemsPlaced({name: "Bad", items: {path: "dialogue.choices", key: "key",
+    placement: "rect"}, choiceLayout: {area: [0, 0, 100, 10], rows: {2: [0]}}}), /row 2 needs 2/u);
+});

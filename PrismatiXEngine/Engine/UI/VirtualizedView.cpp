@@ -4,6 +4,7 @@
 #include "Engine/Graphics/Renderer2D.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <limits>
 #include <unordered_set>
@@ -188,5 +189,37 @@ void VirtualizedView::HandleEvent(UIEvent& event) {
 }
 
 void VirtualizedView::Draw(graphics::Renderer2D& renderer,const Theme& theme){if(GetVisibility()!=Visibility::Visible)return;renderer.PushClip(LayoutRect());Control::Draw(renderer,theme);renderer.PopClip();}
+
+std::optional<std::map<std::size_t, std::vector<double>>>
+ParseChoiceRows(const std::string_view rows) {
+    std::map<std::size_t, std::vector<double>> result;
+    std::size_t start = 0;
+    while (start < rows.size()) {
+        const std::size_t end = std::min(rows.find(';', start), rows.size());
+        const std::string_view row = rows.substr(start, end - start);
+        start = end + 1;
+        const std::size_t colon = row.find(':');
+        if (colon == std::string_view::npos) return std::nullopt;
+        std::size_t count = 0;
+        if (std::from_chars(row.data(), row.data() + colon, count).ec != std::errc{} ||
+            count == 0 || count > 64 || result.contains(count))
+            return std::nullopt;
+        std::vector<double> offsets;
+        std::size_t cursor = colon + 1;
+        while (cursor <= row.size()) {
+            const std::size_t comma = std::min(row.find(',', cursor), row.size());
+            double offset = 0.0;
+            const auto parsed = std::from_chars(row.data() + cursor, row.data() + comma, offset);
+            if (parsed.ec != std::errc{} || parsed.ptr != row.data() + comma ||
+                !std::isfinite(offset))
+                return std::nullopt;
+            offsets.push_back(offset);
+            cursor = comma + 1;
+        }
+        if (offsets.size() != count) return std::nullopt;
+        result.emplace(count, std::move(offsets));
+    }
+    return result;
+}
 
 }  // namespace px::ui

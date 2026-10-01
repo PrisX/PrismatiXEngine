@@ -1072,19 +1072,29 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
         // An authored ChoiceList draws the buttons from this data.
         VariantArray items;
         const auto count = p.choices.size();
-        const auto row = m_choiceLayout.offsets.find(count);
+        // The HUD's own choiceArea/choicePitch/choiceRows win over the
+        // older player.choiceLayout setting.
+        ChoiceLayout layout = m_choiceLayout;
+        if (const auto* placed = dynamic_cast<const PlacedItemsView*>(m_choiceList);
+            placed && placed->HasChoiceLayout()) {
+            const Rect& area = placed->ChoiceArea();
+            layout = {area.x, area.y, area.w, area.h, placed->ChoicePitch(),
+                      ParseChoiceRows(placed->ChoiceRows()).value_or(
+                          std::map<std::size_t, std::vector<double>>{})};
+        }
+        const auto row = layout.offsets.find(count);
         for (std::size_t i = 0; i < count; ++i) {
             double offset = static_cast<double>(i) - (static_cast<double>(count) - 1.0) / 2.0;
-            if (row != m_choiceLayout.offsets.end() && i < row->second.size()) offset = row->second[i];
+            if (row != layout.offsets.end() && i < row->second.size()) offset = row->second[i];
             items.emplace_back(VariantObject{
                 {"key", Variant(static_cast<std::int64_t>(i))},
                 {"text", Variant(p.choices[i])},
                 {"rect", Variant(VariantObject{
-                    {"x", Variant(static_cast<double>(m_choiceLayout.x))},
-                    {"y", Variant(static_cast<double>(m_choiceLayout.y) +
-                                  std::floor(static_cast<double>(m_choiceLayout.halfPitch) * offset))},
-                    {"width", Variant(static_cast<double>(m_choiceLayout.width))},
-                    {"height", Variant(static_cast<double>(m_choiceLayout.height))}})}});
+                    {"x", Variant(static_cast<double>(layout.x))},
+                    {"y", Variant(static_cast<double>(layout.y) +
+                                  std::floor(static_cast<double>(layout.halfPitch) * offset))},
+                    {"width", Variant(static_cast<double>(layout.width))},
+                    {"height", Variant(static_cast<double>(layout.height))}})}});
         }
         (void)m_viewModel.Write("dialogue.choices", Variant(std::move(items)));
         m_presentedChoices = p.choices;

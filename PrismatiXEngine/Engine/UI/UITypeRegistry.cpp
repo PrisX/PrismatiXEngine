@@ -855,7 +855,36 @@ Status RegisterBuiltinUITypes() {
     virtualized.properties.push_back(NumberProperty("overscan","Data",[](const Object& o){return static_cast<double>(As<VirtualizedView>(o)->Overscan());},[](Object& o,double v){As<VirtualizedView>(o)->SetOverscan(static_cast<std::size_t>(std::max(0.0,v)));return Status::Ok();}));add(std::move(virtualized));
     add({"ListView", "VirtualizedView", "UI/Data", [] { return std::make_unique<ListView>(); }});
     add({"GridView", "VirtualizedView", "UI/Data", [] { return std::make_unique<GridView>(); }});
-    add({"PlacedItemsView", "VirtualizedView", "UI/Data", [] { return std::make_unique<PlacedItemsView>(); }});
+    TypeInfo placed{"PlacedItemsView", "VirtualizedView", "UI/Data", [] { return std::make_unique<PlacedItemsView>(); }};
+    PropertyInfo choiceArea{"choiceArea", "Choices", VariantType::Rect,
+        PropertyFlags::Editable | PropertyFlags::Serializable, Variant(Rect{}),
+        [](const Object& o) { return Variant(As<PlacedItemsView>(o)->ChoiceArea()); },
+        [](Object& o, const Variant& v) {
+            const auto* rect = v.TryGet<Rect>();
+            if (!rect || rect->w < 0 || rect->h < 0)
+                return TypeError("choiceArea expects a Rect with a non-negative size");
+            As<PlacedItemsView>(o)->SetChoiceArea(*rect);
+            return Status::Ok();
+        }};
+    choiceArea.editor.displayName = "Choice area";
+    choiceArea.editor.description = "Rectangle of the middle choice bar, in this view's space.";
+    placed.properties.push_back(std::move(choiceArea));
+    placed.properties.push_back(NumberProperty("choicePitch", "Choices",
+        [](const Object& o) { return static_cast<double>(As<PlacedItemsView>(o)->ChoicePitch()); },
+        [](Object& o, double v) {
+            if (!std::isfinite(v)) return TypeError("choicePitch expects a finite number");
+            As<PlacedItemsView>(o)->SetChoicePitch(static_cast<float>(v));
+            return Status::Ok();
+        }));
+    placed.properties.push_back(StringProperty("choiceRows", "Choices",
+        [](const Object& o) { return As<PlacedItemsView>(o)->ChoiceRows(); },
+        [](Object& o, std::string v) {
+            if (!v.empty() && !ParseChoiceRows(v))
+                return TypeError("choiceRows expects rows like \"2:-1,1;3:-1.5,0,1.5\"");
+            As<PlacedItemsView>(o)->SetChoiceRows(std::move(v));
+            return Status::Ok();
+        }));
+    add(std::move(placed));
     TypeInfo colorRect{"ColorRect","Control","UI/Display",[]{return std::make_unique<ColorRect>();}};
     colorRect.properties.push_back({"color","Display",VariantType::Color,PropertyFlags::Editable|PropertyFlags::Serializable|PropertyFlags::Bindable,Variant(Color{}),
         [](const Object& o){return Variant(As<ColorRect>(o)->GetColor());},[](Object& o,const Variant& v){if(auto* c=v.TryGet<Color>()){As<ColorRect>(o)->SetColor(*c);return Status::Ok();}return TypeError("color expects Color");}});add(std::move(colorRect));

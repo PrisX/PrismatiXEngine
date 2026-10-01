@@ -189,6 +189,18 @@ export interface ItemsViewProps extends UiNodeProps {
 
 export interface ItemsPlacedProps extends Omit<UiNodeProps, "itemSource"> {
   readonly items: UiItemSource & {readonly placement: string};
+  /**
+   * Where the Player puts story choices when this view lists
+   * `dialogue.choices`: `area` is the middle choice bar `[x, y, width, height]`
+   * in this view's space, and each choice moves down by `pitch` times its
+   * offset. `rows` gives the offsets for a choice count, e.g.
+   * `{2: [-1, 1], 3: [-1.5, 0, 1.5]}`; other counts sit one pitch apart.
+   */
+  readonly choiceLayout?: {
+    readonly area: readonly [x: number, y: number, width: number, height: number];
+    readonly pitch?: number;
+    readonly rows?: Readonly<Record<number, readonly number[]>>;
+  };
 }
 
 export interface ControlProps extends UiNodeProps {
@@ -671,8 +683,26 @@ export function ItemsList(props: Omit<ItemsViewProps, "columns">): UiElement {
 
 /** Runtime-keyed items at data-authored local rectangles; one item subtree. */
 export function ItemsPlaced(props: ItemsPlacedProps): UiElement {
-  const {items, ...rest} = props;
-  return node("control", "PlacedItemsView", {...rest, itemSource: items});
+  const {items, choiceLayout, ...rest} = props;
+  if (choiceLayout === undefined)
+    return node("control", "PlacedItemsView", {...rest, itemSource: items});
+  const {area, pitch = 0, rows = {}} = choiceLayout;
+  const label = `ItemsPlaced ${props.name ?? ""} choiceLayout`;
+  if (area.length !== 4 || area.some((value) => !Number.isFinite(value)) || area[2] <= 0 || area[3] <= 0)
+    throw new TypeError(`${label} area needs [x, y, width, height] with a positive size`);
+  if (!Number.isFinite(pitch)) throw new TypeError(`${label} pitch must be a finite number`);
+  const encoded = Object.entries(rows).map(([count, offsets]) => {
+    if (!/^[1-9][0-9]?$/u.test(count) || Number(count) > 64 || offsets.length !== Number(count) ||
+        offsets.some((offset) => !Number.isFinite(offset)))
+      throw new TypeError(`${label} row ${count} needs ${count} finite offsets`);
+    return `${count}:${offsets.join(",")}`;
+  }).join(";");
+  return node("control", "PlacedItemsView", {...rest, itemSource: items, runtimeProperties: {
+    ...props.runtimeProperties,
+    choiceArea: {type: "rect", x: area[0], y: area[1], width: area[2], height: area[3]},
+    choicePitch: pitch,
+    ...(encoded === "" ? {} : {choiceRows: encoded}),
+  }});
 }
 
 export function Text(props: TextProps): UiElement {
