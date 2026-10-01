@@ -142,7 +142,7 @@
         },
         {
             "name": "android-arm64",
-            "displayName": "Android arm64-v8a Player (see docs/android.md)",
+            "displayName": "Android arm64-v8a Player (see docs/shipping.md (Android))",
             "description": "Cross-compiles the Player as libmain.so for SDL's Android Java glue. Needs VCPKG_ROOT and ANDROID_NDK_HOME (NDK r27+). Builds; not yet run on a device.",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/out/build/${presetName}",

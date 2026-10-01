@@ -2993,7 +2993,7 @@ function commandUsage(command: string): void {
 }
 
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|release|augment|ids|migrate|import|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("Usage: prismatix <create|add|eject|dev|validate|build|pack|run|release|import|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen> [project-or-save-or-distribution] [options]\n");
   process.stderr.write("  prismatix <command> --help  Purpose, examples and options of one command\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
   process.stderr.write("  prismatix create-overlay --base <distribution> --artifact <published-artifact> --output <patch.pdx> [--signing-key <private-key>]  Patch without a target distribution\n");

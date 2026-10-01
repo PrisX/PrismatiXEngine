@@ -211,7 +211,7 @@ export const inlineTags: readonly {readonly label: string; readonly insert: stri
   {label: "/ruby", insert: "/ruby]", detail: "end ruby"},
 ];
 
-/** One-line summaries of the built-in Story commands (see docs/cookbook.md). */
+/** One-line summaries of the built-in Story commands (see docs/authoring.md). */
 export const commandSummaries: Readonly<Record<string, string>> = {
   id: "Pins the save identity of the next observable operation.",
   chapter: "Starts a chapter and shows its title.",
@@ -266,4 +266,11 @@ export const commandSummaries: Readonly<Record<string, string>> = {
   "skip.enable": "Allows skip again.",
   macro: "Defines a Story macro that expands where it is called; ends at [endmacro].",
   endmacro: "Ends a [macro] definition.",
+  elseif: "Starts a branch taken when earlier [if]/[elseif] expressions were false and this one is true.",
+  endchoice: "Ends a block choice started with [choice text=...] on its own line.",
+  var: "Declares a variable with its default: [var affection=0], scope=profile to keep it across games.",
+  face: "Changes only a layered character's expression, keeping its position and outfit.",
+  credits: "Rolls a staff roll from the lines up to [endcredits].",
+  endcredits: "Ends a [credits] block.",
+  input: "Asks the player for text and stores it in a string variable: [input var=hero prompt=\"名前\"].",
 };

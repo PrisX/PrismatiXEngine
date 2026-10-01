@@ -1,6 +1,6 @@
 // PrismatiX Android Player app module. `prismatix pack --target android`
 // copies this template, fills the inputs below and runs Gradle; see
-// docs/android.md for doing the same by hand.
+// docs/shipping.md (Android) for doing the same by hand.
 //
 // Inputs:
 //   src/main/jniLibs/arm64-v8a/libmain.so    PrismatiXPlayer (android-arm64 preset)
@@ -37,7 +37,7 @@ def keystorePath = setting("keystore", "")
 android {
     namespace "com.prismatix.player"
     compileSdk 35
-    // Pinned so AGP uses the build-tools docs/android.md asks for instead of
+    // Pinned so AGP uses the build-tools docs/shipping.md (Android) asks for instead of
     // its own default version.
     buildToolsVersion "35.0.0"
 

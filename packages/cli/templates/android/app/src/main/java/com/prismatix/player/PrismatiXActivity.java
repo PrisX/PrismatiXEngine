@@ -3,7 +3,7 @@ package com.prismatix.player;
 import org.libsdl.app.SDLActivity;
 
 /**
- * Hosts the PrismatiX Player. See docs/android.md.
+ * Hosts the PrismatiX Player. See docs/shipping.md (Android).
  *
  * <p>SDL3 is linked statically into libmain.so, so only "main" is loaded
  * here. Android 6+ resolves libmain's shared FFmpeg dependencies from the

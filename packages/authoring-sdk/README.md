@@ -16,12 +16,12 @@ The public entrypoint provides:
 
 Named keyboard actions, contexts, and default bindings can be authored in
 `Content/game.pxgame` through the typed `GameInputAction` contract; see the
-[input action guide](../../docs/input-actions.md). The older `inputBindings`
+[input action guide](../../docs/authoring.md#authoring-input-actions). The older `inputBindings`
 entries remain readable for migrated projects.
 
 Embedding applications can declare typed Action signatures in
 `settings["authoring.actionContract"]` and check their native handlers before
-mounting UI; see the [host Action guide](../../docs/host-action-authoring.md).
+mounting UI; see the [host Action guide](../../docs/authoring.md#host-action-authoring-contract).
 
 ## Dynamic resource families
 
@@ -125,14 +125,14 @@ their own `sourceFiles` map without Node filesystem access.
 Importers matching external asset names to media can use
 `createImportedResourceResolver(paths)`. It accepts enumerated project-relative
 paths and reports ambiguous basenames instead of silently picking one; see
-[imported resource resolution](../../docs/imported-resource-resolution.md).
+[imported resource resolution](../../docs/shipping.md#resolving-assets-while-importing-story).
 `serializeStoryCommand(name, arguments)` safely encodes a named-argument Story
 line from JSON values for these importers. The Story project compiler remains
 the authority for command semantics and save identity.
 `buildImportedStorySource(path, lines)` creates a Story source and external ID
 sidecar from adapter-assigned stable IDs; `assembleImportedStoryProject(input)`
 combines scenes and locales into an index and checked output files. See
-[importing stories](../../docs/importing-stories.md). Neither API decodes a
+[importing stories](../../docs/shipping.md#importing-stories-from-other-formats). Neither API decodes a
 proprietary source format.
 
 For a versioned release, `planSaveAnchorPolicy(previousRuntimeIr,
@@ -140,7 +140,7 @@ nextRuntimeIr, replacements)` compares compiled execution identities. It
 returns `preserve` when all old anchors survive, or a sparse
 `map-or-preserve` policy after each missing anchor receives an explicit
 replacement. The result can be used as a `.pxsave-migration` document's
-`anchor` field; see [save migration anchors](../../docs/save-migrations.md).
+`anchor` field; see [save migration anchors](../../docs/shipping.md#save-migration-anchors).
 Test real old saves because identical IDs do not prove identical story meaning.
 
 The map preserves both authored ids and the exact pre-migration fallback
@@ -234,7 +234,7 @@ several top-level children, automatically receive a transparent full-scene
 structural root. Existing scenes with an explicit structural root keep their
 canonical node identities.
 
-For a confirmation overlay, [`<Modal>`](../../docs/modal-authoring.md) authors
+For a confirmation overlay, [`<Modal>`](../../docs/authoring.md#modal-dialogs-in-tsx-ui) authors
 the backdrop and panel while native input traps focus and backdrop clicks.
 
 Use `jsx: "react-jsx"` and
@@ -394,7 +394,7 @@ or write any non-identifier name directly:
 
 `@name text` speaks one line and returns to narration. `@alias[smile left
 voice=v001] text` changes the expression or position and plays a voice for
-that line only. See the [cookbook](../../docs/cookbook.md#short-forms-for-long-scripts)
+that line only. See the [cookbook](../../docs/authoring.md#short-forms-for-long-scripts)
 for these forms and the `storyAssets` short-name roots used by
 `compileProject` and `createStoryAssetIndex`.
 
@@ -407,7 +407,7 @@ in a shipped game without reviewing save/seen identity migration.
 ## Project-aware character resources
 
 Layered expression sprites have a typed, validated `.pxportrait` authoring
-contract. See [layered portrait authoring](../../docs/portrait-authoring.md)
+contract. See [layered portrait authoring](../../docs/authoring.md#layered-portrait-authoring)
 for the helper, coordinate semantics, and dependency rules.
 
 For reusable image-layer animations, `defineMotion` and `serializeMotion`
@@ -424,8 +424,8 @@ out the current page; the configured start route is also prefetched during
 boot. Story commands, a general route/transition preload
 handshake, masks, blur, and audio markers are not implemented.
 The image-layer renderer and atlas selection have framebuffer integration tests.
-See [the motion guide](../../docs/motion-authoring.md) and
-[remaining contract](../../docs/architecture/layered-motion-authoring.md).
+See [the motion guide](../../docs/authoring.md#authoring-layered-motion) and
+[remaining contract](../../docs/authoring.md#layered-motion-authoring-proposal).
 
 ```ts
 import {serializeMotion} from "@prismatix/authoring-sdk";

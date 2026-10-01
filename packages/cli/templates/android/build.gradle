@@ -1,4 +1,4 @@
-// PrismatiX Android Player project; see docs/android.md.
+// PrismatiX Android Player project; see docs/shipping.md (Android).
 plugins {
     id "com.android.application" version "8.7.3" apply false
 }

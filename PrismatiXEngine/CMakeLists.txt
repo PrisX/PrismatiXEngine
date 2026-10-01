@@ -440,7 +440,7 @@ function(prismatix_add_player target qa_hooks)
     )
     if(ANDROID)
         # SDL's Java glue (SDLActivity) loads the game as libmain.so and
-        # calls its SDL_main; see docs/android.md. The shipped and QA Players
+        # calls its SDL_main; see docs/shipping.md (Android). The shipped and QA Players
         # both use that name, so they build into separate directories. Each
         # directory gets everything the APK's lib/<abi>/ needs (libmain.so
         # plus the shared FFmpeg libraries) and prismatix-player.json, which

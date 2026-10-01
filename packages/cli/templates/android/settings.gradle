@@ -1,5 +1,5 @@
 // PrismatiX Android Player project template. Builds with Gradle 8.9+ and
-// JDK 17+; see docs/android.md.
+// JDK 17+; see docs/shipping.md (Android).
 pluginManagement {
     repositories {
         google()
