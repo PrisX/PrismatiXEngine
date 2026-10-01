@@ -70,6 +70,26 @@ export interface NormalizedProjectInput {
 export interface ProjectDistribution {
   readonly executableName?: string;
   readonly icon?: string;
+  readonly android?: ProjectAndroidDistribution;
+}
+
+/**
+ * `prismatix pack --target android` settings. `icon` is a project-relative
+ * square PNG. The keystore names environment variables that hold its
+ * passwords; passwords themselves never belong in prismatix.json.
+ */
+export interface ProjectAndroidDistribution {
+  readonly applicationId?: string;
+  readonly versionCode?: number;
+  readonly versionName?: string;
+  readonly label?: string;
+  readonly icon?: string;
+  readonly keystore?: {
+    readonly path: string;
+    readonly alias: string;
+    readonly storePasswordEnv: string;
+    readonly keyPasswordEnv?: string;
+  };
 }
 
 const reservedFileNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
@@ -78,7 +98,7 @@ const reservedFileNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 export function projectDistributionError(value: unknown): string | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return "distribution must be an object";
-  const {executableName, icon, output, compression, archiveShards, linkMedia, ...rest} =
+  const {executableName, icon, output, compression, archiveShards, linkMedia, android, ...rest} =
     value as Record<string, unknown>;
   const extra = Object.keys(rest);
   if (extra.length > 0) return `distribution does not support ${extra.join(", ")}`;
@@ -102,6 +122,56 @@ export function projectDistributionError(value: unknown): string | undefined {
     return "distribution.archiveShards must be an integer from 1 to 64";
   if (linkMedia !== undefined && typeof linkMedia !== "boolean")
     return "distribution.linkMedia must be true or false";
+  return android === undefined ? undefined : androidDistributionError(android);
+}
+
+const plainText = (value: unknown, maxBytes: number): value is string =>
+  typeof value === "string" && value.trim().length > 0 &&
+  new TextEncoder().encode(value).length <= maxBytes && !/[\u0000-\u001f\u007f]/.test(value);
+const environmentName = (value: unknown): boolean =>
+  typeof value === "string" && /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(value);
+
+function androidDistributionError(value: unknown): string | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return "distribution.android must be an object";
+  const {applicationId, versionCode, versionName, label, icon, keystore, ...rest} =
+    value as Record<string, unknown>;
+  const extra = Object.keys(rest);
+  if (extra.length > 0) return `distribution.android does not support ${extra.join(", ")}`;
+  if (applicationId !== undefined && (typeof applicationId !== "string" ||
+      applicationId.length > 150 ||
+      !/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/.test(applicationId)))
+    return "distribution.android.applicationId must be a dotted Android package name such as com.example.game";
+  if (versionCode !== undefined && (!Number.isInteger(versionCode) ||
+      (versionCode as number) < 1 || (versionCode as number) > 2100000000))
+    return "distribution.android.versionCode must be an integer from 1 to 2100000000";
+  if (versionName !== undefined && !plainText(versionName, 100))
+    return "distribution.android.versionName must be a single line of at most 100 bytes";
+  if (label !== undefined && !plainText(label, 100))
+    return "distribution.android.label must be a single line of at most 100 bytes";
+  if (icon !== undefined && (typeof icon !== "string" || !isSafeResourcePath(icon) ||
+      icon.includes(":") || !/\.png$/i.test(icon)))
+    return "distribution.android.icon must be a safe project-relative .png path";
+  if (keystore === undefined) return undefined;
+  if (keystore === null || typeof keystore !== "object" || Array.isArray(keystore))
+    return "distribution.android.keystore must be an object";
+  const {path, alias, storePasswordEnv, keyPasswordEnv, ...keystoreRest} =
+    keystore as Record<string, unknown>;
+  const secrets = Object.keys(keystoreRest).filter((key) => /pass/i.test(key));
+  if (secrets.length > 0)
+    return `distribution.android.keystore must not contain ${secrets.join(", ")}: ` +
+      "name environment variables in storePasswordEnv and keyPasswordEnv instead";
+  const keystoreExtra = Object.keys(keystoreRest);
+  if (keystoreExtra.length > 0)
+    return `distribution.android.keystore does not support ${keystoreExtra.join(", ")}`;
+  if (!plainText(path, 1024))
+    return "distribution.android.keystore.path must be a keystore file path";
+  if (!plainText(alias, 256))
+    return "distribution.android.keystore.alias must name the signing key";
+  if (!environmentName(storePasswordEnv))
+    return "distribution.android.keystore.storePasswordEnv must be an environment variable name";
+  if (keyPasswordEnv !== undefined && !environmentName(keyPasswordEnv))
+    return "distribution.android.keystore.keyPasswordEnv must be an environment variable name";
   return undefined;
 }
 

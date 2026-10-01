@@ -159,6 +159,30 @@ test("distribution is an author-only manifest field", () => {
   }
 });
 
+test("distribution.android validates identity, icon and password-free keystore settings", () => {
+  const android = {applicationId: "com.example.hikari", versionCode: 7, versionName: "1.2.0",
+    label: "Hikari's Day", icon: "Assets/Branding/icon.png",
+    keystore: {path: "../keys/release.jks", alias: "upload",
+      storePasswordEnv: "HIKARI_STORE_PASSWORD", keyPasswordEnv: "HIKARI_KEY_PASSWORD"}};
+  const normalized = normalizeProject({project: {name: "Brand", distribution: {android}},
+    sourceFiles: {"Story/main.pxstory": "こんにちは。\n"}});
+  assert.equal(normalized.valid, true, JSON.stringify(normalized.diagnostics));
+  assert.deepEqual(normalized.value?.distribution?.android, android);
+  const keystore = android.keystore;
+  for (const invalid of [{applicationId: "hikari"}, {applicationId: "com.1example.game"},
+    {applicationId: "com.example-game.app"}, {versionCode: 0}, {versionCode: 1.5},
+    {versionName: ""}, {label: "two\nlines"}, {icon: "Assets/icon.ico"}, {icon: "../icon.png"},
+    {keystore: {...keystore, storePassword: "hunter2"}}, {keystore: {...keystore, password: "x"}},
+    {keystore: {...keystore, storePasswordEnv: "NOT-A-NAME"}}, {keystore: {path: "k.jks"}},
+    {packageName: "com.example.game"}, "com.example.game"]) {
+    const result = normalizeProject({project: {name: "Brand", distribution: {android: invalid}}});
+    assert.deepEqual(result.diagnostics.map(({code}) => code), ["PXBUILD1065"], JSON.stringify(invalid));
+  }
+  const leaked = normalizeProject({project: {name: "Brand",
+    distribution: {android: {keystore: {...keystore, keyPassword: "hunter2"}}}}});
+  assert.match(leaked.diagnostics[0]?.message ?? "", /must not contain keyPassword/u);
+});
+
 test("project compile resolves storyAssets against included resources", () => {
   const result = compileProject({
     project: {name: "Roots", resourceIncludes: ["Assets"], storyAssets: {bg: ["Assets/bg"]}},
