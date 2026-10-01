@@ -19,6 +19,8 @@
 #include <filesystem>
 #include <future>
 #include <map>
+
+#include <nlohmann/json.hpp>
 #include <memory>
 #include <optional>
 #include <set>
@@ -152,6 +154,7 @@ private:
     // Returns true when it consumed the frame (a movie is on screen).
     bool VideoFrame(float dt);
     void PublishLocaleStrings();
+    bool ApplyPlayerSettings(const nlohmann::json& settings);
     void ConfigureE2EJourney();
     void DriveE2EJourney();
     void DriveBenchJourney();
