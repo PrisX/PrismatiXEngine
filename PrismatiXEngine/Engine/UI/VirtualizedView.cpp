@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdlib>
 #include <cmath>
 #include <limits>
 #include <unordered_set>
@@ -208,10 +209,12 @@ ParseChoiceRows(const std::string_view rows) {
         std::size_t cursor = colon + 1;
         while (cursor <= row.size()) {
             const std::size_t comma = std::min(row.find(',', cursor), row.size());
-            double offset = 0.0;
-            const auto parsed = std::from_chars(row.data() + cursor, row.data() + comma, offset);
-            if (parsed.ec != std::errc{} || parsed.ptr != row.data() + comma ||
-                !std::isfinite(offset))
+            // strtod, not from_chars: the NDK's libc++ has no floating-point
+            // from_chars. Offsets are plain decimals, so the C locale is fine.
+            const std::string text(row.substr(cursor, comma - cursor));
+            char* parsedEnd = nullptr;
+            const double offset = text.empty() ? 0.0 : std::strtod(text.c_str(), &parsedEnd);
+            if (text.empty() || parsedEnd != text.c_str() + text.size() || !std::isfinite(offset))
                 return std::nullopt;
             offsets.push_back(offset);
             cursor = comma + 1;
