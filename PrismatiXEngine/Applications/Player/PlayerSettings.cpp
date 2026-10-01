@@ -289,6 +289,18 @@ bool PlayerApp::ApplyPlayerSettings(const nlohmann::json& settingsObject) {
             PX_LOG_WARN("Ignoring player.touchProfile '{}'; use auto, on or off",
                         touch->get<std::string>());
     }
+    // player.textureBudgetMiB: {"desktop"?: MiB, "mobile"?: MiB} replaces the
+    // platform's default resident texture budget.
+    if (const auto budget = settings->find("player.textureBudgetMiB");
+        budget != settings->end() && budget->is_object()) {
+        const auto platform = graphics::AssetCache::MobileTextureBudget() ? "mobile" : "desktop";
+        if (const auto mebibytes = budget->find(platform);
+            mebibytes != budget->end() && mebibytes->is_number_unsigned()) {
+            const auto value = std::clamp<std::size_t>(mebibytes->get<std::size_t>(), 32, 16384);
+            m_runtime.Assets().SetTextureBudget(value * 1024u * 1024u);
+            PX_LOG_INFO("Player texture budget {} MiB ({})", value, platform);
+        }
+    }
     if (const auto dock = settings->find("player.dockArea");
         dock != settings->end() && dock->is_object()) {
         m_dockArea = {dock->value("x", 0.0f), dock->value("y", 0.0f),

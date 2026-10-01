@@ -711,6 +711,12 @@ Windows; they have not run on a phone.
   new surface size.
 - **Low memory:** drops textures not drawn in the last frame, font files no
   open font uses, and unreferenced decoded audio.
+- **Texture budget:** resident textures are trimmed, least recently drawn
+  first, to 192 MiB on Android and iOS (512 MiB on desktop); a texture drawn
+  in the last frame always stays. `"player.textureBudgetMiB": {"mobile": 256}`
+  in the project settings changes it (32-16384, `desktop` likewise).
+  `distribution.transcode` shrinks the APK's media but not this figure:
+  textures are decoded to RGBA either way.
 - **Terminating:** saves again only if the game ran since the last
   background save, then quits.
 - `SDL_EVENT_RENDER_TARGETS_RESET` and `SDL_EVENT_RENDER_DEVICE_RESET`

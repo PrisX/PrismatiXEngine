@@ -99,7 +99,17 @@ public:
     [[nodiscard]] std::size_t ImageDecodeByteLimit() const { return m_imageDecodeByteLimit; }
     void SetAsyncPreloadEnabled(bool enabled) { m_asyncPreloadEnabled = enabled; }
     [[nodiscard]] bool AsyncPreloadEnabled() const { return m_asyncPreloadEnabled; }
+    // Resident texture bytes BeginFrame trims back to, least recently drawn
+    // first; a texture drawn this frame or the previous one is never evicted,
+    // even over budget. The default suits the platform's memory (see
+    // DefaultTextureBudgetBytes); player.textureBudgetMiB overrides it.
     void SetTextureBudget(std::size_t bytes) { m_textureBudgetBytes=bytes; }
+    [[nodiscard]] std::size_t TextureBudget() const { return m_textureBudgetBytes; }
+    // 512 MiB on desktop; 192 MiB on Android and iOS, where the GPU shares a
+    // few GiB of RAM with the rest of the device.
+    [[nodiscard]] static std::size_t DefaultTextureBudgetBytes();
+    // True on Android and iOS: the "mobile" entry of player.textureBudgetMiB.
+    [[nodiscard]] static bool MobileTextureBudget();
     [[nodiscard]] std::size_t ResidentTextureBytes() const { return m_residentTextureBytes; }
     [[nodiscard]] bool HasResidentTexture(const std::string& path) const;
     // True once a texture request has an outcome, resident or failed, so a
@@ -213,7 +223,7 @@ private:
     std::uint64_t m_assetSession = 1;
     std::uint64_t m_nextPreloadBatch = 1;
     std::uint64_t m_nextPreloadSequence = 1;
-    std::size_t m_textureBudgetBytes=512u*1024u*1024u;
+    std::size_t m_textureBudgetBytes=DefaultTextureBudgetBytes();
     std::size_t m_residentTextureBytes=0;
     std::size_t m_preloadConcurrency = 4;
     // Zero selects the automatic policy: start up to the worker concurrency

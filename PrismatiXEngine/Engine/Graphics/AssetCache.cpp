@@ -108,6 +108,20 @@ AssetCache::~AssetCache() {
     Clear();
 }
 
+bool AssetCache::MobileTextureBudget() {
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+    return true;
+#else
+    return false;
+#endif
+}
+
+std::size_t AssetCache::DefaultTextureBudgetBytes() {
+    // A 1080p VN scene is a background, a few sprites and UI: 30-60 MiB of
+    // RGBA. 192 MiB keeps several scenes warm without crowding a 3-4 GiB phone.
+    return (MobileTextureBudget() ? 192u : 512u) * 1024u * 1024u;
+}
+
 std::optional<std::string> AssetCache::ReadTextAsset(
     const std::string& path) const {
     return m_vfs.ReadText(path);

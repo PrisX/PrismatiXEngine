@@ -48,6 +48,7 @@
       "player.dockArea":{"type":"object","additionalProperties":false,"properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number","minimum":0},"height":{"type":"number","minimum":0}}},
       "player.choiceLayout":{"type":"object","additionalProperties":false,"properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number","minimum":0},"height":{"type":"number","minimum":0},"halfPitch":{"type":"number"},"offsets":{"type":"object","maxProperties":64,"propertyNames":{"pattern":"^[1-9][0-9]?$"},"additionalProperties":{"type":"array","maxItems":64,"items":{"type":"number"}}}}},
       "player.touchProfile":{"enum":["auto","on","off"]},
+      "player.textureBudgetMiB":{"type":"object","additionalProperties":false,"minProperties":1,"properties":{"desktop":{"type":"integer","minimum":32,"maximum":16384},"mobile":{"type":"integer","minimum":32,"maximum":16384}}},
       "player.uiHoverSound":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
       "player.uiActivateSound":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
       "player.uiCancelSound":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},

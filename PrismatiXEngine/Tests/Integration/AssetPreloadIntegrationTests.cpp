@@ -293,6 +293,68 @@ int main() {
         SDL_Quit();
     });
 
+    suite.Run("TextureBudgetEvictsLeastRecentlyDrawnButNeverTexturesInUse", [&] {
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+        constexpr std::size_t expectedDefault = 192u * 1024u * 1024u;
+#else
+        constexpr std::size_t expectedDefault = 512u * 1024u * 1024u;
+#endif
+        suite.Expect(px::graphics::AssetCache::DefaultTextureBudgetBytes() == expectedDefault,
+                     "the default budget follows the platform's memory class");
+        suite.Require(SDL_Init(SDL_INIT_VIDEO), "budget video initializes");
+        px::test::TempDirectory fixture("asset-texture-budget");
+        for (const char* name : {"a.bmp", "b.bmp", "c.bmp", "d.bmp"})
+            suite.Require(WriteBitmap(fixture.path / name, 64, 64, 0x3366ccffu),
+                          "budget fixtures are written");
+        SDL_Window* window = SDL_CreateWindow("Texture budget", 160, 90, SDL_WINDOW_HIDDEN);
+        suite.Require(window != nullptr, "hidden native window is created");
+        SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
+        suite.Require(renderer != nullptr, "native renderer is created");
+        px::io::VFS vfs;
+        vfs.MountDirectory(fixture.path.string());
+        {
+            px::graphics::AssetCache assets(renderer, vfs);
+            suite.Expect(assets.TextureBudget() == expectedDefault, "a new cache starts at the default");
+            constexpr std::size_t textureBytes = 64u * 64u * 4u;
+            assets.SetTextureBudget(3 * textureBytes);
+            const auto draw = [&](const char* path) { return static_cast<bool>(assets.Texture(path)); };
+            assets.BeginFrame();
+            suite.Require(draw("a.bmp"), "a decodes");
+            assets.BeginFrame();
+            suite.Require(draw("b.bmp"), "b decodes");
+            assets.BeginFrame();
+            suite.Require(draw("c.bmp"), "c decodes");
+            assets.BeginFrame();
+            suite.Require(draw("a.bmp"), "a is drawn again, so b is least recent");
+            assets.BeginFrame();
+            suite.Require(draw("d.bmp"), "d decodes over budget");
+            suite.Expect(assets.ResidentTextureBytes() == 4 * textureBytes,
+                         "eviction waits for the next frame boundary");
+            assets.BeginFrame();
+            suite.Expect(!assets.HasResidentTexture("b.bmp") && assets.HasResidentTexture("a.bmp") &&
+                             assets.HasResidentTexture("c.bmp") && assets.HasResidentTexture("d.bmp") &&
+                             assets.ResidentTextureBytes() == 3 * textureBytes,
+                         "only the least recently drawn texture goes");
+
+            // Over a tiny budget, the texture drawn in the frame just ended
+            // survives; everything older goes.
+            assets.SetTextureBudget(1);
+            suite.Require(draw("a.bmp"), "a is drawn in this frame");
+            assets.BeginFrame();
+            suite.Expect(assets.HasResidentTexture("a.bmp") && !assets.HasResidentTexture("c.bmp") &&
+                             !assets.HasResidentTexture("d.bmp") &&
+                             assets.ResidentTextureBytes() == textureBytes,
+                         "a texture in use is kept even over budget");
+            assets.BeginFrame();
+            suite.Expect(!assets.HasResidentTexture("a.bmp") && assets.ResidentTextureBytes() == 0,
+                         "once no longer drawn it is evicted too");
+            suite.Require(draw("b.bmp"), "an evicted texture reloads on demand");
+        }
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+    });
+
     suite.Run("FailedDemandRequestIsCachedUntilAssetSessionChanges", [&] {
         suite.Require(SDL_Init(SDL_INIT_VIDEO), "demand request video initializes");
         px::test::TempDirectory fixture("asset-preload-negative-cache");
