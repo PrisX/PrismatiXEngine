@@ -492,8 +492,26 @@ prismatix_add_player(PrismatiXPlayerQA 1)
 # Everything below is desktop tooling and its install layout. An Android
 # build produces only the Player libraries; packaging stays on the host.
 if(NOT ANDROID)
+# distribution.transcode: PNG to WebP, Ogg Vorbis/WAV to Ogg Opus or Vorbis.
+add_library(PrismatiXMediaTranscoder STATIC Applications/Packager/MediaTranscoder.cpp)
+target_include_directories(PrismatiXMediaTranscoder PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(PrismatiXMediaTranscoder PRIVATE
+    SDL3::SDL3 SDL3_image::SDL3_image nlohmann_json::nlohmann_json)
+if(TARGET WebP::webp AND TARGET Ogg::ogg AND TARGET Vorbis::vorbisenc AND
+   TARGET Vorbis::vorbisfile AND TARGET Opus::opus)
+    target_link_libraries(PrismatiXMediaTranscoder PRIVATE
+        WebP::webp Ogg::ogg Vorbis::vorbisenc Vorbis::vorbisfile Opus::opus)
+    target_compile_definitions(PrismatiXMediaTranscoder PRIVATE PRISMATIX_MEDIA_ENCODERS=1)
+    set(PRISMATIX_MEDIA_ENCODERS_FOUND TRUE)
+else()
+    message(STATUS "WebP/Vorbis/Opus encoders not found: the Packager cannot transcode media")
+    target_compile_definitions(PrismatiXMediaTranscoder PRIVATE PRISMATIX_MEDIA_ENCODERS=0)
+endif()
+prismatix_configure_target(PrismatiXMediaTranscoder)
+
 add_executable(PrismatiXPackager Applications/PackagerMain.cpp)
-target_link_libraries(PrismatiXPackager PRIVATE PrismatiXPackagerSDK PrismatiXRuntime)
+target_link_libraries(PrismatiXPackager PRIVATE PrismatiXPackagerSDK PrismatiXRuntime
+    PrismatiXMediaTranscoder)
 prismatix_configure_target(PrismatiXPackager)
 
 add_executable(PrismatiXPreviewHost Applications/PreviewHostMain.cpp)
@@ -1143,6 +1161,13 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
         PrismatiXFileSourceTests
         Tests/Unit/IO/FileSourceTests.cpp
         PrismatiX.Unit.IO.FileSource "unit;io;archive;android" PrismatiXRuntime)
+    if(PRISMATIX_MEDIA_ENCODERS_FOUND)
+        prismatix_add_simple_test(
+            PrismatiXMediaTranscoderTests
+            Tests/Unit/Packager/MediaTranscoderTests.cpp
+            PrismatiX.Unit.Packager.MediaTranscoder "unit;packager;media" PrismatiXRuntime)
+        target_link_libraries(PrismatiXMediaTranscoderTests PRIVATE PrismatiXMediaTranscoder)
+    endif()
     prismatix_add_simple_test(
         PrismatiXAppLifecycleTests
         Tests/Unit/Platform/AppLifecycleTests.cpp

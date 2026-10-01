@@ -16,6 +16,7 @@
 #include <unistd.h>
 #endif
 
+#include "Applications/Packager/MediaTranscoder.h"
 #include "Engine/SDK/Packager.h"
 #include "Engine/IO/PackageVerifier.h"
 #include "Engine/IO/OverlaySignature.h"
@@ -253,6 +254,15 @@ int RunMain(int argc, char** argv) {
                              "Overlay verification failed unexpectedly"));
             return static_cast<int>(px::sdk::PackageExitCode::Failed);
         }
+    }
+    if (argc == 3 && std::string_view(argv[1]) == "--transcode") {
+        // distribution.transcode: the CLI owns the cache and hands over only
+        // the files that have no up-to-date encoding.
+        return px::sdk::transcode::RunTranscodeRequest(
+            Utf8Path(argv[2]), [](const std::string& line) {
+                std::cout << line << '\n';
+                std::cout.flush();
+            });
     }
     if (argc == 3 && std::string_view(argv[1]) == "--verify-package") {
         const std::filesystem::path distribution = Utf8Path(argv[2]);

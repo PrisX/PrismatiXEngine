@@ -27,6 +27,10 @@
     "spdlog",
     "mbedtls",
     "zstd",
-    "ffmpeg"
+    "ffmpeg",
+    "libwebp",
+    "libogg",
+    "libvorbis",
+    "opus"
   ]
 }

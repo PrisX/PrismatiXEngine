@@ -150,6 +150,13 @@ else()
         # The offline shader compiler library is host-only. Android builds
         # still run the host shadercross executable for built-in shaders.
         find_package(SDL3_shadercross CONFIG REQUIRED)
+        # Encoders for distribution.transcode (Packager only). SDL_image and
+        # SDL_mixer already depend on these; without them the Packager reports
+        # that transcoding is unavailable and packs the originals.
+        find_package(WebP CONFIG QUIET)
+        find_package(Ogg CONFIG QUIET)
+        find_package(Vorbis CONFIG QUIET)
+        find_package(Opus CONFIG QUIET)
     endif()
     find_package(nlohmann_json CONFIG REQUIRED)
     find_package(spdlog CONFIG REQUIRED)
