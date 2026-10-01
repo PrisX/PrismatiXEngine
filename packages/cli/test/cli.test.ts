@@ -2111,3 +2111,169 @@ test("distribution.linkMedia hard-links project media into the artifact", async 
     assert.notEqual(run(["build", projectPath, "--artifact-only", "--output", join(parent, "bad")]).status, 0);
   } finally { await rm(parent, {recursive: true, force: true}); }
 });
+
+function arm64Elf(): Buffer {
+  const header = Buffer.alloc(64);
+  header.writeUInt32BE(0x7f454c46, 0);
+  header[4] = 2; header[5] = 1;
+  header.writeUInt16LE(183, 18);
+  return header;
+}
+
+function squarePng(size: number): Buffer {
+  const header = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+  header.writeUInt32BE(13, 8);
+  header.write("IHDR", 12, "latin1");
+  header.writeUInt32BE(size, 16);
+  header.writeUInt32BE(size, 20);
+  return header;
+}
+
+test("pack --target android stages the Gradle template and collects the APK and AAB", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "prismatix-cli-android-"));
+  try {
+    const root = join(parent, "game");
+    await createStarter(root, {name: "Android Sample", install: async (directory) => {
+      await writeFile(join(directory, "package-lock.json"), JSON.stringify({lockfileVersion: 3}));
+      await mkdir(join(directory, "node_modules", "@prismatix"), {recursive: true});
+      await symlink(resolve("."), join(directory, "node_modules", "@prismatix", "cli"), "junction");
+    }});
+    const projectPath = join(root, "prismatix.json");
+    const manifest = JSON.parse(await readFile(projectPath, "utf8")) as Record<string, unknown>;
+    await writeFile(join(root, "Assets", "icon.png"), squarePng(192));
+    const android = {applicationId: "com.example.androidsample", versionCode: 4,
+      label: "Ann's <Game> & co", icon: "Assets/icon.png"};
+    await writeFile(projectPath, JSON.stringify({...manifest, distribution: {android}}));
+
+    const tools = join(parent, "tools");
+    const packager = join(tools, "mock-packager.mjs");
+    await write(packager, `
+      import {copyFile, mkdir, readFile, writeFile} from "node:fs/promises";
+      import {basename, join} from "node:path";
+      const request = JSON.parse(await readFile(process.argv[3], "utf8"));
+      const out = request.outputDir;
+      await mkdir(join(out, "Package"), {recursive: true});
+      await mkdir(join(out, "Notices"), {recursive: true});
+      await writeFile(join(out, "Package", "manifest.json"), JSON.stringify({gameId: request.gameId,
+        title: request.title, resolution: {width: request.width, height: request.height}}));
+      await writeFile(join(out, "Content.pdx"), "pdx");
+      await writeFile(join(out, "Notices", "LICENSE"), "license");
+      await writeFile(join(out, "SDL3.dll"), "desktop library");
+      await copyFile(request.playerExecutable, join(out, basename(request.playerExecutable)));
+      process.stdout.write(JSON.stringify({protocolVersion: 1, event: "completed",
+        requestId: request.requestId}) + "\\n");
+    `);
+    const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+    await write(player, "desktop player");
+    const gradle = join(tools, "mock-gradle.mjs");
+    await write(gradle, `
+      import {mkdir, readFile, readdir, stat, writeFile} from "node:fs/promises";
+      import {join, relative} from "node:path";
+      const args = process.argv.slice(2);
+      const project = args[args.indexOf("-p") + 1];
+      const tasks = args.filter((value) => /^(assemble|bundle)/.test(value));
+      const main = join(project, "app", "src", "main");
+      const exists = (path) => stat(path).then(() => true, () => false);
+      const list = async (directory) => (await readdir(directory, {recursive: true, withFileTypes: true}))
+        .filter((entry) => entry.isFile())
+        .map((entry) => relative(directory, join(entry.parentPath, entry.name)).split("\\\\").join("/")).sort();
+      await writeFile(process.env.PX_GRADLE_RECORD, JSON.stringify({tasks,
+        properties: await readFile(join(project, "prismatix.properties"), "utf8"),
+        local: await readFile(join(project, "local.properties"), "utf8"),
+        strings: await readFile(join(main, "res", "values", "strings.xml"), "utf8"),
+        jni: await list(join(main, "jniLibs", "arm64-v8a")),
+        assets: await list(join(main, "assets")),
+        icon: await exists(join(main, "res", "mipmap-xxxhdpi", "ic_launcher.png")),
+        adaptive: await exists(join(main, "res", "mipmap-anydpi-v26")),
+        sdlGlue: await exists(join(main, "java", "org", "libsdl", "app", "SDLActivity.java"))}));
+      const outputs = join(project, "app", "build", "outputs");
+      const emit = async (path, text) => {
+        await mkdir(join(outputs, path, ".."), {recursive: true});
+        await writeFile(join(outputs, path), text);
+      };
+      if (tasks.includes("assembleDebug")) await emit("apk/debug/app-debug.apk", "debug apk");
+      if (tasks.includes("assembleRelease")) await emit("apk/release/app-release.apk", "release apk");
+      if (tasks.includes("bundleRelease")) await emit("bundle/release/app-release.aab", "release aab");
+    `);
+    const libraries = join(parent, "android", "shipped", "arm64-v8a");
+    await mkdir(libraries, {recursive: true});
+    await writeFile(join(libraries, "libmain.so"), arm64Elf());
+    await writeFile(join(libraries, "libavcodec.so"), arm64Elf());
+    await writeFile(join(libraries, "notes.txt"), "not a library");
+    await writeFile(join(libraries, "prismatix-player.json"),
+      JSON.stringify({format: "PrismatiXAndroidPlayer", variant: "shipped", sdlVersion: "3.4.10"}));
+    const sdk = join(parent, "sdk");
+    await mkdir(join(sdk, "platforms"), {recursive: true});
+    const record = join(parent, "gradle-record.json");
+    const output = join(parent, "android-out");
+    const pack = (extra: readonly string[], env: Record<string, string> = {}) => spawnSync(process.execPath,
+      [resolve("dist/src/cli.js"), "pack", projectPath, "--target", "android", "--packager", packager,
+        "--player", player, "--android-player", join(parent, "android", "shipped"), "--gradle", gradle,
+        "--android-sdk", sdk, "--output", output, ...extra, "--json"],
+      {encoding: "utf8", env: {...process.env, PX_GRADLE_RECORD: record, ...env}});
+    type GradleRecord = {tasks: string[]; properties: string; local: string; strings: string;
+      jni: string[]; assets: string[]; icon: boolean; adaptive: boolean; sdlGlue: boolean};
+
+    const debug = pack([]);
+    assert.equal(debug.status, 0, debug.stderr);
+    assert.match(debug.stderr, /PXCLI1251/u, "an unsigned build warns that it is for testing");
+    const debugSummary = JSON.parse(debug.stdout.trim().split("\n").at(-1)!) as Record<string, unknown>;
+    assert.equal(debugSummary.buildType, "debug");
+    assert.equal(await readFile(String(debugSummary.apk), "utf8"), "debug apk");
+    let seen = JSON.parse(await readFile(record, "utf8")) as GradleRecord;
+    assert.deepEqual(seen.tasks, ["assembleDebug"]);
+    assert.deepEqual(seen.jni, ["libavcodec.so", "libmain.so"]);
+    assert.deepEqual(seen.assets, ["Content.pdx", "Notices/LICENSE", "Package/manifest.json"],
+      "the desktop Player and its libraries stay out of the APK");
+    assert.match(seen.properties, /^applicationId=com\.example\.androidsample$/mu);
+    assert.match(seen.properties, /^versionCode=4$/mu);
+    assert.match(seen.properties, /^screenOrientation=sensorLandscape$/mu);
+    assert.doesNotMatch(seen.properties, /keystore/u);
+    assert.match(seen.local, /^sdk\.dir=.*sdk$/mu);
+    assert.match(seen.strings, /Ann\\'s &lt;Game&gt; &amp; co/u);
+    assert.deepEqual([seen.icon, seen.adaptive, seen.sdlGlue], [true, false, true]);
+
+    await writeFile(join(parent, "release.jks"), "keystore");
+    await writeFile(projectPath, JSON.stringify({...manifest, distribution: {android: {...android,
+      keystore: {path: "../release.jks", alias: "upload", storePasswordEnv: "PX_TEST_STORE_PASSWORD"}}}}));
+    await rm(record);
+    const missing = pack([], {PX_TEST_STORE_PASSWORD: ""});
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /PX_TEST_STORE_PASSWORD must hold the keystore password/u);
+    assert.equal(await stat(record).then(() => true, () => false), false, "Gradle must not run");
+
+    const release = pack([], {PX_TEST_STORE_PASSWORD: "correct horse"});
+    assert.equal(release.status, 0, release.stderr);
+    const releaseSummary = JSON.parse(release.stdout.trim().split("\n").at(-1)!) as Record<string, unknown>;
+    assert.equal(releaseSummary.buildType, "release");
+    assert.equal(await readFile(String(releaseSummary.aab), "utf8"), "release aab");
+    seen = JSON.parse(await readFile(record, "utf8")) as GradleRecord;
+    assert.deepEqual(seen.tasks, ["assembleRelease", "bundleRelease"]);
+    assert.match(seen.properties, /^storePasswordEnv=PX_TEST_STORE_PASSWORD$/mu);
+    assert.match(seen.properties, /^keyAlias=upload$/mu);
+    assert.doesNotMatch(seen.properties, /correct horse/u, "passwords never reach a file");
+    const forcedDebug = pack(["--debug"], {PX_TEST_STORE_PASSWORD: ""});
+    assert.equal(forcedDebug.status, 0, forcedDebug.stderr);
+
+    await writeFile(join(libraries, "prismatix-player.json"),
+      JSON.stringify({format: "PrismatiXAndroidPlayer", variant: "qa", sdlVersion: "3.4.10"}));
+    const qa = pack(["--debug"]);
+    assert.equal(qa.status, 1);
+    assert.match(qa.stderr, /QA Player, which must never ship/u);
+    await writeFile(join(libraries, "prismatix-player.json"),
+      JSON.stringify({format: "PrismatiXAndroidPlayer", variant: "shipped", sdlVersion: "3.4.10"}));
+
+    const foreign = join(parent, "foreign");
+    await write(join(foreign, "keep.txt"), "user file");
+    const refused = spawnSync(process.execPath, [resolve("dist/src/cli.js"), "pack", projectPath,
+      "--target", "android", "--android-player", libraries, "--gradle", gradle, "--android-sdk", sdk,
+      "--output", foreign, "--debug", "--json"], {encoding: "utf8"});
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /not empty and was not created by prismatix/u);
+
+    assert.equal(run(["pack", projectPath, "--debug"]).status, 2);
+    assert.equal(run(["pack", projectPath, "--target", "ios"]).status, 2);
+    assert.equal(run(["pack", projectPath, "--target", "android", "--check"]).status, 2);
+  } finally { await rm(parent, {recursive: true, force: true}); }
+});

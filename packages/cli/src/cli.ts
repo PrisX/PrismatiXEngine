@@ -36,6 +36,9 @@ import {distributionCoversLineage, distributionLineage, readReleaseLineage,
 import {addCharacter, addScene} from "./scaffold.js";
 import {resolvePreviewTarget} from "./preview-target.js";
 import {builtinRoutes, ejectBuiltinUi} from "./eject.js";
+import {AndroidExportError, androidSettings, checkAndroidInputs, checkKeystoreEnvironment,
+  claimAndroidOutput, collectAndroidOutputs, findAndroidSdk, findGradle, resolveAndroidPlayer,
+  runGradle, stageGradleProject, templateSdlVersion} from "./android-export.js";
 import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
 
 import {
@@ -93,7 +96,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   dev: {values: "runtime preview-host debounce ui-registry at", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space"},
-  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space check verify-media"},
+  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target android-player gradle android-sdk", flags: "encrypt ignore-disk-space check verify-media debug"},
   run: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space"},
   add: {values: "project from name chapter title", flags: ""},
@@ -171,6 +174,15 @@ function parseOptions(command: string, args: readonly string[]): Options {
     throw new Error("--previous-package cannot be used with pack --check");
   if (flags.has("verify-media") && !flags.has("check"))
     throw new Error("--verify-media requires pack --check");
+  if (values.has("target") && !["desktop", "android"].includes(values.get("target")!))
+    throw new Error("--target must be desktop or android");
+  const android = values.get("target") === "android";
+  for (const name of ["android-player", "gradle", "android-sdk"])
+    if (values.has(name) && !android) throw new Error(`--${name} requires --target android`);
+  if (flags.has("debug") && !android) throw new Error("--debug requires --target android");
+  if (android && flags.has("check")) throw new Error("--check cannot be combined with --target android");
+  if (android && values.has("previous-package"))
+    throw new Error("--previous-package cannot be combined with --target android");
   if (values.has("artifact") && values.has("ui-registry")) throw new Error("--ui-registry requires a fresh build; it cannot be combined with --artifact");
   if (values.has("compression") && !["none", "fast", "balanced", "maximum"].includes(values.get("compression")!))
     throw new Error("--compression must be none, fast, balanced, or maximum");
@@ -2142,7 +2154,96 @@ async function releaseCommand(options: Options): Promise<number> {
   }
 }
 
+// pack --target android: a desktop-format package under <output>/build/package,
+// then the Gradle template turns it and the prebuilt Android Player into an
+// APK (and an AAB when a release keystore is configured).
+async function androidPackCommand(options: Options): Promise<number> {
+  try {
+    const location = await resolveProjectPath(options.positional[0]);
+    const raw = location.manifestExists ? object(await readJson(location.projectPath)) : undefined;
+    if (raw?.distribution !== undefined) {
+      const error = projectDistributionError(raw.distribution);
+      if (error !== undefined)
+        throw new PackagerFailure([diagnostic("PXCLI1221", error, location.projectPath)]);
+    }
+    const androidConfig = (raw?.distribution as ProjectDistribution | undefined)?.android;
+    const release = androidConfig?.keystore !== undefined && !options.flags.has("debug");
+    const authoredVersion = typeof raw?.version === "string" ? raw.version : undefined;
+    const facts = (id: string, name: string, width: number, height: number) => ({
+      root: location.root, id, name, width, height,
+      ...(authoredVersion === undefined ? {} : {version: authoredVersion})});
+    // Check everything that does not need the packed game before packing it.
+    const early = androidSettings(facts("", "", 16, 9), androidConfig, release);
+    await checkAndroidInputs(early);
+    checkKeystoreEnvironment(early);
+    const playerOption = options.values.get("android-player");
+    if (playerOption === undefined)
+      throw new AndroidExportError("--target android needs --android-player <dir>",
+        "Build the android-arm64 preset and pass its android/shipped/arm64-v8a folder");
+    const player = await resolveAndroidPlayer(playerOption);
+    const javaSdl = await templateSdlVersion();
+    if (player.sdlVersion !== undefined && javaSdl !== undefined && player.sdlVersion !== javaSdl)
+      throw new AndroidExportError(`The Android Player uses SDL ${player.sdlVersion}, but the ` +
+        `template's Java glue is SDL ${javaSdl}`, "Use a CLI and Player from the same engine release");
+    const gradle = await findGradle(options.values.get("gradle"));
+    const androidSdk = await findAndroidSdk(options.values.get("android-sdk"));
+    const earlyId = typeof raw?.id === "string" ? raw.id : basename(location.root);
+    const output = resolve(options.values.get("output") ?? join(location.root, "dist", `${earlyId}-android`));
+    await claimAndroidOutput(output, [location.root]);
+    if (!release)
+      progress({severity: "warning", code: "PXCLI1251", message: androidConfig?.keystore === undefined
+        ? "Warning: no distribution.android.keystore; building a debug-signed APK for testing only"
+        : "Building a debug-signed APK (--debug)"});
+
+    const packageDirectory = join(output, "build", "package");
+    const packOptions: Options = {values: new Map(options.values), flags: new Set(options.flags),
+      positional: [...options.positional]};
+    for (const name of ["target", "android-player", "gradle", "android-sdk"]) packOptions.values.delete(name);
+    packOptions.flags.delete("debug");
+    packOptions.values.set("output", packageDirectory);
+    const packed = await packProject(packOptions);
+    const manifest = object(await readJson(join(packed.output, "Package", "manifest.json")));
+    const resolution = object(manifest?.resolution);
+    if (typeof manifest?.gameId !== "string" || typeof manifest.title !== "string" ||
+        typeof resolution?.width !== "number" || typeof resolution.height !== "number")
+      throw new AndroidExportError(`Unexpected package manifest in ${packed.output}`);
+    const settings = androidSettings(facts(manifest.gameId, manifest.title,
+      resolution.width, resolution.height), androidConfig, release);
+    const project = join(output, "build", "gradle");
+    progress({severity: "information", code: "PXCLI1252",
+      message: `Staging the Android project in ${project}`});
+    const staged = await stageGradleProject({project, settings, player,
+      distribution: packed.output, playerExecutable: basename(packed.player), androidSdk});
+    const tasks = release ? ["assembleRelease", "bundleRelease"] : ["assembleDebug"];
+    progress({severity: "information", code: "PXCLI1253",
+      message: `Running Gradle ${tasks.join(" ")} (${gradle})`});
+    const built = await runGradle(gradle, project, tasks);
+    if (built.code !== 0)
+      throw new AndroidExportError(`Gradle exited with code ${built.code}`,
+        built.tail.split(/\r?\n/u).filter((line) => line.trim().length > 0).slice(-12).join("\n"));
+    const outputs = await collectAndroidOutputs(project, output, manifest.gameId, release);
+    const summary = {packed: true, target: "android", buildType: release ? "release" : "debug",
+      apk: outputs.apk, ...(outputs.aab === undefined ? {} : {aab: outputs.aab}),
+      applicationId: settings.applicationId, versionCode: settings.versionCode,
+      versionName: settings.versionName, libraries: player.libraries, assets: staged.assets};
+    process.stdout.write(machineOutput ? `${JSON.stringify(summary)}\n` : [
+      `Android ${summary.buildType} build ready: ${outputs.apk}`,
+      ...(outputs.aab === undefined ? [] : [`  App bundle: ${outputs.aab}`]),
+      `  ${settings.applicationId} ${settings.versionName} (${settings.versionCode}), ` +
+        `${player.libraries.length} native libraries, ${staged.assets} asset files`,
+      ""].join("\n"));
+    return 0;
+  } catch (error) {
+    printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure
+      ? error.diagnostics : error instanceof AndroidExportError
+        ? [diagnostic("PXCLI1250", error.message, options.positional[0], error.hint)]
+        : [diagnostic("PXCLI1250", "Android pack failed", options.positional[0], String(error))]);
+    return 1;
+  }
+}
+
 async function packCommand(options: Options): Promise<number> {
+  if (options.values.get("target") === "android") return androidPackCommand(options);
   try { const result = await packProject(options); process.stdout.write(machineOutput
     ? `${JSON.stringify(result.validatedOnly
       ? {validated: true, packed: false,
@@ -2833,7 +2934,10 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "prismatix build [project] --artifact-only [--output <dir>]"],
   pack: ["Package an already built artifact as a playable distribution.",
     "prismatix pack [project] --artifact <dir> [--output <dir>] [--runtime <dir>]",
-    "prismatix pack [project] --artifact <dir> --check [--verify-media]"],
+    "prismatix pack [project] --artifact <dir> --check [--verify-media]",
+    "prismatix pack [project] --target android --android-player <arm64-v8a dir> [--artifact <dir>] [--output <dir>]",
+    "    [--gradle <gradle>] [--android-sdk <dir>] [--debug]   APK, plus an AAB when distribution.android.keystore is set;",
+    "    needs JAVA_HOME (JDK 17+), Gradle 8.9+ and an Android SDK with platform 35 (ANDROID_HOME)"],
   run: ["Build a distribution and start its Player.", "prismatix run [project] [--runtime <dir>]"],
   release: ["Validate, build, pack and verify a release candidate in one step.",
     "prismatix release [project] [--output <dir>] [--runtime <dir>]",
