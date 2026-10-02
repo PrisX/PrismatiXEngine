@@ -147,6 +147,7 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
     ...(input.profileVariables ?? []).map((name) => `profileFlags.${name}`),
     ...(input.localeStrings ?? []).map((key) => `strings.${key}`),
     "dialogue.nvl", "dialogue.face", "dialog.visible", "dialog.skipNext", "platform.touch",
+    "platform.os", "platform.mobile", "platform.desktop",
     "input.visible", "input.prompt",
     ...playerDialogKinds(settings).map((kind) => `dialog.kind.${kind}`),
     ...["master", "bgm", "se", "voice"].map((bus) => `settings.muted.${bus}`),

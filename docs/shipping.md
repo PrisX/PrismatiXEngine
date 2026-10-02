@@ -758,6 +758,25 @@ The project setting `player.touchProfile` controls both:
 | `"on"` | on | always `true`: preview touch layouts on desktop |
 | `"off"` | off; the first finger acts as a plain mouse pointer | always `false` |
 
+### Detecting the platform
+
+The device the game runs on is fixed Player UI data:
+
+| Key | Value |
+| --- | --- |
+| `platform.os` | `"windows"`, `"macos"`, `"linux"`, `"android"` or `"ios"` |
+| `platform.mobile` | `true` on Android and iOS |
+| `platform.desktop` | `true` everywhere else |
+
+On mobile the game is always fullscreen: the Player ignores
+`set.fullscreen.off`, so dim or disable a window-mode choice there:
+
+```tsx
+<Group name="ScreenMode" enabledWhen="platform.desktop">...</Group>
+```
+
+Runtime scripts read the same thing as `ctx.platform` (`{os, mobile}`).
+
 ### Verification checklist for the first device run
 
 1. The APK installs, the title screen appears, and logcat shows

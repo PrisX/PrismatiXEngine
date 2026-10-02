@@ -382,6 +382,12 @@ export type InputEventType =
   | "pointer-down" | "pointer-up" | "pointer-move" | "pointer-wheel"
   | "text" | "action";
 export type PointerButton = "none" | "primary" | "secondary" | "middle";
+export interface PlatformInfo {
+  readonly os: "windows" | "macos" | "linux" | "android" | "ios" | "web";
+  /** True on phones and tablets, where the game always fills the screen. */
+  readonly mobile: boolean;
+}
+
 export interface InputEvent {
   readonly id: number;
   readonly frame: number;
@@ -606,6 +612,8 @@ export interface PrismatiXEngine {
   GetMouseY(): number;
   GetLeftClick(): boolean;
   GetRightClick(): boolean;
+  /** The platform the game runs on, fixed for the session. */
+  GetPlatform(): PlatformInfo;
   IsInputActionPressed(action: LogicalInputAction): boolean;
   IsInputActionDown(action: LogicalInputAction): boolean;
   GetInputEvents(): readonly InputEvent[];
@@ -771,6 +779,7 @@ export const ENGINE_HOST_BINDINGS = [
   "GetMouseY",
   "GetLeftClick",
   "GetRightClick",
+  "GetPlatform",
   "IsInputActionPressed",
   "IsInputActionDown",
   "GetInputEvents",
@@ -960,6 +969,8 @@ export interface PrismatiXContext {
     on(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): void;
     emit(event: string, payload?: RuntimeValue): Promise<void>;
   };
+  /** The platform the game runs on: `os` is "windows", "macos", "linux", "android" or "ios". */
+  readonly platform: PlatformInfo;
   readonly input: {
     mouseX(): number;
     mouseY(): number;
@@ -1262,6 +1273,7 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       on: (event, handler) => engine.on(event, handler),
       emit: (event, payload) => engine.emit(event, payload),
     },
+    get platform() { return engine.GetPlatform(); },
     input: {
       mouseX: () => engine.GetMouseX(),
       mouseY: () => engine.GetMouseY(),

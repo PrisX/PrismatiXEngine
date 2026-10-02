@@ -154,6 +154,7 @@ const engine = {
   GetMouseY: () => 24,
   GetLeftClick: () => true,
   GetRightClick: () => false,
+  GetPlatform: () => ({os: "windows", mobile: false}),
   IsInputActionPressed: (action: string) => action === "advance",
   IsInputActionDown: () => false,
   GetInputEvents: () => [{id: 23, frame: 4, type: "action", pointerId: 0,

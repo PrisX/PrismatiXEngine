@@ -6,6 +6,7 @@
 #include "Engine/Diagnostics/FrameProfiler.h"
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/Platform/Input.h"
+#include "Engine/Platform/PlatformInfo.h"
 #include "Engine/UI/Layout.h"
 #include "Engine/UI/UiApplication.h"
 #include "Engine/UI/VirtualizedView.h"
@@ -167,6 +168,13 @@ GalgameUI::GalgameUI() {
     // True when the player is using touch (Input::TouchActive), so TSX can
     // show touch-friendly variants.
     (void)m_viewModel.Define("platform.touch",Variant(false),true);
+    // The device the game runs on, fixed for the session: "windows",
+    // "macos", "linux", "android" or "ios", plus mobile/desktop booleans
+    // for visibleWhen/enabledWhen (a phone has no windowed mode, ...).
+    const PlatformInfo platform = CurrentPlatform();
+    (void)m_viewModel.Define("platform.os",Variant(std::string(platform.os)),true);
+    (void)m_viewModel.Define("platform.mobile",Variant(platform.mobile),true);
+    (void)m_viewModel.Define("platform.desktop",Variant(!platform.mobile),true);
     // An authored slot template can bind into one typed collection. Keep the
     // flat fields for older authored UI documents until they are migrated.
     VariantArray initialSlots;

@@ -4,6 +4,7 @@
 #include "Applications/Player/QaHooks.h"
 #include "Applications/Player/QaIpc.h"
 
+#include "Engine/Platform/PlatformInfo.h"
 #include "Engine/Graphics/Screenshot.h"
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Diagnostics/FrameProfiler.h"
@@ -843,6 +844,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     for (const auto& [profile, muted] : m_settings.voiceProfileMuted)
         if (muted && !m_settings.voiceProfileVolumes.contains(profile))
             m_runtime.Audio().SetVoiceProfileVolume(profile, 0);
+    // A phone or tablet has no windowed mode; a desktop settings file or a
+    // stale toggle must not leave the game in a window there.
+    if (CurrentPlatform().mobile) m_settings.fullscreen = true;
     if (m_settings.fullscreen) {
         if (!SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), true) ||
             !SDL_SyncWindow(m_runtime.GetWindow().Handle()))
@@ -1868,7 +1872,8 @@ void PlayerApp::SaveSettingsInBackground() {
         });
 }
 
-bool PlayerApp::ApplyFullscreenSetting(const bool fullscreen) {
+bool PlayerApp::ApplyFullscreenSetting(bool fullscreen) {
+    if (CurrentPlatform().mobile) fullscreen = true;
     SDL_Window* window = m_runtime.GetWindow().Handle();
     const bool actuallyFullscreen =
         (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;

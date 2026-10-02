@@ -7,6 +7,7 @@
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Platform/Input.h"
+#include "Engine/Platform/PlatformInfo.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Support/Logger.h"
 #include "Engine/UI/Actions/ActionCatalog.h"
@@ -2845,6 +2846,14 @@ public:
             }
             return JS_ThrowRangeError(context, "unknown screen effect operation");
         }
+        if (operation == "platform.info") {
+            const PlatformInfo platform = CurrentPlatform();
+            JSValue info = JS_NewObject(context);
+            JS_SetPropertyStr(context, info, "os",
+                              JS_NewStringLen(context, platform.os.data(), platform.os.size()));
+            JS_SetPropertyStr(context, info, "mobile", JS_NewBool(context, platform.mobile));
+            return info;
+        }
         if (operation.starts_with("input.")) {
             if (!services.input) return JS_ThrowInternalError(context, "Input is unavailable");
             if (operation == "input.events") {
@@ -3380,6 +3389,7 @@ public:
                 GetMouseY: { value: bindRuntime("input.mouseY") },
                 GetLeftClick: { value: bindRuntime("input.leftClick") },
                 GetRightClick: { value: bindRuntime("input.rightClick") },
+                GetPlatform: { value: bindRuntime("platform.info") },
                 IsInputActionPressed: { value: bindRuntime("input.actionPressed") },
                 IsInputActionDown: { value: bindRuntime("input.actionDown") },
                 GetInputEvents: { value: bindRuntime("input.events") },
