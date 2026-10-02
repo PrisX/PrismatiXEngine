@@ -61,7 +61,7 @@ struct PackageOverlayVerification {
     const std::filesystem::path& distribution,
     const std::filesystem::path& overlayPath);
 
-// Requires a pinned public key and a valid revision-2 or revision-3 publisher signature.
+// Requires a pinned public key and a valid publisher signature.
 // Player must use this entry point before an automatic overlay mount.
 [[nodiscard]] PackageOverlayVerification VerifySignedPackageOverlay(
     const std::filesystem::path& distribution,
@@ -108,7 +108,7 @@ struct PackageOverlayChain {
 // Scans a dedicated updates directory for bounded regular PDX candidates,
 // then finds the unique signed exact-base chain. An absent directory means no
 // update. Ambiguous branches fail closed; stale/unrelated files are ignored.
-// An enabled revision-3 optional pack mounts last only when it verifies
+// An enabled optional pack mounts last only when it verifies
 // against the final main update. Empty ID leaves optional packs disabled.
 // A verifier can exclude the candidate it is checking when that file is
 // already present in the same updates directory.

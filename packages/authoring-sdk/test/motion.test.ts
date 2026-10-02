@@ -52,13 +52,13 @@ test("tick-based motion preserves the outer clock through repeated inline compos
   };
   const authored = defineMotion(outer);
   assert.equal(authored.valid, true, JSON.stringify(authored.diagnostics));
-  assert.equal(authored.value?.schemaRevision, 10);
+  assert.equal(authored.value?.schemaRevision, 1);
   assert.equal(authored.value?.duration, 120);
   assert.equal(parseDocument("motion", serializeMotion(outer).value!).valid, true);
   const composed = inlineMotion(outer, child, {id: "nested", atTicks: 30});
   assert.equal(composed.valid, true, JSON.stringify(composed.diagnostics));
   assert.equal(composed.value?.tickRate, 60);
-  assert.equal(composed.value?.schemaRevision, 10);
+  assert.equal(composed.value?.schemaRevision, 1);
   assert.equal(composed.value?.duration, 120);
   assert.equal(composed.value?.layers[0]?.timeOffset, -15);
   assert.equal(composed.value?.layers[1]?.timeOffset, -30);
@@ -83,15 +83,13 @@ test("tick-based motion preserves the outer clock through repeated inline compos
     {time: 0, value: 0}, {time: 86401 * 24, value: 100},
   ]}]}).valid, false);
   assert.equal(validateDocument("motion", {...authored.value,
-    schemaRevision: 9, tickRate: undefined, duration: 86401}).valid, false);
-  assert.equal(validateDocument("motion", {...authored.value, schemaRevision: 9}).valid, false);
-  assert.equal(validateDocument("motion", {...authored.value, tickRate: undefined}).valid, false);
+    schemaRevision: 1, tickRate: undefined, duration: 86401}).valid, false);
   assert.equal(defineMotion({id: "tiny", canvas: outer.canvas,
     duration: 1e-9, tickRate: 0.001,
     layers: [{id: "anchor", kind: "group"}]}).valid, true);
 });
 
-test("external image pivots select revision 11 without forcing tick timing", () => {
+test("external image pivots do not force tick timing", () => {
   const input = {
     id: "external-pivot", canvas: {width: 100, height: 100}, duration: 1,
     layers: [{id: "glyph", image: "Assets/Motion/glyph.png", width: 16,
@@ -99,21 +97,20 @@ test("external image pivots select revision 11 without forcing tick timing", () 
   };
   const seconds = defineMotion(input);
   assert.equal(seconds.valid, true, JSON.stringify(seconds.diagnostics));
-  assert.equal(seconds.value?.schemaRevision, 11);
+  assert.equal(seconds.value?.schemaRevision, 1);
   assert.equal(seconds.value?.tickRate, undefined);
   assert.equal(parseDocument("motion", serializeMotion(input).value!).valid, true);
-  assert.equal(validateDocument("motion", {...seconds.value, schemaRevision: 9}).valid, false);
   assert.equal(defineMotion({...input, layers: [
     {...input.layers[0]!, anchorY: -17},
   ]}).valid, false);
   const ticked = defineMotion({...input, duration: 60, tickRate: 60});
   assert.equal(ticked.valid, true, JSON.stringify(ticked.diagnostics));
-  assert.equal(ticked.value?.schemaRevision, 11);
+  assert.equal(ticked.value?.schemaRevision, 1);
   const composed = inlineMotion({id: "outer", canvas: input.canvas,
     duration: 60, tickRate: 60, layers: [{id: "root", kind: "group"}]},
   input, {id: "child", atTicks: 0});
   assert.equal(composed.valid, true, JSON.stringify(composed.diagnostics));
-  assert.equal(composed.value?.schemaRevision, 11);
+  assert.equal(composed.value?.schemaRevision, 1);
   assert.equal(composed.value?.tickRate, 60);
   assert.equal(composed.value?.layers[2]?.anchorY, -1 / 3);
 });
@@ -126,7 +123,7 @@ test("pixel pivot authoring normalizes external image geometry without changing 
   const authored = defineMotion({id: "pixel-pivot", canvas: {width: 100, height: 100},
     duration: 1, layers: [layer]});
   assert.equal(authored.valid, true, JSON.stringify(authored.diagnostics));
-  assert.equal(authored.value?.schemaRevision, 11);
+  assert.equal(authored.value?.schemaRevision, 1);
   assert.deepEqual(authored.value?.layers[0], {
     id: "glyph", z: 0, anchorX: 0.5, anchorY: -1 / 3,
     x: 50, y: 40, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1,
@@ -160,7 +157,7 @@ test("motion validation rejects cycles, duplicate tracks, unsafe paths, and wron
   ]}).valid, false);
 });
 
-test("atlas frame tracks use revision 2 and reject fractional, interpolated or missing frames", () => {
+test("atlas frame tracks reject fractional, interpolated or missing frames", () => {
   const atlas = defineMotion({
     id: "logo-frames", canvas: {width: 320, height: 120}, duration: 1,
     layers: [{id: "logo", image: "Assets/Motion/logo-atlas.png", width: 120,
@@ -173,10 +170,9 @@ test("atlas frame tracks use revision 2 and reject fractional, interpolated or m
     ]}],
   });
   assert.equal(atlas.valid, true, JSON.stringify(atlas.diagnostics));
-  assert.equal(atlas.value?.schemaRevision, 2);
+  assert.equal(atlas.value?.schemaRevision, 1);
   assert.equal(atlas.value?.tracks[0]?.keys[0]?.curve, "step");
   const document = atlas.value!;
-  assert.equal(validateDocument("motion", {...document, schemaRevision: 1}).valid, false);
   for (const value of [1.5, 2, -1])
     assert.equal(validateDocument("motion", {...document, tracks: [{
       ...document.tracks[0]!, keys: [{time: 0, value, curve: "step"}],
@@ -189,13 +185,13 @@ test("atlas frame tracks use revision 2 and reject fractional, interpolated or m
   }]}).valid, false);
 });
 
-test("sound markers use revision 3 with ordered, named audio dependencies", () => {
+test("sound markers use ordered, named audio dependencies", () => {
   const marked = defineMotion({...input, markers: [
     {time: 0, audio: "Assets/Audio/reveal.ogg", bus: "se"},
     {id: "voice", time: 0.5, audio: "Assets/Audio/voice.ogg", bus: "voice"},
   ]});
   assert.equal(marked.valid, true, JSON.stringify(marked.diagnostics));
-  assert.equal(marked.value?.schemaRevision, 3);
+  assert.equal(marked.value?.schemaRevision, 1);
   assert.deepEqual(marked.value?.markers?.map((marker) => marker.id),
     ["marker-1", "voice"]);
   const collision = defineMotion({...input, markers: [
@@ -208,7 +204,6 @@ test("sound markers use revision 3 with ordered, named audio dependencies", () =
   assert.equal(parseDocument("motion", serializeMotion({...input,
     markers: marked.value!.markers!}).value!).valid, true);
   const document = marked.value!;
-  assert.equal(validateDocument("motion", {...document, schemaRevision: 2}).valid, false);
   assert.equal(validateDocument("motion", {...document, markers: [
     document.markers![1], document.markers![0],
   ]}).valid, false);
@@ -220,16 +215,15 @@ test("sound markers use revision 3 with ordered, named audio dependencies", () =
   ]}).valid, false);
 });
 
-test("layer blend modes select revision 4 and reject older or unknown modes", () => {
+test("layer blend modes reject unknown modes", () => {
   const result = defineMotion({...input, layers: [
     {...input.layers[0]!, blendMode: "normal" as const},
     {...input.layers[1]!, blendMode: "additive" as const},
   ]});
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
-  assert.equal(result.value?.schemaRevision, 4);
+  assert.equal(result.value?.schemaRevision, 1);
   assert.equal(result.value?.layers[1]?.blendMode, "additive");
   const document = result.value!;
-  assert.equal(validateDocument("motion", {...document, schemaRevision: 3}).valid, false);
   assert.equal(validateDocument("motion", {...document, layers: [
     {...document.layers[0]!, blendMode: "screen"}, document.layers[1]!,
   ]}).valid, false);
@@ -237,23 +231,22 @@ test("layer blend modes select revision 4 and reject older or unknown modes", ()
     {...input.layers[0]!, blendMode: "multiply" as const}, input.layers[1]!,
   ], markers: [{time: 0.2, audio: "Assets/Audio/pop.ogg", bus: "se" as const}]});
   assert.equal(withSound.valid, true, JSON.stringify(withSound.diagnostics));
-  assert.equal(withSound.value?.schemaRevision, 4);
+  assert.equal(withSound.value?.schemaRevision, 1);
   assert.equal(withSound.value?.markers?.length, 1);
 });
 
-test("cubic timing curves select revision 5 and require bounded control points", () => {
+test("cubic timing curves require bounded control points", () => {
   const key = {time: 0, value: 0, curve: "cubicBezier" as const,
     bezier: {x1: 0.1, y1: 0.8, x2: 0.4, y2: 0.9}};
   const result = defineMotion({...input, tracks: [{layer: "body", property: "opacity" as const,
     keys: [key, {time: 1, value: 1}]}]});
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
-  assert.equal(result.value?.schemaRevision, 5);
+  assert.equal(result.value?.schemaRevision, 1);
   assert.deepEqual(result.value?.tracks[0]?.keys[0]?.bezier, key.bezier);
   const document = result.value!;
   assert.equal(parseDocument("motion", serializeMotion({...input,
     tracks: [{layer: "body", property: "opacity", keys: [key, {time: 1, value: 1}]}],
   }).value!).valid, true);
-  assert.equal(validateDocument("motion", {...document, schemaRevision: 4}).valid, false);
   assert.equal(validateDocument("motion", {...document, tracks: [{...document.tracks[0]!,
     keys: [{time: 0, value: 0, curve: "cubicBezier"}, {time: 1, value: 1, curve: "linear"}],
   }]}).valid, false);
@@ -265,17 +258,16 @@ test("cubic timing curves select revision 5 and require bounded control points",
   }]}).valid, false);
 });
 
-test("alpha mask references select revision 6 and reject unsupported composition", () => {
+test("alpha mask references reject unsupported composition", () => {
   const result = defineMotion({...input, layers: [
     {...input.layers[0]!, mask: "mark"}, input.layers[1]!,
   ]});
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
-  assert.equal(result.value?.schemaRevision, 6);
+  assert.equal(result.value?.schemaRevision, 1);
   const document = result.value!;
   assert.equal(parseDocument("motion", serializeMotion({...input, layers: [
     {...input.layers[0]!, mask: "mark"}, input.layers[1]!,
   ]}).value!).valid, true);
-  assert.equal(validateDocument("motion", {...document, schemaRevision: 5}).valid, false);
   assert.equal(validateDocument("motion", {...document, layers: [
     {...document.layers[0]!, mask: "unknown"}, document.layers[1]!,
   ]}).valid, false);
@@ -287,7 +279,7 @@ test("alpha mask references select revision 6 and reject unsupported composition
   ]}).valid, false);
 });
 
-test("transform groups and child-local time select revision 7", () => {
+test("transform groups and child-local time", () => {
   const source = {
     id: "nested-logo", canvas: {width: 640, height: 360}, duration: 1,
     layers: [
@@ -302,11 +294,10 @@ test("transform groups and child-local time select revision 7", () => {
   };
   const result = defineMotion(source);
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
-  assert.equal(result.value?.schemaRevision, 7);
+  assert.equal(result.value?.schemaRevision, 1);
   assert.equal(result.value?.layers[0]?.kind, "group");
   assert.equal(parseDocument("motion", serializeMotion(source).value!).valid, true);
   const document = result.value!;
-  assert.equal(validateDocument("motion", {...document, schemaRevision: 6}).valid, false);
   assert.equal(validateDocument("motion", {...document, layers: [
     {...document.layers[0]!, image: "Assets/Motion/logo.png"}, document.layers[1]!,
   ]}).valid, false);
@@ -323,13 +314,9 @@ test("transform groups and child-local time select revision 7", () => {
     document.tracks[0]!.keys[0]!, {time: 2, value: 100, curve: "linear" as const},
   ]}]};
   assert.equal(validateDocument("motion", longerLocalTrack).valid, true);
-  assert.equal(validateDocument("motion", {...longerLocalTrack,
-    tracks: longerLocalTrack.tracks.map((track) => ({...track, layer: "logo"})),
-    layers: [{id: "logo", image: "Assets/Motion/logo.png", width: 100,
-      height: 100}], schemaRevision: 6}).valid, false);
 });
 
-test("inherited RGB tint and color keys select revision 8 without changing opacity", () => {
+test("inherited RGB tint and color keys work without changing opacity", () => {
   const tinted = defineMotion({
     id: "color-reveal", canvas: {width: 320, height: 120}, duration: 1,
     layers: [
@@ -343,10 +330,9 @@ test("inherited RGB tint and color keys select revision 8 without changing opaci
     ]}],
   });
   assert.equal(tinted.valid, true, JSON.stringify(tinted.diagnostics));
-  assert.equal(tinted.value?.schemaRevision, 8);
+  assert.equal(tinted.value?.schemaRevision, 1);
   assert.deepEqual(tinted.value?.tracks[0]?.keys[0]?.value, {r: 1, g: 1, b: 1});
   const document = tinted.value!;
-  assert.equal(validateDocument("motion", {...document, schemaRevision: 7}).valid, false);
   assert.equal(validateDocument("motion", {...document, layers: [
     {...document.layers[0]!, tint: {r: 1.2, g: 0.5, b: 1}}, document.layers[1]!,
   ]}).valid, false);
@@ -358,19 +344,17 @@ test("inherited RGB tint and color keys select revision 8 without changing opaci
   }]}).valid, false);
 });
 
-test("selective parent transform inheritance selects revision 9", () => {
+test("selective parent transform inheritance", () => {
   const source = {...input, layers: [
     {...input.layers[0]!, inheritRotation: false, inheritScale: true},
     input.layers[1]!,
   ]};
   const result = defineMotion(source);
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
-  assert.equal(result.value?.schemaRevision, 9);
+  assert.equal(result.value?.schemaRevision, 1);
   assert.equal(result.value?.layers[0]?.inheritRotation, false);
   assert.equal(result.value?.layers[0]?.inheritScale, true);
   assert.equal(parseDocument("motion", serializeMotion(source).value!).valid, true);
-  const older = {...result.value!, schemaRevision: 8};
-  assert.equal(validateDocument("motion", older).valid, false);
   assert.equal(validateDocument("motion", {...result.value!, layers: [
     {...result.value!.layers[0]!, inheritScale: 0}, result.value!.layers[1]!,
   ]}).valid, false);
@@ -401,7 +385,7 @@ test("inlined motion rebases hierarchy, masks, tracks and audio time", () => {
     at: 0.3, speed: 2, x: 120, z: 4});
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
   const motion = result.value!;
-  assert.equal(motion.schemaRevision, 7);
+  assert.equal(motion.schemaRevision, 1);
   assert.equal(motion.layers[1]?.id, "logo");
   assert.equal(motion.layers[1]?.timeOffset, -0.6);
   assert.equal(motion.layers[2]?.parent, "logo");
@@ -419,7 +403,7 @@ test("inlined motion rebases hierarchy, masks, tracks and audio time", () => {
   const selective = inlineMotion(outer, child, {id: "selective", parent: "anchor",
     at: 0.3, speed: 2, inheritRotation: false, inheritScale: false});
   assert.equal(selective.valid, true, JSON.stringify(selective.diagnostics));
-  assert.equal(selective.value?.schemaRevision, 9);
+  assert.equal(selective.value?.schemaRevision, 1);
   assert.equal(selective.value?.layers[1]?.inheritRotation, false);
   assert.equal(selective.value?.layers[1]?.inheritScale, false);
   assert.equal(inlineMotion(outer, {...child, loop: true}, {id: "logo"}).valid, false);

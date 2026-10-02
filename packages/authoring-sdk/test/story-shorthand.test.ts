@@ -7,7 +7,7 @@ import type {CharacterDocument} from "../src/index.js";
 
 const yuki: CharacterDocument = {
   format: "PrismatiXCharacter",
-  schemaRevision: 2,
+  schemaRevision: 1,
   id: "11111111-1111-4111-8111-111111111111",
   displayName: "雪",
   aliases: ["yuki"],

@@ -455,7 +455,7 @@ export class ArtemisConverter {
     }
     const descriptor = joinProjectPath(directory, `${expression}.pxportrait`);
     const target = this.projectFile(descriptor);
-    const text = `${compactJson({format: "PrismatiXLayeredPortrait", schemaRevision: 2,
+    const text = `${compactJson({format: "PrismatiXLayeredPortrait", schemaRevision: 1,
       width: this.system.screen[0], height: this.system.screen[1], layers})}\n`;
     let existing: string | undefined;
     try { existing = (await readFile(target, "utf8")).replace(/\r\n/gu, "\n"); } catch { existing = undefined; }

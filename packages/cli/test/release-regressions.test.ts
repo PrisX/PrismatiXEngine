@@ -71,7 +71,7 @@ test('dev recovers first failure, retains acknowledged revision on rejection, an
         ir=readFileSync(join(q.projectRoot,q.irPath),'utf8');
         if(ir.includes('REJECT-ME')) type='runtimeIrRejected';
       }
-      process.stdout.write(JSON.stringify({...q,type,appliedRevision:q.revision,runtimeIrSchemaRevision:2,uiSchemaRevision:2})+'\\n');
+      process.stdout.write(JSON.stringify({...q,type,appliedRevision:q.revision,runtimeIrSchemaRevision:1,uiSchemaRevision:1})+'\\n');
       if(q.type==='shutdown') {rl.close();process.exit(0);}
       if(q.type==='play' && ir.includes('CRASH-ME') && !existsSync(log+'.crashed')) {
         appendFileSync(log+'.crashed','yes'); setTimeout(()=>process.exit(29),150);
@@ -133,7 +133,7 @@ test('Preview rejects incompatible contracts, oversized frames and stale acknowl
           const q=JSON.parse(line);
           if(q.type==='hello' && '${mode}'==='oversize') {process.stdout.write('x'.repeat(17*1024*1024));return;}
           const type={hello:'ready',applyRuntimeIr:'staleRevision',shutdown:'shutdownAccepted'}[q.type];
-          process.stdout.write(JSON.stringify({...q,type,runtimeIrSchemaRevision:${mode==='schema'?1:2},uiSchemaRevision:2,appliedRevision:q.revision})+'\\n');
+          process.stdout.write(JSON.stringify({...q,type,runtimeIrSchemaRevision:${mode==='schema'?2:1},uiSchemaRevision:1,appliedRevision:q.revision})+'\\n');
           if(q.type==='shutdown') {rl.close();process.exit(0);}
         });
       `);

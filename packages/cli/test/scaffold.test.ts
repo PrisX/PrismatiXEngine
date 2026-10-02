@@ -46,7 +46,7 @@ test("add scene writes one source per locale and lists it in a chapter", async (
   const root = await project({
     "prismatix.json": {name: "Game", id: "game", defaultLocale: "zh-TW",
       supportedLocales: ["zh-TW", "ja-JP"], storyIndex: "Story/story.pxindex"},
-    "Story/story.pxindex": {format: "PrismatiXStoryIndex", schemaRevision: 2, id: "main",
+    "Story/story.pxindex": {format: "PrismatiXStoryIndex", schemaRevision: 1, id: "main",
       entryScene: "prologue", chapters: [{id: "chapter-1", title: "Chapter 1", scenes: ["prologue"]}],
       scenes: [{id: "prologue", sources: {"zh-TW": "Story/zh-TW/prologue.pxstory"}}]},
   });

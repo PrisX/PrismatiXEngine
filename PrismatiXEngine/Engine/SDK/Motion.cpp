@@ -131,7 +131,7 @@ MotionAffine Multiply(const MotionAffine& parent, const MotionAffine& child) {
 // The parent's authored rotation is tracked independently of its affine
 // matrix. Factoring a reflected matrix alone would mistake a negative scale
 // for 180 degrees of rotation. Legacy clips keep the exact affine matrix;
-// revision-9 opt-outs retain the parent's affine translation in every case.
+// inheritance opt-outs retain the parent's affine translation in every case.
 MotionAffine FilterParentTransform(const MotionAffine& parent,
                                    double parentRotationDegrees,
                                    bool inheritRotation, bool inheritScale) {
@@ -235,12 +235,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
     if (!root.contains("format") || !root["format"].is_string() ||
         root["format"].get_ref<const std::string&>() != "PrismatiXMotion" ||
         !root.contains("schemaRevision") || !root["schemaRevision"].is_number_integer() ||
-        (root["schemaRevision"] != 1 && root["schemaRevision"] != 2 &&
-         root["schemaRevision"] != 3 && root["schemaRevision"] != 4 &&
-         root["schemaRevision"] != 5 && root["schemaRevision"] != 6 &&
-         root["schemaRevision"] != 7 && root["schemaRevision"] != 8 &&
-         root["schemaRevision"] != 9 && root["schemaRevision"] != 10 &&
-         root["schemaRevision"] != 11) ||
+        root["schemaRevision"] != 1 ||
         !root.contains("id") ||
         !root["id"].is_string() || !Identifier(root["id"].get_ref<const std::string&>()))
         return fail("PXMOTION1002", "Motion format, revision, or id is invalid");
@@ -249,10 +244,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         return fail("PXMOTION1003", "Motion canvas must specify width and height");
     const auto canvasWidth = Number(*canvas, "width", 0, 0.000001, 16384, true);
     const auto canvasHeight = Number(*canvas, "height", 0, 0.000001, 16384, true);
-    const int revision = root["schemaRevision"].get<int>();
     const bool tickTime = root.contains("tickRate");
-    if ((revision < 10 && tickTime) || (revision == 10 && !tickTime))
-        return fail("PXMOTION1003", "Motion tickRate requires revision 10 or newer and is mandatory for revision 10");
     const auto tickRate = Number(root, "tickRate", 1, 0.001, 1000, tickTime);
     if (!tickRate) return fail("PXMOTION1003", "Motion tickRate is invalid");
     // Tick values can be smaller than one millionth while still describing
@@ -265,7 +257,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         return fail("PXMOTION1003", "Motion canvas, duration, or loop is invalid");
     MotionClip clip;
     clip.id = root["id"].get<std::string>();
-    clip.schemaRevision = root["schemaRevision"].get<int>();
+    clip.schemaRevision = 1;
     clip.canvasWidth = *canvasWidth;
     clip.canvasHeight = *canvasHeight;
     clip.duration = *duration / *tickRate;
@@ -296,8 +288,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         MotionLayer layer;
         layer.id = entry["id"].get<std::string>();
         if (const auto kind = entry.find("kind"); kind != entry.end()) {
-            if (clip.schemaRevision < 7 || !kind->is_string())
-                return fail("PXMOTION1030", "Motion layer kind requires revision 7");
+            if (!kind->is_string())
+                return fail("PXMOTION1030", "Motion layer kind is invalid");
             const auto value = kind->get<std::string>();
             if (value == "group") layer.kind = MotionLayerKind::Group;
             else if (value != "image")
@@ -313,8 +305,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             layer.image = entry["image"].get<std::string>();
         }
         if (const auto blend = entry.find("blendMode"); blend != entry.end()) {
-            if (clip.schemaRevision < 4 || !blend->is_string())
-                return fail("PXMOTION1026", "Motion blend mode requires revision 4");
+            if (!blend->is_string())
+                return fail("PXMOTION1026", "Motion blend mode is invalid");
             const auto value = blend->get<std::string>();
             if (value == "normal") layer.blendMode = MotionBlendMode::Normal;
             else if (value == "additive") layer.blendMode = MotionBlendMode::Additive;
@@ -329,9 +321,9 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             !layerIds.emplace(layer.id, clip.layers.size()).second)
             return fail("PXMOTION1007", "Motion layer id or image path is invalid or duplicated");
         if (const auto frames = entry.find("frames"); frames != entry.end()) {
-            if (clip.schemaRevision < 2 || !frames->is_array() ||
+            if (!frames->is_array() ||
                 frames->empty() || frames->size() > 4096)
-                return fail("PXMOTION1020", "Motion atlas frames require revision 2 and 1 to 4096 rectangles");
+                return fail("PXMOTION1020", "Motion atlas frames must contain 1 to 4096 rectangles");
             layer.frames.reserve(frames->size());
             for (const auto& frame : *frames) {
                 if (!OnlyFields(frame, {"x", "y", "width", "height"}) ||
@@ -356,9 +348,9 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             parents.push_back(parent->get<std::string>());
         } else parents.emplace_back();
         if (const auto mask = entry.find("mask"); mask != entry.end()) {
-            if (clip.schemaRevision < 6 || !mask->is_string() ||
+            if (!mask->is_string() ||
                 !Identifier(mask->get_ref<const std::string&>()))
-                return fail("PXMOTION1027", "Motion mask requires revision 6 and a valid layer id");
+                return fail("PXMOTION1027", "Motion mask requires a valid layer id");
             masks.push_back(mask->get<std::string>());
         } else masks.emplace_back();
         const auto z = Number(entry, "z", 0, -100000, 100000);
@@ -367,8 +359,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
                                   16384, imageLayer);
         const auto height = Number(entry, "height", 0, imageLayer ? 0.000001 : 0,
                                    16384, imageLayer);
-        const double minimumAnchor = clip.schemaRevision >= 11 ? -16 : 0;
-        const double maximumAnchor = clip.schemaRevision >= 11 ? 16 : 1;
+        constexpr double minimumAnchor = -16;
+        constexpr double maximumAnchor = 16;
         const auto anchorX = Number(entry, "anchorX", 0, minimumAnchor, maximumAnchor);
         const auto anchorY = Number(entry, "anchorY", 0, minimumAnchor, maximumAnchor);
         const auto x = Number(entry, "x", 0, -1'000'000, 1'000'000);
@@ -385,13 +377,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         const auto visible = Boolean(entry, "visible", true);
         if (!z || std::floor(*z) != *z || !width || !height || !anchorX || !anchorY ||
             !x || !y || !scaleX || !scaleY || !rotation || !timeOffset ||
-            !timeScale || !opacity || !inheritRotation || !inheritScale || !visible ||
-            (clip.schemaRevision < 7 &&
-                (entry.contains("timeOffset") || entry.contains("timeScale"))))
+            !timeScale || !opacity || !inheritRotation || !inheritScale || !visible)
             return fail("PXMOTION1009", "Motion layer geometry or visibility is invalid");
-        if (clip.schemaRevision < 9 &&
-            (entry.contains("inheritRotation") || entry.contains("inheritScale")))
-            return fail("PXMOTION1034", "Selective parent inheritance requires revision 9");
         layer.z = static_cast<int>(*z);
         layer.width = *width; layer.height = *height;
         layer.anchorX = *anchorX; layer.anchorY = *anchorY;
@@ -401,9 +388,9 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         layer.inheritScale = *inheritScale;
         layer.timeOffset = *timeOffset / *tickRate; layer.timeScale = *timeScale;
         if (const auto tint = entry.find("tint"); tint != entry.end()) {
-            if (clip.schemaRevision < 8 || !OnlyFields(*tint, {"r", "g", "b"}) ||
+            if (!OnlyFields(*tint, {"r", "g", "b"}) ||
                 tint->size() != 3)
-                return fail("PXMOTION1032", "Motion tint requires revision 8 and RGB channels");
+                return fail("PXMOTION1032", "Motion tint requires RGB channels");
             const auto r = Number(*tint, "r", 1, 0, 1, true);
             const auto g = Number(*tint, "g", 1, 0, 1, true);
             const auto b = Number(*tint, "b", 1, 0, 1, true);
@@ -470,10 +457,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             !targets.insert(layerName + "." + propertyName).second)
             return fail("PXMOTION1014", "Motion track target is unknown or duplicated");
         if (*property == MotionProperty::Frame &&
-            (clip.schemaRevision < 2 || clip.layers[layer->second].frames.empty()))
-            return fail("PXMOTION1022", "Motion frame tracks require revision 2 atlas frames");
-        if (*property == MotionProperty::Tint && clip.schemaRevision < 8)
-            return fail("PXMOTION1033", "Motion tint tracks require revision 8");
+            clip.layers[layer->second].frames.empty())
+            return fail("PXMOTION1022", "Motion frame tracks require atlas frames");
         totalKeys += entry["keys"].size();
         if (totalKeys > 1'000'000)
             return fail("PXMOTION1015", "Motion clip exceeds the one-million-key limit");
@@ -486,10 +471,9 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             if (!OnlyFields(key, {"time", "value", "curve", "bezier"}) ||
                 !key.contains("curve") || !key["curve"].is_string())
                 return fail("PXMOTION1016", "Motion key shape is invalid");
-            // Revision 7 keys use layer-local seconds. A faster nested clock
+            // Keys use layer-local seconds. A faster nested clock
             // can reach key times beyond the enclosing clip duration.
-            const auto time = Number(key, "time", 0, 0,
-                clip.schemaRevision >= 7 ? 86400.0 * *tickRate : *duration, true);
+            const auto time = Number(key, "time", 0, 0, 86400.0 * *tickRate, true);
             const auto curve = Curve(key["curve"].get<std::string>());
             if (!time || *time <= previous || !curve || !key.contains("value"))
                 return fail("PXMOTION1017", "Motion key time or curve is invalid");
@@ -498,10 +482,10 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             parsed.curve = *curve;
             const auto bezier = key.find("bezier");
             if (*curve == MotionCurve::CubicBezier) {
-                if (clip.schemaRevision < 5 || bezier == key.end() ||
+                if (bezier == key.end() ||
                     !OnlyFields(*bezier, {"x1", "y1", "x2", "y2"}) ||
                     bezier->size() != 4)
-                    return fail("PXMOTION1027", "Cubic Bezier keys require revision 5 and four control coordinates");
+                    return fail("PXMOTION1027", "Cubic Bezier keys require four control coordinates");
                 const auto x1 = Number(*bezier, "x1", 0, 0, 1, true);
                 const auto y1 = Number(*bezier, "y1", 0, -8, 8, true);
                 const auto x2 = Number(*bezier, "x2", 0, 0, 1, true);
@@ -545,8 +529,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         clip.tracks.push_back(std::move(track));
     }
     if (const auto markers = root.find("markers"); markers != root.end()) {
-        if (clip.schemaRevision < 3 || !markers->is_array() || markers->size() > 4096)
-            return fail("PXMOTION1024", "Motion audio markers require revision 3 and at most 4096 entries");
+        if (!markers->is_array() || markers->size() > 4096)
+            return fail("PXMOTION1024", "Motion audio markers must be an array of at most 4096 entries");
         std::unordered_set<std::string> markerIds;
         double previousTime = -1;
         clip.markers.reserve(markers->size());

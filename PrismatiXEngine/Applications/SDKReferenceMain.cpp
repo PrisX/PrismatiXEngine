@@ -48,7 +48,7 @@ std::optional<std::string> Generate(const std::filesystem::path& contractsPath,
     const auto contracts = nlohmann::json::parse(*contractsSource, nullptr, false);
     if (contracts.is_discarded() || !contracts.is_object() ||
         contracts.value("format", "") != "PrismatiXContractManifest" ||
-        contracts.value("schemaRevision", 0u) != 2u ||
+        contracts.value("schemaRevision", 0u) != 1u ||
         !contracts.contains("contracts") || !contracts["contracts"].is_array()) {
         std::cerr << "SDK contract manifest is unsupported\n";
         return std::nullopt;
@@ -69,9 +69,9 @@ std::optional<std::string> Generate(const std::filesystem::path& contractsPath,
               "`px::sdk::api`\n"
               "- Authoring TypeScript: `@prismatix/authoring-sdk`\n"
               "- Extension TypeScript: `@prismatix/runtime`\n"
-              "- CLI: `prismatix validate|build|run|pack|migrate|inspect-save`\n\n"
+              "- CLI: `prismatix validate|build|run|pack|inspect-save`\n\n"
               "## Canonical documents\n\n"
-              "| Contract | Extension | Schema | Revision | Migration policy |\n"
+              "| Contract | Extension | Schema | Revision |\n"
               "| --- | --- | --- | ---: | --- |\n";
     for (const auto& contract : contracts["contracts"]) {
         if (!contract.is_object() || !contract.contains("id") ||
@@ -79,9 +79,7 @@ std::optional<std::string> Generate(const std::filesystem::path& contractsPath,
             !contract["extension"].is_string() || !contract.contains("schema") ||
             !contract["schema"].is_string() ||
             !contract.contains("schemaRevision") ||
-            !contract["schemaRevision"].is_number_unsigned() ||
-            !contract.contains("migration") ||
-            !contract["migration"].is_string()) {
+            !contract["schemaRevision"].is_number_unsigned()) {
             std::cerr << "SDK contract descriptor is malformed\n";
             return std::nullopt;
         }
@@ -89,8 +87,7 @@ std::optional<std::string> Generate(const std::filesystem::path& contractsPath,
                << "` | `" << MarkdownCell(contract["extension"].get<std::string>())
                << "` | `" << MarkdownCell(contract["schema"].get<std::string>())
                << "` | " << contract["schemaRevision"].get<unsigned int>()
-               << " | `" << MarkdownCell(contract["migration"].get<std::string>())
-               << "` |\n";
+               << " |\n";
     }
 
     output << "\n## UI TypeRegistry\n\n"

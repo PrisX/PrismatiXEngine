@@ -40,7 +40,7 @@ Json Operation(const std::string& id, const std::string& kind,
 std::string Document(const std::string& id, const std::uint64_t revision,
                      Json operations) {
     return Json{{"format", "PrismatiXRuntimeIR"},
-                {"schemaRevision", 2},
+                {"schemaRevision", 1},
                 {"documentId", id},
                 {"committedRevision", revision},
                 {"operations", std::move(operations)}}
@@ -990,7 +990,7 @@ int main() {
                       "pre-Timeline checkpoint captures");
         const std::string timeline = Json{
             {"format", "PrismatiXTimeline"},
-            {"schemaRevision", 2},
+            {"schemaRevision", 1},
             {"id", "preview.timeline"},
             {"duration", 4.0},
             {"tracks", Json::array({

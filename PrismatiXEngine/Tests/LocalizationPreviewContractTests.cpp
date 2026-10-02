@@ -10,7 +10,7 @@ using Json = nlohmann::json;
 
 Json Document(std::string text = "こんにちは", int maxCharacters = 12) {
     return {{"format", "PrismatiXLocalization"},
-            {"schemaRevision", 2},
+            {"schemaRevision", 1},
             {"revision", 8},
             {"primaryLocale", "en-US"},
             {"referenceLocale", "ja-JP"},
@@ -51,10 +51,10 @@ bool ContainsCode(const std::vector<px::diag::Diagnostic>& diagnostics,
 }  // namespace
 
 int main() {
-    auto legacyDocument = Document();
-    legacyDocument["schemaRevision"] = 1;
+    auto unsupportedDocument = Document();
+    unsupportedDocument["schemaRevision"] = 2;
     assert(!px::preview::BuildLocalizationPreviewTable(
-        Request(std::move(legacyDocument))));
+        Request(std::move(unsupportedDocument))));
 
     const auto localized =
         px::preview::BuildLocalizationPreviewTable(Request(Document()));

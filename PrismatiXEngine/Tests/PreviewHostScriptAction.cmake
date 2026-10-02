@@ -9,7 +9,7 @@ if(NOT DEFINED INPUT_FILE)
 endif()
 
 file(TO_CMAKE_PATH "${FIXTURE_ROOT}" PROJECT_ROOT)
-set(ENVELOPE "\"protocol\":\"PrismatiXPreviewProtocol\",\"schemaRevision\":2,\"protocolVersion\":2,\"sessionId\":\"script-action-session\"")
+set(ENVELOPE "\"protocol\":\"PrismatiXPreviewProtocol\",\"schemaRevision\":1,\"protocolVersion\":1,\"sessionId\":\"script-action-session\"")
 set(INPUT "{\"type\":\"hello\",${ENVELOPE},\"requestId\":\"hello-action\",\"documentId\":\"\",\"revision\":0}\n")
 string(APPEND INPUT "{\"type\":\"applyRuntimeIr\",${ENVELOPE},\"requestId\":\"apply-action\",\"documentId\":\"typed-action-document\",\"revision\":1,\"projectRoot\":\"${PROJECT_ROOT}\",\"committedRevision\":1,\"irPath\":\"typed-action.pxir\"}\n")
 string(APPEND INPUT "{\"type\":\"advance\",${ENVELOPE},\"requestId\":\"reveal-intro\",\"documentId\":\"typed-action-document\",\"revision\":1}\n")

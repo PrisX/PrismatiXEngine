@@ -13,8 +13,8 @@ const authored = serializeMotion({
 if (!authored.valid || authored.value === undefined)
   throw new Error(JSON.stringify(authored.diagnostics));
 const descriptor = JSON.parse(authored.value) as {schemaRevision: number};
-if (descriptor.schemaRevision !== 2)
-  throw new Error("Atlas frame motion must use revision 2");
+if (descriptor.schemaRevision !== 1)
+  throw new Error("Atlas frame motion must be revision 1");
 
 const masked = serializeMotion({
   id: "masked-reveal", canvas: {width: 1280, height: 720}, duration: 1,
@@ -27,8 +27,8 @@ const masked = serializeMotion({
     {time: 0, value: -320}, {time: 1, value: 0},
   ]}],
 });
-if (!masked.valid || JSON.parse(masked.value!).schemaRevision !== 6)
-  throw new Error("Alpha-mask motion must validate as revision 6");
+if (!masked.valid || JSON.parse(masked.value!).schemaRevision !== 1)
+  throw new Error("Alpha-mask motion must validate as revision 1");
 
 const nested = serializeMotion({
   id: "nested-logo", canvas: {width: 1280, height: 720}, duration: 1,
@@ -42,8 +42,8 @@ const nested = serializeMotion({
     {time: 0, value: 0}, {time: 0.5, value: 1},
   ]}],
 });
-if (!nested.valid || JSON.parse(nested.value!).schemaRevision !== 7)
-  throw new Error("Child-local motion must validate as revision 7");
+if (!nested.valid || JSON.parse(nested.value!).schemaRevision !== 1)
+  throw new Error("Child-local motion must validate as revision 1");
 
 const tinted = serializeMotion({
   id: "colored-logo", canvas: {width: 1280, height: 720}, duration: 1,
@@ -57,8 +57,8 @@ const tinted = serializeMotion({
     {time: 1, value: {r: 1, g: 0, b: 0}},
   ]}],
 });
-if (!tinted.valid || JSON.parse(tinted.value!).schemaRevision !== 8)
-  throw new Error("Inherited RGB tint must validate as revision 8");
+if (!tinted.valid || JSON.parse(tinted.value!).schemaRevision !== 1)
+  throw new Error("Inherited RGB tint must validate as revision 1");
 
 const selective = serializeMotion({
   id: "counter-rotating-logo", canvas: {width: 1280, height: 720},
@@ -70,8 +70,8 @@ const selective = serializeMotion({
       width: 320, height: 120, inheritRotation: false},
   ],
 });
-if (!selective.valid || JSON.parse(selective.value!).schemaRevision !== 9)
-  throw new Error("Selective inheritance must validate as revision 9");
+if (!selective.valid || JSON.parse(selective.value!).schemaRevision !== 1)
+  throw new Error("Selective inheritance must validate as revision 1");
 
 const inlined = inlineMotion({
   id: "full-title", canvas: {width: 1280, height: 720}, duration: 1,
@@ -84,7 +84,7 @@ const inlined = inlineMotion({
     {time: 0, value: 0}, {time: 2, value: 1},
   ]}],
 }, {id: "intro", at: 0.25, speed: 4, x: 480, y: 300});
-if (!inlined.valid || inlined.value?.schemaRevision !== 7 ||
+if (!inlined.valid || inlined.value?.schemaRevision !== 1 ||
     inlined.value.tracks[1]?.keys[1]?.time !== 2)
   throw new Error(`Inline motion failed: ${JSON.stringify(inlined.diagnostics)}`);
 

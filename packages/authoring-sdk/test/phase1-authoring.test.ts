@@ -48,7 +48,7 @@ test("Gallery references become native project asset descriptors", () => {
     path: "Assets/CG/scene.png", kind: "cg"};
   const thumbnail = {id: "55555555-5555-4555-8555-555555555555",
     path: "Assets/CG/scene-thumb.png", kind: "cg"};
-  const game = {format: "PrismatiXGame", schemaRevision: 2,
+  const game = {format: "PrismatiXGame", schemaRevision: 1,
     variables: [], gallery: [{id: "scene", title: "Scene", image, thumbnail,
       unlockFlag: "scene"}], unlockables: []};
   const input = {project: {id: "gallery-game"},
@@ -187,7 +187,7 @@ test("compileProject runs the production character graph validator on readable p
   const source = "Characters/yuki.pxcharacter";
   const descriptor = {id: characterId, displayName: "Yuki", source};
   const character = {
-    format: "PrismatiXCharacter", schemaRevision: 2,
+    format: "PrismatiXCharacter", schemaRevision: 1,
     id: characterId, displayName: "Yuki", aliases: ["yuki"],
     defaultExpressionId: expressionId,
     expressions: [{id: expressionId, name: "Smile", aliases: ["smile"],

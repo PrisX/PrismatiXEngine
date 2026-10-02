@@ -148,7 +148,7 @@ std::string UiTitle() {
 
 std::string RuntimeGameCatalog() {
     return R"({
-      "format":"PrismatiXGame","schemaRevision":2,
+      "format":"PrismatiXGame","schemaRevision":1,
       "variables":[{"name":"affinity","type":"integer","default":7,"scope":"profile"}],
       "inputBindings":[{"key":"Escape","command":"screen.open","argument":"settings"}],
       "gallery":[{"id":"ending-rin","title":"Rin Ending",
@@ -209,7 +209,7 @@ int main() {
 
     Write(root / "Content/Runtime/start.pxir", R"({
       "format":"PrismatiXRuntimeIR",
-      "schemaRevision":2,
+      "schemaRevision":1,
       "documentId":"99999999-9999-4999-8999-999999999999",
       "committedRevision":4,
       "operations":[{
@@ -222,7 +222,7 @@ int main() {
       }]
     })");
     Write(root / "Content/Runtime/start.pxmap", R"({
-      "format":"PrismatiXSourceMap","schemaRevision":2,
+      "format":"PrismatiXSourceMap","schemaRevision":1,
       "documentId":"99999999-9999-4999-8999-999999999999",
       "mappings":[{"operationId":"line-1","sourceId":"line-1",
         "sourceUri":"Story/Entry.pxstory","startLine":1,"startColumn":1,
@@ -235,12 +235,12 @@ int main() {
     Write(root / "Content/UI/Title.pxui", UiTitle());
     Write(root / "Content/game.pxgame", RuntimeGameCatalog());
     Write(root / "Content/Localization/ja-JP.json", R"({
-      "format":"PrismatiXLocale","schemaRevision":2,
+      "format":"PrismatiXLocale","schemaRevision":1,
       "locale":"ja-JP","strings":{}
     })");
     Write(root / "Story/Entry.pxstory", "雪: hello\n[end]\n");
     Write(root / "Story/story.pxindex", R"({
-      "format":"PrismatiXStoryIndex","schemaRevision":2,"id":"main",
+      "format":"PrismatiXStoryIndex","schemaRevision":1,"id":"main",
       "entryScene":"entry-scene",
       "chapters":[{"id":"entry","title":"Entry","scenes":["entry-scene"]}],
       "scenes":[{"id":"entry-scene","sources":{"ja-JP":"Story/Entry.pxstory"}}]
@@ -248,7 +248,7 @@ int main() {
     Write(root / "Assets/rin.png", "fixture-image");
     Write(root / "Characters/11111111-1111-4111-8111-111111111111.pxcharacter",
           R"({
-      "format":"PrismatiXCharacter","schemaRevision":2,
+      "format":"PrismatiXCharacter","schemaRevision":1,
       "id":"11111111-1111-4111-8111-111111111111","revision":0,
       "displayName":"凛","aliases":["rin"],
       "voiceDirectory":"Content/Audio/Voice/Rin",
@@ -262,7 +262,7 @@ int main() {
     })");
     Write(root / "project.pxproject",
           R"({
-      "format":"PrismatiXProject","schemaRevision":2,
+      "format":"PrismatiXProject","schemaRevision":1,
       "id":"package-contract-game","name":"雪の物語","version":"0.2.0",
       "contentVersion":"fixture-v1","saveVersion":1,
       "resolution":{"width":1280,"height":720},
@@ -297,7 +297,7 @@ int main() {
     std::vector<px::sdk::PackageEvent> events;
     suite.Run("StrictRequest_ParsesLockedWireContract", [&] {
         std::ostringstream json;
-        json << R"({"format":"PrismatiXPackageRequest","schemaRevision":2,)"
+        json << R"({"format":"PrismatiXPackageRequest","schemaRevision":1,)"
              << R"("requestId":"parse-contract",)"
              << R"("gameId":"parse-contract-game",)"
              << R"("projectRoot":")" << root.generic_string() << R"(",)"
@@ -2693,7 +2693,7 @@ int main() {
         const auto originalLocale = Read(localePath);
 
         Write(localePath, R"({
-          "format":"PrismatiXLocale","schemaRevision":2,
+          "format":"PrismatiXLocale","schemaRevision":1,
           "locale":"ja-JP","fontChain":["Content/Fonts/missing.ttf"],
           "strings":{"snow":"雪"}
         })");
@@ -2712,7 +2712,7 @@ int main() {
                 "Fonts/NotoSansTC-Bold.ttf",
             fontPath, std::filesystem::copy_options::overwrite_existing);
         Write(localePath, R"({
-          "format":"PrismatiXLocale","schemaRevision":2,
+          "format":"PrismatiXLocale","schemaRevision":1,
           "locale":"ja-JP","fontChain":["Content/Fonts/NotoSansTC-Bold.ttf"],
           "strings":{"snow":"雪"}
         })");
@@ -2729,7 +2729,7 @@ int main() {
                      "a fallback chain covering locale and Story glyphs packages successfully");
 
         Write(localePath, R"({
-          "format":"PrismatiXLocale","schemaRevision":2,
+          "format":"PrismatiXLocale","schemaRevision":1,
           "locale":"ja-JP","fontChain":["Content/Fonts/NotoSansTC-Bold.ttf"],
           "strings":{"unsupported":"\uDBFF\uDFFF"}
         })");
@@ -2759,7 +2759,7 @@ int main() {
                          !px::sdk::FindFontFileDamage(fontBytes(strippedFont)).empty(),
                      "a font with its CR bytes stripped is reported as damaged");
         Write(localePath, R"({
-          "format":"PrismatiXLocale","schemaRevision":2,
+          "format":"PrismatiXLocale","schemaRevision":1,
           "locale":"ja-JP","fontChain":["Content/Fonts/NotoSansTC-Bold.ttf"],
           "strings":{"snow":"雪"}
         })");
@@ -2797,7 +2797,7 @@ int main() {
               {"source", "Effects/screen-dream.pxeffect"}}});
         Write(effectRoot / "project.pxproject", project.dump());
         Write(effectRoot / "Effects/dream-tone.pxeffect", R"({
-          "format":"PrismatiXEffect","schemaRevision":3,
+          "format":"PrismatiXEffect","schemaRevision":1,
           "id":"dream-tone","targetLayer":"stage",
           "shader":"Effects/dream-tone.frag.hlsl",
           "uniforms":[{"name":"amount","type":"number","slot":0,
@@ -2819,7 +2819,7 @@ int main() {
           }
         )");
         Write(effectRoot / "Effects/node-tone.pxeffect", R"({
-          "format":"PrismatiXEffect","schemaRevision":3,
+          "format":"PrismatiXEffect","schemaRevision":1,
           "id":"node-tone","targetLayer":"node",
           "shader":"Effects/node-tone.frag.hlsl",
           "uniforms":[{"name":"tint","type":"color","slot":0,
@@ -2839,7 +2839,7 @@ int main() {
           }
         )");
         Write(effectRoot / "Effects/screen-dream.pxeffect", R"({
-          "format":"PrismatiXEffect","schemaRevision":3,
+          "format":"PrismatiXEffect","schemaRevision":1,
           "id":"screen-dream","targetLayer":"transition",
           "shader":"Effects/screen-dream.frag.hlsl",
           "uniforms":[{"name":"softness","type":"number","slot":0,
@@ -2926,7 +2926,7 @@ int main() {
         constexpr std::size_t expectedArtifactCount = 3;
 #endif
         suite.Expect(effect.id == "dream-tone" && effect.targetLayer == "stage" &&
-                         effect.schemaRevision == 3 &&
+                         effect.schemaRevision == 1 &&
                          effect.samplerCount == 1 &&
                          effect.uniformBufferCount == 1 &&
                          effect.artifacts.size() == expectedArtifactCount &&
@@ -3207,7 +3207,7 @@ int main() {
     suite.Run("InvalidRuntimeGameCatalog_IsRejectedBeforePackaging", [&] {
         const auto catalogPath = root / "Content/game.pxgame";
         Write(catalogPath, R"({
-          "format":"PrismatiXGame","schemaRevision":2,
+          "format":"PrismatiXGame","schemaRevision":1,
           "variables":[{"name":"affinity","type":"integer","default":"seven","scope":"session"}],
           "gallery":[],"unlockables":[]
         })" );
@@ -3225,7 +3225,7 @@ int main() {
     suite.Run("GalleryPathsAndUnknownUuids_AreRejectedBeforePackaging", [&] {
         const auto catalogPath = root / "Content/game.pxgame";
         Write(catalogPath, R"({
-          "format":"PrismatiXGame","schemaRevision":2,
+          "format":"PrismatiXGame","schemaRevision":1,
           "variables":[],"unlockables":[],
           "gallery":[{"id":"legacy","image":"Assets/rin.png"}]
         })" );
@@ -3240,7 +3240,7 @@ int main() {
             "canonical packages cannot use path-authoritative Gallery items");
 
         Write(catalogPath, R"({
-          "format":"PrismatiXGame","schemaRevision":2,
+          "format":"PrismatiXGame","schemaRevision":1,
           "variables":[],"unlockables":[],
           "gallery":[{"id":"unknown","image":{"id":"99999999-9999-4999-8999-999999999999","path":"Assets/rin.png"}}]
         })" );

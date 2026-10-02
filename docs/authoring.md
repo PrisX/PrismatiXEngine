@@ -1013,7 +1013,7 @@ any character action preset on the message window.
 
 #### Changing only the face of a layered character
 
-When a character's expressions are revision-2 `.pxportrait` descriptors
+When a character's expressions are role-tagged `.pxportrait` descriptors
 (see [layered portraits](#layered-portrait-authoring)), each expression is a body
 (`base` layers) plus a face (`expression` layers), and an alias such as
 `z1e0700_e0022` names both. `[face]` changes only the face and keeps the
@@ -1128,7 +1128,7 @@ example by setting `"gameCatalog":"Content/game.pxgame"` in the project and
 creating:
 
 ```json
-{"format":"PrismatiXGame","schemaRevision":2,"variables":[{"name":"affection","type":"integer","default":0,"scope":"session"}],"gallery":[],"unlockables":[]}
+{"format":"PrismatiXGame","schemaRevision":1,"variables":[{"name":"affection","type":"integer","default":0,"scope":"session"}],"gallery":[],"unlockables":[]}
 ```
 
 ```pxstory
@@ -1481,7 +1481,7 @@ locale's `strings` entry and updates it when the player switches language.
 ```
 
 ```json
-{"format": "PrismatiXLocale", "schemaRevision": 2, "locale": "ja-JP",
+{"format": "PrismatiXLocale", "schemaRevision": 1, "locale": "ja-JP",
  "strings": {"save.incompatible": "このセーブデータは読み込めません。"}}
 ```
 
@@ -1517,14 +1517,14 @@ Runtime extensions run in QuickJS, without Node filesystem/process/network modul
 
 Put named actions in the project's `Content/game.pxgame` document. This is
 versioned JSON, but the `GameInputAction` TypeScript type can be used by
-generators. Unlike the older `inputBindings` command/key pairs, one entry
+generators. Unlike `inputBindings` command/key pairs, one entry
 declares the action identity, input context, default keyboard keys, wheel gesture, and an
 optional Player route or UI command together:
 
 ```json
 {
   "format": "PrismatiXGame",
-  "schemaRevision": 3,
+  "schemaRevision": 1,
   "variables": [],
   "gallery": [],
   "unlockables": [],
@@ -1541,8 +1541,7 @@ optional Player route or UI command together:
 }
 ```
 
-`uiAction` requires `schemaRevision: 3`; revision 2 remains valid for projects
-without it. An authored UI shortcut calls the same Player UI command handler
+An authored `uiAction` shortcut calls the same Player UI command handler
 as a button, with an optional string `argument`. It is active only in the
 declared input context (`ui` while in menus, `game` during gameplay), and is
 suppressed during splash, preload, video, and full-screen CG presentation.
@@ -1671,8 +1670,7 @@ displays the bound direction and asks the host to persist successful changes.
 `wheelBinding` returns `null` for an unknown action. `setWheelBinding` returns
 `false` for an unknown action or invalid threshold. Player saves these choices
 alongside keyboard bindings in per-user `config.dat` and restores them before
-game actions register. Older revision-2 settings without `wheelBindings`
-continue to use authored defaults. A native host using `GameSettings` can wire
+game actions register. A native host using `GameSettings` can wire
 both devices to its own settings path:
 
 ```cpp
@@ -1694,7 +1692,6 @@ registered later still receive their overrides. A missing file leaves defaults
 active on a fresh Input. An invalid file changes neither settings nor input.
 Keep writes disabled so the host cannot overwrite the user's bytes. Hosts with a
 different store can use `CaptureInputBindings` and `ApplyInputBindings` directly.
-Existing `inputBindings` documents remain readable for migration.
 
 Project compilation checks `bindingAction` in UI scenes and components. An
 empty or non-string value is an error (`PXBUILD1071`). A name absent from both
@@ -1735,10 +1732,9 @@ project-relative texture paths; a layer cannot reference another `.pxportrait`.
 `defineLayeredPortrait` returns the typed validated document when an importer
 needs to inspect or transform it before serialization.
 
-Role-tagged layers produce revision 2. Mark every layer `base` or
+Mark every layer `base` or
 `expression`: `base` includes body, dress, pose, and overlays that must not
-change during a facial transition. Untagged revision-1 descriptors continue
-to load unchanged. A partial role table is rejected.
+change during a facial transition. A partial role table is rejected.
 
 Reference the saved descriptor in Story just like a sprite:
 
@@ -1748,11 +1744,10 @@ Reference the saved descriptor in Story just like a sprite:
 
 With `transition=auto`, a new actor uses the ordinary entrance fade. An
 existing actor with the same portrait simply updates position; a replacement
-crossfades only if both revision-2 descriptors have the same canvas, layer
+crossfades only if both role-tagged descriptors have the same canvas, layer
 count, roles, and all `base` layers are identical while at least one
 `expression` layer differs. Otherwise it switches immediately. `true` and
-`false` retain their original explicit behavior, including on revision-1
-portraits. This makes a changed outfit or pose safe without per-story-line
+`false` retain their explicit behavior, including on portraits without roles. This makes a changed outfit or pose safe without per-story-line
 transition flags; it does not infer semantic roles from filenames.
 
 When a character's expressions are role-tagged descriptors, `[face alias
@@ -1799,56 +1794,43 @@ logical canvas, image layers, and keyed tracks. TypeScript authors can use
 `defineMotion` or `serializeMotion` from `@prismatix/authoring-sdk` to create and
 validate that JSON; a TSX UI references the saved resource with `<Motion>`.
 
-Revision 1 supports parented image layers and keyed position, scale,
-rotation, opacity, and visibility. Revision 2 adds atlas frames: pixel
+The contract is `schemaRevision` 1. It supports parented image layers and keyed
+position, scale, rotation, opacity, and visibility. Atlas frames are pixel
 rectangles in one layer image selected by integer, `step`-curve `frame` keys.
-The helper chooses revision 2 when either `frames` or a `frame` track is used.
-Revision 3 adds timed `se`/`voice` audio markers. The helper selects revision 3
-when `markers` are present. Older revision-1/2 files remain supported.
-Revision 4 adds per-layer `blendMode`: `normal` (default), `additive`, or
-`multiply`. The helper selects revision 4 when a layer declares the property;
-older revisions reject it instead of silently drawing with the wrong blend.
-Revision 5 adds a `cubicBezier` timing curve for numeric tracks. Its control
-points specify normalized time/value coordinates; the helper selects revision
-5 when a key uses it. Earlier revisions and existing clips remain supported.
-Revision 6 adds `mask` on an image layer. It names another animated layer whose
-sampled alpha clips the content layer; the source layer is not painted by
-itself. The helper selects revision 6 when any layer declares a mask. Missing,
-self-referential and nested mask references are rejected. This first slice
-requires normal blending on both the content and mask source; combining a mask
+Timed `se`/`voice` audio markers fire when ordinary playback crosses them.
+Each layer may declare `blendMode`: `normal` (default), `additive`, or
+`multiply`. A key may use a `cubicBezier` timing curve for numeric tracks; its
+control points specify normalized time/value coordinates.
+A `mask` on an image layer names another animated layer whose sampled alpha
+clips the content layer; the source layer is not painted by itself. Missing,
+self-referential and nested mask references are rejected. A mask requires
+normal blending on both the content and mask source; combining a mask
 with additive/multiply is rejected instead of producing a misleading image.
-Revision 7 adds non-drawing `kind: "group"` layers and per-layer `timeOffset` /
-`timeScale`. A child samples its tracks at `parentLocalTime * timeScale +
+Non-drawing `kind: "group"` layers and per-layer `timeOffset` / `timeScale`
+give a child local time: it samples its tracks at `parentLocalTime * timeScale +
 timeOffset`; its transform and opacity still inherit from the parent. Group
 layers need no image or dimensions and create no packaged texture dependency.
-The helper selects revision 7 when these fields are used. Older files retain
-their original shared-clock behavior. In revision 7, track key times use the
-target layer's local seconds and may exceed the outer clip's `duration` (up to
-86,400 seconds); earlier revisions still require keys within `duration`.
-Audio markers always use the outer clip clock and remain within its duration.
-Revision 8 adds multiplicative RGB `tint` on image or group layers and a
-three-channel `tint` track. The helper selects revision 8 when either is
-authored; older files cannot silently contain tint fields. A group's tint is
-multiplied into its descendants, independently of `opacity`.
-Revision 9 adds per-layer `inheritRotation` and `inheritScale` switches, both
-defaulting to `true`. A child can keep the parent's affine translation while
+Track key times use the target layer's local seconds and may exceed the outer
+clip's `duration` (up to 86,400 seconds). Audio markers always use the outer
+clip clock and remain within its duration.
+Multiplicative RGB `tint` applies on image or group layers and as a
+three-channel `tint` track. A group's tint is multiplied into its descendants,
+independently of `opacity`.
+Per-layer `inheritRotation` and `inheritScale` switches, both
+defaulting to `true`, let a child keep the parent's affine translation while
 dropping its authored rotation, scale/stretch (including reflection and shear),
 or both. The sampler tracks authored rotation separately so a negative scale
 does not become a fake 180-degree angle. `inlineMotion` accepts the same
-switches for its inserted group. Older revisions reject these fields.
-Revision 10 adds an explicit `tickRate` (ticks per second). When it is present,
-`duration`, layer `timeOffset`, track-key `time`, and audio-marker `time` are
-all authored in ticks. The Native loader converts them to seconds before
-playback; `defineMotion` selects revision 10, which requires `tickRate`.
-Earlier revisions still use seconds and reject the field. The allowed
-`tickRate` is 0.001–1000; converted duration and local key/offset limits
-remain one day. This avoids independent, error-prone division of every
-timestamp when importing a source timeline. It does **not** infer a source
-format's tick rate or validate that source animation semantics match.
-Revision 11 lets image-layer `anchorX` and `anchorY` extend from -16 to 16
-image-size units, including a pivot outside the image rectangle. `defineMotion`
-selects it when an anchor is outside [0, 1]; earlier revisions keep their
-original [0, 1] bounds. Revision 11 may use seconds or an explicit `tickRate`.
+switches for its inserted group.
+An explicit `tickRate` (ticks per second, 0.001-1000) is optional. When it is
+present, `duration`, layer `timeOffset`, track-key `time`, and audio-marker
+`time` are all authored in ticks and the native loader converts them to seconds
+before playback; without it they are seconds. Converted duration and local
+key/offset limits remain one day. This avoids independent, error-prone division
+of every timestamp when importing a source timeline. It does **not** infer a
+source format's tick rate or validate that source animation semantics match.
+Image-layer `anchorX` and `anchorY` extend from -16 to 16
+image-size units, including a pivot outside the image rectangle.
 An external source's origin coordinates still require a verified mapping to
 these normalized anchors before claiming a faithful import.
 
@@ -2018,7 +2000,7 @@ hierarchy, not a reference to another `.pxmotion` resource; an importer must
 flatten external `.mtn` subclips and diagnose unsupported source fields.
 
 For offline composition, `inlineMotion` performs the ID, parent, mask, track,
-and audio-marker rebasing and adds a revision-7 group for you:
+and audio-marker rebasing and adds a transform group for you:
 
 ```ts
 import {inlineMotion, serializeMotion} from "@prismatix/authoring-sdk";
@@ -2129,14 +2111,14 @@ Status: image-layer, timing, blend, alpha-mask, and inline nested-transform slic
 and Story playback below remain a proposal. This is not an `.mtn` parser or a claim that the
 original M2/petal animations are reproduced.
 
-The versioned `PrismatiXMotion` revision-1 through revision-11 `.pxmotion` contract has an
+The versioned `PrismatiXMotion` revision-1 `.pxmotion` contract has an
 Authoring SDK `defineMotion`/`serializeMotion` helper, matching native parser,
 unique layer/track and hierarchy checks, path checks, deterministic keyed
 sampling, and a `Renderer2D` image-layer drawing adapter. A `MotionRect`
 control can now play the descriptor in TSX-authored UI, splash scenes,
 Player routes and native/WASM previews. `MotionSampler::Seek`
 reuses its scratch storage and binary-searches ordered keys; its parent-world
-transform and inherited opacity are sampled deterministically, with revision-7
+transform and inherited opacity are sampled deterministically, with
 child-local time offsets and scales. `fit` is the default
 canvas scaling mode to avoid image squashing. Native and TypeScript contract
 tests cover this slice. `compileProject` validates reachable descriptors
@@ -2154,35 +2136,31 @@ texture residency under budget pressure, and M2-specific framebuffer
 conformance remain open. Story motion commands,
 masks beyond one alpha-mask source per content layer, blur, specialized blend equations, save/load playback binding, and
 M2 conformance fixtures have not been added. The renderer adapter has not yet
-passed an M2-specific framebuffer comparison. Revision 2 adds
-per-layer atlas rectangles and discrete `frame` keys; the Authoring helper
-selects it automatically when those fields are present. The native sampler
+passed an M2-specific framebuffer comparison. Layers carry
+per-layer atlas rectangles and discrete `frame` keys. The native sampler
 selects a source rectangle without changing textures at each key, and a
-two-colour atlas framebuffer test checks the rendered output. Revision-1
-descriptors remain readable and cannot silently contain revision-2 fields.
-Revision 3 adds ordered `se`/`voice` audio markers: the Authoring SDK validates
+two-colour atlas framebuffer test checks the rendered output.
+Ordered `se`/`voice` audio markers: the Authoring SDK validates
 them and includes their audio paths in package dependencies, and `MotionRect`
 emits crossed events during normal playback to the Player audio service (also
 for splash scenes). Seeking does not replay skipped cues. Script markers,
 Story integration, and audio-predecode scheduling remain open.
-Revision 4 adds layer-local normal/additive/multiply blending. Authoring and
-native parsing reject the field in older revisions; a framebuffer test draws
+Layers have local normal/additive/multiply blending; a framebuffer test draws
 overlapping layers from one atlas and verifies both additive and multiply
 pixels. This is not an alpha-mask implementation or M2 conformance fixture.
-Revision 5 adds bounded cubic Bézier timing controls for numeric property
-tracks. The authoring helper chooses it automatically, older revisions reject
-the controls, and native `Seek` solves the timing cubic deterministically.
+Numeric property tracks accept bounded cubic Bézier timing controls, and
+native `Seek` solves the timing cubic deterministically.
 The original `.mtn` custom timing curves still require semantic comparison
 before a converter may claim equivalence.
-Revision 6 adds a layer `mask` reference. The referenced layer is sampled on
+A layer may carry a `mask` reference. The referenced layer is sampled on
 the same clock and rendered only into reusable alpha coverage targets; its
 alpha multiplies the content layer. SDK and native validation reject missing,
 self-referential, nested or non-normal-blend masks. GPU D3D12 and basic D3D11
 framebuffer tests check full, empty, half-alpha, and moving coverage. This is
 not an M2 conformance result: external nested clip references, blur, particles, and
 source-specific blend behavior still block a faithful converter.
-Revision 7 adds non-drawing transform groups and child-local time remapping.
-The Authoring helper selects it automatically; the native sampler computes
+Non-drawing transform groups and child-local time remapping are part of the contract.
+The native sampler computes
 each layer's local time in hierarchy order before sampling property tracks.
 The GPU framebuffer test verifies that a delayed child moves at the expected
 time without painting its group, and the project compiler omits groups from
@@ -2190,13 +2168,13 @@ image dependencies. This allows an offline `.mtn` importer to flatten some
 referenced submotions under groups, but does not interpret external references,
 spatial paths, particles, mesh deformations, or source-specific mask flags.
 `inlineMotion` now performs that offline rebasing for already-authored
-non-looping clips, including mask references and audio-marker times. Revision-7
-track keys are bounded by the local clock's 86,400-second limit instead of the
+non-looping clips, including mask references and audio-marker times. Track
+keys are bounded by the local clock's 86,400-second limit instead of the
 outer duration; audio markers remain on the outer clock. This is composition
 of known `.pxmotion` inputs, not an `.mtn` parser or conformance result.
 The helper also accepts an empty outer layer list as a composition starting
 point and rejects temporal overflow unless truncation is explicitly requested.
-Revision 8 adds a three-channel animated RGB tint and inherited modulation
+A three-channel animated RGB tint and inherited modulation
 through transform groups. Its native sampler and framebuffer test verify that
 color changes reach the pixels without changing alpha. This maps the ordinary
 color modulation seen in M2's `m2logo` source, but not its source-specific
@@ -2205,25 +2183,25 @@ In the decoded M2 source, `src/bure/icon1` and `src/bure2/icon1` resolve to
 280×112 indexed images. Their names alone do not imply a runtime blur effect;
 the need for per-layer blur in this particular clip is unproven until the
 source semantics and rendered frames are compared.
-Revision 9 lets a child retain the parent's affine translation while opting
+A child may retain the parent's affine translation while opting
 out of inherited rotation and/or scale/stretch. Native sampling tests cover
 all four combinations and reflected parents. This fills an Engine capability
 gap revealed by nonuniform `inheritMask` values in the Senren M2 source; the
 bitfield-to-rule mapping and rendered-frame equivalence are still unproven.
-Revision 10 accepts an explicit ticks-per-second rate for authored duration,
+An optional explicit ticks-per-second rate applies to authored duration,
 layer offsets, track keys, and audio markers. Native playback normalizes all
 four to seconds; `inlineMotion` can compose clips with different rates after
 validating each source, while retaining the outer rate in the result. It also
 accepts `atTicks` for a nested start without manual division. The M2 source
 rate is still unverified, and this does not resolve source-specific paths or
 composition rules.
-Revision 11 allows normalized layer anchors outside the image rectangle,
-bounded to [-16, 16] on each axis. Older revisions remain bounded to [0, 1];
-revision 11 permits either seconds or an explicit tick clock. This gives an
+Normalized layer anchors may lie outside the image rectangle,
+bounded to [-16, 16] on each axis; a clip uses either seconds or an explicit
+tick clock. This gives an
 importer a way to represent external image pivots, but source-origin mapping
 and rendered-frame equivalence still require separate validation.
 
-Revision-1 sampling uses a layer's authored property until its first key;
+Sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.
 Visibility keys are discrete. Layers with the same `z` paint in authored order.
 
@@ -2241,9 +2219,8 @@ Story/Stage playback with preloading and save/load behavior.
 ### Target `.pxmotion` document
 
 The file is a reusable composition, currently referenceable from a UI node
-or splash; transition and Story presentation remain targets. Revisions 1–9
-author time in seconds; revision 10 requires declared ticks per second;
-revision 11 allows either clock. Native playback uses seconds. Coordinates are in a declared logical
+or splash; transition and Story presentation remain targets. Authored time is in
+seconds, or in ticks when the document declares a tick rate. Native playback uses seconds. Coordinates are in a declared logical
 canvas, independent of window scaling.
 
 - `canvas`: width, height, scale mode and transparent background.
@@ -2641,7 +2618,7 @@ glslang HLSL frontend plus ShaderCross/SPIRV-Cross and emits SPIR-V and MSL.
 ```json
 {
   "format": "PrismatiXEffect",
-  "schemaRevision": 3,
+  "schemaRevision": 1,
   "id": "dream-tone",
   "targetLayer": "stage",
   "shader": "Effects/dream-tone.frag.hlsl",
@@ -2658,8 +2635,8 @@ glslang HLSL frontend plus ShaderCross/SPIRV-Cross and emits SPIR-V and MSL.
 }
 ```
 
-Revision 2 remains accepted for existing Stage-only effects. Revision 3 adds
-`node` and `transition` targets and the controlled viewport input. An effect may
+The `targetLayer` is `stage`, `node` or `transition`; the shader receives a
+controlled viewport input. An effect may
 declare at most eight uniquely named uniforms in unique slots.
 Supported types are `number`, `vec2`, and `color`; defaults must be finite and
 inside the declared range. Colors also remain in normalized `[0, 1]` space.

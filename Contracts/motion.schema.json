@@ -6,7 +6,7 @@
   "required": ["format", "schemaRevision", "id", "canvas", "duration", "loop", "layers", "tracks"],
   "properties": {
     "format": {"const": "PrismatiXMotion"},
-    "schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]},
+    "schemaRevision": {"const":1},
     "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
     "canvas": {
       "type": "object", "additionalProperties": false,
@@ -137,68 +137,5 @@
         }
       }
     }
-  },
-  "allOf": [{
-    "if": {"type": "object", "properties": {"schemaRevision": {"const": 1}}},
-    "then": {"type": "object", "properties": {
-      "layers": {"type": "array", "items": {"type": "object", "properties": {"frames": false}}},
-      "tracks": {"type": "array", "items": {"type": "object", "properties": {"property": {"not": {"const": "frame"}}}}}
-    }}
-  }, {
-    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2]}}},
-    "then": {"type": "object", "properties": {"markers": false}}
-  }, {
-    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3]}}},
-    "then": {"type": "object", "properties": {
-      "layers": {"type": "array", "items": {"type": "object", "properties": {"blendMode": false}}}
-    }}
-  }, {
-    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4]}}},
-    "then": {"type": "object", "properties": {
-      "tracks": {"type": "array", "items": {"type": "object", "properties": {
-        "keys": {"type": "array", "items": {"type": "object", "properties": {
-          "curve": {"not": {"const": "cubicBezier"}}, "bezier": false
-        }}}
-      }}}
-    }}
-  }, {
-    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4, 5]}}},
-    "then": {"type": "object", "properties": {
-      "layers": {"type": "array", "items": {"type": "object", "properties": {"mask": false}}}
-    }}
-  }, {
-    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4, 5, 6]}}},
-    "then": {"type": "object", "properties": {
-      "layers": {"type": "array", "items": {"type": "object", "properties": {
-        "kind": false, "timeOffset": false, "timeScale": false
-      }}}
-    }}
-  }, {
-    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7]}}},
-    "then": {"type": "object", "properties": {
-      "layers": {"type": "array", "items": {"type": "object", "properties": {"tint": false}}},
-      "tracks": {"type": "array", "items": {"type": "object", "properties": {
-        "property": {"not": {"const": "tint"}}
-      }}}
-    }}
-  }, {
-    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7, 8]}}},
-    "then": {"type": "object", "properties": {
-      "layers": {"type": "array", "items": {"type": "object", "properties": {
-        "inheritRotation": false, "inheritScale": false
-      }}}
-    }}
-  }, {
-    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9]}}},
-    "then": {"properties": {"tickRate": false}}
-  }, {
-    "if": {"type": "object", "properties": {"schemaRevision": {"const": 10}}},
-    "then": {"properties": {"tickRate": true}, "required": ["tickRate"]}
-  }, {
-    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}}},
-    "then": {"properties": {"layers": {"type": "array", "items": {"type": "object", "properties": {
-      "anchorX": {"type": "number", "minimum": 0, "maximum": 1},
-      "anchorY": {"type": "number", "minimum": 0, "maximum": 1}
-    }}}}}
-  }]
+  }
 }

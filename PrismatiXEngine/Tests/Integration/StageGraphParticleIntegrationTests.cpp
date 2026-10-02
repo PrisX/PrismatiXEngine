@@ -125,7 +125,7 @@ int main() {
             std::ofstream output(fixture.path / "hero.pxportrait",
                                  std::ios::binary | std::ios::trunc);
             output << "{\"format\":\"PrismatiXLayeredPortrait\","
-                   << "\"schemaRevision\":2,\"width\":16,\"height\":16,"
+                   << "\"schemaRevision\":1,\"width\":16,\"height\":16,"
                    << "\"layers\":[{\"path\":\"" << layer
                    << "\",\"width\":16,\"height\":16,\"role\":\"base\"}]}";
             return static_cast<bool>(output);
@@ -178,7 +178,7 @@ int main() {
                       "UI portrait layer textures are available");
         {
             std::ofstream descriptor(fixture.path / "hero.pxportrait");
-            descriptor << R"({"format":"PrismatiXLayeredPortrait","schemaRevision":2,
+            descriptor << R"({"format":"PrismatiXLayeredPortrait","schemaRevision":1,
                 "width":16,"height":16,"layers":[
                 {"path":"body.bmp","width":16,"height":16,"role":"base"},
                 {"path":"face.bmp","x":8,"width":8,"height":16,"role":"expression"}]})";
@@ -230,11 +230,12 @@ int main() {
             output << "{\"format\":\"PrismatiXLayeredPortrait\","
                    << "\"schemaRevision\":1,\"width\":16,\"height\":16,"
                    << "\"layers\":["
-                   << "{\"path\":\"body.bmp\",\"width\":16,\"height\":16},"
+                   << "{\"path\":\"body.bmp\",\"width\":16,\"height\":16,"
+                   << "\"role\":\"base\"},"
                    << "{\"path\":\"" << face
-                   << "\",\"width\":8,\"height\":8},"
+                   << "\",\"width\":8,\"height\":8,\"role\":\"expression\"},"
                    << "{\"path\":\"ornament.bmp\",\"x\":10,"
-                   << "\"width\":4,\"height\":4}]}";
+                   << "\"width\":4,\"height\":4,\"role\":\"base\"}]}";
             return static_cast<bool>(output);
         };
         suite.Require(writePortrait("old.pxportrait", "old-face.bmp") &&
@@ -247,7 +248,7 @@ int main() {
                                              const char* face, const char* faceRole) {
             std::ofstream output(fixture.path / name, std::ios::binary);
             output << "{\"format\":\"PrismatiXLayeredPortrait\","
-                   << "\"schemaRevision\":2,\"width\":16,\"height\":16,"
+                   << "\"schemaRevision\":1,\"width\":16,\"height\":16,"
                    << "\"layers\":["
                    << "{\"path\":\"" << body
                    << "\",\"width\":16,\"height\":16,\"role\":\"base\"},"
@@ -266,7 +267,7 @@ int main() {
                                               "new-face.bmp", "expression") &&
                           writeTaggedPortrait("tag-base-face.pxportrait", "body.bmp",
                                               "new-face.bmp", "base"),
-                      "revision-2 portrait roles are available");
+                      "portrait roles are available");
         SDL_Surface* surface = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
         suite.Require(surface != nullptr, "portrait surface initializes");
         SDL_Renderer* native = SDL_CreateSoftwareRenderer(surface);
@@ -337,7 +338,7 @@ int main() {
                          "auto mode never fades changes to base-role layers");
             stage.SetCharacterAuto("hero", "old.pxportrait", 2);
             suite.Expect(stage.CaptureState().actors.front().previousImagePath.empty(),
-                         "legacy portraits remain usable and snap in auto mode");
+                         "a portrait with different roles snaps in auto mode");
             stage.SetCharacterAuto("newcomer", "tag-old.pxportrait", 2);
             const auto newcomer = stage.CaptureState().actors;
             suite.Expect(std::ranges::any_of(newcomer, [](const auto& actor) {

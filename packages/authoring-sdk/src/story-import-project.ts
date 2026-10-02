@@ -152,7 +152,7 @@ export function assembleImportedStoryProject(
       ...(scene.requiredLabels === undefined ? {} : {requiredLabels: scene.requiredLabels})});
   }
   const storyIndex: StoryIndexDocument = {format: "PrismatiXStoryIndex",
-    schemaRevision: 2, id: input.id, entryScene: input.entryScene, chapters,
+    schemaRevision: 1, id: input.id, entryScene: input.entryScene, chapters,
     scenes};
   const validated = validateDocument<StoryIndexDocument>("storyIndex", storyIndex, indexPath);
   diagnostics.push(...validated.diagnostics);

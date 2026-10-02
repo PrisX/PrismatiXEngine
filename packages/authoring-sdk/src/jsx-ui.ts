@@ -521,7 +521,7 @@ export interface PrismatiXUiNode {
 }
 
 interface PrismatiXUiDocumentBase {
-  readonly schemaRevision: 2;
+  readonly schemaRevision: 1;
   readonly id: string;
   readonly revision: number;
   readonly name: string;
@@ -1213,7 +1213,7 @@ function lowerDocument(element: UiElement, path?: string,
   const rootId = visit(authoredRoot, null, 0, "root",
     siblingSeeds([authoredRoot])[0]!, false, props.width, props.height);
   const common: PrismatiXUiDocumentBase = {
-    schemaRevision: 2,
+    schemaRevision: 1,
     id: documentId,
     revision: props.revision ?? 1,
     name: props.name,

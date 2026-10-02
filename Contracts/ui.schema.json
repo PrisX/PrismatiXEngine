@@ -152,7 +152,7 @@
   "additionalProperties": false,
   "required": ["format", "schemaRevision", "id", "revision", "name", "width", "height", "rootId", "nodes", "theme", "behaviorGraph", "behaviorTriggers", "visualStateGroups"],
   "properties": {
-    "format": {"const": "PrismatiXUIScene"}, "schemaRevision": {"const": 2},
+    "format": {"const": "PrismatiXUIScene"}, "schemaRevision": {"const": 1},
     "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
     "revision": {"type": "integer", "minimum": 0},
     "name": {"type": "string", "minLength": 1, "maxLength": 512},

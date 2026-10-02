@@ -14,7 +14,7 @@
 #endif
 
 int main() {
-    static_assert(px::sdk::kPreviewSessionContractRevision == 3);
+    static_assert(px::sdk::kPreviewSessionContractRevision == 1);
     static_assert(std::is_member_function_pointer_v<
                   decltype(&px::sdk::PreviewSession::ApplyTimeline)>);
     static_assert(std::is_member_function_pointer_v<
@@ -27,7 +27,7 @@ int main() {
         return 3;
 
     const std::string runtimeIr =
-        R"({"format":"PrismatiXRuntimeIR","schemaRevision":2,"documentId":"consumer","committedRevision":1,"operations":[]})";
+        R"({"format":"PrismatiXRuntimeIR","schemaRevision":1,"documentId":"consumer","committedRevision":1,"operations":[]})";
     const auto parsed = px::sdk::api::ParseRuntimeIr(runtimeIr);
     if (!parsed.Valid() || parsed.document.documentId != "consumer") return 1;
 

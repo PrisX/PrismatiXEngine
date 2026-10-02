@@ -9,7 +9,7 @@ const imagePath = "Assets/yuki-smile.png";
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u;
 
 function compactCharacter() {
-  return {format: "PrismatiXCharacter", schemaRevision: 2,
+  return {format: "PrismatiXCharacter", schemaRevision: 1,
     displayName: "Yuki", aliases: ["yuki"],
     expressions: [{name: "Smile", aliases: ["smile"], assetPath: imagePath}]} satisfies CharacterSourceDocument;
 }
@@ -56,7 +56,7 @@ test("path shorthand reuses explicit catalog identities and preserves pinned ids
   const normalized = normalizeProject({project: {id: "pinned-game", name: "Pinned",
     assets: [{id: assetId, kind: "character", source: imagePath}],
     characters: [{id: characterId, displayName: "Yuki", source: characterPath}]},
-    documents: {[characterPath]: {format: "PrismatiXCharacter", schemaRevision: 2,
+    documents: {[characterPath]: {format: "PrismatiXCharacter", schemaRevision: 1,
       id: characterId, displayName: "Yuki", aliases: ["yuki"],
       defaultExpressionId: "smile",
       expressions: [{id: expressionId, name: "Smile", aliases: ["smile"],
@@ -76,7 +76,7 @@ test("assetPath may pin a stable assetId without a handwritten catalog entry", (
   const assetId = "33333333-3333-4333-8333-333333333333";
   const normalized = normalizeProject({project: {id: "pinned-asset", name: "Pinned Asset",
     characters: [{source: characterPath, displayName: "Yuki"}]},
-    documents: {[characterPath]: {format: "PrismatiXCharacter", schemaRevision: 2,
+    documents: {[characterPath]: {format: "PrismatiXCharacter", schemaRevision: 1,
       displayName: "Yuki", aliases: ["yuki"],
       expressions: [{name: "Smile", aliases: ["smile"],
         assetId, assetPath: imagePath}]}}});
@@ -91,7 +91,7 @@ test("path-first expressions fail clearly for unsafe or conflicting assets", () 
   ] as const) {
     const result = normalizeProject({project: {id: "invalid-game", name: "Invalid",
       characters: [{source: characterPath, displayName: "Yuki"}]},
-      documents: {[characterPath]: {format: "PrismatiXCharacter", schemaRevision: 2,
+      documents: {[characterPath]: {format: "PrismatiXCharacter", schemaRevision: 1,
         displayName: "Yuki", aliases: ["yuki"], expressions: [expression]}}});
     assert.equal(result.valid, false);
     assert.ok(result.diagnostics.some((diagnostic) => diagnostic.code === code),
@@ -101,7 +101,7 @@ test("path-first expressions fail clearly for unsafe or conflicting assets", () 
     assets: [{id: "33333333-3333-4333-8333-333333333333", kind: "character",
       source: "Assets/other.png"}],
     characters: [{source: characterPath, displayName: "Yuki"}]},
-    documents: {[characterPath]: {format: "PrismatiXCharacter", schemaRevision: 2,
+    documents: {[characterPath]: {format: "PrismatiXCharacter", schemaRevision: 1,
       displayName: "Yuki", aliases: ["yuki"], expressions: [{name: "Smile",
         aliases: ["smile"], assetPath: imagePath,
         assetId: "33333333-3333-4333-8333-333333333333"}]}}});

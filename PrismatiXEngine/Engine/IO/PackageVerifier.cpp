@@ -859,12 +859,12 @@ static PackageOverlayVerification VerifyOverlayImpl(
     if (!metadata.is_object() ||
         !metadata.contains("schemaRevision") ||
         !metadata["schemaRevision"].is_number_integer() ||
-        (metadata["schemaRevision"] != 1 &&
-         metadata["schemaRevision"] != 2 &&
-         metadata["schemaRevision"] != 3))
+        metadata["schemaRevision"] != 1)
         return fail("Overlay metadata schema is invalid");
-    const int revision = metadata["schemaRevision"].get<int>();
-    const bool optionalOverlay = revision == 3;
+    // An optional overlay is distinguished by its kind and optionalId fields;
+    // a signed overlay by its publisher signature entry.
+    const bool optionalOverlay =
+        metadata.contains("kind") || metadata.contains("optionalId");
     if (metadata.size() != baseFields.size() + (optionalOverlay ? 2 : 0))
         return fail("Overlay metadata schema is invalid");
     if (optionalOverlay &&
@@ -873,7 +873,10 @@ static PackageOverlayVerification VerifyOverlayImpl(
          !metadata["optionalId"].is_string() ||
          !ValidOptionalPackId(metadata["optionalId"].get<std::string>())))
         return fail("Optional overlay identity is invalid");
-    const bool signedOverlay = revision >= 2;
+    const bool signedOverlay = std::ranges::any_of(
+        overlay.Entries(), [](const auto& entry) {
+            return entry.name == kPackageOverlaySignatureUri;
+        });
     if (requireSignature && !signedOverlay)
         return fail("Automatic overlay loading requires a publisher signature");
     for (const auto& field : baseFields) {
@@ -902,7 +905,7 @@ static PackageOverlayVerification VerifyOverlayImpl(
         }
         if (!VerifyOverlayMetadataSignature(
                 *metadataText, signatureHex,
-                baseParsed.manifest.publisherPublicKey, revision))
+                baseParsed.manifest.publisherPublicKey))
             return fail("Overlay publisher signature is invalid");
     }
     const auto baseManifestSha = FingerprintText(*baseManifestText);
@@ -1104,7 +1107,7 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
         if (metadata.is_object() &&
             metadata.contains("schemaRevision") &&
             metadata["schemaRevision"].is_number_integer() &&
-            metadata["schemaRevision"] == 3 &&
+            metadata["schemaRevision"] == 1 &&
             metadata.contains("kind") &&
             metadata["kind"].is_string() &&
             metadata["kind"] == "optional" &&
@@ -1353,7 +1356,7 @@ PackageOverlayBuildResult CreatePackageOverlay(
         return fail("Overlay metadata hashing failed");
     Json metadata{
         {"format", "PrismatiXPackageOverlay"},
-        {"schemaRevision", optionalPackId.empty() ? (signedOverlay ? 2 : 1) : 3},
+        {"schemaRevision", 1},
         {"gameId", baseParsed.manifest.gameId},
         {"basePackageFingerprint", baseParsed.manifest.packageFingerprint},
         {"targetPackageFingerprint", targetParsed.manifest.packageFingerprint},
@@ -1379,8 +1382,7 @@ PackageOverlayBuildResult CreatePackageOverlay(
             return fail("Overlay signing key file is empty");
         auto keyHex = keyText->substr(first, last - first + 1);
         const auto signedHex = SignOverlayMetadata(
-            metadataText, keyHex, baseParsed.manifest.publisherPublicKey,
-            optionalPackId.empty() ? 2 : 3);
+            metadataText, keyHex, baseParsed.manifest.publisherPublicKey);
         std::fill(keyHex.begin(), keyHex.end(), '\0');
         std::fill(keyText->begin(), keyText->end(), '\0');
         if (!signedHex)
@@ -1706,7 +1708,7 @@ static PackageOverlayBuildResult CreatePackageOverlayFromPlanImpl(
         return fail("Overlay metadata hashing failed");
     Json metadata{
         {"format", "PrismatiXPackageOverlay"},
-        {"schemaRevision", optionalPackId.empty() ? (signedOverlay ? 2 : 1) : 3},
+        {"schemaRevision", 1},
         {"gameId", baseParsed.manifest.gameId},
         {"basePackageFingerprint", baseParsed.manifest.packageFingerprint},
         {"targetPackageFingerprint", targetParsed.manifest.packageFingerprint},
@@ -1732,8 +1734,7 @@ static PackageOverlayBuildResult CreatePackageOverlayFromPlanImpl(
             return fail("Overlay signing key file is empty");
         auto keyHex = keyText->substr(first, last - first + 1);
         const auto signedHex = SignOverlayMetadata(
-            metadataText, keyHex, baseParsed.manifest.publisherPublicKey,
-            optionalPackId.empty() ? 2 : 3);
+            metadataText, keyHex, baseParsed.manifest.publisherPublicKey);
         std::fill(keyHex.begin(), keyHex.end(), '\0');
         std::fill(keyText->begin(), keyText->end(), '\0');
         if (!signedHex)

@@ -21,7 +21,7 @@ async function distribution(root: string, name: string, target: boolean): Promis
     await mkdir(join(stage, "Package"), {recursive: true});
     await writeFile(join(stage, "Content-00.pdx"), target ? "target-pdx" : "base-pdx");
     await writeFile(join(stage, "Package/manifest.json"), JSON.stringify({
-      format: "PrismatiXPackageManifest", schemaRevision: 2,
+      format: "PrismatiXPackageManifest", schemaRevision: 1,
       gameId: "patch-test", contentVersion: target ? "v2" : "v1",
       packageFingerprint: target ? b : a,
       archives: [{file: "Content-00.pdx", group: "base", optional: false}],

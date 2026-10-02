@@ -145,7 +145,7 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
 
     try {
         if (root.value("format", std::string{}) != "PrismatiXPackageManifest" ||
-            root.value("schemaRevision", 0) != 2)
+            root.value("schemaRevision", 0) != 1)
             AddDiagnostic(result.diagnostics, "PXPKG1403",
                           "Package manifest format or schema revision is unsupported");
 
@@ -427,7 +427,7 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
                 PackageCustomEffect effect;
                 effect.id = value["id"].get<std::string>();
                 effect.schemaRevision =
-                    value.value("schemaRevision", std::uint32_t{2});
+                    value.value("schemaRevision", std::uint32_t{0});
                 effect.targetLayer = value["targetLayer"].get<std::string>();
                 const bool validTarget =
                     effect.targetLayer == "stage" ||
@@ -435,10 +435,7 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
                     effect.targetLayer == "transition";
                 const auto& artifacts = value["artifacts"];
                 if (!IsIdentifier(effect.id) || !validTarget ||
-                    (effect.schemaRevision != 2 &&
-                     effect.schemaRevision != 3) ||
-                    (effect.schemaRevision == 2 &&
-                     effect.targetLayer != "stage") ||
+                    effect.schemaRevision != 1 ||
                     !effectIds.insert(effect.id).second ||
                     value["uniforms"].size() > 8 ||
                     artifacts.empty() || artifacts.size() > 3) {

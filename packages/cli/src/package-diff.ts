@@ -60,7 +60,7 @@ async function loadIndexedPackage(directory: string): Promise<IndexedPackage> {
   const index = record(await boundedJson(join(root, "Package/content-index.json"), 128 * 1024 ** 2));
   if (manifest === undefined || index === undefined ||
       manifest.format !== "PrismatiXPackageManifest" ||
-      manifest.schemaRevision !== 2 ||
+      manifest.schemaRevision !== 1 ||
       typeof manifest.gameId !== "string" || manifest.gameId.length === 0 ||
       typeof manifest.contentVersion !== "string" || manifest.contentVersion.length === 0 ||
       typeof manifest.packageFingerprint !== "string" ||

@@ -7,7 +7,7 @@ const rootId = "11111111-1111-4111-8111-111111111111";
 const uiId = "22222222-2222-4222-8222-222222222222";
 const project = {
   format: "PrismatiXProject",
-  schemaRevision: 2,
+  schemaRevision: 1,
   id: "commercial-sample",
   name: "Commercial Sample",
   version: "0.2.0",
@@ -25,7 +25,7 @@ const project = {
 };
 const storyIndex = {
   format: "PrismatiXStoryIndex",
-  schemaRevision: 2,
+  schemaRevision: 1,
   id: "main",
   entryScene: "scene01",
   chapters: [{id: "chapter01", title: "Chapter 1", scenes: ["scene01"]}],
@@ -33,7 +33,7 @@ const storyIndex = {
 };
 const game = {
   format: "PrismatiXGame",
-  schemaRevision: 2,
+  schemaRevision: 1,
   variables: [
     {name: "route", type: "string", default: "common", scope: "session"},
     {name: "allClear", type: "boolean", default: false, scope: "profile"},
@@ -43,7 +43,7 @@ const game = {
 };
 const ui = {
   format: "PrismatiXUIScene",
-  schemaRevision: 2,
+  schemaRevision: 1,
   id: uiId,
   revision: 1,
   name: "Title",
@@ -80,7 +80,7 @@ test("project host Action contract checks authored UI before publication", () =>
         id: "host.open", arguments: {target},
       }}]}},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
   });
   const valid = compile("settings");
@@ -95,7 +95,7 @@ test("project host Action contract checks authored UI before publication", () =>
   }}, documents: {"Story/story.pxindex": storyIndex,
     "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
   sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
     locale: "zh-TW", strings: {}}}});
   assert.equal(unsupported.valid, false);
   assert.ok(unsupported.diagnostics.some((item) => item.code === "PXSDKJSON1004"));
@@ -109,7 +109,7 @@ test("project compilation checks authored input action routes", () => {
       ]},
       "Content/UI/Title.pxui": ui},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
   });
   const valid = compile("settings");
@@ -142,7 +142,7 @@ test("cross-document diagnostics locate the exact authored JSON values", () => {
     documents: {"Story/story.pxindex": storyIndex,
       "Content/game.pxgame": catalog, "Content/UI/Title.pxui": ui},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
   });
   const gameResult = compile(projectText, gameText);
@@ -184,7 +184,7 @@ test("missing authored includes and UI entries point back to their declarations"
     projectSource: {path: "prismatix.json", text: JSON.stringify(missingUi)},
     documents: {"Story/story.pxindex": storyIndex, "Content/game.pxgame": game},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
   });
   assert.equal(uiResult.diagnostics.find((item) => item.code === "PXBUILD1002")?.span?.path,
@@ -198,7 +198,7 @@ test("project compilation checks declared Player UI data binding paths", () => {
     "Content/UI/Title.pxui": {...ui, nodes: [{...ui.nodes[0],
       bindings: {text: {path: "screen.missing"}}}]}},
   sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
     locale: "zh-TW", strings: {}}}});
   assert.equal(result.valid, false);
   assert.ok(result.diagnostics.some((item) => item.code === "PXBUILD1086" &&
@@ -214,7 +214,7 @@ test("project compilation rejects a missing host-declared UI path", () => {
     "Content/UI/Title.pxui": {...ui, nodes: [{...ui.nodes[0],
       bindings: {text: {path: "dialogue.typo"}}}]}},
   sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
     locale: "zh-TW", strings: {}}}});
   assert.equal(result.valid, false);
   assert.ok(result.diagnostics.some((item) => item.code === "PXBUILD1094" &&
@@ -242,7 +242,7 @@ test("project compilation reports unresolved key-binding buttons before Player s
         componentInterface: {properties: [], signals: [], slots: []},
       }} : {})},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}}});
   };
   assert.equal(compile("photo-mode").valid, true);
@@ -290,7 +290,7 @@ test("project compilation checks keyboard defaults against a native key registry
       documentSources: {"Content/game.pxgame": sourceOverride ??
         JSON.stringify(catalog, null, 2)},
       sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-      locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
         locale: "zh-TW", strings: {}}},
     });
   };
@@ -316,7 +316,7 @@ test("project compilation checks keyboard defaults against a native key registry
 
 test("compileProject validates extension UI Actions and packages typed resource arguments", () => {
   const extensionPath = "Content/Extensions/music.pxextension";
-  const extension = {format: "PrismatiXExtension", schemaRevision: 2,
+  const extension = {format: "PrismatiXExtension", schemaRevision: 1,
     language: "javascript", id: "music-extension", version: "1.0.0",
     requiredEngineVersion: "^0.2.0", entry: "music.js",
     capabilities: ["ui", "audio"],
@@ -340,7 +340,7 @@ test("compileProject validates extension UI Actions and packages typed resource 
       JSON.stringify(uiWithAction(arguments_), null, 2),
       [extensionPath]: JSON.stringify(manifest, null, 2)},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
   });
   const valid = compile({media: {type: "resource", value: "Assets/Audio/theme.ogg"},
@@ -388,7 +388,7 @@ test("UI-only project edits reuse Story compilation but publish fresh UI and rev
     documents: {"Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {"ui.start": "開始"}}},
     storyCompilationCache,
   };
@@ -416,7 +416,7 @@ test("compileProject produces one deterministic RuntimeIR BuildArtifact", () => 
       "Content/UI/Panel.pxuicomponent": component,
     },
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2, locale: "zh-TW", strings: {"ui.start": "開始"}}},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1, locale: "zh-TW", strings: {"ui.start": "開始"}}},
     committedRevision: 7,
   });
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
@@ -448,8 +448,8 @@ test("compileProject reports completed Story scenes across locales", () => {
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n",
       "Story/ja-JP/scene01.pxstory": "Opening.\n[end]\n"},
     locales: {
-      "zh-TW": {format: "PrismatiXLocale", schemaRevision: 2, locale: "zh-TW", strings: {}},
-      "ja-JP": {format: "PrismatiXLocale", schemaRevision: 2, locale: "ja-JP", strings: {}},
+      "zh-TW": {format: "PrismatiXLocale", schemaRevision: 1, locale: "zh-TW", strings: {}},
+      "ja-JP": {format: "PrismatiXLocale", schemaRevision: 1, locale: "ja-JP", strings: {}},
     },
     onStoryProgress: (event) => progress.push(event),
   });
@@ -489,7 +489,7 @@ test("compileProject collects UI runtime texture dependencies", () => {
       "Content/UI/Title.pxui": textureUi,
     },
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
   });
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
@@ -523,7 +523,7 @@ test("missing UI dependencies point to their authored values only for matching s
       "Content/game.pxgame": game, "Content/UI/Title.pxui": authored},
     documentSources: {"Content/UI/Title.pxui": text},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
     resourceExists: (path) => !path.includes("/missing."),
   });
@@ -552,7 +552,7 @@ test("missing Player setting audio points to the source project field", () => {
     documents: {"Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
     resourceExists: (path) => path !== "Assets/Audio/missing-title.ogg",
   });
@@ -575,7 +575,7 @@ test("missing catalog media points to its authored asset row", () => {
     documents: {"Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
     resourceExists: (path) => path !== "Assets/CG/missing.png",
   });
@@ -596,7 +596,7 @@ test("missing Story media keeps its authored command location through scene cach
       documents: {"Story/story.pxindex": storyIndex,
         "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
       sourceFiles: {"Story/zh-TW/scene01.pxstory": source},
-      locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
         locale: "zh-TW", strings: {}}},
       resourceExists: (path) => path !== "Assets/Audio/missing-theme.ogg",
       storyCompilationCache,
@@ -637,7 +637,7 @@ test("compileProject packages both halves of an authored intro-loop BGM", () => 
     "Content/UI/Title.pxui": ui,
   }, sourceFiles: {"Story/zh-TW/scene01.pxstory":
     "[bgm Assets/Audio/theme-loop.ogg intro=Assets/Audio/theme-intro.ogg fade=0.5s]\n[end]\n"},
-  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
     locale: "zh-TW", strings: {}}}});
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
   assert.deepEqual(result.artifact?.dependencies
@@ -661,7 +661,7 @@ test("compileProject packages nested SpriteText glyph images", () => {
     "Content/game.pxgame": game,
     "Content/UI/Title.pxui": spriteUi,
   }, sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
     locale: "zh-TW", strings: {}}}});
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
   assert.deepEqual(result.artifact?.dependencies
@@ -687,7 +687,7 @@ test("compileProject validates splash voice variants and packages every possible
     documents: {"Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
     ...(resourceExists === undefined ? {} : {resourceExists}),
   });
@@ -766,7 +766,7 @@ test("compileProject packages every Player setting path and rejects missing ones
     documents: {"Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
     ...(resourceExists === undefined ? {} : {resourceExists}),
   });
@@ -791,7 +791,7 @@ test("compileProject checks Player option bindings and confirmations", () => {
     documents: {"Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
   });
   const settings = {
@@ -828,7 +828,7 @@ test("compileProject checks profile rules, flags replaced settings and unknown P
     documents: {"Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
     ...(resourceExists === undefined ? {} : {resourceExists}),
   });
@@ -901,7 +901,7 @@ test("compileProject validates portraits referenced outside Story and collects e
     documents: {"Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game, "Content/UI/Title.pxui": withPortraitUi},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
     resourceText: (path) => path === descriptorPath ? text : undefined,
     ...(resourceExists === undefined ? {} : {resourceExists}),
@@ -919,7 +919,7 @@ test("compileProject validates portraits referenced outside Story and collects e
     documents: {"Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
     resourceText: (path) => path === descriptorPath
       ? JSON.stringify(descriptor) : undefined,
@@ -968,7 +968,7 @@ test("compileProject validates motion descriptors and packages their image layer
         "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
       sourceFiles: {"Story/zh-TW/scene01.pxstory":
         "[motion Assets/Motion/logo.pxmotion await=true]\n[end]\n"},
-      locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
         locale: "zh-TW", strings: {}}},
       resourceText: (path) => path === descriptorPath
         ? JSON.stringify(motion, null, 2) : undefined,
@@ -978,7 +978,7 @@ test("compileProject validates motion descriptors and packages their image layer
   assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
   for (const path of [descriptorPath, "Assets/Motion/back.png", "Assets/Motion/mark.png"])
     assert.ok(valid.artifact?.dependencies.some((dependency) => dependency.source === path));
-  const atlas = compile({...descriptor, schemaRevision: 2,
+  const atlas = compile({...descriptor, schemaRevision: 1,
     layers: [descriptor.layers[0], {...descriptor.layers[1], frames: [
       {x: 0, y: 0, width: 128, height: 128},
       {x: 128, y: 0, width: 128, height: 128},
@@ -990,13 +990,13 @@ test("compileProject validates motion descriptors and packages their image layer
   assert.equal(atlas.artifact?.dependencies.filter((dependency) =>
     dependency.source === "Assets/Motion/mark.png").length, 1,
   "all atlas frames share one packaged texture");
-  const masked = compile({...descriptor, schemaRevision: 6,
+  const masked = compile({...descriptor, schemaRevision: 1,
     layers: [{...descriptor.layers[0], mask: "mark"}, descriptor.layers[1]]});
   assert.equal(masked.valid, true, JSON.stringify(masked.diagnostics));
   assert.ok(masked.artifact?.dependencies.some((dependency) =>
     dependency.source === "Assets/Motion/mark.png"),
   "mask-only sources must still be packaged");
-  const nested = compile({...descriptor, schemaRevision: 7,
+  const nested = compile({...descriptor, schemaRevision: 1,
     layers: [{id: "subclip", kind: "group", timeOffset: -0.25, timeScale: 2},
       {...descriptor.layers[1], parent: "subclip"}]});
   assert.equal(nested.valid, true, JSON.stringify(nested.diagnostics));
@@ -1005,19 +1005,19 @@ test("compileProject validates motion descriptors and packages their image layer
   assert.equal(nested.artifact?.dependencies.some((dependency) =>
     dependency.source === ""), false,
   "non-drawing transform groups do not create empty image dependencies");
-  const missingMask = compile({...descriptor, schemaRevision: 6,
+  const missingMask = compile({...descriptor, schemaRevision: 1,
     layers: [{...descriptor.layers[0], mask: "mark"}, descriptor.layers[1]]},
   (path) => path !== "Assets/Motion/mark.png");
   assert.equal(missingMask.valid, false);
   assert.ok(missingMask.diagnostics.some((diagnostic) =>
     diagnostic.code === "PXBUILD1044"));
-  const sound = compile({...descriptor, schemaRevision: 3, markers: [
+  const sound = compile({...descriptor, schemaRevision: 1, markers: [
     {id: "hit", time: 0.5, audio: "Assets/Audio/hit.ogg", bus: "se"},
   ]});
   assert.equal(sound.valid, true, JSON.stringify(sound.diagnostics));
   assert.ok(sound.artifact?.dependencies.some((dependency) =>
     dependency.source === "Assets/Audio/hit.ogg"));
-  const missingSound = compile({...descriptor, schemaRevision: 3, markers: [
+  const missingSound = compile({...descriptor, schemaRevision: 1, markers: [
     {id: "hit", time: 0.5, audio: "Assets/Audio/hit.ogg", bus: "se"},
   ]}, (path) => path !== "Assets/Audio/hit.ogg");
   assert.equal(missingSound.valid, false);
@@ -1032,7 +1032,7 @@ test("compileProject validates motion descriptors and packages their image layer
         name: "Logo motion", runtimeProperties: {path: descriptorPath},
       }]}},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
     resourceText: (path) => path === descriptorPath ? JSON.stringify(descriptor) : undefined,
   });
@@ -1070,7 +1070,7 @@ test("compileProject checks every authored UI property against a supplied native
           ...(bindingDevice === undefined ? {} : {bindingDevice})}}]},
     },
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
     uiTypeRegistry: registry,
   });
@@ -1107,7 +1107,7 @@ test("compileProject rejects UI component interfaces that the native Runtime can
       [source]: candidate,
     },
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
   });
 
@@ -1138,15 +1138,15 @@ test("compileProject publishes aligned RuntimeIR and source maps for every Story
   const extensionPath = "Content/Extensions/localized.pxextension";
   const heroId = "33333333-3333-4333-8333-333333333333";
   const heroSource = `Characters/${heroId}.pxcharacter`;
-  const hero = {format: "PrismatiXCharacter", schemaRevision: 2,
+  const hero = {format: "PrismatiXCharacter", schemaRevision: 1,
     id: heroId, displayName: "英雄", displayNames: {"ja-JP": "勇者"},
     aliases: ["hero"], expressions: []};
   const rivalId = "44444444-4444-4444-8444-444444444444";
   const rivalSource = `Characters/${rivalId}.pxcharacter`;
-  const rival = {format: "PrismatiXCharacter", schemaRevision: 2,
+  const rival = {format: "PrismatiXCharacter", schemaRevision: 1,
     id: rivalId, displayName: "對手", aliases: ["rival"], expressions: []};
   const localizedExtension = {
-    format: "PrismatiXExtension", schemaRevision: 2, language: "javascript",
+    format: "PrismatiXExtension", schemaRevision: 1, language: "javascript",
     id: "localized-media", version: "1.0.0",
     requiredEngineVersion: ">=0.2.0 <0.3.0", entry: "localized.js",
     capabilities: ["runtime"],
@@ -1189,12 +1189,12 @@ test("compileProject publishes aligned RuntimeIR and source maps for every Story
       "Assets/ja-JP/opening.ogg": "localized-voice-ja",
     },
     locales: {
-      "zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      "zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
         locale: "zh-TW", strings: {}, resources: {
           "opening.background": "Assets/zh-TW/opening.webp",
           "opening.voice": "Assets/zh-TW/opening.ogg",
         }},
-      "ja-JP": {format: "PrismatiXLocale", schemaRevision: 2,
+      "ja-JP": {format: "PrismatiXLocale", schemaRevision: 1,
         locale: "ja-JP", strings: {}, resources: {
           "opening.background": "Assets/ja-JP/opening.webp",
           "opening.voice": "Assets/ja-JP/opening.ogg",
@@ -1267,9 +1267,9 @@ test("localized literal Story speakers keep dialogue identity and presentation s
       "Story/ja-JP/scene01.pxstory": '*start\n@"ムラサメ"\nおはよう。\n[end]\n',
     },
     locales: {
-      "zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      "zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
         locale: "zh-TW", strings: {}},
-      "ja-JP": {format: "PrismatiXLocale", schemaRevision: 2,
+      "ja-JP": {format: "PrismatiXLocale", schemaRevision: 1,
         locale: "ja-JP", strings: {}},
     },
   });
@@ -1286,7 +1286,7 @@ test("localized literal Story speakers keep dialogue identity and presentation s
 
 test("compileProject fails closed when cross-document identity is inconsistent", () => {
   const authoredProject = {...project, entry: {story: "missing", ui: "title"}};
-  const authoredLocale = {format: "PrismatiXLocale", schemaRevision: 2, locale: "ja-JP", strings: {}};
+  const authoredLocale = {format: "PrismatiXLocale", schemaRevision: 1, locale: "ja-JP", strings: {}};
   const result = compileProject({
     project: authoredProject,
     projectSource: {path: "prismatix.json", text: JSON.stringify(authoredProject)},
@@ -1316,7 +1316,7 @@ test("compileProject validates and publishes an explicit save migration chain", 
   };
   const migration = {
     format: "PrismatiXSaveMigration",
-    schemaRevision: 2,
+    schemaRevision: 1,
     id: descriptor.id,
     from: descriptor.from,
     to: descriptor.to,
@@ -1332,7 +1332,7 @@ test("compileProject validates and publishes an explicit save migration chain", 
       [descriptor.asset]: migration,
     },
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2, locale: "zh-TW", strings: {}}},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1, locale: "zh-TW", strings: {}}},
   });
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
   assert.ok(result.artifact?.files[descriptor.asset]?.includes("PrismatiXSaveMigration"));
@@ -1348,7 +1348,7 @@ test("compileProject validates and publishes an explicit save migration chain", 
       }))},
     },
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2, locale: "zh-TW", strings: {}}},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1, locale: "zh-TW", strings: {}}},
   });
   assert.equal(oversized.valid, false);
   assert.equal(oversized.diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1074")?.path,
@@ -1361,7 +1361,7 @@ test("compileProject validates and publishes an explicit save migration chain", 
       "Content/UI/Title.pxui": ui, [descriptor.asset]: mismatched},
     documentSources: {[descriptor.asset]: JSON.stringify(mismatched)},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
       locale: "zh-TW", strings: {}}},
   });
   assert.equal(mismatch.diagnostics.find((diagnostic) =>
@@ -1379,7 +1379,7 @@ test("compileProject validates and publishes an explicit save migration chain", 
       [descriptor.asset]: {...migration, to: {contentVersion: "orphan", saveVersion: 1}},
     },
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2, locale: "zh-TW", strings: {}}},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1, locale: "zh-TW", strings: {}}},
   });
   assert.equal(broken.valid, false);
   assert.equal(broken.diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1010")?.span?.path,
@@ -1390,7 +1390,7 @@ test("compileProject publishes only validated custom-effect source inputs", () =
   const descriptor = {id: "dream-tone", source: "Effects/dream-tone.pxeffect"};
   const effect = {
     format: "PrismatiXEffect",
-    schemaRevision: 2,
+    schemaRevision: 1,
     id: descriptor.id,
     targetLayer: "stage",
     shader: "Effects/dream-tone.frag.hlsl",
@@ -1417,7 +1417,7 @@ test("compileProject publishes only validated custom-effect source inputs", () =
       },
       documentSources: {[descriptor.source]: JSON.stringify(authoredEffect)},
       sourceFiles,
-      locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
         locale: "zh-TW", strings: {}}},
     });
   };
@@ -1428,15 +1428,13 @@ test("compileProject publishes only validated custom-effect source inputs", () =
   assert.equal(valid.artifact?.files[effect.shader], shader);
 
   const transition = compile({}, {
-    schemaRevision: 3,
+    schemaRevision: 1,
     targetLayer: "transition",
   });
   assert.equal(transition.valid, true, JSON.stringify(transition.diagnostics));
 
-  const legacyWrongTarget = compile({}, {targetLayer: "node"});
-  assert.equal(legacyWrongTarget.valid, false);
-  assert.ok(legacyWrongTarget.diagnostics.some((diagnostic) =>
-    diagnostic.code === "PXSDKJSON1004"));
+  const nodeTarget = compile({}, {targetLayer: "node"});
+  assert.equal(nodeTarget.valid, true, JSON.stringify(nodeTarget.diagnostics));
 
   const basicTier = compile({graphicsTier: "basic"});
   assert.equal(basicTier.valid, false);
@@ -1475,7 +1473,7 @@ test("compileProject rejects unknown and unsupported-tier Story effects before p
       "Content/UI/Title.pxui": ui,
     },
     sourceFiles: {"Story/zh-TW/scene01.pxstory": story},
-    locales: {"zh-TW": {format:"PrismatiXLocale",schemaRevision:2,
+    locales: {"zh-TW": {format:"PrismatiXLocale",schemaRevision:1,
       locale:"zh-TW",strings:{}}},
   });
 
@@ -1502,7 +1500,7 @@ test("compileProject declares every hover.<name> a UI binds as Player UI data", 
     documents: {"Story/story.pxindex": storyIndex, "Content/game.pxgame": game,
       "Content/UI/Title.pxui": hoverUi},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2, locale: "zh-TW", strings: {}}},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1, locale: "zh-TW", strings: {}}},
   });
   const result = compile();
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));

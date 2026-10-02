@@ -1,6 +1,6 @@
 {
   "format": "PrismatiXStoryIndex",
-  "schemaRevision": 2,
+  "schemaRevision": 1,
   "id": "main",
   "entryScene": "main",
   "chapters": [{"id": "main", "title": "Main", "scenes": ["main"]}],

@@ -9,7 +9,7 @@ function uuid(n: number): string {
 }
 
 function portrait(body: string, face: string): LayeredPortraitDocument {
-  return {format: "PrismatiXLayeredPortrait", schemaRevision: 2, width: 1920, height: 1080, layers: [
+  return {format: "PrismatiXLayeredPortrait", schemaRevision: 1, width: 1920, height: 1080, layers: [
     {path: `Assets/fg/aix/${body}.png`, x: 517, y: 151, width: 952, height: 1764, opacity: 255, role: "base"},
     {path: `Assets/fg/aix/${face}.png`, x: 818, y: 240, width: 224, height: 204, opacity: 255, role: "expression"},
   ]};
@@ -19,7 +19,7 @@ function portrait(body: string, face: string): LayeredPortraitDocument {
 const combos = [["z1e0000", "e0022"], ["z1e0000", "e0023"], ["z1e0700", "e0022"], ["z1e0700", "e0023"],
   ["z2e0100", "e0022"]] as const;
 const aix: CharacterDocument = {
-  format: "PrismatiXCharacter", schemaRevision: 2, id: uuid(1), displayName: "藍", aliases: ["aix"],
+  format: "PrismatiXCharacter", schemaRevision: 1, id: uuid(1), displayName: "藍", aliases: ["aix"],
   defaultExpressionId: uuid(100),
   expressions: combos.map(([body, face], index) => ({id: uuid(100 + index), name: `藍 ${body}_${face}`,
     aliases: [`${body}_${face}`], assetId: uuid(200 + index)})),

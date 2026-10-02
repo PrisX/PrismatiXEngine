@@ -10,7 +10,7 @@
   "required": ["format", "schemaRevision", "id", "revision", "name", "width", "height", "rootId", "nodes", "theme", "componentInterface"],
   "properties": {
     "format": {"const": "PrismatiXUIComponent"},
-    "schemaRevision": {"const": 2},
+    "schemaRevision": {"const": 1},
     "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
     "revision": {"type": "integer", "minimum": 0},
     "name": {"type": "string", "minLength": 1, "maxLength": 512},

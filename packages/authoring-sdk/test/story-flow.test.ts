@@ -5,7 +5,7 @@ import {compileStory, compileStoryProject, parseStory, stableSourceIdReport} fro
 import type {GameDocument} from "../src/index.js";
 
 const game: GameDocument = {
-  format: "PrismatiXGame", schemaRevision: 2,
+  format: "PrismatiXGame", schemaRevision: 1,
   variables: [{name: "affection", type: "integer", default: 0, scope: "session"}],
   gallery: [], unlockables: [],
 };
@@ -121,7 +121,7 @@ test("[choice] block mistakes are reported", () => {
 });
 
 test("block options reach other scenes with scene=", () => {
-  const index = {format: "PrismatiXStoryIndex" as const, schemaRevision: 2 as const, id: "flow",
+  const index = {format: "PrismatiXStoryIndex" as const, schemaRevision: 1 as const, id: "flow",
     entryScene: "a", chapters: [{id: "c", title: "C", scenes: ["a", "b"]}],
     scenes: [{id: "a", sources: {en: "Story/a.pxstory"}}, {id: "b", sources: {en: "Story/b.pxstory"}}]};
   const result = compileStoryProject({storyIndex: index, locale: "en", game, sourceFiles: {

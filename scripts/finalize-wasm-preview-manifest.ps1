@@ -12,9 +12,9 @@ if (-not (Test-Path -LiteralPath $contractPath -PathType Leaf)) {
 
 $contract = Get-Content -LiteralPath $contractPath -Raw | ConvertFrom-Json
 if ($contract.format -ne "PrismatiXPreviewContract" -or
-    $contract.schemaRevision -ne 2 -or
-    $contract.protocolVersion -ne 2) {
-    throw "WASM Preview contract revision 2 / protocol 2 is required"
+    $contract.schemaRevision -ne 1 -or
+    $contract.protocolVersion -ne 1) {
+    throw "WASM Preview contract revision 1 / protocol 1 is required"
 }
 $commitPattern = '^[0-9a-f]{40}$'
 if ($contract.engineCommit -notmatch $commitPattern -or
@@ -68,7 +68,7 @@ $manifest = [ordered]@{
     engineCommit = $contract.engineCommit
     runtimeCoreCommit = $contract.runtimeCoreCommit
     emscriptenVersion = $contract.emscriptenVersion
-    protocolVersion = 2
+    protocolVersion = 1
     moduleFactory = $contract.moduleFactory
     bundleSha256 = Get-Sha256Text $artifactIdentity
     moduleSha256 = $byPath["prismatix-preview.mjs"].sha256

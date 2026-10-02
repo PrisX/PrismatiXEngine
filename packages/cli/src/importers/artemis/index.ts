@@ -171,7 +171,7 @@ export async function importArtemis(options: ArtemisImportOptions): Promise<Arte
   const catalogPath = typeof manifest.gameCatalog === "string" ? manifest.gameCatalog : "Content/game.pxgame";
   let previousCatalog: Json | undefined;
   try { previousCatalog = await readJson(join(project, ...catalogPath.split("/"))); } catch { previousCatalog = undefined; }
-  const game = {format: "PrismatiXGame", schemaRevision: 3,
+  const game = {format: "PrismatiXGame", schemaRevision: 1,
     variables: [...converter.variables].sort().map((name) => ({name, type: "integer", default: 0,
       scope: name.startsWith("g_") ? "profile" : "session"})),
     progressionFlags: converter.gallery.map((entry) => entry.id),
@@ -184,7 +184,7 @@ export async function importArtemis(options: ArtemisImportOptions): Promise<Arte
     const displayName = converter.nameByAlias.get(alias) ?? alias;
     const expressions = [...converter.expressions.get(alias)!].sort((left, right) =>
       left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0);
-    const document = {format: "PrismatiXCharacter", schemaRevision: 2, revision: 1, displayName, aliases: [alias],
+    const document = {format: "PrismatiXCharacter", schemaRevision: 1, revision: 1, displayName, aliases: [alias],
       expressions: expressions.map(([expression, assetPath]) => ({name: `${displayName} ${expression}`,
         aliases: [expression], assetPath, thumbnailAssetId: null}))};
     const source = joinProjectPath(config.charactersRoot, `${alias}.pxcharacter`);

@@ -4,118 +4,102 @@ export const contractManifest: Readonly<Record<string, unknown>> = {
     {
       "extension": ".pxir",
       "id": "runtimeIr",
-      "migration": "reject-legacy",
       "schema": "runtime-ir.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": ".pxmap",
       "id": "sourceMap",
-      "migration": "reject-legacy",
       "schema": "source-map.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": ".pxproject",
       "id": "project",
-      "migration": "cli-only",
       "schema": "project.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": ".pxcharacter",
       "id": "character",
-      "migration": "migrate-previous",
       "schema": "character.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": ".pxportrait",
       "id": "portrait",
-      "migration": "reject-legacy",
       "schema": "portrait.schema.json",
       "schemaRevision": 1
     },
     {
       "extension": ".pxui",
       "id": "ui",
-      "migration": "migrate-previous",
       "schema": "ui.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": ".pxuicomponent",
       "id": "uiComponent",
-      "migration": "cli-only",
       "schema": "ui-component.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": ".pxtimeline",
       "id": "timeline",
-      "migration": "cli-only",
       "schema": "timeline.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": ".pxanim",
       "id": "animation",
-      "migration": "cli-only",
       "schema": "animation.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": ".pxmotion",
       "id": "motion",
-      "migration": "reject-legacy",
       "schema": "motion.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": ".pxextension",
       "id": "extension",
-      "migration": "reject-future",
       "schema": "extension.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": "story.pxindex",
       "id": "storyIndex",
-      "migration": "cli-only",
       "schema": "story-index.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": "game.pxgame",
       "id": "game",
-      "migration": "cli-only",
       "schema": "game.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": ".json",
       "id": "locale",
-      "migration": "cli-only",
       "schema": "locale.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": ".pxsave-migration",
       "id": "saveMigration",
-      "migration": "reject-legacy",
       "schema": "save-migration.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     },
     {
       "extension": ".pxeffect",
       "id": "effect",
-      "migration": "reject-legacy",
       "schema": "effect.schema.json",
-      "schemaRevision": 2
+      "schemaRevision": 1
     }
   ],
   "format": "PrismatiXContractManifest",
-  "schemaRevision": 2
+  "schemaRevision": 1
 };
 
 export const contractSchemas: Readonly<Record<string, object>> = {
@@ -197,7 +181,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "const": 2
+        "const": 1
       },
       "tracks": {
         "items": {
@@ -405,7 +389,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "integer"
       },
       "schemaRevision": {
-        "const": 2
+        "const": 1
       },
       "voice": {
         "additionalProperties": false,
@@ -662,27 +646,6 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     "$id": "https://prismatix.dev/contracts/effect.schema.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
-    "allOf": [
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "const": 2
-            }
-          },
-          "required": [
-            "schemaRevision"
-          ]
-        },
-        "then": {
-          "properties": {
-            "targetLayer": {
-              "const": "stage"
-            }
-          }
-        }
-      }
-    ],
     "properties": {
       "format": {
         "const": "PrismatiXEffect"
@@ -691,10 +654,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
       },
       "schemaRevision": {
-        "enum": [
-          2,
-          3
-        ]
+        "const": 1
       },
       "shader": {
         "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
@@ -1044,7 +1004,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "$ref": "#/$defs/safety"
       },
       "schemaRevision": {
-        "const": 2
+        "const": 1
       },
       "version": {
         "maxLength": 64,
@@ -1070,32 +1030,6 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     "$id": "https://prismatix.dev/contracts/game.schema.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
-    "allOf": [
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "const": 2
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "inputActions": {
-              "items": {
-                "properties": {
-                  "uiAction": false
-                },
-                "type": "object"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        }
-      }
-    ],
     "properties": {
       "extensions": {
         "additionalProperties": {
@@ -1276,10 +1210,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "uniqueItems": true
       },
       "schemaRevision": {
-        "enum": [
-          2,
-          3
-        ]
+        "const": 1
       },
       "unlockables": {
         "items": {
@@ -1400,7 +1331,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "object"
       },
       "schemaRevision": {
-        "const": 2
+        "const": 1
       },
       "strings": {
         "additionalProperties": {
@@ -1426,362 +1357,6 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     "$id": "https://prismatix.dev/contracts/motion.schema.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
-    "allOf": [
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "const": 1
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "layers": {
-              "items": {
-                "properties": {
-                  "frames": false
-                },
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "tracks": {
-              "items": {
-                "properties": {
-                  "property": {
-                    "not": {
-                      "const": "frame"
-                    }
-                  }
-                },
-                "type": "object"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "enum": [
-                1,
-                2
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "markers": false
-          },
-          "type": "object"
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "enum": [
-                1,
-                2,
-                3
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "layers": {
-              "items": {
-                "properties": {
-                  "blendMode": false
-                },
-                "type": "object"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "enum": [
-                1,
-                2,
-                3,
-                4
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "tracks": {
-              "items": {
-                "properties": {
-                  "keys": {
-                    "items": {
-                      "properties": {
-                        "bezier": false,
-                        "curve": {
-                          "not": {
-                            "const": "cubicBezier"
-                          }
-                        }
-                      },
-                      "type": "object"
-                    },
-                    "type": "array"
-                  }
-                },
-                "type": "object"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "enum": [
-                1,
-                2,
-                3,
-                4,
-                5
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "layers": {
-              "items": {
-                "properties": {
-                  "mask": false
-                },
-                "type": "object"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "enum": [
-                1,
-                2,
-                3,
-                4,
-                5,
-                6
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "layers": {
-              "items": {
-                "properties": {
-                  "kind": false,
-                  "timeOffset": false,
-                  "timeScale": false
-                },
-                "type": "object"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "enum": [
-                1,
-                2,
-                3,
-                4,
-                5,
-                6,
-                7
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "layers": {
-              "items": {
-                "properties": {
-                  "tint": false
-                },
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "tracks": {
-              "items": {
-                "properties": {
-                  "property": {
-                    "not": {
-                      "const": "tint"
-                    }
-                  }
-                },
-                "type": "object"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "enum": [
-                1,
-                2,
-                3,
-                4,
-                5,
-                6,
-                7,
-                8
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "layers": {
-              "items": {
-                "properties": {
-                  "inheritRotation": false,
-                  "inheritScale": false
-                },
-                "type": "object"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "enum": [
-                1,
-                2,
-                3,
-                4,
-                5,
-                6,
-                7,
-                8,
-                9
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "tickRate": false
-          }
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "const": 10
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "tickRate": true
-          },
-          "required": [
-            "tickRate"
-          ]
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "enum": [
-                1,
-                2,
-                3,
-                4,
-                5,
-                6,
-                7,
-                8,
-                9,
-                10
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "layers": {
-              "items": {
-                "properties": {
-                  "anchorX": {
-                    "maximum": 1,
-                    "minimum": 0,
-                    "type": "number"
-                  },
-                  "anchorY": {
-                    "maximum": 1,
-                    "minimum": 0,
-                    "type": "number"
-                  }
-                },
-                "type": "object"
-              },
-              "type": "array"
-            }
-          }
-        }
-      }
-    ],
     "properties": {
       "canvas": {
         "additionalProperties": false,
@@ -2072,19 +1647,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         ]
       },
       "schemaRevision": {
-        "enum": [
-          1,
-          2,
-          3,
-          4,
-          5,
-          6,
-          7,
-          8,
-          9,
-          10,
-          11
-        ]
+        "const": 1
       },
       "tickRate": {
         "maximum": 1000,
@@ -2264,7 +1827,23 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     "additionalProperties": false,
     "allOf": [
       {
-        "else": {
+        "if": {
+          "properties": {
+            "layers": {
+              "contains": {
+                "properties": {
+                  "role": true
+                },
+                "required": [
+                  "role"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          }
+        },
+        "then": {
           "properties": {
             "layers": {
               "items": {
@@ -2278,30 +1857,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
               },
               "type": "array"
             }
-          },
-          "type": "object"
-        },
-        "if": {
-          "properties": {
-            "schemaRevision": {
-              "const": 1
-            }
-          },
-          "type": "object"
-        },
-        "then": {
-          "properties": {
-            "layers": {
-              "items": {
-                "properties": {
-                  "role": false
-                },
-                "type": "object"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
+          }
         }
       }
     ],
@@ -2365,10 +1921,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "enum": [
-          1,
-          2
-        ]
+        "const": 1
       },
       "width": {
         "exclusiveMinimum": 0,
@@ -2665,7 +2218,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "integer"
       },
       "schemaRevision": {
-        "const": 2
+        "const": 1
       },
       "settings": {
         "additionalProperties": {
@@ -3595,7 +3148,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "const": 2
+        "const": 1
       }
     },
     "required": [
@@ -3823,7 +3376,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "const": 2
+        "const": 1
       },
       "to": {
         "$ref": "#/$defs/version"
@@ -3902,7 +3455,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "const": 2
+        "const": 1
       }
     },
     "required": [
@@ -4001,7 +3554,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "const": 2
+        "const": 1
       }
     },
     "required": [
@@ -4095,7 +3648,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "const": 2
+        "const": 1
       },
       "tracks": {
         "items": {
@@ -4316,7 +3869,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
       },
       "schemaRevision": {
-        "const": 2
+        "const": 1
       },
       "theme": {
         "items": {
@@ -5157,7 +4710,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
       },
       "schemaRevision": {
-        "const": 2
+        "const": 1
       },
       "theme": {
         "items": {
@@ -5292,21 +4845,21 @@ export const contractSchemas: Readonly<Record<string, object>> = {
 };
 
 export const contractHashes: Readonly<Record<string, string>> = {
-  "animation.schema.json": "350ac0431be758205b25b425155a920cbf626f918d3be410950e2717c69b8ec8",
-  "character.schema.json": "feebb524fbe2c39dc1e9566c0fb9aeaed62b7f5309dda981edf6f320577aa106",
+  "animation.schema.json": "ef9ccdba9dbc8a08a00848e487cb2a6938c23f88b891ff0c85bf9d16783254a7",
+  "character.schema.json": "add85d9937b6d58d1ef0ede35143607f2f8eeb28e6b4baa12567fd113ab63137",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
-  "effect.schema.json": "631dd0bce555dcbb3f849049978c9b635dd79848ac497adf292ca6e02468eee7",
-  "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",
-  "game.schema.json": "48d500c77e10f90b02be0cf87c1368eb3a65253e22bc0fbac534bf3af95e44a9",
-  "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
-  "motion.schema.json": "300c1bbdeb16abf4faa8014afa81800e8d72a1e7f1f6d06d309cf53ba2980f01",
-  "portrait.schema.json": "658421c74dacc9d8247b64c6a00389c069b7516f57f863f399160161a1207f16",
-  "project.schema.json": "22dca6d37ac881bb1d9e66cb373eb07d3f98c0ca05e6eb34551f2f9aac5a92ed",
-  "runtime-ir.schema.json": "9ba844df82d20eee89b8d4fb178c03b4e386170bc251f2a7c2509ca2b0f948ee",
-  "save-migration.schema.json": "b66062b76495dfec0ec9dc1a9c7f0bfc1c49967a5748b2a48f7e186c9cf8533e",
-  "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",
-  "story-index.schema.json": "abc3cf730c81d25c45c5a11632268e16334d5a189ff419bdfb2da940e6292b82",
-  "timeline.schema.json": "48f267a0d203fc813879304be8df079b965785d71258cbcf358b51db269265be",
-  "ui-component.schema.json": "d91e1ee59871449dfb898409aadaf054adc2f39c3df0df911ce993122e3a281a",
-  "ui.schema.json": "746bc2823a982625cbbb8fa7795057c1200b4aec1bc5dbd9e1c8ef5915c6984f"
+  "effect.schema.json": "8707b1b1d75154000786f797b06561643a5f9881df968708a0994546e3f782bd",
+  "extension.schema.json": "f644ab7d736add644057cc1a199db6dd042901802c8ba91c8e7cebfde5bfda5b",
+  "game.schema.json": "a2614c48076fc5e7554934e446f37319c556adb9f13a28f24c8592813f0dfd23",
+  "locale.schema.json": "391e4abe7616d74554af376e2ae3563961215b1631cdd04faf5034016aaff774",
+  "motion.schema.json": "6cc663c16bc82c6d966609bb2410bb2873ae43a16d5da3611234bec041d54268",
+  "portrait.schema.json": "ff39099daa65276854bb8a54ed54e82ddf81229f5edc4d35bbd95a7ae211c334",
+  "project.schema.json": "11b902f7474e93322a36f247fb61401649102cd14e76cfd2d82a5da3a3601014",
+  "runtime-ir.schema.json": "87c80cfb6dbdff136db7b7117e209a85ce4cb7bc64f66bae38bb942cae1af3c3",
+  "save-migration.schema.json": "dbeb66ade2f356f3540994a12c1ef66c51dbe81d8ca5148e0aff30293507cbe7",
+  "source-map.schema.json": "7870837298e9d117b988fb06889627dfb7a62ab42007e99b43e0bd42e092f223",
+  "story-index.schema.json": "15cc9991af509f264db6ecfb50858352ca7ae11a207cfbd5d12eb7caa6fb8da2",
+  "timeline.schema.json": "c38698ec2cb9567e750581d5846198f1a99c08fcbebb0ad3dd6b3e620876d420",
+  "ui-component.schema.json": "41b43c338c77d6f5b1d9c635d581b3f783c95a786434cb88d1153a2960ac999c",
+  "ui.schema.json": "6472c6c2edbe4545225c70e6b27737c21cbc574e02cee7546a5cb46fb59392b7"
 };

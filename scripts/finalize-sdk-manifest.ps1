@@ -12,8 +12,8 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
 }
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-if ($manifest.format -ne "PrismatiXSDKManifest" -or $manifest.schemaRevision -ne 2) {
-    throw "Only PrismatiXSDKManifest schema revision 2 can be finalized"
+if ($manifest.format -ne "PrismatiXSDKManifest" -or $manifest.schemaRevision -ne 1) {
+    throw "Only PrismatiXSDKManifest schema revision 1 can be finalized"
 }
 if (-not [string]::IsNullOrWhiteSpace($TargetTriple)) {
     $manifest.target = $TargetTriple
@@ -74,8 +74,8 @@ foreach ($entry in $contractFiles.GetEnumerator()) {
 }
 $previewContract = @(
     "PrismatiXPreviewProtocol",
-    "schemaRevision=2",
-    "protocolVersion=2",
+    "schemaRevision=1",
+    "protocolVersion=1",
     "envelope=protocolVersion,sessionId,requestId,documentId,revision",
     "commands=apply,patch,play,pause,continue,step,seekStory,applyTimeline,seekTimeline,selectChoice,input,capture,restoreCheckpoint,resize,stop",
     "events=state,runtimeFocus,diagnostics,output,debug,audioState,unsupported,crashed"

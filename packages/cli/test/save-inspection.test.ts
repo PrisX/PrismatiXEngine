@@ -15,7 +15,7 @@ async function fixture(t: test.TestContext, source: string) {
 }
 
 test("inspection preserves native floating numeric lexemes and uint64 precision", async t => {
-  const nativeReply = '{"schemaRevision":4,"state":{"zoom":1.0,"timestamp":18446744073709551615}}';
+  const nativeReply = '{"schemaRevision":1,"state":{"zoom":1.0,"timestamp":18446744073709551615}}';
   const f = await fixture(t, `process.stdout.write(${JSON.stringify(nativeReply)});`);
   const result = await inspectSaveWithRuntime(f);
   assert.equal(result.output, `${nativeReply}\n`);

@@ -5,7 +5,7 @@
   "required":["format","schemaRevision","width","height","layers"],
   "properties":{
     "format":{"const":"PrismatiXLayeredPortrait"},
-    "schemaRevision":{"enum":[1,2]},
+    "schemaRevision":{"const":1},
     "width":{"type":"number","exclusiveMinimum":0,"maximum":16384},
     "height":{"type":"number","exclusiveMinimum":0,"maximum":16384},
     "layers":{"type":"array","minItems":1,"maxItems":10000,"items":{
@@ -23,10 +23,7 @@
     }}
   },
   "allOf":[{
-    "if":{"type":"object","properties":{"schemaRevision":{"const":1}}},
-    "then":{"type":"object","properties":{"layers":{"type":"array","items":{
-      "type":"object","properties":{"role":false}}}}},
-    "else":{"type":"object","properties":{"layers":{"type":"array","items":{
-      "type":"object","properties":{"role":true},"required":["role"]}}}}
+    "if":{"properties":{"layers":{"type":"array","contains":{"type":"object","properties":{"role":true},"required":["role"]}}}},
+    "then":{"properties":{"layers":{"type":"array","items":{"type":"object","properties":{"role":true},"required":["role"]}}}}
   }]
 }

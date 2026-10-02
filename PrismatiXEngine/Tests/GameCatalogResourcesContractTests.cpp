@@ -53,7 +53,7 @@ thumbnail = res("00000000-0000-4000-8000-000000000014", "Content/Old/rin-ending-
 
 constexpr std::string_view kProjectManifest = R"({
   "format":"PrismatiXProject",
-  "schemaRevision":2,
+  "schemaRevision":1,
   "assets":[
     {"id":"00000000-0000-4000-8000-000000000013","kind":"cg","source":"Content/CG/rin-ending.png"},
     {"id":"00000000-0000-4000-8000-000000000014","kind":"uiImage","source":"Content/CG/rin-ending-thumb.png"}
@@ -62,7 +62,7 @@ constexpr std::string_view kProjectManifest = R"({
 
 constexpr std::string_view kCanonicalCatalog = R"({
   "format":"PrismatiXGame",
-  "schemaRevision":2,
+  "schemaRevision":1,
   "variables":[
     {"name":"skipRead","type":"boolean","default":true,"scope":"profile"},
     {"name":"affinity","type":"integer","default":7,"scope":"session"},
@@ -143,7 +143,7 @@ int main() {
         px::vn::GameCatalog runtime;
         const auto status = runtime.LoadCanonical(
             kCanonicalCatalog,
-            R"({"format":"PrismatiXProject","schemaRevision":2,"assets":[]})",
+            R"({"format":"PrismatiXProject","schemaRevision":1,"assets":[]})",
             [](std::string_view) { return false; });
         suite.Require(status.IsOk(), "runtime consumes the canonical catalog directly");
         suite.Expect(
@@ -241,14 +241,14 @@ int main() {
         suite.Require(parsed.Valid(), "canonical catalog parses before resolution");
         const auto unknown = px::sdk::ResolveGameCatalogGalleryResources(
             parsed.document,
-            R"({"format":"PrismatiXProject","schemaRevision":2,"assets":[]})",
+            R"({"format":"PrismatiXProject","schemaRevision":1,"assets":[]})",
             [](std::string_view) { return true; });
         suite.Expect(HasCode(unknown, "PXCAT1024"),
                      "unknown Gallery UUIDs are rejected");
 
         const auto wrongKind = px::sdk::ResolveGameCatalogGalleryResources(
             parsed.document,
-            R"({"format":"PrismatiXProject","schemaRevision":2,"assets":[{"id":"00000000-0000-4000-8000-000000000013","kind":"voice","source":"Content/CG/rin-ending.png"},{"id":"00000000-0000-4000-8000-000000000014","kind":"uiImage","source":"Content/CG/rin-ending-thumb.png"}]})",
+            R"({"format":"PrismatiXProject","schemaRevision":1,"assets":[{"id":"00000000-0000-4000-8000-000000000013","kind":"voice","source":"Content/CG/rin-ending.png"},{"id":"00000000-0000-4000-8000-000000000014","kind":"uiImage","source":"Content/CG/rin-ending-thumb.png"}]})",
             [](std::string_view) { return true; });
         suite.Expect(HasCode(wrongKind, "PXCAT1025"),
                      "non-image Gallery assets are rejected");
@@ -308,7 +308,7 @@ name = "affinity"
     });
 
     suite.Run("InputActionsRejectDuplicatesAndMalformedKeys", [&] {
-        constexpr std::string_view prefix = R"({"format":"PrismatiXGame","schemaRevision":2,"variables":[],"gallery":[],"unlockables":[],)";
+        constexpr std::string_view prefix = R"({"format":"PrismatiXGame","schemaRevision":1,"variables":[],"gallery":[],"unlockables":[],)";
         const auto duplicates = px::sdk::LoadCanonicalGameCatalogResources(
             std::string(prefix) + R"("inputBindings":[{"key":"G","command":"screen.open","argument":"gallery"}],"inputActions":[{"id":"screen.open.gallery","context":"game","keys":["F8"]}]})");
         suite.Expect(HasCode(duplicates, "PXCAT1119"),
@@ -337,7 +337,7 @@ name = "affinity"
         px::vn::GameCatalog runtime;
         suite.Require(runtime.LoadCanonical(
             std::string(prefix) + R"("inputActions":[{"id":"toggle-skip","context":"game","keys":[]}]})",
-            R"({"format":"PrismatiXProject","schemaRevision":2,"assets":[]})",
+            R"({"format":"PrismatiXProject","schemaRevision":1,"assets":[]})",
             [](std::string_view) { return false; }).IsOk(),
             "runtime accepts an explicitly empty keyboard default");
         suite.Expect(runtime.InputActions().size() == 1 &&
@@ -345,31 +345,26 @@ name = "affinity"
                      "empty-key intent survives catalog-to-Player transfer");
     });
 
-    suite.Run("Revision3InputActionsPreserveUiCommands", [&] {
+    suite.Run("InputActionsPreserveUiCommands", [&] {
         constexpr std::string_view source = R"({
-          "format":"PrismatiXGame","schemaRevision":3,
+          "format":"PrismatiXGame","schemaRevision":1,
           "variables":[],"gallery":[],"unlockables":[],
           "inputActions":[{"id":"settings.keys","context":"ui","keys":["F2"],
             "uiAction":{"command":"settings.page7","argument":"keys"}}]})";
         const auto parsed = px::sdk::LoadCanonicalGameCatalogResources(source);
-        suite.Require(parsed.Valid(), "revision-3 UI shortcut catalog parses");
+        suite.Require(parsed.Valid(), "UI shortcut catalog parses");
         suite.Expect(parsed.document.inputActions.size() == 1 &&
                          parsed.document.inputActions[0].uiCommand == "settings.page7" &&
                          parsed.document.inputActions[0].uiArgument == "keys",
                      "UI command and argument survive native loading");
         px::vn::GameCatalog runtime;
         suite.Require(runtime.LoadCanonical(source,
-            R"({"format":"PrismatiXProject","schemaRevision":2,"assets":[]})",
+            R"({"format":"PrismatiXProject","schemaRevision":1,"assets":[]})",
             [](std::string_view) { return false; }).IsOk(),
-            "runtime loads revision-3 UI shortcuts");
+            "runtime loads UI shortcuts");
         suite.Expect(runtime.InputActions().size() == 1 &&
                          runtime.InputActions()[0].uiCommand == "settings.page7",
                      "runtime catalog retains UI shortcut command");
-        auto older = nlohmann::json::parse(source);
-        older["schemaRevision"] = 2;
-        suite.Expect(HasCode(px::sdk::LoadCanonicalGameCatalogResources(older.dump()),
-                             "PXCAT1123"),
-                     "revision 2 cannot silently accept the new UI command");
         auto ambiguous = nlohmann::json::parse(source);
         ambiguous["inputActions"][0]["context"] = "game";
         ambiguous["inputActions"][0]["route"] = "settings";

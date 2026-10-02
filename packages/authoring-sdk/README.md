@@ -12,12 +12,11 @@ The public entrypoint provides:
 - structural Story localization validation;
 - UI Visual State and shared property-capability validation;
 - a React-free JSX runtime and typed UI components that lower to the same canonical UI contracts;
-- explicit migration entrypoints and generated contract hashes.
+- generated contract hashes.
 
 Named keyboard actions, contexts, and default bindings can be authored in
 `Content/game.pxgame` through the typed `GameInputAction` contract; see the
-[input action guide](../../docs/authoring.md#authoring-input-actions). The older `inputBindings`
-entries remain readable for migrated projects.
+[input action guide](../../docs/authoring.md#authoring-input-actions).
 
 Embedding applications can declare typed Action signatures in
 `settings["authoring.actionContract"]` and check their native handlers before
@@ -423,7 +422,7 @@ for the helper, coordinate semantics, and dependency rules.
 
 For reusable image-layer animations, `defineMotion` and `serializeMotion`
 create a validated `.pxmotion` with parented layers and keyed position, scale,
-rotation, opacity, or step visibility tracks. Revision 2 also supports atlas
+rotation, opacity, or step visibility tracks. It also supports atlas
 frame rectangles and discrete `frame` keys. The default
 canvas mode is `fit`. The native `MotionSampler` can seek deterministically
 without per-frame allocations, and `DrawMotionPose` draws its result through

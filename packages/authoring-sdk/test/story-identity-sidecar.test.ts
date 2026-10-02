@@ -26,7 +26,7 @@ test("sidecars are written one entry per line and keep every identity", () => {
 
 test("compact and pretty-printed sidecars compile to the same identities", () => {
   const externalized = externalizeStoryIds(story, {path: "Story/main.pxstory"});
-  const index = {format: "PrismatiXStoryIndex" as const, schemaRevision: 2 as const, id: "main",
+  const index = {format: "PrismatiXStoryIndex" as const, schemaRevision: 1 as const, id: "main",
     entryScene: "main", chapters: [{id: "c", title: "C", scenes: ["main"]}],
     scenes: [{id: "main", sources: {en: "Story/main.pxstory"}}]};
   const compile = (sidecar: string) => compileStoryProject({storyIndex: index, locale: "en",

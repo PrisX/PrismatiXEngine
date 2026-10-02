@@ -6,7 +6,7 @@ import type {StoryIndexDocument} from "../src/index.js";
 
 const storyIndex: StoryIndexDocument = {
   format: "PrismatiXStoryIndex",
-  schemaRevision: 2,
+  schemaRevision: 1,
   id: "main-story",
   entryScene: "scene01",
   chapters: [{id: "chapter01", title: "Chapter 1", scenes: ["scene01", "scene02"]}],
@@ -226,7 +226,7 @@ test("Story project compiler supports jumping directly to another scene entry", 
 
 test("Story scene identityNamespace preserves explicit operation anchors after splitting a source", () => {
   const oldIndex: StoryIndexDocument = {
-    format: "PrismatiXStoryIndex", schemaRevision: 2, id: "migration",
+    format: "PrismatiXStoryIndex", schemaRevision: 1, id: "migration",
     entryScene: "main", chapters: [{id: "all", title: "All", scenes: ["main"]}],
     scenes: [{id: "main", sources: {"zh-TW": "old.pxstory"}}],
   };
@@ -299,7 +299,7 @@ test("Story project compiler hashes author-controlled scene and label ids into i
   const compiled = compileStoryProject({
     storyIndex: {
       format: "PrismatiXStoryIndex",
-      schemaRevision: 2,
+      schemaRevision: 1,
       id: "collision-story",
       entryScene: "chapter.one",
       chapters: [{id: "chapter", title: "Chapter", scenes: ["chapter.one"]}],

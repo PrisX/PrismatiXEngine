@@ -26,7 +26,7 @@ PersistLoadStatus GameSettings::LoadWithFallback(
         j.at("format") != "PrismatiXSettings" ||
         !j.contains("schemaRevision") ||
         !j.at("schemaRevision").is_number_integer() ||
-        j.at("schemaRevision") != 2) {
+        j.at("schemaRevision") != 1) {
         diag::Diagnostic diagnostic{
             .severity = diag::Severity::Error,
             .code = "PXSETTINGS6301",
@@ -164,7 +164,7 @@ PersistLoadStatus GameSettings::LoadWithFallback(
 bool GameSettings::Save(const std::string& path, const crypto::Key* key) const {
     Json j;
     j["format"] = "PrismatiXSettings";
-    j["schemaRevision"] = 2;
+    j["schemaRevision"] = 1;
     j["masterVolume"] = masterVolume;
     j["bgmVolume"] = bgmVolume;
     j["seVolume"] = seVolume;

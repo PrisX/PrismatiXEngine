@@ -24,7 +24,7 @@
   "type":"object","additionalProperties":false,
   "required":["format","schemaRevision","language","id","version","requiredEngineVersion","entry","capabilities","commands","actions"],
   "properties":{
-    "format":{"const":"PrismatiXExtension"},"schemaRevision":{"const":2},"language":{"const":"javascript"},
+    "format":{"const":"PrismatiXExtension"},"schemaRevision":{"const":1},"language":{"const":"javascript"},
     "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"version":{"type":"string","pattern":"^[vV]?[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$","maxLength":64},
     "requiredEngineVersion":{"type":"string","minLength":1,"maxLength":128},"entry":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
     "modules":{"type":"array","uniqueItems":true,"maxItems":1024,"items":{"allOf":[{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},{"type":"string","pattern":"\\.js$"}]}},

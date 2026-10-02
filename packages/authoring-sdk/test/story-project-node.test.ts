@@ -11,7 +11,7 @@ import {compileStoryProject, externalizeStoryIds, loadStorySourceFiles,
 const mainPath = "Story/zh-TW/main.pxstory";
 const nextPath = "Story/zh-TW/next.pxstory";
 const storyIndex: StoryIndexDocument = {
-  format: "PrismatiXStoryIndex", schemaRevision: 2, id: "node-loader",
+  format: "PrismatiXStoryIndex", schemaRevision: 1, id: "node-loader",
   entryScene: "main",
   chapters: [{id: "chapter", title: "Chapter", scenes: ["main", "next"]}],
   scenes: [

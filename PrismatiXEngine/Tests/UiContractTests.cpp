@@ -383,7 +383,6 @@ int main() {
           "native UI contract must reject $index outside an item template");
 
     auto dynamicSceneJson = nlohmann::json::parse(ValidScene());
-    dynamicSceneJson["schemaRevision"] = 2;
     dynamicSceneJson["nodes"][1]["kind"] = "leaf";
     dynamicSceneJson["nodes"][1]["runtimeType"] = "OptionButton";
     dynamicSceneJson["nodes"][1]["interaction"]["onClick"] = nullptr;
@@ -397,7 +396,7 @@ int main() {
     const auto dynamicScene =
         ParseSceneFixture(dynamicSceneJson.dump());
     Check(dynamicScene.Valid() &&
-              dynamicScene.document.schemaRevision == 2 &&
+              dynamicScene.document.schemaRevision == 1 &&
               dynamicScene.document.nodes[1].kind ==
                   px::sdk::UiNodeKind::Leaf &&
               dynamicScene.document.nodes[1].runtimeType == "OptionButton" &&
@@ -470,18 +469,13 @@ int main() {
           "SDK must reject Runtime collections beyond the shared entry budget");
 
     auto constrainedScene = nlohmann::json::parse(ValidScene());
-    constrainedScene["schemaRevision"] = 2;
     constrainedScene["nodes"][1]["layout"]["anchorRight"] = 0.75;
     constrainedScene["nodes"][1]["layout"]["anchorBottom"] = 1.0;
     const auto constrained = ParseSceneFixture(constrainedScene.dump());
     Check(constrained.Valid() &&
               constrained.document.nodes[1].layout.anchorRight == 0.75f &&
               constrained.document.nodes[1].layout.anchorBottom == 1.0f,
-          "revision-2 edge constraints must cross the SDK contract");
-    constrainedScene["schemaRevision"] = 1;
-    Check(!px::sdk::ParseUi(constrainedScene.dump()).Valid(),
-          "revision-1 documents must reject edge constraints");
-    constrainedScene["schemaRevision"] = 2;
+          "edge constraints must cross the SDK contract");
     constrainedScene["nodes"][1]["layout"]["anchorRight"] = 0.25;
     Check(!ParseSceneFixture(constrainedScene.dump()).Valid(),
           "constraint edges must not cross their leading anchors");
@@ -535,7 +529,7 @@ int main() {
 
     std::string future = ValidScene();
     future.replace(future.find("\"schemaRevision\":1"), 18,
-                   "\"schemaRevision\":3");
+                   "\"schemaRevision\":2");
     Check(!px::sdk::ParseUi(future).Valid(),
           "future UI document schema revision must be rejected");
 

@@ -198,7 +198,7 @@ int main() {
                 px::graphics::Renderer2D atlasRenderer(device.Renderer(), atlasAssets, true);
                 atlasRenderer.SetLogicalSize(640, 360);
                 const auto parsed = px::sdk::ParseMotion(R"({
-                  "format":"PrismatiXMotion","schemaRevision":2,"id":"atlas",
+                  "format":"PrismatiXMotion","schemaRevision":1,"id":"atlas",
                   "canvas":{"width":640,"height":360},"duration":1,"loop":false,
                   "layers":[{"id":"mark","image":"Assets/atlas.bmp",
                     "width":100,"height":100,"x":270,"y":130,"frames":[
@@ -227,7 +227,7 @@ int main() {
                         result = 1;
                     }
                     const auto externalPivot = px::sdk::ParseMotion(R"({
-                      "format":"PrismatiXMotion","schemaRevision":11,"id":"external-pivot",
+                      "format":"PrismatiXMotion","schemaRevision":1,"id":"external-pivot",
                       "canvas":{"width":640,"height":360},"duration":1,"loop":false,
                       "layers":[{"id":"mark","image":"Assets/atlas.bmp",
                         "width":60,"height":60,"x":300,"y":150,
@@ -254,7 +254,7 @@ int main() {
                         }
                     }
                     const auto nested = px::sdk::ParseMotion(R"({
-                      "format":"PrismatiXMotion","schemaRevision":7,"id":"nested",
+                      "format":"PrismatiXMotion","schemaRevision":1,"id":"nested",
                       "canvas":{"width":640,"height":360},"duration":1,"loop":false,
                       "layers":[
                         {"id":"subclip","kind":"group","x":250,"y":130,
@@ -294,7 +294,7 @@ int main() {
                         }
                     }
                     const auto eased = px::sdk::ParseMotion(R"({
-                      "format":"PrismatiXMotion","schemaRevision":5,"id":"eased",
+                      "format":"PrismatiXMotion","schemaRevision":1,"id":"eased",
                       "canvas":{"width":640,"height":360},"duration":1,"loop":false,
                       "layers":[{"id":"mark","image":"Assets/atlas.bmp",
                         "width":100,"height":100,"x":270,"y":130,
@@ -320,7 +320,7 @@ int main() {
                         }
                     }
                     auto blended = px::sdk::ParseMotion(R"({
-                      "format":"PrismatiXMotion","schemaRevision":4,"id":"blend",
+                      "format":"PrismatiXMotion","schemaRevision":1,"id":"blend",
                       "canvas":{"width":640,"height":360},"duration":1,"loop":false,
                       "layers":[
                         {"id":"base","image":"Assets/atlas.bmp","width":100,
@@ -358,7 +358,7 @@ int main() {
                         }
                     }
                     const auto tinted = px::sdk::ParseMotion(R"({
-                      "format":"PrismatiXMotion","schemaRevision":8,"id":"tinted",
+                      "format":"PrismatiXMotion","schemaRevision":1,"id":"tinted",
                       "canvas":{"width":640,"height":360},"duration":1,"loop":false,
                       "layers":[
                         {"id":"group","kind":"group","tint":{"r":0.5,"g":1,"b":1}},
@@ -400,7 +400,7 @@ int main() {
                             (atlasRoot / "Assets/mask.bmp").string().c_str());
                     if (maskSurface) SDL_DestroySurface(maskSurface);
                     auto masked = px::sdk::ParseMotion(R"({
-                      "format":"PrismatiXMotion","schemaRevision":6,"id":"masked",
+                      "format":"PrismatiXMotion","schemaRevision":1,"id":"masked",
                       "canvas":{"width":640,"height":360},"duration":1,"loop":false,
                       "layers":[
                         {"id":"content","image":"Assets/atlas.bmp","width":100,

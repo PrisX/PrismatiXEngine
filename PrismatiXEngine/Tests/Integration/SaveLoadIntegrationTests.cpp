@@ -462,7 +462,7 @@ void TestSaveValidation() {
     );
 
     const auto currentJson = px::progress::LoadJson(saves.SlotPath(0), nullptr);
-    Check(currentJson && currentJson->value("schemaRevision", 0) == 4 &&
+    Check(currentJson && currentJson->value("schemaRevision", 0) == 1 &&
               currentJson->contains("integrityHash") &&
               currentJson->contains("anchor") && currentJson->contains("state") &&
               (*currentJson)["state"].contains("scriptPending") &&
@@ -503,7 +503,7 @@ void TestSaveValidation() {
         deep["extra"] = std::move(nested);
         Check(!px::progress::ParseSaveEnvelope(rehash(std::move(deep))),
               "save JSON depth over 128 must fail before materializing the DOM");
-        Check(!px::progress::ParseSaveEnvelope("{\"format\":3,\"schemaRevision\":4}") &&
+        Check(!px::progress::ParseSaveEnvelope("{\"format\":3,\"schemaRevision\":1}") &&
                   !px::progress::ParseSaveEnvelope("{\"format\":\"PrismatiXSave\",\"schemaRevision\":\"four\"}"),
               "wrong header types return failure without escaping exceptions");
         auto tampered = *currentJson;
@@ -513,7 +513,7 @@ void TestSaveValidation() {
               "save envelope must reject payload changes that do not update integrity metadata");
     }
 
-    px::progress::Json wrongType{ { "format", "PrismatiXSave" }, { "schemaRevision", 2 }, { "variables", { { "affection", "high" } } } };
+    px::progress::Json wrongType{ { "format", "PrismatiXSave" }, { "schemaRevision", 1 }, { "variables", { { "affection", "high" } } } };
     Check(px::progress::SaveJson(saves.SlotPath(1), wrongType, nullptr), "wrong-type fixture should be written");
     Check(!saves.Load(1), "wrong-type save must fail without throwing");
 
@@ -521,7 +521,7 @@ void TestSaveValidation() {
     Check(px::progress::SaveJson(saves.SlotPath(3), legacySave, nullptr), "legacy fixture should be written");
     Check(!saves.Load(3), "legacy numeric save versions must be rejected");
 
-    px::progress::Json wrongSchema{ { "format", "PrismatiXSave" }, { "schemaRevision", 999 } };
+    px::progress::Json wrongSchema{ { "format", "PrismatiXSave" }, { "schemaRevision", 2 } };
     Check(px::progress::SaveJson(saves.SlotPath(2), wrongSchema, nullptr), "wrong-schema fixture should be written");
     Check(!saves.Load(2), "unsupported save schema must be rejected");
     Check(!saves.Peek(2).exists, "unsupported save must not appear as a valid slot");
@@ -541,7 +541,7 @@ void TestSaveValidation() {
             Check(writer.Save(0, exported), "native inspector fixture writer succeeds");
         }
         const px::progress::Json manifest{
-            {"format", "PrismatiXPackageManifest"}, {"schemaRevision", 2},
+            {"format", "PrismatiXPackageManifest"}, {"schemaRevision", 1},
             {"engineVersion", "0.2.0"}, {"gameId", exported.gameId}, {"title", "Inspector fixture"},
             {"contentVersion", exported.contentVersion}, {"packageFingerprint", exported.packageFingerprint},
             {"saveVersion", 1}, {"graphicsTier", "basic"},
@@ -643,18 +643,6 @@ void TestProfileAndSettingsSchemas() {
     px::progress::Json legacyProfile{ { "version", 4 }, { "clearCount", 99 } };
     Check(px::progress::SaveJson(profilePath, legacyProfile, nullptr), "legacy profile fixture should be written");
     Check(!px::progress::LoadGlobalProfile(loadedProfile, profilePath, nullptr), "legacy numeric profile versions must be rejected");
-    px::progress::Json revisionOneProfile{
-        {"format", "PrismatiXProfile"}, {"schemaRevision", 1},
-        {"seen", px::progress::Json::array()},
-        {"choicesSeen", px::progress::Json::array()},
-        {"clearedRoutes", px::progress::Json::array()},
-        {"scenes", px::progress::Json::array()},
-        {"cgs", px::progress::Json::array()},
-        {"music", px::progress::Json::array()},
-        {"vars", px::progress::Json::object()}, {"clearCount", 0}};
-    Check(!loadedProfile.ApplyJson(revisionOneProfile),
-          "revision-1 profiles with unstable seen identities must be rejected");
-
     px::progress::GameSettings settings;
     settings.masterVolume = 73;
     settings.bgmVolume = 64;
@@ -715,7 +703,7 @@ void TestProfileAndSettingsSchemas() {
     const auto beforeInvalidKeys = restoredInput.CaptureKeyboardBindings();
     const auto beforeInvalidWheel = restoredInput.CaptureWheelBindings();
     px::progress::Json invalidScancode{
-        {"format", "PrismatiXSettings"}, {"schemaRevision", 2},
+        {"format", "PrismatiXSettings"}, {"schemaRevision", 1},
         {"keyboardBindings", {{"quick-save", std::vector<int>{-1}}}},
         {"wheelBindings", {{"backlog", {{"direction", "down"},
                                           {"threshold", 3.0}}}}}};
@@ -741,7 +729,7 @@ void TestProfileAndSettingsSchemas() {
           "a rejected wheel override cannot partially apply valid keyboard changes");
 
     px::progress::Json invalidBindings{
-        {"format", "PrismatiXSettings"}, {"schemaRevision", 2},
+        {"format", "PrismatiXSettings"}, {"schemaRevision", 1},
         {"keyboardBindings", {{"quick-save", "not-an-array"}}}};
     Check(px::progress::SaveJson(settingsPath, invalidBindings, nullptr),
           "invalid keyboard settings fixture should be written");
@@ -750,7 +738,7 @@ void TestProfileAndSettingsSchemas() {
                   std::vector<int>{f11},
           "invalid keyboard binding type must not partially replace settings");
     px::progress::Json invalidWheel{
-        {"format", "PrismatiXSettings"}, {"schemaRevision", 2},
+        {"format", "PrismatiXSettings"}, {"schemaRevision", 1},
         {"wheelBindings", {{"backlog", {{"direction", "none"},
                                          {"threshold", 1.0}}}}}};
     Check(px::progress::SaveJson(settingsPath, invalidWheel, nullptr) &&
@@ -758,21 +746,21 @@ void TestProfileAndSettingsSchemas() {
               loadedSettings.wheelBindings.at("backlog").threshold == 1.5f,
           "invalid wheel binding must not partially replace settings");
     px::progress::Json settingsWithoutBindings{
-        {"format", "PrismatiXSettings"}, {"schemaRevision", 2}};
+        {"format", "PrismatiXSettings"}, {"schemaRevision", 1}};
     Check(px::progress::SaveJson(settingsPath, settingsWithoutBindings, nullptr),
-          "older settings without keyboard overrides should be written");
+          "settings without keyboard overrides should be written");
     Check(loadedSettings.Load(settingsPath, nullptr) &&
               loadedSettings.keyboardBindings.empty() &&
               loadedSettings.wheelBindings.empty(),
           "settings without input overrides restore engine defaults");
 
     px::progress::Json oldSettingsWithKeys{
-        {"format", "PrismatiXSettings"}, {"schemaRevision", 2},
+        {"format", "PrismatiXSettings"}, {"schemaRevision", 1},
         {"keyboardBindings", {{"quick-save", std::vector<int>{f11}}}}};
     Check(px::progress::SaveJson(settingsPath, oldSettingsWithKeys, nullptr) &&
               loadedSettings.Load(settingsPath, nullptr) &&
               loadedSettings.wheelBindings.empty(),
-          "older keyboard settings without wheel bindings load safely");
+          "keyboard settings without wheel bindings load safely");
     px::Input migratedInput;
     Check(loadedSettings.ApplyInputBindings(migratedInput) &&
               migratedInput.GetWheelBinding("advance")->direction ==
@@ -797,7 +785,7 @@ void TestProfileAndSettingsSchemas() {
           "wheel override persists after reopening migrated settings");
 
     for (const px::progress::Json& malformedHeader : {
-             px::progress::Json{{"format", 42}, {"schemaRevision", 2}},
+             px::progress::Json{{"format", 42}, {"schemaRevision", 1}},
              px::progress::Json{{"format", "PrismatiXSettings"},
                                 {"schemaRevision", "2"}}}) {
         Check(px::progress::SaveJson(settingsPath, malformedHeader, nullptr),
@@ -816,12 +804,6 @@ void TestProfileAndSettingsSchemas() {
     px::progress::Json legacySettings{ { "version", 4 }, { "language", "legacy" } };
     Check(px::progress::SaveJson(settingsPath, legacySettings, nullptr), "legacy settings fixture should be written");
     Check(!loadedSettings.Load(settingsPath, nullptr), "legacy numeric settings versions must be rejected");
-    px::progress::Json revisionOneSettings{
-        {"format", "PrismatiXSettings"}, {"schemaRevision", 1}};
-    Check(px::progress::SaveJson(settingsPath, revisionOneSettings, nullptr),
-          "revision-1 settings fixture should be written");
-    Check(!loadedSettings.Load(settingsPath, nullptr),
-          "revision-1 settings must be rejected by the 0.2 runtime");
 }
 
 void TestExplicitSaveMigrationChain() {
@@ -846,7 +828,7 @@ void TestExplicitSaveMigrationChain() {
         -> std::optional<std::string> {
         if (asset.ends_with("chapter-1.pxsave-migration")) {
             return R"({
-              "format":"PrismatiXSaveMigration","schemaRevision":2,
+              "format":"PrismatiXSaveMigration","schemaRevision":1,
               "id":"chapter-1-to-1-5",
               "from":{"contentVersion":"chapter-1","saveVersion":1},
               "to":{"contentVersion":"chapter-1.5","saveVersion":1},
@@ -860,7 +842,7 @@ void TestExplicitSaveMigrationChain() {
         }
         if (asset.ends_with("chapter-2.pxsave-migration")) {
             return R"({
-              "format":"PrismatiXSaveMigration","schemaRevision":2,
+              "format":"PrismatiXSaveMigration","schemaRevision":1,
               "id":"chapter-1-5-to-2",
               "from":{"contentVersion":"chapter-1.5","saveVersion":1},
               "to":{"contentVersion":"chapter-2","saveVersion":2},
@@ -917,7 +899,7 @@ void TestExplicitSaveMigrationChain() {
         missingAnchor,
         [](std::string_view) -> std::optional<std::string> {
             return R"({
-              "format":"PrismatiXSaveMigration","schemaRevision":2,
+              "format":"PrismatiXSaveMigration","schemaRevision":1,
               "id":"chapter-1-5-to-2",
               "from":{"contentVersion":"chapter-1","saveVersion":1},
               "to":{"contentVersion":"chapter-2","saveVersion":2},
@@ -933,7 +915,7 @@ void TestExplicitSaveMigrationChain() {
     const auto sparseMigration = [](std::string_view)
         -> std::optional<std::string> {
         return R"({
-          "format":"PrismatiXSaveMigration","schemaRevision":2,
+          "format":"PrismatiXSaveMigration","schemaRevision":1,
           "id":"chapter-1-5-to-2",
           "from":{"contentVersion":"chapter-1","saveVersion":1},
           "to":{"contentVersion":"chapter-2","saveVersion":2},
@@ -969,7 +951,7 @@ void TestExplicitSaveMigrationChain() {
         missingAnchor,
         [](std::string_view) -> std::optional<std::string> {
             return R"({
-              "format":"PrismatiXSaveMigration","schemaRevision":2,
+              "format":"PrismatiXSaveMigration","schemaRevision":1,
               "id":"chapter-1-5-to-2",
               "from":{"contentVersion":"chapter-1","saveVersion":1},
               "to":{"contentVersion":"chapter-2","saveVersion":2},

@@ -33,34 +33,32 @@ function runHuman(args: readonly string[]) {
   return spawnSync(process.execPath, [resolve("dist/src/cli.js"), ...args], {encoding: "utf8"});
 }
 
-async function fixture(legacy = false): Promise<{root: string; project: string}> {
+async function fixture(): Promise<{root: string; project: string}> {
   const root = await mkdtemp(join(tmpdir(), "prismatix-cli-test-"));
   const project = join(root, "project.pxproject");
   await write(project, JSON.stringify({
-    format: "PrismatiXProject", schemaRevision: legacy ? 1 : 2, id: "cli-sample",
+    format: "PrismatiXProject", schemaRevision: 1, id: "cli-sample",
     name: "CLI Sample", version: "0.2.0",
-    ...(legacy ? {} : {contentVersion: "chapter-1"}), saveVersion: 1,
+    contentVersion: "chapter-1", saveVersion: 1,
     resolution: {width: 1280, height: 720}, entry: {story: "main", ui: "title"},
     defaultLocale: "en", supportedLocales: ["en"],
     storyIndex: "Story/story.pxindex", gameCatalog: "Content/game.pxgame",
     extensions: [], uiEntryPoints: {title: "Content/UI/Title.pxui"}, assets: [],
   }));
   await write(join(root, "Story/story.pxindex"), JSON.stringify({
-    format: "PrismatiXStoryIndex", schemaRevision: legacy ? 1 : 2, id: "main", entryScene: "main",
+    format: "PrismatiXStoryIndex", schemaRevision: 1, id: "main", entryScene: "main",
     chapters: [{id: "chapter", title: "Chapter", scenes: ["main"]}],
     scenes: [{id: "main", sources: {en: "Story/main.pxstory"}}],
   }));
   await write(join(root, "Story/main.pxstory"), "Hello.\n[end]\n");
   await write(join(root, "Content/game.pxgame"), JSON.stringify({
-    format: "PrismatiXGame", schemaRevision: legacy ? 1 : 2,
-    variables: legacy
-      ? [{name: "route", type: "string", default: "common", persistent: false}]
-      : [{name: "route", type: "string", default: "common", scope: "session"}],
+    format: "PrismatiXGame", schemaRevision: 1,
+    variables: [{name: "route", type: "string", default: "common", scope: "session"}],
     gallery: [], unlockables: [],
   }));
   const id = "11111111-1111-4111-8111-111111111111";
   await write(join(root, "Content/UI/Title.pxui"), JSON.stringify({
-    format: "PrismatiXUIScene", schemaRevision: 2, id, revision: 1,
+    format: "PrismatiXUIScene", schemaRevision: 1, id, revision: 1,
     name: "Title", width: 1280, height: 720, rootId: id,
     nodes: [{id, parentId: null, order: 0, kind: "control", runtimeType: "Control",
       name: "Root", visible: true, locked: false,
@@ -71,7 +69,7 @@ async function fixture(legacy = false): Promise<{root: string; project: string}>
     behaviorGraph: {nodes: [], links: [], groups: []}, behaviorTriggers: [], visualStateGroups: [],
   }));
   await write(join(root, "Content/Localization/en.json"), JSON.stringify({
-    format: "PrismatiXLocale", schemaRevision: legacy ? 1 : 2, locale: "en", strings: {},
+    format: "PrismatiXLocale", schemaRevision: 1, locale: "en", strings: {},
   }));
   return {root, project};
 }
@@ -290,7 +288,7 @@ test("validate and build reject native UI property type mismatches before packag
   await write(uiPath, wrongColorSource);
   const registryPath = join(value.root, "PrismatiXUiTypeRegistry.json");
   await write(registryPath, JSON.stringify({
-    format: "PrismatiXUiTypeRegistry", schemaRevision: 2,
+    format: "PrismatiXUiTypeRegistry", schemaRevision: 1,
     controls: [{runtimeType: "Control", properties: [
       {id: "modulate", valueType: "color",
         writable: true, bindable: true, animatable: true},
@@ -377,7 +375,7 @@ test("validate and artifact build use the selected local Runtime UI registry", a
   await write(uiPath, JSON.stringify(ui));
   const runtime = join(value.root, "native-build");
   const registry = join(runtime, "PrismatiXUiTypeRegistry.json");
-  await write(registry, JSON.stringify({format: "PrismatiXUiTypeRegistry", schemaRevision: 2,
+  await write(registry, JSON.stringify({format: "PrismatiXUiTypeRegistry", schemaRevision: 1,
     controls: [{runtimeType: "Control", properties: [{id: "modulate", valueType: "color",
       writable: true, bindable: true, animatable: true}]}]}));
   const invalid = run(["validate", value.project, "--runtime", runtime]);
@@ -412,7 +410,7 @@ test("validate and build reject keyboard names absent from the selected native R
   await write(gamePath, JSON.stringify(game));
   const runtime = join(value.root, "native-build");
   await write(join(runtime, "PrismatiXUiTypeRegistry.json"), JSON.stringify({
-    format: "PrismatiXUiTypeRegistry", schemaRevision: 2, controls: [],
+    format: "PrismatiXUiTypeRegistry", schemaRevision: 1, controls: [],
   }));
   const keyManifest = join(runtime, "PrismatiXInputKeyRegistry.json");
   await write(keyManifest, JSON.stringify({format: "PrismatiXInputKeyRegistry",
@@ -484,7 +482,7 @@ test("dev --once streams PreviewHost protocol output and exits after a clean shu
         patchRuntimeIr: "runtimeIrApplied", play: "playAccepted", shutdown: "shutdownAccepted"};
       const type = types[request.type];
       if (!type) process.exit(71);
-      process.stdout.write(JSON.stringify({...request, type, runtimeIrSchemaRevision: 2, uiSchemaRevision: 2,
+      process.stdout.write(JSON.stringify({...request, type, runtimeIrSchemaRevision: 1, uiSchemaRevision: 1,
         ...(type === "runtimeIrApplied" ? {applyMode: "fullRuntimeRestart", appliedRevision: request.revision} : {})}) + "\\n");
       if (request.type === "shutdown") { input.close(); process.exitCode = 0; }
     });
@@ -527,8 +525,8 @@ test("dev reuses verified media and Story inputs without hiding changes", {timeo
       appendFileSync(${JSON.stringify(hostLog)}, JSON.stringify({pid: process.pid, type: request.type}) + "\\n");
       const type = {hello: "ready", applyRuntimeIr: "runtimeIrApplied",
         play: "playAccepted", shutdown: "shutdownAccepted"}[request.type];
-      process.stdout.write(JSON.stringify({...request, type, runtimeIrSchemaRevision: 2,
-        uiSchemaRevision: 2, appliedRevision: request.revision}) + "\\n");
+      process.stdout.write(JSON.stringify({...request, type, runtimeIrSchemaRevision: 1,
+        uiSchemaRevision: 1, appliedRevision: request.revision}) + "\\n");
       if (request.type === "shutdown") { input.close(); process.exit(0); }
     });
   `);
@@ -1434,7 +1432,7 @@ test("pack invokes the native file-based request protocol", async () => {
     const [flag, path] = process.argv.slice(2);
     if (flag !== "--request" || !path || !isAbsolute(path)) process.exit(41);
     const request = JSON.parse(await readFile(path, "utf8"));
-    if (request.format !== "PrismatiXPackageRequest" || request.schemaRevision !== 2 ||
+    if (request.format !== "PrismatiXPackageRequest" || request.schemaRevision !== 1 ||
         request.startScript !== "Runtime/main.pxir" || !Array.isArray(request.inputs)) process.exit(42);
     process.stdout.write(JSON.stringify({protocolVersion: 1, event: "completed",
       requestId: request.requestId, fileRequest: true}) + "\\n");
@@ -1624,7 +1622,7 @@ test("pack validates UI against the selected Packager's adjacent registry", asyn
   await write(mock, "process.exit(0);\n");
   await write(player, "fixture");
   await write(join(tools, "PrismatiXUiTypeRegistry.json"), JSON.stringify({
-    format: "PrismatiXUiTypeRegistry", schemaRevision: 2,
+    format: "PrismatiXUiTypeRegistry", schemaRevision: 1,
     controls: [{runtimeType: "Control", properties: [{id: "modulate", valueType: "color",
       writable: true, bindable: true, animatable: true}]}],
   }));
@@ -1830,7 +1828,7 @@ test("build publishes every declared extension ES module", async () => {
   project.extensions = ["Content/Extensions/module.pxextension"];
   await write(value.project, JSON.stringify(project));
   await write(join(value.root, "Content/Extensions/module.pxextension"), JSON.stringify({
-    format: "PrismatiXExtension", schemaRevision: 2, language: "javascript",
+    format: "PrismatiXExtension", schemaRevision: 1, language: "javascript",
     id: "module", version: "1.0.0", requiredEngineVersion: "^0.2.0",
     entry: "entry.js", modules: ["lib/helper.js"], capabilities: ["runtime"],
     commands: [], actions: [],
@@ -1847,129 +1845,11 @@ test("build publishes every declared extension ES module", async () => {
   assert.equal((await stat(join(output, "Content/Extensions/lib/helper.js"))).isFile(), true);
 });
 
-test("migrate is dry-run by default and commits with a recoverable backup", async () => {
-  const value = await fixture(true);
-  const legacyProject = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
-  legacyProject.graphicsTier = "gpu-effects";
-  legacyProject.engineCompatibility = {minimum: "0.2.0", maximum: "0.2.x"};
-  await write(value.project, JSON.stringify(legacyProject));
-  const originalProject = await readFile(value.project, "utf8");
-  const dryRun = run(["migrate", value.project, "--content-version", "chapter-1"]);
-  assert.equal(dryRun.status, 0, dryRun.stderr);
-  assert.equal(await readFile(value.project, "utf8"), originalProject);
-  const backup = join(value.root, "backup");
-  const committed = run(["migrate", value.project, "--content-version", "chapter-1", "--write", "--backup", backup]);
-  assert.equal(committed.status, 0, committed.stderr);
-  assert.match(await readFile(value.project, "utf8"), /"contentVersion":\s*"chapter-1"/);
-  assert.match(await readFile(value.project, "utf8"), /"graphicsTier":\s*"gpu-effects"/);
-  assert.match(await readFile(value.project, "utf8"), /"engineCompatibility"/);
-  assert.match(await readFile(join(value.root, "Content/game.pxgame"), "utf8"), /"scope":\s*"session"/);
-  assert.equal((await stat(join(backup, "project.pxproject"))).isFile(), true);
-});
-
-test("migrate imports lossless TypedDocument project, catalog, and UI resources", async () => {
-  const root = await mkdtemp(join(tmpdir(), "prismatix-cli-typed-migration-"));
-  const project = join(root, "project.pxproject");
-  const projectId = "11111111-1111-4111-8111-111111111111";
-  const rootId = "22222222-2222-4222-8222-222222222222";
-  const variableId = "33333333-3333-4333-8333-333333333333";
-  await write(project, `@pxproject 4 ${projectId} PrismatiXProject
-name = "Typed Project"
-version = "0.1.0"
-saveVersion = 1
-width = 1280
-height = 720
-entry = object("story", "main", "ui", "title")
-defaultLocale = "en"
-supportedLocales = array("en")
-storyIndex = "Story/story.pxindex"
-gameCatalog = "Content/Game.pxres"
-extensions = array()
-uiEntryPoints = object("title", "Content/UI/Title.pxscene")
-`);
-  await write(join(root, "Story/story.pxindex"), JSON.stringify({
-    format: "PrismatiXStoryIndex", schemaRevision: 1, id: "main", entryScene: "main",
-    chapters: [{id: "chapter", title: "Chapter", scenes: ["main"]}],
-    scenes: [{id: "main", sources: {en: "Story/main.pxstory"}}],
-  }));
-  await write(join(root, "Story/main.pxstory"), "Typed migration.\n[end]\n");
-  await write(join(root, "Content/Game.pxres"), `@pxresource 4 ${projectId} GameCatalog
-
-[node "${variableId}", "", "route", "Variable"]
-name = "route"
-default = "common"
-persistent = false
-`);
-  await write(join(root, "Content/UI/Title.pxscene"), `@pxscene 4 ${projectId} UIScene
-uiSchemaVersion = 5
-canvasSize = vec2(1280, 720)
-
-[node "${rootId}", "", "Root", "Control"]
-`);
-  await write(join(root, "Content/Localization/en.json"), JSON.stringify({title: "Typed"}));
-
-  const migrated = run(["migrate", project, "--content-version", "chapter-1", "--write",
-    "--backup", join(root, "backup")]);
-  assert.equal(migrated.status, 0, migrated.stderr);
-  const canonicalProject = JSON.parse(await readFile(project, "utf8")) as Record<string, unknown>;
-  assert.equal(canonicalProject.format, "PrismatiXProject");
-  assert.equal(canonicalProject.contentVersion, "chapter-1");
-  const game = JSON.parse(await readFile(join(root, "Content/Game.pxres"), "utf8")) as {
-    format: string; variables: Array<{name: string; type: string; default: unknown; scope: string}>;
-  };
-  assert.deepEqual(game, {format: "PrismatiXGame", schemaRevision: 2,
-    variables: [{name: "route", type: "string", default: "common", scope: "session"}],
-    gallery: [], unlockables: []});
-  const ui = JSON.parse(await readFile(join(root, "Content/UI/Title.pxscene"), "utf8")) as {
-    format: string; width: number; height: number; rootId: string;
-  };
-  assert.deepEqual({format: ui.format, width: ui.width, height: ui.height, rootId: ui.rootId},
-    {format: "PrismatiXUIScene", width: 1280, height: 720, rootId});
-  const validated = run(["validate", project]);
-  assert.equal(validated.status, 0, validated.stderr);
-});
-
-test("migrate refuses lossy fields and reports their exact source span", async () => {
-  const value = await fixture(true);
-  const project = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
-  project.studioUi = {legacy: true};
-  const authored = `${JSON.stringify(project, null, 2)}\n`;
-  await write(value.project, authored);
-  const migrated = run(["migrate", value.project, "--content-version", "chapter-1"]);
-  assert.equal(migrated.status, 1, migrated.stderr);
-  const report = JSON.parse(migrated.stdout) as {
-    diagnostics: Array<{code: string; span?: {path: string; start: {line: number; column: number; offset: number}; end: {line: number; column: number; offset: number}}}>;
-  };
-  const issue = report.diagnostics.find((value) => value.code === "PXMIG2004");
-  assert.ok(issue?.span);
-  assert.equal(issue.span.path, value.project);
-  assert.ok(issue.span.start.line > 1 && issue.span.end.offset > issue.span.start.offset);
-  assert.equal(await readFile(value.project, "utf8"), authored);
-});
-
-test("migrate pinpoints the non-string value in an unsafe legacy locale", async () => {
-  const value = await fixture(true);
-  const localePath = join(value.root, "Content/Localization/en.json");
-  const authored = "{\n  \"welcome\": \"Hello\",\n  \"broken\": 42\n}\n";
-  await write(localePath, authored);
-  const migrated = run(["migrate", value.project, "--content-version", "chapter-1"]);
-  assert.equal(migrated.status, 1, migrated.stderr);
-  const report = JSON.parse(migrated.stdout) as {
-    diagnostics: Array<{code: string; span?: {path: string; start: {line: number; column: number; offset: number}; end: {line: number; column: number; offset: number}}}>;
-  };
-  const issue = report.diagnostics.find((value) => value.code === "PXMIG2003");
-  assert.ok(issue?.span);
-  assert.equal(issue.span.path, localePath);
-  assert.equal(issue.span.start.line, 3);
-  assert.equal(authored.slice(issue.span.start.offset, issue.span.end.offset), "42");
-  assert.equal(await readFile(localePath, "utf8"), authored);
-});
-
 test("inspect-save cannot accept a JS-hashed envelope without the authoritative native validator", async () => {
   const root = await mkdtemp(join(tmpdir(), "prismatix-save-inspect-"));
   const path = join(root, "save.pxsav");
   const envelope: Record<string, unknown> = {
-    format: "PrismatiXSave", schemaRevision: 4, engineVersion: "0.2.0",
+    format: "PrismatiXSave", schemaRevision: 1, engineVersion: "0.2.0",
     gameId: "cli-sample", packageFingerprint: "a".repeat(64),
     contentVersion: "chapter-1", saveVersion: 1,
     anchor: {runtimeDocumentId: "main", sourceId: "line", operationId: "operation"},

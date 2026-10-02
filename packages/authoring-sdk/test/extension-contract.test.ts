@@ -14,7 +14,7 @@ const safety = {
 function manifest(overrides: Partial<ExtensionManifest> = {}): ExtensionManifest {
   return {
     format: "PrismatiXExtension",
-    schemaRevision: 2,
+    schemaRevision: 1,
     language: "javascript",
     id: "contract-test",
     version: "1.0.0",

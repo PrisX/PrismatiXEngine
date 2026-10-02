@@ -10,7 +10,7 @@ if(NOT DEFINED INPUT_FILE)
 endif()
 
 file(TO_CMAKE_PATH "${FIXTURE_ROOT}" PROJECT_ROOT)
-set(ENVELOPE "\"protocol\":\"PrismatiXPreviewProtocol\",\"schemaRevision\":2,\"protocolVersion\":2,\"sessionId\":\"asset-resource-session\"")
+set(ENVELOPE "\"protocol\":\"PrismatiXPreviewProtocol\",\"schemaRevision\":1,\"protocolVersion\":1,\"sessionId\":\"asset-resource-session\"")
 set(INPUT "{\"type\":\"hello\",${ENVELOPE},\"requestId\":\"hello-assets\",\"documentId\":\"\",\"revision\":0}\n")
 string(APPEND INPUT "{\"type\":\"applyRuntimeIr\",${ENVELOPE},\"requestId\":\"apply-assets\",\"documentId\":\"asset-resource-document\",\"revision\":1,\"projectRoot\":\"${PROJECT_ROOT}\",\"committedRevision\":1,\"irPath\":\"unresolved-asset.pxir\"}\n")
 string(APPEND INPUT "{\"type\":\"applyUiScene\",${ENVELOPE},\"requestId\":\"apply-component\",\"documentId\":\"60606060-6060-4060-8060-606060606060\",\"revision\":7,\"projectRoot\":\"${PROJECT_ROOT}\",\"sceneId\":\"60606060-6060-4060-8060-606060606060\",\"uiPath\":\"Content/UI/ComponentScene.pxui\"}\n")

@@ -41,7 +41,7 @@ import type {
 
 export interface ProjectDocument {
   readonly format: "PrismatiXProject";
-  readonly schemaRevision: 2;
+  readonly schemaRevision: 1;
   readonly id: string;
   readonly name: string;
   readonly version: string;
@@ -88,7 +88,7 @@ export interface CustomEffectUniform {
 
 export interface CustomEffectDocument {
   readonly format: "PrismatiXEffect";
-  readonly schemaRevision: 2 | 3;
+  readonly schemaRevision: 1;
   readonly id: string;
   readonly targetLayer: "stage" | "node" | "transition";
   readonly shader: string;
@@ -121,7 +121,7 @@ export type SaveMigrationAnchorPolicy =
 
 export interface SaveMigrationDocument {
   readonly format: "PrismatiXSaveMigration";
-  readonly schemaRevision: 2;
+  readonly schemaRevision: 1;
   readonly id: string;
   readonly from: SaveMigrationVersion;
   readonly to: SaveMigrationVersion;
@@ -730,12 +730,6 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       diagnostics.push(locatedIssue("PXBUILD1022",
         "Custom effect HLSL source is missing or has the wrong extension",
         effect.shader, "/shader", effect.shader, undefined, descriptor.source));
-      continue;
-    }
-    if (effect.schemaRevision === 2 && effect.targetLayer !== "stage") {
-      diagnostics.push(locatedIssue("PXBUILD1024",
-        "Effect schema revision 2 only supports the Stage post-processing target",
-        descriptor.source, "/targetLayer", effect.targetLayer, effect.id));
       continue;
     }
     const uniformNames = new Set<string>();

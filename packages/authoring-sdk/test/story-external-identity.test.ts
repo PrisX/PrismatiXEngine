@@ -8,7 +8,7 @@ import {compileProject, compileStoryProject, externalizeStoryIds,
 const sourcePath = "Story/en/main.pxstory";
 const mapPath = `${sourcePath}.pxids.json`;
 const storyIndex: StoryIndexDocument = {
-  format: "PrismatiXStoryIndex", schemaRevision: 2, id: "story", entryScene: "main",
+  format: "PrismatiXStoryIndex", schemaRevision: 1, id: "story", entryScene: "main",
   chapters: [{id: "chapter", title: "Chapter", scenes: ["main"]}],
   scenes: [{id: "main", identityNamespace: "legacy:main",
     sources: {en: sourcePath}}],

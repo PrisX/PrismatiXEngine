@@ -1,6 +1,6 @@
 {
   "format": "PrismatiXGame",
-  "schemaRevision": 2,
+  "schemaRevision": 1,
   "variables": [
     {"name": "affinity", "type": "integer", "default": 7, "scope": "profile"}
   ],

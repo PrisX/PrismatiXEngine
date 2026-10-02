@@ -17,7 +17,7 @@ constexpr std::string_view kMusicLoopId = "66666666-6666-4666-8666-666666666666"
 std::string Manifest() {
     return R"({
   "format":"PrismatiXProject",
-  "schemaRevision":2,
+  "schemaRevision":1,
   "assets":[
     {"id":"11111111-1111-4111-8111-111111111111","kind":"background","source":"Assets/bg.png"},
     {"id":"22222222-2222-4222-8222-222222222222","kind":"transition","source":"Assets/rule.png"},

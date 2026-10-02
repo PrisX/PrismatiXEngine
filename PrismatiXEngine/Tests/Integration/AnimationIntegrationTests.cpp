@@ -97,7 +97,7 @@ void TestUnifiedTimelineAndPresets() {
     Check(player.RestoreState(state) && player.Playing(handle), "timeline playback should restore its exact mid-animation state");
     const std::string encoded = px::animation::WriteAnimationClip(clip);
     auto decoded = px::animation::ParseAnimationClip(encoded, "memory.pxanim");
-    Check(decoded && decoded.Value().id == clip.id && decoded.Value().tracks.size() == 1 && encoded.find("\"schemaRevision\": 2") != std::string::npos && encoded.find("easeInOut") != std::string::npos, ".pxanim schema 2 version 4 should round-trip canonical typed keyframes exactly");
+    Check(decoded && decoded.Value().id == clip.id && decoded.Value().tracks.size() == 1 && encoded.find("\"schemaRevision\": 1") != std::string::npos && encoded.find("easeInOut") != std::string::npos, ".pxanim schema 2 version 4 should round-trip canonical typed keyframes exactly");
     auto unknownAnimation = nlohmann::json::parse(encoded);
     unknownAnimation["legacy"] = true;
     Check(!px::animation::ParseAnimationClip(unknownAnimation.dump(), "unknown-field.pxanim"), ".pxanim parsing must reject unknown fields instead of silently dropping them");
@@ -258,7 +258,7 @@ void TestTimelinePlaybackContract() {
 void TestStageMotionStoryPlaybackAndRestore() {
     px::test::TempDirectory temp("stage-motion-story");
     constexpr auto motion = R"({
-      "format":"PrismatiXMotion","schemaRevision":7,"id":"stage-intro",
+      "format":"PrismatiXMotion","schemaRevision":1,"id":"stage-intro",
       "canvas":{"width":320,"height":120},"duration":1,"loop":false,
       "layers":[{"id":"root","kind":"group"}],"tracks":[],
       "markers":[{"id":"chime","time":0.5,"audio":"chime.ogg","bus":"se"}]})";
@@ -303,7 +303,7 @@ void TestStageMotionStoryPlaybackAndRestore() {
 
     px::RuntimeSession runtime({vfs, audio, renderer, assets});
     const nlohmann::json ir{
-        {"format", "PrismatiXRuntimeIR"}, {"schemaRevision", 2},
+        {"format", "PrismatiXRuntimeIR"}, {"schemaRevision", 1},
         {"documentId", "motion-story"}, {"committedRevision", 0},
         {"operations", nlohmann::json::array({
             {{"operationId", "motion"}, {"sourceId", "motion"},
@@ -333,7 +333,7 @@ void TestStageMotionStoryPlaybackAndRestore() {
 
     px::RuntimeSession cameraRuntime({vfs, audio, renderer, assets});
     const nlohmann::json cameraIr{
-        {"format", "PrismatiXRuntimeIR"}, {"schemaRevision", 2},
+        {"format", "PrismatiXRuntimeIR"}, {"schemaRevision", 1},
         {"documentId", "camera-story"}, {"committedRevision", 0},
         {"operations", nlohmann::json::array({
             {{"operationId", "pan"}, {"sourceId", "pan"},
@@ -365,7 +365,7 @@ void TestStageMotionStoryPlaybackAndRestore() {
                               {"text", ""}, {"arguments", std::move(arguments)}};
     };
     const nlohmann::json framingIr{
-        {"format", "PrismatiXRuntimeIR"}, {"schemaRevision", 2},
+        {"format", "PrismatiXRuntimeIR"}, {"schemaRevision", 1},
         {"documentId", "framing-story"}, {"committedRevision", 0},
         {"operations", nlohmann::json::array({
             op("frame", "background", {{"asset", "wide.png"}, {"transition", "false"},
@@ -434,7 +434,7 @@ void TestCanonicalTimelineRuntime() {
     }
     const nlohmann::json timeline{
         {"format", "PrismatiXTimeline"},
-        {"schemaRevision", 2},
+        {"schemaRevision", 1},
         {"id", "chapter01.intro"},
         {"name", "Chapter intro"},
         {"duration", 2.0},

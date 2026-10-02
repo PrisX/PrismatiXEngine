@@ -998,9 +998,9 @@ int main() {
     constexpr std::string_view localizedCharacterId =
         "11111111-1111-4111-8111-111111111111";
     const auto localizedCatalogStatus = localizedCatalog.LoadCharacterResources(
-        R"({"format":"PrismatiXProject","schemaRevision":2,"assets":[],"characters":[{"id":"11111111-1111-4111-8111-111111111111","displayName":"凛","source":"Characters/rin.pxcharacter"}]})",
+        R"({"format":"PrismatiXProject","schemaRevision":1,"assets":[],"characters":[{"id":"11111111-1111-4111-8111-111111111111","displayName":"凛","source":"Characters/rin.pxcharacter"}]})",
         [](std::string_view) -> std::optional<std::string> {
-            return R"({"format":"PrismatiXCharacter","schemaRevision":2,"id":"11111111-1111-4111-8111-111111111111","displayName":"凛","displayNames":{"ja-JP":"リン"},"expressions":[]})";
+            return R"({"format":"PrismatiXCharacter","schemaRevision":1,"id":"11111111-1111-4111-8111-111111111111","displayName":"凛","displayNames":{"ja-JP":"リン"},"expressions":[]})";
         },
         [](std::string_view) { return false; }, charactersDeclared);
     assert(localizedCatalogStatus.IsOk());

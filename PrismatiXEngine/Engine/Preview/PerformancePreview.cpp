@@ -313,7 +313,7 @@ Result<PerformancePreviewSequence> BuildPerformancePreviewSequence(
     const Json manifest = Json::parse(projectManifestJson, nullptr, false);
     if (document.is_discarded() || !document.is_object() ||
         document.value("format", std::string{}) != "PrismatiXPerformance" ||
-        document.value("schemaRevision", 0U) != 2U ||
+        document.value("schemaRevision", 0U) != 1U ||
         document.value("sceneId", std::string{}) != expectedSceneId ||
         !document.contains("revision") ||
         !document["revision"].is_number_unsigned() ||

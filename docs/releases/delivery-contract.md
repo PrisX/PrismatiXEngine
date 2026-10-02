@@ -17,9 +17,9 @@ Mobile and console targets are not supported by this release.
   of native ABI compatibility.
 - Package archives remain PDX5. The 0.2 writer streams content with bounded
   buffers; the on-disk header, index and reader contract are unchanged.
-- Project, Runtime IR, source-map, UI and extension documents use schema
-  revision 2. Older documents are accepted only through explicit migration
-  entry points.
+- Every document format and wire contract (project, Runtime IR, source map,
+  UI, extension, preview protocol and the rest) is at revision 1. Only
+  revision 1 is accepted; there is no migration of other revisions.
 - Save compatibility is declared by `contentVersion`, `saveVersion`, stable
   persistence identity and packaged migration chains. A release update must
   pass the V1-to-V2 package/save journey before publication.

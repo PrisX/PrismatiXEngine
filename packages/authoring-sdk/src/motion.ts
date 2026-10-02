@@ -12,7 +12,7 @@ interface MotionLayerBase {
   readonly id: string;
   readonly parent?: string;
   readonly z?: number;
-  /** Pivot in image-size units; revision 11 allows a pivot outside [0, 1]. */
+  /** Pivot in image-size units; a pivot may lie outside [0, 1]. */
   readonly anchorX?: number;
   readonly anchorY?: number;
   readonly x?: number;
@@ -20,14 +20,14 @@ interface MotionLayerBase {
   readonly scaleX?: number;
   readonly scaleY?: number;
   readonly rotation?: number;
-  /** Local time = parent-local time × timeScale + timeOffset. Revision 7. */
+  /** Local time = parent-local time × timeScale + timeOffset. */
   readonly timeOffset?: number;
   readonly timeScale?: number;
   readonly opacity?: number;
-  /** Disable the parent's rotation/scale independently. Revision 9. */
+  /** Disable the parent's rotation/scale independently. */
   readonly inheritRotation?: boolean;
   readonly inheritScale?: boolean;
-  /** Inherited multiplicatively by child layers. Requires revision 8. */
+  /** Inherited multiplicatively by child layers. */
   readonly tint?: MotionTint;
   readonly visible?: boolean;
 }
@@ -36,18 +36,18 @@ export interface MotionImageLayer extends MotionLayerBase {
   readonly kind?: "image";
   readonly image: string;
   /** Pixel rectangles within image; frame tracks select an index without
-   * loading a new texture on each key. Requires schema revision 2. */
+   * loading a new texture on each key. */
   readonly frames?: readonly MotionFrame[];
   /** Another animated layer whose alpha clips this layer. Mask sources are
-   * not painted independently. Requires revision 6. */
+   * not painted independently. */
   readonly mask?: string;
-  /** Normal alpha, additive light, or multiplicative tint. Revision 4. */
+  /** Normal alpha, additive light, or multiplicative tint. */
   readonly blendMode?: "normal" | "additive" | "multiply";
   readonly width: number;
   readonly height: number;
 }
 
-/** Invisible transform/time parent for inlined sub-timelines. Revision 7. */
+/** Invisible transform/time parent for inlined sub-timelines. */
 export interface MotionGroupLayer extends MotionLayerBase {
   readonly kind: "group";
   readonly image?: never;
@@ -149,7 +149,7 @@ export interface MotionInput {
   readonly id: string;
   readonly canvas: {readonly width: number; readonly height: number};
   readonly duration: number;
-  /** Revision 10: all authored times are ticks at this rate per second. */
+  /** All authored times are ticks at this rate per second. */
   readonly tickRate?: number;
   readonly loop?: boolean;
   readonly scaleMode?: "fit" | "fill" | "stretch";
@@ -161,35 +161,19 @@ export interface MotionInput {
 
 export interface MotionDocument extends MotionInput {
   readonly format: "PrismatiXMotion";
-  readonly schemaRevision: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
+  readonly schemaRevision: 1;
   readonly loop: boolean;
   readonly tracks: readonly MotionTrack[];
   readonly markers?: readonly MotionAudioMarker[];
 }
 
-/** Author a deterministic image-layer .pxmotion clip. Atlas frames use
- * revision 2, audio markers revision 3, blend modes revision 4, and cubic
- * timing curves revision 5, layer alpha masks revision 6, and local-time
- * transform groups revision 7, inherited RGB tint revision 8, and selective
- * parent rotation/scale inheritance revision 9.
+/** Author a deterministic image-layer .pxmotion clip: atlas frames, audio
+ * markers, blend modes, cubic timing curves, layer alpha masks, local-time
+ * transform groups, inherited RGB tint, selective parent rotation/scale
+ * inheritance, tick rates and external anchors.
  * Blur and nested motion remain unsupported. */
 export function defineMotion(input: MotionInput): Result<MotionDocument> {
-  const atlas = input.layers.some((layer) => layer.frames !== undefined) ||
-    input.tracks?.some((track) => track.property === "frame") === true;
   const hasMarkers = (input.markers?.length ?? 0) > 0;
-  const hasBlendModes = input.layers.some((layer) => layer.blendMode !== undefined);
-  const hasBezier = input.tracks?.some((track) => track.keys.some((key) =>
-    key.curve === "cubicBezier" || key.bezier !== undefined)) === true;
-  const hasMasks = input.layers.some((layer) => layer.mask !== undefined);
-  const hasLocalTime = input.layers.some((layer) => layer.kind === "group" ||
-    layer.timeOffset !== undefined || layer.timeScale !== undefined);
-  const hasTint = input.layers.some((layer) => layer.tint !== undefined) ||
-    input.tracks?.some((track) => track.property === "tint") === true;
-  const hasSelectiveInheritance = input.layers.some((layer) =>
-    layer.inheritRotation !== undefined || layer.inheritScale !== undefined);
-  const hasExternalAnchor = input.layers.some((layer) =>
-    (layer.anchorX !== undefined && (layer.anchorX < 0 || layer.anchorX > 1)) ||
-    (layer.anchorY !== undefined && (layer.anchorY < 0 || layer.anchorY > 1)));
   const usedMarkerIds = new Set(input.markers?.flatMap((marker) =>
     marker.id === undefined ? [] : [marker.id]) ?? []);
   const markers = input.markers?.map((marker, index) => {
@@ -202,8 +186,7 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
   });
   const document: MotionDocument = {
     format: "PrismatiXMotion",
-    schemaRevision: hasExternalAnchor ? 11 : input.tickRate !== undefined ? 10 : hasSelectiveInheritance ? 9 : hasTint ? 8 : hasLocalTime ? 7 : hasMasks ? 6 : hasBezier ? 5 : hasBlendModes ? 4 :
-      hasMarkers ? 3 : atlas ? 2 : 1,
+    schemaRevision: 1,
     id: input.id,
     canvas: input.canvas,
     duration: input.duration,
@@ -296,7 +279,7 @@ export interface InlineMotionOptions {
   readonly visible?: boolean;
 }
 
-/** Inline one non-looping motion under a revision-7 transform/time group.
+/** Inline one non-looping motion under a transform/time group.
  * Child IDs, mask references, tracks and audio markers are rebased together.
  * The child canvas remains in its authored logical units; use scaleX/scaleY
  * when placing it in a differently sized parent canvas. The group becomes

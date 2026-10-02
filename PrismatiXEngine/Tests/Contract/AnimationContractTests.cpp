@@ -159,13 +159,13 @@ int main() {
         suite.Expect(!px::sdk::ParseMotion(
             R"({"format":7,"schemaRevision":1,"id":"bad"})").Valid() &&
                          !px::sdk::ParseMotion(
-            R"({"format":"PrismatiXMotion","schemaRevision":18446744073709551615,"id":"bad"})").Valid(),
-                     "malformed motion format and huge revisions report diagnostics");
+            R"({"format":"PrismatiXMotion","schemaRevision":2,"id":"bad"})").Valid(),
+                     "malformed motion format and unsupported revisions report diagnostics");
     });
 
-    suite.Run("MotionClip_LayerBlendModesAreVersionedAndValidated", [&] {
+    suite.Run("MotionClip_LayerBlendModesAreValidated", [&] {
         constexpr auto source = R"({
-          "format":"PrismatiXMotion","schemaRevision":4,"id":"blend",
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"blend",
           "canvas":{"width":320,"height":120},"duration":1,"loop":false,
           "layers":[
             {"id":"base","image":"Assets/base.png","width":100,"height":100},
@@ -178,12 +178,7 @@ int main() {
             px::sdk::MotionBlendMode::Normal && parsed.clip->layers[1].blendMode ==
             px::sdk::MotionBlendMode::Additive && parsed.clip->layers[2].blendMode ==
             px::sdk::MotionBlendMode::Multiply,
-            "revision-4 blend modes parse without changing ordinary layers");
-        auto oldRevision = std::string(source);
-        oldRevision.replace(oldRevision.find("\"schemaRevision\":4"),
-            std::string("\"schemaRevision\":4").size(), "\"schemaRevision\":3");
-        suite.Expect(!px::sdk::ParseMotion(oldRevision).Valid(),
-            "older motion revisions reject blendMode rather than ignoring it");
+            "blend modes parse without changing ordinary layers");
         auto invalid = std::string(source);
         invalid.replace(invalid.find("\"additive\""),
             std::string("\"additive\"").size(), "\"screen\"");
@@ -191,9 +186,9 @@ int main() {
             "unsupported blend mode fails closed");
     });
 
-    suite.Run("MotionClip_AlphaMasksAreVersionedAndValidated", [&] {
+    suite.Run("MotionClip_AlphaMasksAreValidated", [&] {
         constexpr auto source = R"({
-          "format":"PrismatiXMotion","schemaRevision":6,"id":"masked",
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"masked",
           "canvas":{"width":320,"height":120},"duration":1,"loop":false,
           "layers":[
             {"id":"content","image":"Assets/content.png","width":100,
@@ -204,7 +199,7 @@ int main() {
             {"time":0,"value":10,"curve":"linear"},
             {"time":1,"value":30,"curve":"linear"}]}]})";
         const auto parsed = px::sdk::ParseMotion(source);
-        suite.Require(parsed.Valid(), "revision-6 mask reference parses");
+        suite.Require(parsed.Valid(), "mask reference parses");
         suite.Expect(parsed.clip->layers[0].mask == 1 &&
                      parsed.clip->maskSource[1] && !parsed.clip->maskSource[0],
                      "mask source is identified without adding a dependency kind");
@@ -212,10 +207,6 @@ int main() {
         sampler.Seek(0.5);
         suite.Expect(std::abs(sampler.LayerPose(1).transform.tx - 20) < 0.001,
                      "mask layer follows the same deterministic clock");
-        auto old = nlohmann::json::parse(source);
-        old["schemaRevision"] = 5;
-        suite.Expect(!px::sdk::ParseMotion(old.dump()).Valid(),
-                     "older revisions reject mask instead of ignoring it");
         auto unknown = nlohmann::json::parse(source);
         unknown["layers"][0]["mask"] = "missing";
         suite.Expect(!px::sdk::ParseMotion(unknown.dump()).Valid(),
@@ -232,7 +223,7 @@ int main() {
 
     suite.Run("MotionClip_GroupsRemapChildTimeWithoutDrawing", [&] {
         constexpr auto source = R"({
-          "format":"PrismatiXMotion","schemaRevision":7,"id":"subtimeline",
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"subtimeline",
           "canvas":{"width":320,"height":120},"duration":1,"loop":false,
           "layers":[
             {"id":"group","kind":"group","x":100,"y":30,
@@ -243,7 +234,7 @@ int main() {
             {"time":0,"value":0,"curve":"linear"},
             {"time":1,"value":100,"curve":"linear"}]}]})";
         const auto parsed = px::sdk::ParseMotion(source);
-        suite.Require(parsed.Valid(), "revision-7 group and local time parse");
+        suite.Require(parsed.Valid(), "group and local time parse");
         suite.Expect(parsed.clip->layers[0].kind == px::sdk::MotionLayerKind::Group &&
                      px::sdk::MotionDependencies(*parsed.clip) ==
                          std::vector<std::string>{"Assets/mark.png"},
@@ -272,21 +263,11 @@ int main() {
         longerLocalTrack["tracks"][0]["keys"][1]["value"] = 200;
         const auto longerParsed = px::sdk::ParseMotion(longerLocalTrack.dump());
         suite.Require(longerParsed.Valid(),
-                      "revision-7 local keys may exceed root duration");
+                      "local keys may exceed root duration");
         px::sdk::MotionSampler longerSampler(*longerParsed.clip);
         longerSampler.Seek(1);
         suite.Expect(std::abs(longerSampler.LayerPose(1).transform.tx - 300) < 0.001,
                      "two-second child key is reached on one-second root clock");
-        auto oldLongerTrack = longerLocalTrack;
-        oldLongerTrack["schemaRevision"] = 6;
-        oldLongerTrack["layers"].erase(oldLongerTrack["layers"].begin());
-        oldLongerTrack["layers"][0].erase("parent");
-        suite.Expect(!px::sdk::ParseMotion(oldLongerTrack.dump()).Valid(),
-                     "revision-6 keys remain bounded by root duration");
-        auto old = nlohmann::json::parse(source);
-        old["schemaRevision"] = 6;
-        suite.Expect(!px::sdk::ParseMotion(old.dump()).Valid(),
-                     "older revisions reject local clocks and groups");
         auto drawableGroup = nlohmann::json::parse(source);
         drawableGroup["layers"][0]["image"] = "Assets/invalid.png";
         suite.Expect(!px::sdk::ParseMotion(drawableGroup.dump()).Valid(),
@@ -299,7 +280,7 @@ int main() {
 
     suite.Run("MotionClip_TickRateNormalizesEveryTimelineField", [&] {
         constexpr auto source = R"({
-          "format":"PrismatiXMotion","schemaRevision":10,"id":"tick-clock",
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"tick-clock",
           "canvas":{"width":320,"height":120},"duration":90,"tickRate":60,"loop":false,
           "layers":[
             {"id":"group","kind":"group","x":10,"timeOffset":-15,"timeScale":2},
@@ -310,7 +291,7 @@ int main() {
             {"time":120,"value":120,"curve":"linear"}]}],
           "markers":[{"id":"cue","time":30,"audio":"Assets/cue.ogg","bus":"se"}]})";
         const auto parsed = px::sdk::ParseMotion(source);
-        suite.Require(parsed.Valid(), "revision-10 tick timeline parses");
+        suite.Require(parsed.Valid(), "tick timeline parses");
         suite.Expect(std::abs(parsed.clip->duration - 1.5) < 0.001 &&
                      std::abs(parsed.clip->layers[0].timeOffset + 0.25) < 0.001 &&
                      std::abs(parsed.clip->tracks[0].keys[1].time - 2) < 0.001 &&
@@ -320,14 +301,6 @@ int main() {
         sampler.Seek(0.5);
         suite.Expect(std::abs(sampler.LayerPose(1).transform.tx - 55) < 0.001,
                      "nested tick track plays on the parent-local clock");
-        auto oldRevision = nlohmann::json::parse(source);
-        oldRevision["schemaRevision"] = 9;
-        suite.Expect(!px::sdk::ParseMotion(oldRevision.dump()).Valid(),
-                     "tickRate is forbidden before revision 10");
-        auto missingRate = nlohmann::json::parse(source);
-        missingRate.erase("tickRate");
-        suite.Expect(!px::sdk::ParseMotion(missingRate.dump()).Valid(),
-                     "revision 10 requires tickRate");
         auto invalidRate = nlohmann::json::parse(source);
         invalidRate["tickRate"] = 0;
         suite.Expect(!px::sdk::ParseMotion(invalidRate.dump()).Valid(),
@@ -344,12 +317,6 @@ int main() {
         excessiveKey["tracks"][0]["keys"][1]["time"] = 86401 * 60;
         suite.Expect(!px::sdk::ParseMotion(excessiveKey.dump()).Valid(),
                      "normalized local key remains capped at one day");
-        auto legacyDuration = nlohmann::json::parse(source);
-        legacyDuration["schemaRevision"] = 9;
-        legacyDuration.erase("tickRate");
-        legacyDuration["duration"] = 86401;
-        suite.Expect(!px::sdk::ParseMotion(legacyDuration.dump()).Valid(),
-                     "old revisions retain their seconds-based duration limit");
         auto fractionalTick = nlohmann::json::parse(source);
         fractionalTick["duration"] = 0.000000001;
         fractionalTick["tickRate"] = 0.001;
@@ -366,29 +333,25 @@ int main() {
 
     suite.Run("MotionClip_ExternalAnchorWorksWithSecondsOrTicks", [&] {
         constexpr auto source = R"({
-          "format":"PrismatiXMotion","schemaRevision":11,"id":"pivot",
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"pivot",
           "canvas":{"width":100,"height":100},"duration":1,"loop":false,
           "layers":[{"id":"glyph","image":"Assets/glyph.png","width":16,
              "height":3,"x":8,"anchorX":0.5,"anchorY":-0.3333333333333333}],
           "tracks":[]})";
         const auto parsed = px::sdk::ParseMotion(source);
-        suite.Require(parsed.Valid(), "revision-11 external anchor parses in seconds");
+        suite.Require(parsed.Valid(), "external anchor parses in seconds");
         px::sdk::MotionSampler sampler(*parsed.clip);
         sampler.Seek(0);
         suite.Expect(std::abs(sampler.LayerPose(0).transform.tx) < 0.001 &&
                      std::abs(sampler.LayerPose(0).transform.ty - 1) < 0.001,
                      "pivot above an image shifts its drawn top edge below the layer origin");
-        auto older = nlohmann::json::parse(source);
-        older["schemaRevision"] = 9;
-        suite.Expect(!px::sdk::ParseMotion(older.dump()).Valid(),
-                     "older revisions keep anchors inside the image");
         auto ticked = nlohmann::json::parse(source);
         ticked["tickRate"] = 60;
         ticked["duration"] = 60;
         const auto tickParsed = px::sdk::ParseMotion(ticked.dump());
-        suite.Require(tickParsed.Valid(), "revision 11 can also use ticks");
+        suite.Require(tickParsed.Valid(), "can also use ticks");
         suite.Expect(std::abs(tickParsed.clip->duration - 1) < 0.001,
-                     "revision-11 tick timing is normalized for playback");
+                     "tick timing is normalized for playback");
         auto extreme = nlohmann::json::parse(source);
         extreme["layers"][0]["anchorY"] = -17;
         suite.Expect(!px::sdk::ParseMotion(extreme.dump()).Valid(),
@@ -397,7 +360,7 @@ int main() {
 
     suite.Run("MotionClip_RgbTintInterpolatesAndInheritsIndependentlyOfAlpha", [&] {
         constexpr auto source = R"({
-          "format":"PrismatiXMotion","schemaRevision":8,"id":"tinted",
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"tinted",
           "canvas":{"width":100,"height":100},"duration":1,"loop":false,
           "layers":[
             {"id":"parent","kind":"group","tint":{"r":0.8,"g":0.5,"b":1}},
@@ -407,7 +370,7 @@ int main() {
             {"time":0,"value":{"r":1,"g":1,"b":1},"curve":"linear"},
             {"time":1,"value":{"r":1,"g":0,"b":0},"curve":"linear"}]}]})";
         const auto parsed = px::sdk::ParseMotion(source);
-        suite.Require(parsed.Valid(), "revision-8 RGB tint parses");
+        suite.Require(parsed.Valid(), "RGB tint parses");
         px::sdk::MotionSampler sampler(*parsed.clip);
         sampler.Seek(0.5);
         const auto& child = sampler.LayerPose(1);
@@ -416,10 +379,6 @@ int main() {
                      std::abs(child.tint.b - 0.5) < 0.000001 &&
                      std::abs(child.opacity - 0.75) < 0.000001,
                      "child RGB is interpolated then multiplied by parent tint without changing alpha");
-        auto older = nlohmann::json::parse(source);
-        older["schemaRevision"] = 7;
-        suite.Expect(!px::sdk::ParseMotion(older.dump()).Valid(),
-                     "revision-7 clips reject tint instead of silently ignoring it");
         auto invalid = nlohmann::json::parse(source);
         invalid["tracks"][0]["keys"][0]["value"]["g"] = 1.1;
         suite.Expect(!px::sdk::ParseMotion(invalid.dump()).Valid(),
@@ -428,7 +387,7 @@ int main() {
 
     suite.Run("MotionClip_SelectiveParentRotationAndScaleInheritance", [&] {
         constexpr auto source = R"({
-          "format":"PrismatiXMotion","schemaRevision":9,"id":"inheritance",
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"inheritance",
           "canvas":{"width":100,"height":100},"duration":1,"loop":false,
           "layers":[
             {"id":"parent","kind":"group","x":40,"y":50,
@@ -444,7 +403,7 @@ int main() {
              "inheritScale":false}],
           "tracks":[]})";
         const auto parsed = px::sdk::ParseMotion(source);
-        suite.Require(parsed.Valid(), "revision-9 selective inheritance parses");
+        suite.Require(parsed.Valid(), "selective inheritance parses");
         px::sdk::MotionSampler sampler(*parsed.clip);
         sampler.Seek(0);
         const auto at = [&](std::size_t index, double x, double y) {
@@ -452,14 +411,10 @@ int main() {
             return std::abs(transform.tx - x) < 0.000001 &&
                 std::abs(transform.ty - y) < 0.000001;
         };
-        suite.Expect(at(1, 40, 70), "legacy child inherits full rotation and scale");
+        suite.Expect(at(1, 40, 70), "default child inherits full rotation and scale");
         suite.Expect(at(2, 60, 50), "child can inherit scale without rotation");
         suite.Expect(at(3, 40, 60), "child can inherit rotation without scale");
         suite.Expect(at(4, 50, 50), "child can keep parent translation alone");
-        auto older = nlohmann::json::parse(source);
-        older["schemaRevision"] = 8;
-        suite.Expect(!px::sdk::ParseMotion(older.dump()).Valid(),
-                     "revision-8 clips reject selective inheritance fields");
         auto invalid = nlohmann::json::parse(source);
         invalid["layers"][2]["inheritRotation"] = 0;
         suite.Expect(!px::sdk::ParseMotion(invalid.dump()).Valid(),
@@ -479,7 +434,7 @@ int main() {
 
     suite.Run("MotionClip_CubicBezierTimingMatchesAuthoredControlPoints", [&] {
         constexpr auto source = R"({
-          "format":"PrismatiXMotion","schemaRevision":5,"id":"eased",
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"eased",
           "canvas":{"width":320,"height":120},"duration":1,"loop":false,
           "layers":[{"id":"mark","image":"Assets/mark.png",
             "width":100,"height":100}],
@@ -488,7 +443,7 @@ int main() {
              "bezier":{"x1":0.1,"y1":0.8,"x2":0.4,"y2":0.9}},
             {"time":1,"value":1,"curve":"linear"}]}]})";
         const auto parsed = px::sdk::ParseMotion(source);
-        suite.Require(parsed.Valid(), "revision-5 cubic timing parses");
+        suite.Require(parsed.Valid(), "cubic timing parses");
         px::sdk::MotionSampler sampler(*parsed.clip);
         sampler.Seek(0.5);
         const double halfway = sampler.Pose()[0].opacity;
@@ -497,11 +452,6 @@ int main() {
         sampler.Seek(0.5);
         suite.Expect(std::abs(sampler.Pose()[0].opacity - halfway) < 0.0000001,
                      "cubic timing seek is deterministic");
-        auto oldRevision = std::string(source);
-        oldRevision.replace(oldRevision.find("\"schemaRevision\":5"),
-            std::string("\"schemaRevision\":5").size(), "\"schemaRevision\":4");
-        suite.Expect(!px::sdk::ParseMotion(oldRevision).Valid(),
-                     "older motion revisions reject cubic timing");
         auto missingControls = nlohmann::json::parse(source);
         missingControls["tracks"][0]["keys"][0].erase("bezier");
         suite.Expect(!px::sdk::ParseMotion(missingControls.dump()).Valid(),
@@ -512,9 +462,9 @@ int main() {
                      "cubic timing rejects invalid time control points");
     });
 
-    suite.Run("MotionClip_AtlasFrameTrackIsDiscreteAndVersioned", [&] {
+    suite.Run("MotionClip_AtlasFrameTrackIsDiscrete", [&] {
         constexpr auto source = R"({
-          "format":"PrismatiXMotion","schemaRevision":2,"id":"atlas",
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"atlas",
           "canvas":{"width":320,"height":120},"duration":1,"loop":false,
           "layers":[{"id":"logo","image":"Assets/logo-atlas.png",
             "width":120,"height":40,"frames":[
@@ -524,7 +474,7 @@ int main() {
             {"time":0,"value":0,"curve":"step"},
             {"time":0.5,"value":1,"curve":"step"}]}]})";
         auto parsed = px::sdk::ParseMotion(source);
-        suite.Expect(parsed.Valid(), "revision-2 atlas motion parses");
+        suite.Expect(parsed.Valid(), "atlas motion parses");
         if (!parsed.Valid()) return;
         px::sdk::MotionSampler sampler(*parsed.clip);
         sampler.Seek(0.25);
@@ -535,11 +485,6 @@ int main() {
         suite.Expect(sampler.Pose()[0].sourcePixels &&
                          sampler.Pose()[0].sourcePixels->x == 120,
                      "second atlas frame is selected after the step");
-        auto oldRevision = std::string(source);
-        oldRevision.replace(oldRevision.find("\"schemaRevision\":2"),
-            std::string("\"schemaRevision\":2").size(), "\"schemaRevision\":1");
-        suite.Expect(!px::sdk::ParseMotion(oldRevision).Valid(),
-                     "revision 1 does not silently reinterpret atlas fields");
         auto invalidFrame = std::string(source);
         invalidFrame.replace(invalidFrame.find("\"value\":1"),
             std::string("\"value\":1").size(), "\"value\":2");
@@ -563,16 +508,16 @@ int main() {
                      "native accepts integral numeric JSON like authoring validation");
     });
 
-    suite.Run("MotionClip_AudioMarkersAreVersionedAndPackaged", [&] {
+    suite.Run("MotionClip_AudioMarkersArePackaged", [&] {
         constexpr auto source = R"({
-          "format":"PrismatiXMotion","schemaRevision":3,"id":"logo",
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"logo",
           "canvas":{"width":320,"height":120},"duration":1,"loop":false,
           "layers":[{"id":"body","image":"Assets/body.png","width":100,"height":100}],
           "tracks":[],"markers":[
             {"id":"start","time":0,"audio":"Assets/Audio/start.ogg","bus":"se"},
             {"id":"voice","time":0.5,"audio":"Assets/Audio/voice.ogg","bus":"voice"}]})";
         const auto parsed = px::sdk::ParseMotion(source);
-        suite.Require(parsed.Valid(), "revision-3 motion audio markers parse");
+        suite.Require(parsed.Valid(), "motion audio markers parse");
         suite.Expect(parsed.clip->markers.size() == 2 &&
                          parsed.clip->markers[1].bus == px::sdk::MotionAudioBus::Voice,
                      "marker audio bus is typed");
@@ -580,12 +525,6 @@ int main() {
         suite.Expect(sounds == std::vector<std::string>{
                          "Assets/Audio/start.ogg", "Assets/Audio/voice.ogg"},
                      "marker audio dependencies are separate from preloaded images");
-        auto old = std::string(source);
-        old.replace(old.find("\"schemaRevision\":3"),
-                    std::string("\"schemaRevision\":3").size(),
-                    "\"schemaRevision\":2");
-        suite.Expect(!px::sdk::ParseMotion(old).Valid(),
-                     "older motion revisions reject markers");
         auto duplicate = std::string(source);
         duplicate.replace(duplicate.find("\"id\":\"voice\""),
                           std::string("\"id\":\"voice\"").size(),

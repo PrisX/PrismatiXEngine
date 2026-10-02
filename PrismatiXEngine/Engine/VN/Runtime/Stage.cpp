@@ -1303,7 +1303,7 @@ std::optional<std::string> Stage::CharacterImage(const std::string& name) const 
 std::optional<std::string> Stage::CharacterPortraitBase(const std::string& name) {
     const auto image = CharacterImage(name);
     const auto* portrait = image ? ResolveLayeredPortrait(*image) : nullptr;
-    if (portrait == nullptr || portrait->schemaRevision != 2) return std::nullopt;
+    if (portrait == nullptr) return std::nullopt;
     std::string base;
     for (const auto& layer : portrait->layers) {
         if (layer.role != PortraitLayer::Role::Base) continue;
@@ -1323,8 +1323,7 @@ void Stage::SetCharacterAuto(const std::string& name, const std::string& imagePa
     if(!transition && found->second.imagePath!=imagePath){
         const auto* previous=ResolveLayeredPortrait(found->second.imagePath);
         const auto* current=ResolveLayeredPortrait(imagePath);
-        if(previous && current && previous->schemaRevision==2 &&
-           current->schemaRevision==2 && previous->width==current->width &&
+        if(previous && current && previous->width==current->width &&
            previous->height==current->height &&
            previous->layers.size()==current->layers.size()){
             bool hasBase=false;

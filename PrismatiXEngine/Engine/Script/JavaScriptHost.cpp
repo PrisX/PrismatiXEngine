@@ -4162,10 +4162,10 @@ bool JavaScriptHost::LoadExtensionManifestIntoCurrentRealm(
     };
     try {
         if (json.value("format", std::string{}) != "PrismatiXExtension" ||
-            json.value("schemaRevision", 0) != 2 ||
+            json.value("schemaRevision", 0) != 1 ||
             Lower(json.value("language", std::string{})) != "javascript") {
             m_impl->Error(manifestPath,
-                          "extension manifest must be PrismatiXExtension schemaRevision 2 with language javascript");
+                          "extension manifest must be PrismatiXExtension schemaRevision 1 with language javascript");
             return false;
         }
         const std::string id = json.at("id").get<std::string>();

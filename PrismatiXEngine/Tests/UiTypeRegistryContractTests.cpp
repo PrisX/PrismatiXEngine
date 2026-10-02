@@ -178,9 +178,9 @@ int main() {
           "oversized UI TypeRegistry manifest must be rejected");
 
     auto future = first.Value();
-    const auto revision = future.find("\"schemaRevision\": 2");
+    const auto revision = future.find("\"schemaRevision\": 1");
     Check(revision != std::string::npos, "fixture must expose schema revision");
-    future.replace(revision, 19, "\"schemaRevision\": 3");
+    future.replace(revision, 19, "\"schemaRevision\": 2");
     Check(!px::sdk::ParseUiTypeRegistry(future).Valid(),
           "future UI TypeRegistry revision must be rejected");
 

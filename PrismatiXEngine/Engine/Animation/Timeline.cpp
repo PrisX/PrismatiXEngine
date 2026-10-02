@@ -849,7 +849,7 @@ std::vector<AnimationClip> OfficialPresets(){std::vector<AnimationClip> clips;co
 
 std::string WriteAnimationClip(const AnimationClip& clip) {
     Json root{{"format", "PrismatiXAnimation"},
-              {"schemaRevision", 2},
+              {"schemaRevision", 1},
               {"version", 4},
               {"id", clip.id.ToString()},
               {"name", clip.name},
@@ -894,10 +894,10 @@ Result<AnimationClip> ParseAnimationClip(const std::string_view text,
                            "nested"}) ||
         root.size() != 10 ||
         root.value("format", std::string{}) != "PrismatiXAnimation" ||
-        root.value("schemaRevision", 0) != 2 || root.value("version", 0) != 4)
+        root.value("schemaRevision", 0) != 1 || root.value("version", 0) != 4)
         return Result<AnimationClip>::Failure(TimelineError(
             "PXANIM7520",
-            "Animation must be strict PrismatiXAnimation schema 2 version 4",
+            "Animation must be strict PrismatiXAnimation schema 1 version 4",
             sourcePath));
     try {
         if (!root["name"].is_string() ||
@@ -1008,12 +1008,12 @@ Result<TimelineDocument> ParseTimeline(const std::string_view text,
         !OnlyFields(root, {"format", "schemaRevision", "id", "name",
                            "duration", "tracks", "markers", "nestedClips"}) ||
         root.value("format", std::string{}) != "PrismatiXTimeline" ||
-        root.value("schemaRevision", 0) != 2 || !root.contains("id") ||
+        root.value("schemaRevision", 0) != 1 || !root.contains("id") ||
         !root.contains("duration") || !root.contains("tracks") ||
         !root.contains("markers") || !root.contains("nestedClips"))
         return Result<TimelineDocument>::Failure(TimelineError(
             "PXTIMELINE7601",
-            "Timeline must be strict PrismatiXTimeline schema 2", sourcePath));
+            "Timeline must be strict PrismatiXTimeline schema 1", sourcePath));
     try {
         if (!root["id"].is_string() ||
             !Identifier(root["id"].get_ref<const std::string&>()) ||

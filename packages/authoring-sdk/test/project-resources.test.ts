@@ -11,7 +11,7 @@ const source = `Characters/${characterId}.pxcharacter`;
 function project() {
   return {
     format: "PrismatiXProject",
-    schemaRevision: 2,
+    schemaRevision: 1,
     id: "project-resources",
     name: "Project Resources",
     version: "0.2.0",
@@ -37,7 +37,7 @@ function project() {
 function character() {
   return {
     format: "PrismatiXCharacter",
-    schemaRevision: 2,
+    schemaRevision: 1,
     id: characterId,
     displayName: "Yuki",
     aliases: ["yuki"],

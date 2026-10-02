@@ -6,7 +6,7 @@ import {applyStoryIdentityMap, compileProject, compileStory, createStoryMacroLib
 import type {CharacterDocument} from "../src/index.js";
 
 const yuki: CharacterDocument = {
-  format: "PrismatiXCharacter", schemaRevision: 2,
+  format: "PrismatiXCharacter", schemaRevision: 1,
   id: "11111111-1111-4111-8111-111111111111", displayName: "雪", aliases: ["yuki"],
   defaultExpressionId: "22222222-2222-4222-8222-222222222222",
   expressions: [{id: "22222222-2222-4222-8222-222222222222", name: "Smile", aliases: ["smile"],

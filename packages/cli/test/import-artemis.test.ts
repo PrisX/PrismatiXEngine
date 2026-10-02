@@ -122,7 +122,7 @@ async function fixture(): Promise<{root: string; extracted: string; project: str
     "system/table/list_windows.tbl": table,
   });
   await files(project, {
-    "prismatix.json": `${JSON.stringify({format: "PrismatiXProject", schemaRevision: 2, id: "demo",
+    "prismatix.json": `${JSON.stringify({format: "PrismatiXProject", schemaRevision: 1, id: "demo",
       name: "Demo", resolution: {width: 1280, height: 720}, entry: {story: "intro"},
       defaultLocale: "ja-JP", storyIndex: "Story/story.pxindex", gameCatalog: "Content/game.pxgame"}, null, 2)}\n`,
     "artemis-import.json": JSON.stringify({story: {chapters: [{match: "^(intro)$", id: "opening"}]},

@@ -1,6 +1,6 @@
 {
   "format": "PrismatiXCharacter",
-  "schemaRevision": 2,
+  "schemaRevision": 1,
   "displayName": "小光",
   "aliases": ["guide"],
   "expressions": [

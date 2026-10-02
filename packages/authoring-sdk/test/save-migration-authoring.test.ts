@@ -10,7 +10,7 @@ function operation(operationId: string, sourceId = operationId): RuntimeIrOperat
 }
 
 function runtime(documentId: string, ...operations: RuntimeIrOperation[]): RuntimeIrDocument {
-  return {format: "PrismatiXRuntimeIR", schemaRevision: 2,
+  return {format: "PrismatiXRuntimeIR", schemaRevision: 1,
     documentId, committedRevision: 0, operations};
 }
 

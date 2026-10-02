@@ -89,7 +89,7 @@ int InspectSave(int argc, char* argv[]) {
         const auto snapshot = px::progress::ParseSaveEnvelope(loaded.value->dump(), argv[2]);
         if (!snapshot) throw std::invalid_argument("Save envelope validation failed");
         const px::progress::Json metadata{
-            {"format", "PrismatiXSave"}, {"schemaRevision", 4},
+            {"format", "PrismatiXSave"}, {"schemaRevision", 1},
             {"engineVersion", snapshot->engineVersion}, {"gameId", snapshot->gameId},
             {"packageFingerprint", snapshot->packageFingerprint},
             {"contentVersion", snapshot->contentVersion}, {"saveVersion", snapshot->saveVersion},

@@ -26,7 +26,7 @@ struct CustomEffectArtifactDescriptor {
 
 struct CustomEffectDescriptor {
     std::string id;
-    std::uint32_t schemaRevision = 2;
+    std::uint32_t schemaRevision = 1;
     // stage: whole Stage post-processing; node: one Stage graph leaf;
     // transition: outgoing/incoming screen textures.
     std::string targetLayer;

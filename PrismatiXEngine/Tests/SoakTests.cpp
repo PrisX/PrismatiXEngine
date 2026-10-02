@@ -56,15 +56,15 @@ int main() {
         }
         const std::string runtimeIr =
             Json{{"format", "PrismatiXRuntimeIR"},
-                 {"schemaRevision", 2},
+                 {"schemaRevision", 1},
                  {"documentId", "stress-scene"},
                  {"committedRevision", 1},
                  {"operations", Json::array()}}
                 .dump();
         const std::string envelope =
             Json{{"protocol", "PrismatiXPreviewProtocol"},
-                 {"schemaRevision", 2},
-                 {"protocolVersion", 2},
+                 {"schemaRevision", 1},
+                 {"protocolVersion", 1},
                  {"type", "apply"},
                  {"sessionId", "stress-session"},
                  {"requestId", "stress-apply-1"},

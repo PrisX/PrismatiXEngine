@@ -21,7 +21,6 @@ import {fingerprintFile, publishDirectory, publishedInputs, retainPublishedDirec
 import {augmentArtifact} from "./artifact-augment.js";
 import {assessPackageDiskSpace, availableBytesForOutput, formatDiskBytes} from "./disk-space.js";
 import {createStarter} from "./starter.js";
-import {migrateCommand} from "./migration.js";
 import {importCommand, importFormats} from "./importers/command.js";
 import {inspectSaveWithRuntime} from "./save-inspection.js";
 import {planPackagePatch} from "./package-diff.js";
@@ -106,7 +105,6 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   eject: {values: "project runtime", flags: "force"},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync accept-removals"},
-  migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
   "inspect-save": {values: "package secret runtime player", flags: ""},
   "plan-patch": {values: "base target runtime packager", flags: "verify-contents"},
   "verify-package": {values: "runtime packager", flags: ""},
@@ -1127,7 +1125,7 @@ async function loadUiRegistry(override?: string, runtimeHint?: string,
   if (existsSync(emitter) && (await stat(emitter)).mtimeMs > (await stat(path)).mtimeMs + 1000)
     throw new Error(`UI TypeRegistry manifest is older than its native exporter: ${path}; rebuild PrismatiXUiTypeRegistryManifest`);
   const source = object(await readJson(path));
-  if (source?.format !== "PrismatiXUiTypeRegistry" || source.schemaRevision !== 2 ||
+  if (source?.format !== "PrismatiXUiTypeRegistry" || source.schemaRevision !== 1 ||
       !Array.isArray(source.controls) || !source.controls.every((entry) => {
         const control = object(entry);
         return typeof control?.runtimeType === "string" && Array.isArray(control.properties) &&
@@ -1941,7 +1939,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
     const packagedPlayer = branding.executableName === undefined ? basename(player)
       : branding.executableName + extname(player);
     const requestPlan = {
-      format: "PrismatiXPackageRequest", schemaRevision: 2,
+      format: "PrismatiXPackageRequest", schemaRevision: 1,
       gameId: project.id, playerExecutable: player, title: project.name,
       ...(branding.executableName === undefined ? {} : {executableName: branding.executableName}),
       ...(branding.icon === undefined ? {} : {icon: branding.icon}),
@@ -2369,8 +2367,8 @@ class PreviewClient {
             if (message !== undefined && typeof requestId === "string") {
               const waiter = this.waiters.get(requestId);
               if (waiter !== undefined && message.event === undefined &&
-                  message.protocol === "PrismatiXPreviewProtocol" && message.schemaRevision === 2 &&
-                  message.protocolVersion === 2 && message.sessionId === this.sessionId &&
+                  message.protocol === "PrismatiXPreviewProtocol" && message.schemaRevision === 1 &&
+                  message.protocolVersion === 1 && message.sessionId === this.sessionId &&
                   message.documentId === waiter.documentId && message.revision === waiter.revision) {
                 clearTimeout(waiter.timer); this.waiters.delete(requestId); waiter.accept(message);
               }
@@ -2415,7 +2413,7 @@ class PreviewClient {
     const client = new PreviewClient(child);
     try {
       const ready = await client.request("hello", "", 0, {});
-      if (ready.type !== "ready" || ready.runtimeIrSchemaRevision !== 2 || ready.uiSchemaRevision !== 2)
+      if (ready.type !== "ready" || ready.runtimeIrSchemaRevision !== 1 || ready.uiSchemaRevision !== 1)
         throw new Error(`PreviewHost handshake has incompatible IR/UI contracts: ${JSON.stringify(ready)}`);
     } catch (error) {
       await client.close();
@@ -2430,8 +2428,8 @@ class PreviewClient {
     fields: Readonly<Record<string, unknown>>, timeoutMs = 20_000): Promise<PreviewMessage> {
     if (!this.alive) return Promise.reject(new Error("PreviewHost is not running"));
     const requestId = `cli-${randomUUID()}`;
-    const request = {protocol: "PrismatiXPreviewProtocol", schemaRevision: 2,
-      protocolVersion: 2, type, sessionId: this.sessionId, requestId,
+    const request = {protocol: "PrismatiXPreviewProtocol", schemaRevision: 1,
+      protocolVersion: 1, type, sessionId: this.sessionId, requestId,
       documentId, revision, ...fields};
     return new Promise((accept, reject) => {
       const timer = setTimeout(() => {
@@ -3015,7 +3013,6 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
   augment: ["Add declared files to a built artifact without editing ownership by hand.",
     "prismatix augment [project] --artifact <dir> --manifest <augmentation.json>"],
   ids: ["Write or check the stable save identities of Story lines.", "prismatix ids [project] [--check|--write]"],
-  migrate: ["Upgrade an older project manifest.", "prismatix migrate [project] [--write] [--report <file>]"],
   "inspect-save": ["Decode a player save for support.", "prismatix inspect-save <save> [--package <distribution>]"],
   "verify-package": ["Verify every archive and resource hash of a distribution.",
     "prismatix verify-package <distribution> [--runtime <dir>]"],
@@ -3056,7 +3053,7 @@ function commandUsage(command: string): void {
 }
 
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|add|eject|dev|validate|build|pack|run|release|import|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen|test> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("Usage: prismatix <create|add|eject|dev|validate|build|pack|run|release|import|augment|ids|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen|test> [project-or-save-or-distribution] [options]\n");
   process.stderr.write("  prismatix <command> --help  Purpose, examples and options of one command\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
   process.stderr.write("  prismatix create-overlay --base <distribution> --artifact <published-artifact> --output <patch.pdx> [--signing-key <private-key>]  Patch without a target distribution\n");
@@ -3285,7 +3282,7 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
       temporaryRequest = await mkdtemp(join(tmpdir(), "prismatix-overlay-plan-"));
       const requestPath = join(temporaryRequest, "package-request.json");
       await writeFile(requestPath, `${JSON.stringify({
-        format: "PrismatiXPackageRequest", schemaRevision: 2,
+        format: "PrismatiXPackageRequest", schemaRevision: 1,
         requestId: `cli-overlay-${process.pid}`,
         gameId: project.id,
         projectRoot: artifactRoot,
@@ -3512,7 +3509,6 @@ async function main(): Promise<number> {
   if (command === "eject") return ejectCommand(options);
   if (command === "augment") return augmentCommand(options);
   if (command === "ids") return idsCommand(options);
-  if (command === "migrate") return migrateCommand(options);
   if (command === "import") return importCommand(options);
   if (command === "inspect-save") return inspectSaveCommand(options);
   if (command === "plan-patch") return planPatchCommand(options);

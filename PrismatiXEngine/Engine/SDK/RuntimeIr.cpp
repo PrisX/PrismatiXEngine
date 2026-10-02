@@ -86,7 +86,7 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
     }
     const auto revision = root.find("schemaRevision");
     if (revision == root.end() || !revision->is_number_unsigned() ||
-        revision->get<std::uint32_t>() != 2) {
+        revision->get<std::uint32_t>() != 1) {
         AddDiagnostic(result, "PXSDKIR1003", "Unsupported Runtime IR schema revision");
     }
     if (!ReadRequiredString(root, "documentId", result.document.documentId)) {

@@ -180,7 +180,7 @@ int main() {
     assert(vm.LastRunResult().status == px::vn::VMRunStatus::Faulted);
 
     const auto invalidMap = px::sdk::ParseSourceMap(R"({
-      "format":"PrismatiXSourceMap","schemaRevision":2,"documentId":"doc",
+      "format":"PrismatiXSourceMap","schemaRevision":1,"documentId":"doc",
       "mappings":[{"operationId":"op","sourceId":"source",
         "sourceUri":"../outside.pxstory","startLine":1,"startColumn":1,
         "endLine":1,"endColumn":2}]
@@ -197,7 +197,7 @@ int main() {
     assert(session.Dialogue().State().fullText == "背景預載完成");
 
     assert(session.SetSourceMapText(R"({
-      "format":"PrismatiXSourceMap","schemaRevision":2,"documentId":"loop-document",
+      "format":"PrismatiXSourceMap","schemaRevision":1,"documentId":"loop-document",
       "mappings":[
         {"operationId":"label-operation","sourceId":"label-source",
          "sourceUri":"Story/Loop.pxstory","startLine":6,"startColumn":1,
@@ -217,7 +217,7 @@ int main() {
             emitted.push_back(diagnostic);
         });
     assert(session.StartRuntimeIrText(R"({
-      "format":"PrismatiXRuntimeIR","schemaRevision":2,
+      "format":"PrismatiXRuntimeIR","schemaRevision":1,
       "documentId":"loop-document","committedRevision":1,
       "operations":[
         {"operationId":"label-operation","sourceId":"label-source",

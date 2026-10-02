@@ -423,7 +423,7 @@ void CreateProjectFixture(const std::filesystem::path& root,
     Write(root / "Content/UI/Replay.pxui", replayUi.dump(2));
 
     Write(root / "Content/Extensions/default.pxextension", R"({
-      "format":"PrismatiXExtension","schemaRevision":2,
+      "format":"PrismatiXExtension","schemaRevision":1,
       "id":"player-catalog-native-acceptance",
       "version":"1.0.0","requiredEngineVersion":"^0.2.0",
       "language":"javascript",
@@ -498,7 +498,7 @@ Engine.RegisterAction("acceptance.phase2-menu", async () => {
 )");
 
     Write(root / "Content/game.pxgame", R"({
-      "format":"PrismatiXGame","schemaRevision":3,
+      "format":"PrismatiXGame","schemaRevision":1,
       "variables":[
         {"name":"affinity","type":"integer","default":7,"scope":"profile"},
         {"name":"routeName","type":"string","default":"common","scope":"session"}
@@ -518,7 +518,7 @@ Engine.RegisterAction("acceptance.phase2-menu", async () => {
     })");
 
     Write(root / "Content/Runtime/start.pxir", R"({
-      "format":"PrismatiXRuntimeIR","schemaRevision":2,
+      "format":"PrismatiXRuntimeIR","schemaRevision":1,
       "documentId":"99999999-9999-4999-8999-999999999999",
       "committedRevision":1,
       "operations":[
@@ -540,7 +540,7 @@ Engine.RegisterAction("acceptance.phase2-menu", async () => {
       ]
     })");
     Write(root / "Content/Runtime/start.pxmap", R"({
-      "format":"PrismatiXSourceMap","schemaRevision":2,
+      "format":"PrismatiXSourceMap","schemaRevision":1,
       "documentId":"99999999-9999-4999-8999-999999999999",
       "mappings":[
         {"operationId":"localized-background","sourceId":"localized-background","sourceUri":"Story/Entry.pxstory","startLine":1,"startColumn":1,"endLine":1,"endColumn":10},
@@ -583,7 +583,7 @@ Engine.RegisterAction("acceptance.phase2-menu", async () => {
     Write(root / "Runtime/Locales/ja-JP/main.pxmap", japaneseMap);
 
     Write(root / "project.pxproject", R"({
-      "format":"PrismatiXProject","schemaRevision":2,
+      "format":"PrismatiXProject","schemaRevision":1,
       "id":"player-catalog-native-acceptance","name":"Player Catalog Acceptance",
       "version":"0.2.0","contentVersion":"player-catalog-native-acceptance-v1","saveVersion":1,
       "resolution":{"width":1280,"height":720},
@@ -610,19 +610,19 @@ Engine.RegisterAction("acceptance.phase2-menu", async () => {
       "characters":[]
     })");
     Write(root / "Content/Localization/zh-TW.json", R"({
-      "format":"PrismatiXLocale","schemaRevision":2,"locale":"zh-TW",
+      "format":"PrismatiXLocale","schemaRevision":1,"locale":"zh-TW",
       "fontChain":["Content/Fonts/NotoSansTC-Bold.ttf"],
       "strings":{}
     })");
     Write(root / "Content/Localization/ja-JP.json", R"({
-      "format":"PrismatiXLocale","schemaRevision":2,"locale":"ja-JP",
+      "format":"PrismatiXLocale","schemaRevision":1,"locale":"ja-JP",
       "fontChain":["Content/Fonts/NotoSansTC-Bold.ttf"],
       "strings":{}
     })");
     Write(root / "Story/Entry.pxstory", "Rin: hello\n[end]\n");
     Write(root / "Story/Entry.ja.pxstory", "Rin: こんにちは\n[end]\n");
     Write(root / "Story/story.pxindex", R"({
-      "format":"PrismatiXStoryIndex","schemaRevision":2,"id":"main",
+      "format":"PrismatiXStoryIndex","schemaRevision":1,"id":"main",
       "entryScene":"main",
       "chapters":[{"id":"chapter-1","title":"Chapter 1","scenes":["main"]}],
       "scenes":[{"id":"main","sources":{"zh-TW":"Story/Entry.pxstory","ja-JP":"Story/Entry.ja.pxstory"}}]
@@ -805,7 +805,7 @@ int main(int argc, char* argv[]) {
         const std::string migrationAsset =
             "Content/Migrations/catalog-v1-to-v2.pxsave-migration";
         Write(root / migrationAsset,
-              R"({"format":"PrismatiXSaveMigration","schemaRevision":2,
+              R"({"format":"PrismatiXSaveMigration","schemaRevision":1,
               "id":"catalog-v1-to-v2",
               "from":{"contentVersion":"player-catalog-native-acceptance-v1","saveVersion":1},
               "to":{"contentVersion":"player-catalog-native-acceptance-v2","saveVersion":1},

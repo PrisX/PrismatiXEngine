@@ -264,14 +264,14 @@ bool ImageKind(const std::string_view kind) {
            kind == "uiImage";
 }
 
-bool JsonRevisionTwo(const Json& manifest) {
+bool JsonRevisionOne(const Json& manifest) {
     const auto revision = manifest.find("schemaRevision");
     if (revision == manifest.end()) return false;
     if (revision->is_number_unsigned()) {
-        return revision->get<std::uint64_t>() == 2;
+        return revision->get<std::uint64_t>() == 1;
     }
     return revision->is_number_integer() &&
-           revision->get<std::int64_t>() == 2;
+           revision->get<std::int64_t>() == 1;
 }
 
 std::optional<std::unordered_map<std::string, ProjectAsset>> ParseProjectAssets(
@@ -290,9 +290,9 @@ std::optional<std::unordered_map<std::string, ProjectAsset>> ParseProjectAssets(
     if (manifest.is_discarded() || !manifest.is_object() ||
         format == manifest.end() || !format->is_string() ||
         format->get_ref<const std::string&>() != "PrismatiXProject" ||
-        !JsonRevisionTwo(manifest)) {
+        !JsonRevisionOne(manifest)) {
         Add(result, "PXCAT1020",
-            "project.pxproject must be PrismatiXProject schema revision 2",
+            "project.pxproject must be PrismatiXProject schema revision 1",
             "project.pxproject");
         return std::nullopt;
     }
@@ -561,7 +561,7 @@ GameCatalogResourcesLoadResult LoadCanonicalGameCatalogResources(
     try {
         const int revision = root.value("schemaRevision", 0);
         if (root.value("format", std::string{}) != "PrismatiXGame" ||
-            (revision != 2 && revision != 3)) {
+            revision != 1) {
             Add(result, "PXCAT1103", "Canonical GameCatalog format or revision is unsupported", path);
             return result;
         }
@@ -773,12 +773,12 @@ GameCatalogResourcesLoadResult LoadCanonicalGameCatalogResources(
                         continue;
                     }
                     if (const auto uiAction = source.find("uiAction"); uiAction != source.end()) {
-                        if (revision < 3 || !uiAction->is_object() ||
+                        if (!uiAction->is_object() ||
                             !uiAction->contains("command") ||
                             !(*uiAction)["command"].is_string() ||
                             (uiAction->size() != 1 && uiAction->size() != 2) ||
                             (uiAction->size() == 2 && !uiAction->contains("argument"))) {
-                            Add(result, "PXCAT1123", "UI action requires revision 3 and a command", path, 0, action.id);
+                            Add(result, "PXCAT1123", "UI action requires a command", path, 0, action.id);
                             continue;
                         }
                         action.uiCommand = (*uiAction)["command"].get<std::string>();

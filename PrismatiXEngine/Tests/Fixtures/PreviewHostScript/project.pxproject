@@ -1,6 +1,6 @@
 {
   "format": "PrismatiXProject",
-  "schemaRevision": 2,
+  "schemaRevision": 1,
   "id": "preview-host-script-fixture",
   "name": "Preview Host Script Fixture",
   "version": "0.2.0",

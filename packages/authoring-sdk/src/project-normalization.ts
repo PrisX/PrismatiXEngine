@@ -533,7 +533,7 @@ function defaultUi(projectId: string, name: string, width: number, height: numbe
   });
   return {
     format: "PrismatiXUIScene",
-    schemaRevision: 2,
+    schemaRevision: 1,
     id: sceneId,
     revision: 1,
     name,
@@ -668,7 +668,7 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
 
   const candidate: unknown = {
     format: "PrismatiXProject",
-    schemaRevision: 2,
+    schemaRevision: 1,
     id: projectId,
     name,
     version: "0.1.0",
@@ -715,7 +715,7 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
   if (raw.storyIndex === undefined && documents[project.storyIndex] === undefined) {
     documents[project.storyIndex] = {
       format: "PrismatiXStoryIndex",
-      schemaRevision: 2,
+      schemaRevision: 1,
       id: "main",
       entryScene: project.entry.story,
       chapters: [{id: "main", title: name, scenes: [project.entry.story]}],
@@ -724,7 +724,7 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
   }
   if (raw.gameCatalog === undefined && documents[project.gameCatalog] === undefined) {
     documents[project.gameCatalog] = {
-      format: "PrismatiXGame", schemaRevision: 2,
+      format: "PrismatiXGame", schemaRevision: 1,
       variables: [], gallery: [], unlockables: [],
     };
   }
@@ -734,7 +734,7 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
   }
   if (project.supportedLocales.length === 1 && locales[project.defaultLocale] === undefined) {
     locales[project.defaultLocale] = {
-      format: "PrismatiXLocale", schemaRevision: 2,
+      format: "PrismatiXLocale", schemaRevision: 1,
       locale: project.defaultLocale, strings: {},
     };
   }

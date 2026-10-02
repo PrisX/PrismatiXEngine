@@ -425,7 +425,7 @@ struct UiVisualStateGroup {
 };
 
 struct UiDocument {
-    std::uint32_t schemaRevision = 2;
+    std::uint32_t schemaRevision = 1;
     std::string id;
     std::uint64_t revision = 0;
     std::string name;

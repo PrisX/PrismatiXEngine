@@ -51,7 +51,7 @@ export interface RuntimeIrOperation {
 
 export interface RuntimeIrDocument {
   readonly format: "PrismatiXRuntimeIR";
-  readonly schemaRevision: 2;
+  readonly schemaRevision: 1;
   readonly documentId: string;
   readonly committedRevision: number;
   readonly operations: readonly RuntimeIrOperation[];
@@ -69,7 +69,7 @@ export interface SourceMapEntry {
 
 export interface RuntimeSourceMap {
   readonly format: "PrismatiXSourceMap";
-  readonly schemaRevision: 2;
+  readonly schemaRevision: 1;
   readonly documentId: string;
   readonly mappings: readonly SourceMapEntry[];
 }
@@ -156,7 +156,7 @@ export interface ExtensionAction {
 
 export interface ExtensionManifest {
   readonly format: "PrismatiXExtension";
-  readonly schemaRevision: 2;
+  readonly schemaRevision: 1;
   readonly language: "javascript";
   readonly id: string;
   readonly version: string;
@@ -181,7 +181,7 @@ export interface CharacterExpression {
 
 export interface CharacterDocument {
   readonly format: "PrismatiXCharacter";
-  readonly schemaRevision: 2;
+  readonly schemaRevision: 1;
   readonly id: string;
   readonly displayName: string;
   /** Optional Story speaker names by locale; falls back to displayName. */
@@ -206,15 +206,8 @@ interface GameDocumentBase {
   readonly inputBindings?: readonly JsonValue[];
 }
 
-/** Revision 2 remains authorable; UI command shortcuts require revision 3. */
-export type GameDocument =
-  | (GameDocumentBase & {readonly schemaRevision: 2;
-      readonly inputActions?: readonly GameInputActionV2[]})
-  | (GameDocumentBase & {readonly schemaRevision: 3;
-      readonly inputActions?: readonly GameInputAction[]});
-
-export type GameInputActionV2 = Omit<GameInputAction, "uiAction"> &
-  {readonly uiAction?: never};
+export type GameDocument = GameDocumentBase & {readonly schemaRevision: 1;
+  readonly inputActions?: readonly GameInputAction[]};
 
 /** Portable named input actions; hosts may bind additional behavior to an id. */
 export interface GameInputAction {
@@ -226,7 +219,7 @@ export interface GameInputAction {
                    {readonly direction: "none"};
   /** Player route opened when this action is pressed in its context. */
   readonly route?: string;
-  /** Revision 3: dispatch this command through the Player UI action sink. */
+  /** Dispatch this command through the Player UI action sink. */
   readonly uiAction?: {readonly command: string; readonly argument?: string};
 }
 

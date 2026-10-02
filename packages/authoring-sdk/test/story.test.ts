@@ -8,7 +8,7 @@ import type {CharacterDocument, ExtensionManifest, GameDocument} from "../src/in
 
 const character: CharacterDocument = {
   format: "PrismatiXCharacter",
-  schemaRevision: 2,
+  schemaRevision: 1,
   id: "11111111-1111-4111-8111-111111111111",
   displayName: "雪",
   displayNames: {"ja-JP": "ゆき"},
@@ -61,7 +61,7 @@ test("say and narrate preserve source line breaks inside one dialogue operation"
 });
 
 test("add authors a checked integer increment with catalog scope", () => {
-  const game: GameDocument = {format:"PrismatiXGame", schemaRevision:2,
+  const game: GameDocument = {format:"PrismatiXGame", schemaRevision:1,
     variables:[{name:"score", type:"integer", default:0, scope:"session"},
       {name:"name", type:"string", default:"", scope:"profile"}]};
   const result = compileStory(parseStory("[add name=score amount=2]\n"),
@@ -113,12 +113,12 @@ test("hide all clears actors with one readable operation and optional instant tr
 });
 const game: GameDocument = {
   format: "PrismatiXGame",
-  schemaRevision: 2,
+  schemaRevision: 1,
   variables: [{name:"affection",type:"integer",default:0,scope:"profile"}],
 };
 const extension: ExtensionManifest = {
   format: "PrismatiXExtension",
-  schemaRevision: 2,
+  schemaRevision: 1,
   language: "javascript",
   id: "weather",
   version: "1.0.0",
@@ -471,7 +471,7 @@ test("shake lowers to an explicit Runtime IR operation", () => {
 test("Story catalog assignments lower declared scope and scalar type explicitly", () => {
   const catalog: GameDocument = {
     format: "PrismatiXGame",
-    schemaRevision: 2,
+    schemaRevision: 1,
     variables: [
       {name:"route",type:"string",default:"common",scope:"session"},
       {name:"endingUnlocked",type:"boolean",default:false,scope:"profile"},
@@ -491,7 +491,7 @@ test("Story catalog assignments lower declared scope and scalar type explicitly"
 });
 
 test("if expressions preserve comparison operators and quoted equals through Story parsing", () => {
-  const catalog: GameDocument = {format: "PrismatiXGame", schemaRevision: 2, variables: [
+  const catalog: GameDocument = {format: "PrismatiXGame", schemaRevision: 1, variables: [
     {name: "affection", type: "integer", default: 0, scope: "session"},
     {name: "route", type: "string", default: "a=b", scope: "session"},
   ]};

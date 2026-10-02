@@ -1,4 +1,4 @@
 {
-  "format":"PrismatiXLocale","schemaRevision":2,"locale":"{{LOCALE}}",
+  "format":"PrismatiXLocale","schemaRevision":1,"locale":"{{LOCALE}}",
   "fontChain":["Content/Fonts/NotoSansTC-Bold.ttf"],"strings":{},"resources":{}
 }

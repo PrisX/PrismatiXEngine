@@ -106,7 +106,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     )js");
     Write(extensions / "default.pxextension", R"json({
         "format": "PrismatiXExtension",
-        "schemaRevision": 2,
+        "schemaRevision": 1,
         "language": "javascript",
         "id": "js-demo",
         "version": "1.0.0",
@@ -217,7 +217,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     })json");
     Write(extensions / "denied.pxextension", R"json({
         "format":"PrismatiXExtension",
-        "schemaRevision":2,
+        "schemaRevision":1,
         "language":"javascript",
         "id":"denied",
         "version":"1.0.0",
@@ -230,7 +230,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     Write(extensions / "incompatible.js",
           "Engine.SetVariable('version.executed', true, 'session');\n");
     Write(extensions / "incompatible.pxextension", R"json({
-        "format":"PrismatiXExtension","schemaRevision":2,
+        "format":"PrismatiXExtension","schemaRevision":1,
         "language":"javascript","id":"incompatible","version":"1.0.0",
         "requiredEngineVersion":">=0.3.0","entry":"incompatible.js",
         "capabilities":["runtime"],"commands":[],"actions":[]
@@ -241,7 +241,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         });
     )js");
     Write(extensions / "capability.pxextension", R"json({
-        "format":"PrismatiXExtension","schemaRevision":2,
+        "format":"PrismatiXExtension","schemaRevision":1,
         "language":"javascript","id":"capability","version":"1.0.0",
         "requiredEngineVersion":"^0.2.0","entry":"capability.js",
         "capabilities":["ui"],
@@ -253,7 +253,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         throw new Error("load must roll back");
     )js");
     Write(extensions / "ghost.pxextension", R"json({
-        "format":"PrismatiXExtension","schemaRevision":2,
+        "format":"PrismatiXExtension","schemaRevision":1,
         "language":"javascript","id":"ghost","version":"1.0.0",
         "requiredEngineVersion":"^0.2.0","entry":"ghost.js",
         "capabilities":["runtime"],
@@ -271,7 +271,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     const auto realmManifest = [](const std::string_view id,
                                   const std::string_view entry,
                                   const std::string_view command) {
-        return std::string("{\"format\":\"PrismatiXExtension\",\"schemaRevision\":2,") +
+        return std::string("{\"format\":\"PrismatiXExtension\",\"schemaRevision\":1,") +
             "\"language\":\"javascript\",\"id\":\"" + std::string(id) +
             "\",\"version\":\"1.0.0\",\"requiredEngineVersion\":\"^0.2.0\"," +
             "\"entry\":\"" + std::string(entry) +
@@ -292,7 +292,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         Engine.RegisterCommand("module.command", () => Engine.log(moduleMessage));
     )js");
     Write(extensions / "module.pxextension", R"json({
-        "format":"PrismatiXExtension","schemaRevision":2,
+        "format":"PrismatiXExtension","schemaRevision":1,
         "language":"javascript","id":"module","version":"1.0.0",
         "requiredEngineVersion":"^0.2.0","entry":"module-entry.js",
         "modules":["module-helper.js"],"capabilities":["runtime"],
@@ -305,7 +305,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         Engine.RegisterCommand("bad-module.command", () => value);
     )js");
     Write(extensions / "bad-module.pxextension", R"json({
-        "format":"PrismatiXExtension","schemaRevision":2,
+        "format":"PrismatiXExtension","schemaRevision":1,
         "language":"javascript","id":"bad-module","version":"1.0.0",
         "requiredEngineVersion":"^0.2.0","entry":"bad-module-entry.js",
         "capabilities":["runtime"],
@@ -319,7 +319,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         Engine.RegisterCommand("traversal.command", () => escaped);
     )js");
     Write(extensions / "traversal.pxextension", R"json({
-        "format":"PrismatiXExtension","schemaRevision":2,
+        "format":"PrismatiXExtension","schemaRevision":1,
         "language":"javascript","id":"traversal","version":"1.0.0",
         "requiredEngineVersion":"^0.2.0","entry":"traversal-entry.js",
         "capabilities":["runtime"],

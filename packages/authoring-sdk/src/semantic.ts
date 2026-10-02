@@ -199,9 +199,9 @@ function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[
   }
   const tracks = objects(root.tracks);
   const targets = new Set<string>();
-  // Revision 7 keys live on a layer's local clock. A sped-up child may have
+  // Keys live on a layer's local clock. A sped-up child may have
   // keys beyond the enclosing clip's duration while still being visible.
-  const keyTimeLimit = Number(root.schemaRevision) >= 7 ? 86400 * tickRate : duration;
+  const keyTimeLimit = 86400 * tickRate;
   for (const track of tracks) {
     const target = `${String(track.layer)}.${String(track.property)}`;
     const targetLayer = byId.get(track.layer);
@@ -461,7 +461,7 @@ function uiSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
       diagnostics.push(issue("PXSDKUI1043", "UI node layout must be container-owned", path, node.id));
     }
     if (node.kind === "leaf" && typeof node.runtimeType !== "string") {
-      diagnostics.push(issue("PXSDKUI1018", "UI leaf nodes require a revision-2 runtimeType", path, node.id));
+      diagnostics.push(issue("PXSDKUI1018", "UI leaf nodes require a runtimeType", path, node.id));
     }
     if (typeof node.runtimeType === "string" && !/^[A-Za-z0-9_.-]*$/u.test(node.runtimeType)) {
       diagnostics.push(issue("PXSDKUI1018", "UI node runtimeType is invalid", path, node.id));

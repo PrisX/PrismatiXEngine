@@ -11,7 +11,7 @@ using Json = nlohmann::json;
 Json Document() {
     return {
         {"format", "PrismatiXProgression"},
-        {"schemaRevision", 2},
+        {"schemaRevision", 1},
         {"id", "project-01"},
         {"revision", 12},
         {"nodes", Json::array({
@@ -59,10 +59,10 @@ bool ContainsCode(const std::vector<px::diag::Diagnostic>& diagnostics,
 }  // namespace
 
 int main() {
-    auto legacyDocument = Document();
-    legacyDocument["schemaRevision"] = 1;
+    auto unsupportedDocument = Document();
+    unsupportedDocument["schemaRevision"] = 2;
     assert(!px::preview::SimulateProgressionPreview(
-        Request(std::move(legacyDocument), State())));
+        Request(std::move(unsupportedDocument), State())));
 
     const auto locked = px::preview::SimulateProgressionPreview(
         Request(Document(), State()));

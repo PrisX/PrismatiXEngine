@@ -115,9 +115,9 @@ std::optional<Variant> ProfileValueFromJson(const nlohmann::json& value,
     return Variant(std::move(decoded));
 }
 
-bool RevisionTwo(const nlohmann::json& value) {
-    if (value.is_number_unsigned()) return value.get<std::uint64_t>() == 2;
-    return value.is_number_integer() && value.get<std::int64_t>() == 2;
+bool RevisionOne(const nlohmann::json& value) {
+    if (value.is_number_unsigned()) return value.get<std::uint64_t>() == 1;
+    return value.is_number_integer() && value.get<std::int64_t>() == 1;
 }
 
 }  // namespace
@@ -181,7 +181,7 @@ bool GlobalProfile::TryToJson(nlohmann::json& output) const {
     if (m_vars.size() > kMaxProfileEntries || m_clearCount < 0) return false;
     nlohmann::json j;
     j["format"] = "PrismatiXProfile";
-    j["schemaRevision"] = 2;
+    j["schemaRevision"] = 1;
     j["seen"] = m_seen;
     j["choicesSeen"] = m_choicesSeen;
     j["clearedRoutes"] = m_clearedRoutes;
@@ -208,7 +208,7 @@ bool GlobalProfile::ApplyJson(const nlohmann::json& j) {
         const auto revision = j.find("schemaRevision");
         if (format == j.end() || !format->is_string() ||
             format->get_ref<const std::string&>() != "PrismatiXProfile" ||
-            revision == j.end() || !RevisionTwo(*revision))
+            revision == j.end() || !RevisionOne(*revision))
             return false;
 
         auto loadSet = [&](const char* name,

@@ -5,7 +5,7 @@ import {compileStory, parseStory} from "../src/index.js";
 import type {GameDocument} from "../src/index.js";
 
 const game: GameDocument = {
-  format: "PrismatiXGame", schemaRevision: 2,
+  format: "PrismatiXGame", schemaRevision: 1,
   variables: [
     {name: "hero", type: "string", default: "直哉", scope: "profile"},
     {name: "route", type: "integer", default: 0, scope: "session"},

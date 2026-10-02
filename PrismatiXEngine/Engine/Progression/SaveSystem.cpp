@@ -13,8 +13,7 @@ namespace px::progress {
 
 namespace {
 constexpr std::string_view kSaveFormat = "PrismatiXSave";
-constexpr int kSaveSchemaRevision = 4;
-constexpr int kOldestSaveSchemaRevision = 4;
+constexpr int kSaveSchemaRevision = 1;
 constexpr std::size_t kMaxSaveCollectionItems = 1'000'000;
 
 template<class T>
@@ -53,8 +52,7 @@ bool HasSupportedHeader(const Json& json) {
         json.value("format", std::string{}) != kSaveFormat)
         return false;
     const int revision = IntegerField<int>(json, "schemaRevision");
-    return revision >= kOldestSaveSchemaRevision &&
-           revision <= kSaveSchemaRevision;
+    return revision == kSaveSchemaRevision;
 }
 
 Json ColorToJson(const Color color) {

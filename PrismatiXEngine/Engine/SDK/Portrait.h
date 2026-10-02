@@ -9,14 +9,14 @@
 namespace px::sdk {
 
 struct PortraitLayer {
-    enum class Role : std::uint8_t { Legacy, Base, Expression };
+    enum class Role : std::uint8_t { Base, Expression };
     std::string path;
     float x = 0.0f;
     float y = 0.0f;
     float width = 0.0f;
     float height = 0.0f;
     std::uint8_t opacity = 255;
-    Role role = Role::Legacy;
+    Role role = Role::Base;
 };
 
 struct LayeredPortrait {

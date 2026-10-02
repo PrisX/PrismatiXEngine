@@ -19,7 +19,7 @@ async function packageFixture(root: string, version: string, fingerprint: string
   await mkdir(join(directory, "Package"), {recursive: true});
   await writeFile(join(directory, "Content-00.pdx"), "fixture");
   await writeFile(join(directory, "Package/manifest.json"), JSON.stringify({
-    format: "PrismatiXPackageManifest", schemaRevision: 2,
+    format: "PrismatiXPackageManifest", schemaRevision: 1,
     gameId: "sample", contentVersion: version, packageFingerprint: fingerprint,
     archives: [{file: "Content-00.pdx", group: "base", optional: false}],
   }));

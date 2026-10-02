@@ -5,7 +5,7 @@ import {compileProject, compileStory, externalizeStoryIds, parseStory} from "../
 import type {GameDocument} from "../src/index.js";
 
 const game: GameDocument = {
-  format: "PrismatiXGame", schemaRevision: 2,
+  format: "PrismatiXGame", schemaRevision: 1,
   variables: [{name: "route", type: "string", default: "common", scope: "session"}],
   gallery: [], unlockables: [],
 };
@@ -67,7 +67,7 @@ test("project builds merge Story declarations into the published game catalog", 
   ]);
 
   // Declarations in several scenes and an explicit .pxgame agree or fail.
-  const index = {format: "PrismatiXStoryIndex", schemaRevision: 2, id: "main", entryScene: "a",
+  const index = {format: "PrismatiXStoryIndex", schemaRevision: 1, id: "main", entryScene: "a",
     chapters: [{id: "c", title: "C", scenes: ["a", "b"]}],
     scenes: [{id: "a", sources: {"en-US": "Story/a.pxstory"}}, {id: "b", sources: {"en-US": "Story/b.pxstory"}}]};
   const project = {name: "Vars", storyIndex: "Story/story.pxindex", gameCatalog: "Content/game.pxgame"};

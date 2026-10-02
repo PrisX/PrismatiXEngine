@@ -38,7 +38,7 @@ bool HasDiagnostic(const px::Result<px::ui::UiApplicationSummary>& result, const
 }
 
 nlohmann::json CanonicalUi(nlohmann::json document) {
-    document["schemaRevision"] = 2;
+    document["schemaRevision"] = 1;
     const bool component = document.value("format", std::string{}) == "PrismatiXUIComponent";
     if (!component && !document.contains("behaviorGraph"))
         document["behaviorGraph"] = {{"nodes", nlohmann::json::array()},
@@ -135,7 +135,7 @@ std::string ComplexComponentSource() {
 std::string ParameterizedComponentSource() {
     using Json = nlohmann::json;
     Json component = Json::parse(ComponentSource());
-    component["schemaRevision"] = 2;
+    component["schemaRevision"] = 1;
     auto& option = component["nodes"][1];
     option["kind"] = "leaf";
     option["runtimeType"] = "OptionButton";
@@ -158,7 +158,7 @@ std::string ComplexComponentScene() {
 std::string ParameterizedComponentScene() {
     using Json = nlohmann::json;
     Json scene = Json::parse(ComponentScene(false, false));
-    scene["schemaRevision"] = 2;
+    scene["schemaRevision"] = 1;
     auto& option = scene["nodes"][2];
     option["kind"] = "leaf";
     option["runtimeType"] = "OptionButton";
@@ -647,7 +647,7 @@ void TestGalgameAuthoredSlots() {
     button["onClick"] = {{"id", "save.slot"},
                          {"arguments", {{"slot", "$key"}}}};
     auto document = CanonicalUi(nlohmann::json{
-        {"format", "PrismatiXUIScene"}, {"schemaRevision", 2},
+        {"format", "PrismatiXUIScene"}, {"schemaRevision", 1},
         {"id", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, {"revision", 1},
         {"name", "Authored Save"}, {"width", 600}, {"height", 400},
         {"rootId", rootId}, {"nodes", nlohmann::json::array({root, grid, item, button})},
@@ -1294,7 +1294,7 @@ int main() {
     Check(runtime.behaviorNodeCount == 3 && runtime.behaviorTriggerCount == 1, "Runtime adapter must retain Behavior Graph nodes and triggers");
     Check(runtime.animationClipCount == 1 && runtime.animationTrackCount == 1, "Runtime adapter must retain Animation clips and tracks");
     auto optionScene = nlohmann::json::parse(scene);
-    optionScene["schemaRevision"] = 2;
+    optionScene["schemaRevision"] = 1;
     optionScene["theme"].push_back({ { "id", "opacity_soft" }, { "name", "Soft opacity" }, { "value", "0.35" } });
     optionScene["theme"].push_back({ { "id", "tint_soft" }, { "name", "Soft tint" }, { "value", "#336699" } });
     optionScene["nodes"].push_back(
@@ -1517,7 +1517,7 @@ int main() {
           "fixed free-layout rectangles must not expand to a control's intrinsic minimum");
 
     auto responsiveSource = nlohmann::json::parse(scene);
-    responsiveSource["schemaRevision"] = 2;
+    responsiveSource["schemaRevision"] = 1;
     auto& responsiveLayout = responsiveSource["nodes"][1]["layout"];
     responsiveLayout["x"] = 0;
     responsiveLayout["y"] = 0;
@@ -1528,9 +1528,9 @@ int main() {
     responsiveLayout["anchorRight"] = 0.75;
     responsiveLayout["anchorBottom"] = 0.75;
     const auto responsiveParsed = px::sdk::ParseUi(responsiveSource.dump());
-    Check(responsiveParsed.Valid(), "revision-2 responsive constraint fixture must parse");
+    Check(responsiveParsed.Valid(), "responsive constraint fixture must parse");
     auto responsiveRuntime = px::ui::BuildUiRuntimeTree(responsiveParsed.document);
-    Check(responsiveRuntime.Valid(), "revision-2 edge constraints must build a Runtime tree");
+    Check(responsiveRuntime.Valid(), "edge constraints must build a Runtime tree");
     auto* responsiveButton = dynamic_cast<px::ui::Button*>(responsiveRuntime.root->Find(*buttonId));
     Check(responsiveButton != nullptr && responsiveButton->Anchors() == px::Rect{ 0.25f, 0.25f, 0.75f, 0.75f } && responsiveButton->Offsets() == px::Rect{ 0, 0, 0, 0 }, "Studio constraints must translate to Runtime anchors and offsets");
     (void)responsiveRuntime.root->Measure({ 1600, 900 });
@@ -1592,7 +1592,7 @@ int main() {
     portraitNode->assetId.reset();
     portraitNode->runtimeProperties["path"] = std::string{"Content/Portrait/logo.pxportrait"};
     constexpr auto portraitSource = R"({
-      "format":"PrismatiXLayeredPortrait","schemaRevision":2,
+      "format":"PrismatiXLayeredPortrait","schemaRevision":1,
       "width":320,"height":120,"layers":[
         {"path":"Assets/base.png","width":320,"height":120,"role":"base"},
         {"path":"Assets/face.png","x":24,"y":5,"width":80,"height":80,
@@ -1615,7 +1615,7 @@ int main() {
     Check(!rejectedPortrait && portrait->Path() == "Content/Portrait/logo.pxportrait",
           "invalid portrait replacement preserves the displayed source");
     Check(!px::sdk::ParseLayeredPortrait(R"({"format":"PrismatiXLayeredPortrait",
-        "schemaRevision":2,"width":20,"height":20,"layers":[
+        "schemaRevision":1,"width":20,"height":20,"layers":[
         {"path":"Assets/nested.pxportrait","width":20,"height":20,
          "role":"base"}]})"),
           "native portrait parser rejects descriptor nesting");
@@ -1645,7 +1645,7 @@ int main() {
     motionNode->assetId.reset();
     motionNode->runtimeProperties["path"] = std::string{"Content/Motion/logo.pxmotion"};
     constexpr auto motionSource = R"({
-      "format":"PrismatiXMotion","schemaRevision":3,"id":"logo",
+      "format":"PrismatiXMotion","schemaRevision":1,"id":"logo",
       "canvas":{"width":320,"height":120},"duration":1,"loop":false,
       "layers":[{"id":"body","image":"Assets/body.png","width":100,"height":100}],
       "markers":[{"id":"first","time":0.25,"audio":"Assets/first.ogg","bus":"se"},
@@ -1691,7 +1691,7 @@ int main() {
     Check(firedMotionMarkers.size() == 3,
           "clearing the UI-context audio service detaches an existing MotionRect");
     constexpr auto loopingSource = R"({
-      "format":"PrismatiXMotion","schemaRevision":3,"id":"looping",
+      "format":"PrismatiXMotion","schemaRevision":1,"id":"looping",
       "canvas":{"width":100,"height":100},"duration":1,"loop":true,
       "layers":[{"id":"body","image":"Assets/body.png","width":100,"height":100}],
       "tracks":[],"markers":[{"id":"beat","time":0,"audio":"Assets/beat.ogg","bus":"se"}]})";
@@ -1703,7 +1703,7 @@ int main() {
     Check(loopingMotion.SetSourceLoader([](std::string_view) {
         return std::optional<std::string>{loopingSource};
     }).IsOk() && loopingMotion.SetPath("Content/Motion/loop.pxmotion").IsOk(),
-        "looping MotionRect loads a revision-3 clip");
+        "looping MotionRect loads a clip");
     loopingMotion.Update(2.1f);
     Check(loopMarkers == std::vector<std::string>{"beat", "beat", "beat"},
           "looping motion emits a time-zero cue once per iteration");
@@ -1737,7 +1737,7 @@ int main() {
           "missing motion loader must reject without replacing the installed UI");
 
     auto visualSceneJson = nlohmann::json::parse(scene);
-    visualSceneJson["schemaRevision"] = 2;
+    visualSceneJson["schemaRevision"] = 1;
     visualSceneJson["visualStateGroups"] = nlohmann::json::array({
         {{"id", "interaction"},
          {"defaultState", "normal"},
@@ -2055,11 +2055,7 @@ int main() {
 
     const auto parameterizedComponent = px::sdk::ParseUiComponent(ParameterizedComponentSource());
     const auto parameterizedScene = px::sdk::ParseUi(ParameterizedComponentScene());
-    Check(parameterizedComponent.Valid() && parameterizedScene.Valid(), "revision-2 OptionButton signal fixtures must satisfy SDK contracts");
-    auto revisionOneSignalMapping = nlohmann::json::parse(ComponentScene());
-    revisionOneSignalMapping["schemaRevision"] = 1;
-    revisionOneSignalMapping["nodes"][1]["componentInstance"]["publicSignals"]["accepted"]["argumentBindings"] = { { "index", "index" } };
-    Check(!px::sdk::ParseUi(revisionOneSignalMapping.dump()).Valid(), "legacy revision-1 UI must be rejected before component signal registration");
+    Check(parameterizedComponent.Valid() && parameterizedScene.Valid(), "OptionButton signal fixtures must satisfy SDK contracts");
     px::ui::UIContext parameterizedContext;
     std::int64_t selectedIndex = -1;
     Check(

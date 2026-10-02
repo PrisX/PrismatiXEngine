@@ -44,7 +44,7 @@ for (const mode of ["ipc-stop", "launcher-crash"] as const) {
         const q=JSON.parse(line);
         appendFileSync(${JSON.stringify(log)},JSON.stringify({type:q.type,pid:process.pid,parentPid:process.ppid})+'\\n');
         const type={hello:'ready',applyRuntimeIr:'runtimeIrApplied',play:'playAccepted',shutdown:'shutdownAccepted'}[q.type];
-        process.stdout.write(JSON.stringify({...q,type,runtimeIrSchemaRevision:2,uiSchemaRevision:2,appliedRevision:q.revision})+'\\n');
+        process.stdout.write(JSON.stringify({...q,type,runtimeIrSchemaRevision:1,uiSchemaRevision:1,appliedRevision:q.revision})+'\\n');
         if(q.type==='shutdown') {lines.close();process.exit(0);}
       });
     `);

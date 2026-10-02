@@ -170,7 +170,7 @@ public:
     void SetCharacter(const std::string& name, const std::string& imagePath, int slot,
                       bool transition = true, float offsetX = 0.0f, float offsetY = 0.0f,
                       float scale = 1.0f);
-    // Revision-2 portrait roles limit automatic replacement fades to facial
+    // Portrait roles limit automatic replacement fades to facial
     // expression layers; new actors retain the ordinary entrance transition.
     void SetCharacterAuto(const std::string& name, const std::string& imagePath, int slot,
                           float offsetX = 0.0f, float offsetY = 0.0f,
@@ -190,7 +190,7 @@ public:
         const std::string& name) const;
     // The image a visible (not exiting) character shows, if any.
     [[nodiscard]] std::optional<std::string> CharacterImage(const std::string& name) const;
-    // The `base` layer paths (one per line) of the revision-2 layered
+    // The `base` layer paths (one per line) of the layered
     // portrait a visible character shows; Story [face] matches its body.
     [[nodiscard]] std::optional<std::string> CharacterPortraitBase(const std::string& name);
     // Story [credits]: a staff roll that scrolls from below the screen to

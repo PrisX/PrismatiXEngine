@@ -223,7 +223,7 @@ int main() {
         portrait.nodes[1].kind = px::sdk::UiNodeKind::Image;
         portrait.nodes[1].runtimeProperties.emplace("path", std::string{"Assets/Hero.pxportrait"});
         constexpr auto descriptor = R"({"format":"PrismatiXLayeredPortrait",
-          "schemaRevision":2,"width":320,"height":480,"layers":[
+          "schemaRevision":1,"width":320,"height":480,"layers":[
           {"path":"Assets/Hero/base.png","width":320,"height":480,"role":"base"},
           {"path":"Assets/Hero/face.png","x":40,"y":60,"width":80,"height":80,
            "role":"expression"}]})";
@@ -270,7 +270,7 @@ int main() {
         scene.nodes[1].kind = px::sdk::UiNodeKind::Image;
         scene.nodes[1].runtimeProperties.emplace("path", std::string{"Assets/Motion/logo.pxmotion"});
         constexpr auto descriptor = R"({
-          "format":"PrismatiXMotion","schemaRevision":3,"id":"logo",
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"logo",
           "canvas":{"width":320,"height":120},"duration":1,"loop":false,
           "layers":[{"id":"logo","image":"Assets/Motion/logo.png",
                      "width":320,"height":120}],"tracks":[],

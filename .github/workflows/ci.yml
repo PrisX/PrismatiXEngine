@@ -237,7 +237,7 @@ jobs:
             }
           }
           $manifest = Get-Content -LiteralPath "out/ci/sdk-package/PrismatiXSDKManifest.json" -Raw | ConvertFrom-Json
-          if ($manifest.schemaRevision -ne 2 -or
+          if ($manifest.schemaRevision -ne 1 -or
               $manifest.nativeNamespace -ne 'px::sdk::api' -or
               $manifest.artifactSha256 -notmatch '^[0-9a-f]{64}$' -or
               $manifest.manifestSha256 -notmatch '^[0-9a-f]{64}$') {

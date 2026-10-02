@@ -52,7 +52,7 @@ test("imported Story lines produce a sidecar with stable save identities", () =>
     assert.deepEqual(built.value?.identityMap.entries.map((entry) => entry.id),
       ["original.start", "original.opening", "original.end"]);
     const compiled = compileStoryProject({
-      storyIndex: {format: "PrismatiXStoryIndex", schemaRevision: 2,
+      storyIndex: {format: "PrismatiXStoryIndex", schemaRevision: 1,
         id: "imported", entryScene: "main",
         chapters: [{id: "chapter", title: "Chapter", scenes: ["main"]}],
         scenes: [{id: "main", identityNamespace: "imported:main",

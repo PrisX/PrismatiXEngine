@@ -4,7 +4,7 @@
   "type":"object","additionalProperties":false,
   "required":["format","schemaRevision","id","displayName","aliases","expressions"],
   "properties":{
-    "format":{"const":"PrismatiXCharacter"},"schemaRevision":{"const":2},
+    "format":{"const":"PrismatiXCharacter"},"schemaRevision":{"const":1},
     "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},"revision":{"type":"integer","minimum":0},
     "displayName":{"type":"string","minLength":1,"maxLength":512},
     "displayNames":{"type":"object","maxProperties":128,"propertyNames":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/locale"},"additionalProperties":{"type":"string","minLength":1,"maxLength":512}},

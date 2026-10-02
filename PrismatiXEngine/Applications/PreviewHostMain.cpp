@@ -562,8 +562,8 @@ private:
         }
         if (*type == "hello") {
             Json response = Response(request, "ready");
-            response["runtimeIrSchemaRevision"] = 2;
-            response["uiSchemaRevision"] = 2;
+            response["runtimeIrSchemaRevision"] = 1;
+            response["uiSchemaRevision"] = 1;
             response["renderMode"] = "nativeWindow";
             Write(response);
             spdlog::info("PreviewHost protocol session is ready");
@@ -1976,7 +1976,7 @@ private:
                                  : Json(Json::value_t::discarded);
         if (!projectText || project.is_discarded() || !project.is_object() ||
             project.value("format", std::string{}) != "PrismatiXProject" ||
-            project.value("schemaRevision", 0) != 2 ||
+            project.value("schemaRevision", 0) != 1 ||
             !project.contains("extensions") || !project["extensions"].is_array() ||
             project["extensions"].size() > 1024) {
             m_runtimeStartupErrorCode = "PXPREVIEW-EXT-001";
@@ -2169,7 +2169,7 @@ private:
         const auto localeDocument = localeFile ? Json::parse(localeFile->second, nullptr, false) : Json{};
         if (!localeDocument.is_object() ||
             localeDocument.value("format", std::string{}) != "PrismatiXLocale" ||
-            localeDocument.value("schemaRevision", 0) != 2 ||
+            localeDocument.value("schemaRevision", 0) != 1 ||
             localeDocument.value("locale", std::string{}) != locale ||
             !localeDocument.contains("strings") || !localeDocument["strings"].is_object()) {
             m_runtimeStartupErrorMessage = "Compiled project locale is missing or invalid";

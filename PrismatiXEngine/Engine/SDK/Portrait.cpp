@@ -43,10 +43,9 @@ std::optional<LayeredPortrait> ParseLayeredPortrait(const std::string_view sourc
         *format != "PrismatiXLayeredPortrait") return std::nullopt;
     const auto revision = document.find("schemaRevision");
     if (revision == document.end() || !revision->is_number_integer()) return std::nullopt;
-    if (*revision != 1 && *revision != 2) return std::nullopt;
-    const int schemaRevision = revision->get<int>();
+    if (*revision != 1) return std::nullopt;
     LayeredPortrait portrait;
-    portrait.schemaRevision = schemaRevision;
+    portrait.schemaRevision = 1;
     if (!Number(document, "width", portrait.width, 0, 16384, true) ||
         !Number(document, "height", portrait.height, 0, 16384, true) ||
         portrait.width <= 0 || portrait.height <= 0)
@@ -78,14 +77,11 @@ std::optional<LayeredPortrait> ParseLayeredPortrait(const std::string_view sourc
             layer.opacity = static_cast<std::uint8_t>(alpha);
         }
         const auto role = value.find("role");
-        if (schemaRevision == 1 && role != value.end()) return std::nullopt;
-        if (schemaRevision == 2) {
-            if (role == value.end() || !role->is_string()) return std::nullopt;
-            const auto& name = role->get_ref<const std::string&>();
-            if (name == "base") layer.role = PortraitLayer::Role::Base;
-            else if (name == "expression") layer.role = PortraitLayer::Role::Expression;
-            else return std::nullopt;
-        }
+        if (role == value.end() || !role->is_string()) return std::nullopt;
+        const auto& name = role->get_ref<const std::string&>();
+        if (name == "base") layer.role = PortraitLayer::Role::Base;
+        else if (name == "expression") layer.role = PortraitLayer::Role::Expression;
+        else return std::nullopt;
         portrait.layers.push_back(std::move(layer));
     }
     return portrait;

@@ -444,7 +444,7 @@ bool PlayerApp::LoadLocale(std::string locale, const bool refreshPresentation) {
     const auto document = nlohmann::json::parse(*langText, nullptr, false);
     if (document.is_discarded() || !document.is_object() ||
         document.value("format", std::string{}) != "PrismatiXLocale" ||
-        document.value("schemaRevision", 0) != 2 ||
+        document.value("schemaRevision", 0) != 1 ||
         document.value("locale", std::string{}) != locale ||
         !document.contains("strings") || !document["strings"].is_object()) {
         diag::Emit(diag::Diagnostic{.severity = diag::Severity::Error,

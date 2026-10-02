@@ -27,8 +27,8 @@ assert.ok(unicode.directions.some((entry) => !entry.rightToLeft));
 
 const envelope = {
   protocol: "PrismatiXPreviewProtocol",
-  schemaRevision: 2,
-  protocolVersion: 2,
+  schemaRevision: 1,
+  protocolVersion: 1,
   type: "apply",
   sessionId: "wasm-ci-session",
   requestId: "wasm-ci-apply-1",
@@ -37,7 +37,7 @@ const envelope = {
   payload: {
     runtimeIr: JSON.stringify({
       format: "PrismatiXRuntimeIR",
-      schemaRevision: 2,
+      schemaRevision: 1,
       documentId: "wasm-ci-scene",
       committedRevision: 1,
       operations: [{
@@ -58,7 +58,7 @@ assert.equal(protocol.revision, 1);
 assert.equal(protocol.events[0].status, "applying");
 
 const stale = structuredClone(envelope);
-stale.protocolVersion = 1;
+stale.protocolVersion = 2;
 const rejected = invoke({ kind: "protocol", envelope: stale });
 assert.equal(rejected.ok, true);
 assert.equal(rejected.accepted, false);

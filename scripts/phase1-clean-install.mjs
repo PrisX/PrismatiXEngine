@@ -263,7 +263,7 @@ const interface_ = readline.createInterface({input: process.stdin, crlfDelay: In
 interface_.on("line", (line) => {
   const request = JSON.parse(line);
   if (log) appendFileSync(log, JSON.stringify(request) + "\\n");
-  if (request.type === "hello") write({...response(request, "ready"), runtimeIrSchemaRevision: 2, uiSchemaRevision: 2, renderMode: "mock"});
+  if (request.type === "hello") write({...response(request, "ready"), runtimeIrSchemaRevision: 1, uiSchemaRevision: 1, renderMode: "mock"});
   else if (request.type === "applyRuntimeIr" || request.type === "patchRuntimeIr") write({
     ...response(request, "runtimeIrApplied"), documentId: request.documentId,
     appliedRevision: request.committedRevision, operationCount: 2,
@@ -311,7 +311,7 @@ await writeFile(join(process.cwd(), "phase1-artifact-launched.json"),
   const property = (id, valueType) => ({id, valueType,
     writable: true, bindable: true, animatable: false});
   await writeFile(join(manifestDirectory, "PrismatiXUiTypeRegistry.json"), `${JSON.stringify({
-    format: "PrismatiXUiTypeRegistry", schemaRevision: 2, testOnly: true,
+    format: "PrismatiXUiTypeRegistry", schemaRevision: 1, testOnly: true,
     controls: [
       {runtimeType: "Control", properties: []},
       {runtimeType: "Panel", properties: []},

@@ -777,7 +777,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
   }
   let game = context.game;
   if (declarations.length > 0) {
-    const merged = mergeStoryVariables(game ?? {format: "PrismatiXGame", schemaRevision: 2,
+    const merged = mergeStoryVariables(game ?? {format: "PrismatiXGame", schemaRevision: 1,
       variables: []}, declarations);
     diagnostics.push(...merged.diagnostics);
     game = merged.game;
@@ -1001,7 +1001,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         context.resourceAssets ?? [])?.source;
       const portrait = source === undefined || !source.endsWith(".pxportrait") ? undefined
         : context.portraits?.layers(source);
-      if (portrait === undefined || portrait.schemaRevision !== 2) return [];
+      if (portrait === undefined) return [];
       const base = portrait.layers.filter((layer) => layer.role === "base").map((layer) => layer.path);
       const face = portrait.layers.filter((layer) => layer.role === "expression")
         .map((layer) => stem(layer.path)).sort();
@@ -1439,7 +1439,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         const layered = layeredExpressions(character);
         if (layered.length === 0) {
           diagnostics.push(error("PXSTORY1261",
-            `${alias} has no layered expressions (.pxportrait revision 2 with base and expression layers)`,
+            `${alias} has no layered expressions (.pxportrait with base and expression layers)`,
             node.span));
           break;
         }
@@ -2029,8 +2029,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
   if (!valid) return {resourceDependencies: [...resourceDependencies].sort(),
     resourceLocations: locations, diagnostics, valid: false};
   return {
-    runtimeIr: {format: "PrismatiXRuntimeIR", schemaRevision: 2, documentId: context.documentId, committedRevision: context.committedRevision ?? 0, operations},
-    sourceMap: {format: "PrismatiXSourceMap", schemaRevision: 2, documentId: context.documentId, mappings},
+    runtimeIr: {format: "PrismatiXRuntimeIR", schemaRevision: 1, documentId: context.documentId, committedRevision: context.committedRevision ?? 0, operations},
+    sourceMap: {format: "PrismatiXSourceMap", schemaRevision: 1, documentId: context.documentId, mappings},
     resourceDependencies: [...resourceDependencies].sort(),
     resourceLocations: locations,
     diagnostics,

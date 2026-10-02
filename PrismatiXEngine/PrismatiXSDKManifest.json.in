@@ -1,6 +1,6 @@
 {
   "format": "PrismatiXSDKManifest",
-  "schemaRevision": 2,
+  "schemaRevision": 1,
   "sdkVersion": "@PRISMATIX_ENGINE_VERSION@",
   "nativeNamespace": "px::sdk::api",
   "engineCommit": "@PRISMATIX_ENGINE_COMMIT@",

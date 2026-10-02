@@ -15,7 +15,7 @@ const registry = {controls: [{runtimeType: "Label", properties: [
   {id: "visible", writable: true, bindable: true, animatable: false, valueType: "boolean"},
 ]}]};
 const project = (items: unknown): ProjectDocument => ({
-  format: "PrismatiXProject", schemaRevision: 2, id: "binding-test",
+  format: "PrismatiXProject", schemaRevision: 1, id: "binding-test",
   name: "Binding Test", version: "0.2.0", contentVersion: "chapter-1",
   saveVersion: 1, resolution: {width: 1280, height: 720},
   entry: {story: "main", ui: "settings"}, gameCatalog: "Content/game.pxgame",

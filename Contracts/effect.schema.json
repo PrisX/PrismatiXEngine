@@ -5,7 +5,7 @@
   "required":["format","schemaRevision","id","targetLayer","shader","uniforms"],
   "properties":{
     "format":{"const":"PrismatiXEffect"},
-    "schemaRevision":{"enum":[2,3]},
+    "schemaRevision":{"const":1},
     "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
     "targetLayer":{"enum":["stage","node","transition"]},
     "shader":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
@@ -21,9 +21,5 @@
         "maximum":{"type":"number"}
       }
     }}
-  },
-  "allOf":[{
-    "if":{"properties":{"schemaRevision":{"const":2}},"required":["schemaRevision"]},
-    "then":{"properties":{"targetLayer":{"const":"stage"}}}
-  }]
+  }
 }

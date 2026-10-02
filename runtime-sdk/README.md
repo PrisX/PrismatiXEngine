@@ -298,7 +298,7 @@ ctx.effects.cancel(handle); // abort and report "cancelled"
 ctx.effects.status(handle);
 ```
 
-Packaged schema-revision-3 `.pxeffect` transitions use the same lifecycle and
+Packaged `.pxeffect` transitions use the same lifecycle and
 may take validated named parameters:
 
 ```ts

@@ -194,7 +194,7 @@ int main() {
         const auto portrait = [&](const std::string& name, const std::string& body,
                                   const std::string& face) {
             std::ofstream(root / "P" / name, std::ios::binary)
-                << R"({"format":"PrismatiXLayeredPortrait","schemaRevision":2,"width":16,"height":16,"layers":[)"
+                << R"({"format":"PrismatiXLayeredPortrait","schemaRevision":1,"width":16,"height":16,"layers":[)"
                 << R"({"path":")" << body << R"(","width":16,"height":16,"role":"base"},)"
                 << R"({"path":")" << face << R"(","width":8,"height":8,"role":"expression"}]})";
         };

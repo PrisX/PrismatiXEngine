@@ -1623,11 +1623,10 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
         if (!manifestEntry || effect.is_discarded() || !effect.is_object() ||
             effect.size() != 6 ||
             effect.value("format", std::string{}) != "PrismatiXEffect" ||
-            (schemaRevision != 2 && schemaRevision != 3) ||
+            schemaRevision != 1 ||
             effect.value("id", std::string{}) != id ||
             (targetLayer != "stage" && targetLayer != "node" &&
              targetLayer != "transition") ||
-            (schemaRevision == 2 && targetLayer != "stage") ||
             !effect.contains("shader") || !effect["shader"].is_string() ||
             !effect.contains("uniforms") || !effect["uniforms"].is_array() ||
             effect["uniforms"].size() > 8) {
@@ -1654,8 +1653,7 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
             hlsl.find("cbuffer PrismatiXEffectContext") == std::string::npos ||
             hlsl.find("register(b0, space3)") == std::string::npos ||
             hlsl.find("float4 parameters[8]") == std::string::npos ||
-            (schemaRevision == 3 &&
-             hlsl.find("float4 viewport") == std::string::npos) ||
+            hlsl.find("float4 viewport") == std::string::npos ||
             hlsl.find("register(t0, space2)") == std::string::npos ||
             hlsl.find("register(s0, space2)") == std::string::npos ||
             (expectedSamplers == 2u &&
@@ -2271,7 +2269,7 @@ ValidationResult Validate(const PackageRequest& request,
         if (!text || document.is_discarded() || !document.is_object() ||
             document.value("format", std::string{}) !=
                 "PrismatiXSaveMigration" ||
-            document.value("schemaRevision", 0) != 2 ||
+            document.value("schemaRevision", 0) != 1 ||
             document.value("id", std::string{}) != migration.id ||
             !document.contains("from") || !document["from"].is_object() ||
             !document.contains("to") || !document["to"].is_object() ||
@@ -2372,7 +2370,7 @@ ValidationResult Validate(const PackageRequest& request,
             projectValid = projectValid &&
                 canonicalProject.value("format", std::string{}) ==
                     "PrismatiXProject" &&
-                canonicalProject.value("schemaRevision", 0) == 2 &&
+                canonicalProject.value("schemaRevision", 0) == 1 &&
                 canonicalProject.value("id", std::string{}) == request.gameId &&
                 !canonicalProject.value("name", std::string{}).empty() &&
                 !canonicalProject.value("version", std::string{}).empty() &&
@@ -2444,7 +2442,7 @@ ValidationResult Validate(const PackageRequest& request,
                         !localeDocument.is_object() ||
                         localeDocument.value("format", std::string{}) !=
                             "PrismatiXLocale" ||
-                        localeDocument.value("schemaRevision", 0) != 2 ||
+                        localeDocument.value("schemaRevision", 0) != 1 ||
                         localeDocument.value("locale", std::string{}) != id ||
                         !localeDocument.contains("strings") ||
                         !localeDocument["strings"].is_object()) {
@@ -2554,7 +2552,7 @@ ValidationResult Validate(const PackageRequest& request,
                         !extensionManifest.is_object() ||
                         extensionManifest.value("format", std::string{}) !=
                             "PrismatiXExtension" ||
-                        extensionManifest.value("schemaRevision", 0) != 2 ||
+                        extensionManifest.value("schemaRevision", 0) != 1 ||
                         extensionManifest.value("language", std::string{}) !=
                             "javascript" ||
                         !semver::Parse(extensionManifest.value(
@@ -2968,7 +2966,7 @@ std::string detail::SerializePackageManifest(
     }
     Json root{
         {"format", "PrismatiXPackageManifest"},
-        {"schemaRevision", 2},
+        {"schemaRevision", 1},
         {"engineVersion", manifest.engineVersion},
         {"gameId", manifest.gameId},
         {"title", manifest.title},
@@ -3023,8 +3021,8 @@ PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
     }
     const auto revision = root.find("schemaRevision");
     const auto revisionValue = revision == root.end() ? std::optional<int>{} : JsonInt(*revision);
-    if (!revisionValue || *revisionValue != 2) {
-        AddDiagnostic(result.diagnostics, "PXPKG1103", "schemaRevision must be 2");
+    if (!revisionValue || *revisionValue != 1) {
+        AddDiagnostic(result.diagnostics, "PXPKG1103", "schemaRevision must be 1");
     }
     RequiredString(root, "requestId", result.request.requestId, result.diagnostics);
     RequiredString(root, "gameId", result.request.gameId, result.diagnostics);

@@ -8,7 +8,7 @@
 namespace px::test {
 
 inline nlohmann::json CanonicalUiFixture(nlohmann::json document) {
-    document["schemaRevision"] = 2;
+    document["schemaRevision"] = 1;
     const bool component = document.value("format", std::string{}) ==
                            "PrismatiXUIComponent";
     if (!component) {

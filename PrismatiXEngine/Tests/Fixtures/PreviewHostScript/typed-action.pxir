@@ -1,6 +1,6 @@
 {
   "format": "PrismatiXRuntimeIR",
-  "schemaRevision": 2,
+  "schemaRevision": 1,
   "documentId": "typed-action-document",
   "committedRevision": 1,
   "operations": [

@@ -34,7 +34,7 @@ std::string Manifest() {
 std::string Performance(const std::string& assetId = "asset-bg") {
     return Json{
         {"format", "PrismatiXPerformance"},
-        {"schemaRevision", 2},
+        {"schemaRevision", 1},
         {"sceneId", "scene-01"},
         {"revision", 4},
         {"stage",

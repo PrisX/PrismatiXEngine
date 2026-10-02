@@ -858,7 +858,7 @@ void ParseBehaviorSections(
         const auto entry = graphNodes.find(trigger.entryNodeId);
         const std::string sourceSignal = trigger.nodeId + "/" + trigger.signal;
         const bool dynamicSignal =
-            result.document.schemaRevision == 2 && source != uiNodes.end() &&
+            source != uiNodes.end() &&
             source->second->runtimeType.has_value() &&
             !source->second->runtimeType->empty() && !trigger.signal.empty() &&
             trigger.signal.size() <= 128;
@@ -1354,7 +1354,7 @@ UiParseResult ParseUi(const std::string_view text) {
         AddDiagnostic(result, "PXSDKUI1002", "UI document format is not PrismatiXUIScene");
     const auto schemaRevision = root.find("schemaRevision");
     if (schemaRevision == root.end() || !schemaRevision->is_number_unsigned() ||
-        schemaRevision->get<std::uint32_t>() != 2)
+        schemaRevision->get<std::uint32_t>() != 1)
         AddDiagnostic(result, "PXSDKUI1003", "Unsupported UI document schema revision");
     else
         result.document.schemaRevision = schemaRevision->get<std::uint32_t>();
@@ -1459,7 +1459,7 @@ UiParseResult ParseUi(const std::string_view text) {
         }
         if (node.kind == UiNodeKind::Leaf && !node.runtimeType) {
             AddDiagnostic(result, "PXSDKUI1018",
-                          "UI leaf nodes require a revision-2 runtimeType",
+                          "UI leaf nodes require a runtimeType",
                           index);
             valid = false;
         }
@@ -1640,8 +1640,7 @@ UiParseResult ParseUi(const std::string_view text) {
         }
         const auto bindings = item.find("bindings");
         if (bindings != item.end()) {
-            bool bindingsValid = result.document.schemaRevision == 2 &&
-                                 bindings->is_object() &&
+            bool bindingsValid = bindings->is_object() &&
                                  bindings->size() <= 256;
             if (bindings->is_object() && bindings->size() <= 256) {
                 for (auto binding = bindings->begin(); binding != bindings->end();
@@ -1676,12 +1675,12 @@ UiParseResult ParseUi(const std::string_view text) {
             if (!bindingsValid) {
                 AddDiagnostic(
                     result, "PXSDKUI1065",
-                    "Revision-2 UI property bindings require bounded typed paths",
+                    "UI property bindings require bounded typed paths",
                     index);
                 valid = false;
             }
         } else {
-            AddDiagnostic(result, "PXSDKUI1065", "Revision-2 UI property bindings are required", index);
+            AddDiagnostic(result, "PXSDKUI1065", "UI property bindings are required", index);
             valid = false;
         }
         const auto itemSource = item.find("itemSource");
@@ -2278,7 +2277,6 @@ UiComponentParseResult ParseUiComponent(
                     : std::nullopt;
             const auto runtimeType = source->second->find("runtimeType");
             const bool dynamicSignal =
-                result.document.content.schemaRevision == 2 &&
                 runtimeType != source->second->end() &&
                 runtimeType->is_string() && !signal.signal.empty() &&
                 signal.signal.size() <= 128;

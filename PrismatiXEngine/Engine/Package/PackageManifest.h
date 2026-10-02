@@ -47,7 +47,7 @@ struct PackageShaderArtifact {
 
 struct PackageCustomEffect {
     std::string id;
-    std::uint32_t schemaRevision = 2;
+    std::uint32_t schemaRevision = 1;
     std::string targetLayer;
     std::vector<PackageEffectUniform> uniforms;
     std::vector<PackageShaderArtifact> artifacts;

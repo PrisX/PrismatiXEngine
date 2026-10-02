@@ -12,13 +12,13 @@ export interface LayeredPortraitLayer {
   readonly y?: number;
   /** Byte alpha used by the native Stage compositor (0–255). */
   readonly opacity?: number;
-  /** Revision 2: only changed expression layers may crossfade in auto mode. */
+  /** Only changed expression layers may crossfade in auto mode. */
   readonly role?: "base" | "expression";
 }
 
 export interface LayeredPortraitDocument {
   readonly format: "PrismatiXLayeredPortrait";
-  readonly schemaRevision: 1 | 2;
+  readonly schemaRevision: 1;
   readonly width: number;
   readonly height: number;
   readonly layers: readonly LayeredPortraitLayer[];
@@ -31,13 +31,11 @@ export interface LayeredPortraitInput {
 }
 
 /** Creates and validates the public .pxportrait document without hand-writing
- * format, revision, x/y, or alpha defaults. All layers need a role when any
- * one uses it; legacy untagged portraits remain revision 1. */
+ * format, revision, x/y, or alpha defaults. */
 export function defineLayeredPortrait(input: LayeredPortraitInput): Result<LayeredPortraitDocument> {
-  const hasRoles = input.layers.some((layer) => layer.role !== undefined);
   const document: LayeredPortraitDocument = {
     format: "PrismatiXLayeredPortrait",
-    schemaRevision: hasRoles ? 2 : 1,
+    schemaRevision: 1,
     width: input.width,
     height: input.height,
     layers: input.layers.map((layer) => ({

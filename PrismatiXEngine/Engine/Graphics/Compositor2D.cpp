@@ -15,25 +15,22 @@ namespace px::graphics {
 
 namespace {
 
-struct alignas(16) CustomUniformsV2 {
+struct alignas(16) CustomUniforms {
     float texelSize[2];
     float progress;
     float randomSeed;
     float parameters[8][4];
-};
-
-struct alignas(16) CustomUniformsV3 : CustomUniformsV2 {
     float viewport[4];
 };
 
 [[maybe_unused]] bool SetCustomUniforms(
     SDL_Renderer* renderer, SDL_GPURenderState* state,
-    const CustomEffectDescriptor& descriptor, const int width, const int height,
+    const CustomEffectDescriptor& /*descriptor*/, const int width, const int height,
     const float progress, const float randomSeed,
     const std::array<std::array<float, 4>, 8>& parameters,
     const std::array<float, 4>& viewport) {
     if (!renderer || !state || width <= 0 || height <= 0) return false;
-    CustomUniformsV3 uniforms{};
+    CustomUniforms uniforms{};
     uniforms.texelSize[0] = 1.0f / static_cast<float>(width);
     uniforms.texelSize[1] = 1.0f / static_cast<float>(height);
     uniforms.progress = std::clamp(progress, 0.0f, 1.0f);
@@ -41,10 +38,8 @@ struct alignas(16) CustomUniformsV3 : CustomUniformsV2 {
     for (std::size_t slot = 0; slot < parameters.size(); ++slot)
         std::ranges::copy(parameters[slot], uniforms.parameters[slot]);
     std::ranges::copy(viewport, uniforms.viewport);
-    const std::uint32_t bytes = descriptor.schemaRevision >= 3
-                                    ? sizeof(CustomUniformsV3)
-                                    : sizeof(CustomUniformsV2);
-    return SDL_SetGPURenderStateFragmentUniforms(state, 0, &uniforms, bytes);
+    return SDL_SetGPURenderStateFragmentUniforms(
+        state, 0, &uniforms, sizeof(CustomUniforms));
 }
 
 }  // namespace
@@ -199,10 +194,7 @@ bool Compositor2D::LoadCustomEffects(
         const std::uint32_t expectedSamplers =
             descriptor.targetLayer == "transition" ? 2u : 1u;
         if (descriptor.id.empty() || !validTarget ||
-            (descriptor.schemaRevision != 2 &&
-             descriptor.schemaRevision != 3) ||
-            (descriptor.schemaRevision == 2 &&
-             descriptor.targetLayer != "stage") ||
+            descriptor.schemaRevision != 1 ||
             descriptor.samplerCount != expectedSamplers ||
             descriptor.uniformBufferCount != 1 ||
             descriptor.uniforms.size() > 8 || descriptor.artifacts.empty() ||
@@ -453,7 +445,7 @@ void Compositor2D::EndStage(const StagePostEffects& effects) {
             return;
         customSource = m_intermediate;
     }
-    CustomUniformsV3 customUniforms{};
+    CustomUniforms customUniforms{};
     customUniforms.texelSize[0] = 1.0f / static_cast<float>(m_width);
     customUniforms.texelSize[1] = 1.0f / static_cast<float>(m_height);
     customUniforms.progress = std::clamp(effects.customProgress, 0.0f, 1.0f);
@@ -463,10 +455,7 @@ void Compositor2D::EndStage(const StagePostEffects& effects) {
                           customUniforms.parameters[slot]);
     customUniforms.viewport[2] = static_cast<float>(m_width);
     customUniforms.viewport[3] = static_cast<float>(m_height);
-    const std::uint32_t uniformBytes =
-        custom->second.descriptor.schemaRevision >= 3
-            ? sizeof(CustomUniformsV3)
-            : sizeof(CustomUniformsV2);
+    constexpr std::uint32_t uniformBytes = sizeof(CustomUniforms);
     (void)ApplyRenderState(custom->second.state, customSource,
                            m_previousTarget, &customUniforms,
                            uniformBytes);

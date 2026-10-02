@@ -1,6 +1,6 @@
 {
   "format": "PrismatiXExtension",
-  "schemaRevision": 2,
+  "schemaRevision": 1,
   "language": "javascript",
   "id": "preview-debug-fixture",
   "version": "1.0.0",

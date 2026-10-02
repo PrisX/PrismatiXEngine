@@ -18,7 +18,7 @@ await writeFile(join(root,'project.pxproject'), JSON.stringify(manifest));
 await mkdir(join(root,'Content/Localization'),{recursive:true});
 await mkdir(join(root,'Content/Fonts'),{recursive:true});
 await cp(join(repo,'packages/cli/templates/minimal/Content/Fonts/NotoSansTC-Bold.ttf'),join(root,'Content/Fonts/NotoSansTC-Bold.ttf'));
-await writeFile(join(root,'Content/Localization/en.json'),JSON.stringify({format:'PrismatiXLocale',schemaRevision:2,locale:'en',strings:{},fontChain:['Content/Fonts/NotoSansTC-Bold.ttf']}));
+await writeFile(join(root,'Content/Localization/en.json'),JSON.stringify({format:'PrismatiXLocale',schemaRevision:1,locale:'en',strings:{},fontChain:['Content/Fonts/NotoSansTC-Bold.ttf']}));
 let transcript = '', errors = '', sequence = 0;
 function session() {
   let revision = 1;
@@ -37,7 +37,7 @@ function session() {
     const response = await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>{pending.delete(requestId);reject(new Error(`Timeout ${type}`));},15000);
       pending.set(requestId,{resolve,reject,timer});
-      child.stdin.write(JSON.stringify({protocol:'PrismatiXPreviewProtocol',schemaRevision:2,protocolVersion:2,sessionId:'native-ui-test',requestId,documentId:'preview-controls-document',revision,type,...fields})+'\n');
+      child.stdin.write(JSON.stringify({protocol:'PrismatiXPreviewProtocol',schemaRevision:1,protocolVersion:1,sessionId:'native-ui-test',requestId,documentId:'preview-controls-document',revision,type,...fields})+'\n');
     });
     assert.notEqual(response.type,'error',JSON.stringify(response));
     if (type === 'applyRuntimeIr') revision = fields.committedRevision;

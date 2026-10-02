@@ -68,7 +68,7 @@ export async function addCharacter(root: string, alias: string, options: {
   const characterPath = join(root, source);
   if (await exists(characterPath)) throw new Error(`${source} already exists`);
   await mkdir(join(root, "Characters"), {recursive: true});
-  await writeJson(characterPath, {format: "PrismatiXCharacter", schemaRevision: 2, revision: 1,
+  await writeJson(characterPath, {format: "PrismatiXCharacter", schemaRevision: 1, revision: 1,
     displayName, aliases: [alias], expressions});
   manifest.characters = [...characters, {alias, displayName, source}];
   await writeJson(manifestPath, manifest);

@@ -5,7 +5,7 @@
   "required":["format","schemaRevision","id","from","to","anchor","operations"],
   "properties":{
     "format":{"const":"PrismatiXSaveMigration"},
-    "schemaRevision":{"const":2},
+    "schemaRevision":{"const":1},
     "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
     "from":{"$ref":"#/$defs/version"},
     "to":{"$ref":"#/$defs/version"},

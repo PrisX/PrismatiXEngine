@@ -183,13 +183,12 @@ An overlay is an unencrypted PDX5 file whose virtual resources are exactly:
 - `__prismatix_overlay__/manifest.json` (at most 16 KiB)
 - `__prismatix_overlay__/target-manifest.json` (at most 4 MiB)
 - `__prismatix_overlay__/target-content-index.json` (at most 128 MiB)
-- `__prismatix_overlay__/signature.bin` (exactly 64 bytes, signed revisions 2 and 3)
+- `__prismatix_overlay__/signature.bin` (exactly 64 bytes, present when the overlay is signed)
 - every added or changed target resource, by its original virtual URI
 
 The overlay manifest has `format: "PrismatiXPackageOverlay"`, a
-`schemaRevision` of 1 for unsigned updates, 2 for signed updates, or 3 for
-signed optional packs. Revision 3 adds `kind: "optional"` and a bounded
-lowercase `optionalId`. All revisions contain `gameId`,
+`schemaRevision` of 1. An optional pack adds `kind: "optional"` and a bounded
+lowercase `optionalId`. Every overlay contains `gameId`,
 `basePackageFingerprint`, `targetPackageFingerprint`, and SHA-256
 fields named `baseManifestSha256`, `baseContentIndexSha256`,
 `targetManifestSha256`, and `targetContentIndexSha256`. The two target
@@ -197,18 +196,17 @@ documents copy the Packager-produced `Package/manifest.json` and
 `Package/content-index.json`. The reserved overlay prefix cannot be an
 ordinary package resource.
 
-Revisions 2 and 3 sign the SHA-256 digest of the exact overlay manifest bytes,
-prefixed with the ASCII bytes `PrismatiXPackageOverlaySignatureV2` or
-`PrismatiXPackageOverlaySignatureV3`, respectively, and a NUL byte.
+A signed overlay signs the SHA-256 digest of the exact overlay manifest bytes,
+prefixed with the ASCII bytes `PrismatiXPackageOverlaySignature` and a NUL byte.
 `signature.bin` contains a raw P-256 ECDSA SHA-256 signature in
 `r || s` form. The signed manifest hashes the exact base and target
 documents; the target index hashes every changed payload. Verification
 rejects missing, extra, mismatched, or damaged entries. Unchanged resources
 remain in the base PDX even if the target changes their shard assignment.
 
-`prismatix verify-overlay` checks every revision and verifies signatures
-whenever present. Add `--require-signature` for the Player trust policy; it
-rejects revision 1. Unsigned overlays remain available for explicit
+`prismatix verify-overlay` verifies signatures whenever present. Add
+`--require-signature` for the Player trust policy; it rejects an unsigned
+overlay. Unsigned overlays remain available for explicit
 inspection and are never loaded automatically.
 
 The distribution-to-distribution form of `create-overlay` fully verifies both
@@ -300,7 +298,7 @@ operations. It avoids listing every unchanged anchor in a file limited to
 ```json
 {
   "format": "PrismatiXSaveMigration",
-  "schemaRevision": 2,
+  "schemaRevision": 1,
   "id": "chapter-1-to-2",
   "from": {"contentVersion": "chapter-1", "saveVersion": 1},
   "to": {"contentVersion": "chapter-2", "saveVersion": 2},
@@ -342,10 +340,7 @@ Existence alone cannot prove the operation has the same narrative meaning or
 that variables, resources, and routes still make sense. Validate representative
 old slots at each changed position in the packaged Player.
 
-`map-or-preserve` requires a Player with this policy implemented. Earlier
-Players do not understand it. A content overlay cannot replace the Player
-executable, so an already released older Player needs a new base distribution
-with the updated runtime before it can use this policy.
+A content overlay cannot replace the Player executable.
 
 ## Augmenting a published artifact
 

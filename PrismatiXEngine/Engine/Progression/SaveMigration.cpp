@@ -102,7 +102,7 @@ Status ApplyMigrationDocument(SaveSnapshot& candidate,
     }
     try {
         if (root.value("format", std::string{}) != "PrismatiXSaveMigration" ||
-            root.value("schemaRevision", 0) != 2 ||
+            root.value("schemaRevision", 0) != 1 ||
             root.value("id", std::string{}) != descriptor.id) {
             return Status::Fail(MigrationError(
                 "PXSAVE6206", "Save migration format, revision, or identity is invalid",

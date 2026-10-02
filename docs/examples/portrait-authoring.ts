@@ -11,7 +11,7 @@ const defined = defineLayeredPortrait(input);
 const serialized = serializeLayeredPortrait(input);
 if (!defined.valid || !serialized.valid || serialized.value === undefined ||
     defined.value?.layers[0]?.opacity !== 255 ||
-    defined.value.schemaRevision !== 2)
+    defined.value.schemaRevision !== 1)
   throw new Error("Layered portrait authoring example failed");
 const document = JSON.parse(serialized.value) as {format?: string};
 if (document.format !== "PrismatiXLayeredPortrait")

@@ -1,7 +1,7 @@
 import {validateDocument, type GameDocument} from "@prismatix/authoring-sdk";
 
 const game: GameDocument = {
-  format: "PrismatiXGame", schemaRevision: 3,
+  format: "PrismatiXGame", schemaRevision: 1,
   variables: [], gallery: [], unlockables: [],
   inputActions: [
     {id: "quick-save", context: "game", keys: ["F8"]},

@@ -95,7 +95,7 @@ Json BuildRuntimeIr(const std::string_view locale) {
         }
     }
     values.push_back(Operation(sequence++, "endStory", Json::object()));
-    return {{"format", "PrismatiXRuntimeIR"}, {"schemaRevision", 2},
+    return {{"format", "PrismatiXRuntimeIR"}, {"schemaRevision", 1},
             {"documentId", kDocumentId}, {"committedRevision", 7},
             {"operations", std::move(operations)}};
 }
@@ -113,7 +113,7 @@ Json BuildSourceMap(const Json& runtime, const std::string& sourceUri) {
                           {"endColumn", 2}});
         ++line;
     }
-    return {{"format", "PrismatiXSourceMap"}, {"schemaRevision", 2},
+    return {{"format", "PrismatiXSourceMap"}, {"schemaRevision", 1},
             {"documentId", kDocumentId}, {"mappings", std::move(mappings)}};
 }
 
@@ -178,7 +178,7 @@ FixturePaths BuildFixture(const std::filesystem::path& base) {
             strings["ui." + std::to_string(index)] =
                 locale + " localized string " + std::to_string(index);
         Write(fixture.root / localePath,
-              Json{{"format", "PrismatiXLocale"}, {"schemaRevision", 2},
+              Json{{"format", "PrismatiXLocale"}, {"schemaRevision", 1},
                    {"locale", locale}, {"strings", std::move(strings)}}.dump());
         storySources[locale] = storyPath;
         fixture.inputs.insert(fixture.inputs.end(),
@@ -186,7 +186,7 @@ FixturePaths BuildFixture(const std::filesystem::path& base) {
     }
 
     Write(fixture.root / "Story/story.pxindex",
-          Json{{"format", "PrismatiXStoryIndex"}, {"schemaRevision", 2},
+          Json{{"format", "PrismatiXStoryIndex"}, {"schemaRevision", 1},
                {"id", "main"}, {"entryScene", "main"},
                {"chapters", Json::array({{{"id", "chapter-1"},
                                             {"title", "Mega Chapter"},
@@ -195,13 +195,13 @@ FixturePaths BuildFixture(const std::filesystem::path& base) {
                                           {"sources", std::move(storySources)}}})}}
               .dump());
     Write(fixture.root / "Content/game.pxgame",
-          Json{{"format", "PrismatiXGame"}, {"schemaRevision", 2},
+          Json{{"format", "PrismatiXGame"}, {"schemaRevision", 1},
                {"variables", Json::array()}, {"gallery", Json::array()},
                {"unlockables", Json::array()}}
               .dump());
     Write(fixture.root / "Content/UI/HUD.pxui", UiDocument());
     Write(fixture.root / "Content/Migrations/v1-to-v2.pxsave-migration",
-          R"({"format":"PrismatiXSaveMigration","schemaRevision":2,
+          R"({"format":"PrismatiXSaveMigration","schemaRevision":1,
           "id":"commercial-v1-to-v2",
           "from":{"contentVersion":"commercial-v1","saveVersion":1},
           "to":{"contentVersion":"commercial-v2","saveVersion":2},
@@ -237,7 +237,7 @@ FixturePaths BuildFixture(const std::filesystem::path& base) {
                                     {"saveVersion", 2}}},
                             {"asset", "Content/Migrations/v1-to-v2.pxsave-migration"}};
     Write(fixture.root / "project.pxproject",
-          Json{{"format", "PrismatiXProject"}, {"schemaRevision", 2},
+          Json{{"format", "PrismatiXProject"}, {"schemaRevision", 1},
                {"id", "commercial-mega-vn"}, {"name", "CommercialMegaVN"},
                {"version", "2.0.0"}, {"contentVersion", "commercial-v2"},
                {"saveVersion", 2}, {"graphicsTier", "basic"},
