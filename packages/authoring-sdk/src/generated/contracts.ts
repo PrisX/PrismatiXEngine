@@ -3016,6 +3016,20 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           "player.presentationTransitions": {
             "additionalProperties": false,
             "properties": {
+              "loadDuration": {
+                "maximum": 10,
+                "minimum": 0,
+                "type": "number"
+              },
+              "loadPreset": {
+                "enum": [
+                  "none",
+                  "fade",
+                  "crossfade",
+                  "slide-left",
+                  "slide-right"
+                ]
+              },
               "routeDuration": {
                 "maximum": 10,
                 "minimum": 0,
@@ -5287,7 +5301,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
   "motion.schema.json": "300c1bbdeb16abf4faa8014afa81800e8d72a1e7f1f6d06d309cf53ba2980f01",
   "portrait.schema.json": "658421c74dacc9d8247b64c6a00389c069b7516f57f863f399160161a1207f16",
-  "project.schema.json": "4515d7a3105f4522d6a1beb49643db8698e5daa619a2d25bc71e5e301fff0c07",
+  "project.schema.json": "22dca6d37ac881bb1d9e66cb373eb07d3f98c0ca05e6eb34551f2f9aac5a92ed",
   "runtime-ir.schema.json": "9ba844df82d20eee89b8d4fb178c03b4e386170bc251f2a7c2509ca2b0f948ee",
   "save-migration.schema.json": "b66062b76495dfec0ec9dc1a9c7f0bfc1c49967a5748b2a48f7e186c9cf8533e",
   "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",

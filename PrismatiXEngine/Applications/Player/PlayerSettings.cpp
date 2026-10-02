@@ -447,6 +447,13 @@ bool PlayerApp::ApplyPlayerSettings(const nlohmann::json& settingsObject) {
             m_routeTransition.preset = *preset;
         if (const auto duration = transitionDuration(*transitions, "routeDuration"))
             m_routeTransition.duration = *duration;
+        // Loading a save defaults to the route effect; games often want a
+        // slower fade there, so it has its own pair.
+        m_loadTransition = m_routeTransition;
+        if (const auto preset = transitionPreset(*transitions, "loadPreset"))
+            m_loadTransition.preset = *preset;
+        if (const auto duration = transitionDuration(*transitions, "loadDuration"))
+            m_loadTransition.duration = *duration;
         if (const auto preset = transitionPreset(*transitions, "splashPreset"))
             m_splashTransition.preset = *preset;
         if (const auto duration = transitionDuration(*transitions, "splashDuration")) {

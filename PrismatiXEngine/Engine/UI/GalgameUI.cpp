@@ -1186,6 +1186,8 @@ Status GalgameUI::ScrollBacklog(const int rows) {
 
 Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
     const Screen target=saveMode?Screen::Save:Screen::Load;
+    // Fresh slot data replaces a reveal still in progress (e.g. a page change).
+    m_revealedSlots.reset();
     (void)SetSaveLoadConfirmation(SaveLoadPrompt::None);
     VariantArray slotValues;
     slotValues.reserve(slots.size());
@@ -1241,6 +1243,33 @@ Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
     }
     m_items = std::make_shared<ItemSource>(std::move(slots), *this);
     return grid->SetSource(m_items, [] { return std::make_unique<CardButton>(); });
+}
+
+void GalgameUI::RevealSaveSlot(const std::string_view argument) {
+    const auto current = m_viewModel.Read("saveLoad.slots");
+    if (!current) return;
+    const auto* slots = current.Value().AsArray();
+    if (!slots) return;
+    // Arrays and objects are shared: rebuild the changed slot, so the kept
+    // original still says occupied.
+    VariantArray hidden = *slots;
+    bool found = false;
+    for (auto& slot : hidden) {
+        const auto* fields = slot.AsObject();
+        if (!fields) continue;
+        const auto key = fields->find("argument");
+        const auto* text = key == fields->end() ? nullptr : key->second.TryGet<std::string>();
+        if (!text || *text != argument) continue;
+        VariantObject changed = *fields;
+        changed["occupied"] = Variant(false);
+        slot = Variant(std::move(changed));
+        found = true;
+    }
+    if (!found) return;
+    m_revealedSlots = current.Value();
+    // Two UI updates: one applies the hidden state, the next restores it.
+    m_revealFrames = 2;
+    (void)m_viewModel.Write("saveLoad.slots", Variant(std::move(hidden)));
 }
 
 bool GalgameUI::SupportsSaveLoadConfirmation() const {
@@ -1419,7 +1448,7 @@ void GalgameUI::PublishHover() {
         (void)m_viewModel.Write("hover." + m_hoverName, Variant(true));
 }
 
-bool GalgameUI::Update(const Input& input, int width, int height,float deltaSeconds) { const diag::ScopedFramePhase profiled(diag::FramePhase::UiUpdate); const bool consumed=m_context.Update(input,width,height,deltaSeconds);PublishHover();auto actions=std::move(m_pendingActions);m_pendingActions.clear();for(const auto& action:actions)if(m_sink)m_sink(action);return consumed; }
+bool GalgameUI::Update(const Input& input, int width, int height,float deltaSeconds) { const diag::ScopedFramePhase profiled(diag::FramePhase::UiUpdate); const bool consumed=m_context.Update(input,width,height,deltaSeconds);if(m_revealedSlots&&--m_revealFrames<=0){(void)m_viewModel.Write("saveLoad.slots",*std::exchange(m_revealedSlots,std::nullopt));}PublishHover();auto actions=std::move(m_pendingActions);m_pendingActions.clear();for(const auto& action:actions)if(m_sink)m_sink(action);return consumed; }
 void GalgameUI::Render(graphics::Renderer2D& renderer) { m_context.Render(renderer); }
 
 }  // namespace px::ui

@@ -184,6 +184,8 @@ Set Player presentation effects in the project `settings` (seconds, from 0 to
     "splashDuration": 0.3,
     "titlePreset": "crossfade",
     "titleDuration": 0.5,
+    "loadPreset": "fade",
+    "loadDuration": 1.2,
     "routeOverrides": [
       {"from": "title", "to": "settings", "preset": "slide-left", "duration": 0.4}
     ]
@@ -196,8 +198,9 @@ Set Player presentation effects in the project `settings` (seconds, from 0 to
 }
 ```
 
-`routePreset`/`routeDuration` apply to Player menu routes and confirmed load
-presentation; `splashPreset`/`splashDuration` apply between splash screens;
+`routePreset`/`routeDuration` apply to Player menu routes;
+`loadPreset`/`loadDuration` apply when a save is loaded and default to the route
+pair; `splashPreset`/`splashDuration` apply between splash screens;
 `titlePreset`/`titleDuration` apply from the final splash to the title. A splash
 entry can override the effect or duration used when entering that screen.
 `routeOverrides` selects an exact outgoing/incoming Player route pair; unknown
@@ -334,6 +337,14 @@ when items reorder. Empty, duplicate, or invalid keys retain the previous
 visible snapshot and emit a diagnostic. Nested item templates and template-local
 Behavior/Animation targets are not yet supported. The template is a Runtime
 data source, not a static first child of the GridView/ListView.
+
+After a save, the Player hides that slot's `item.occupied` for a moment. Put
+the slot's thumbnail and text in a control bound to it with a `showTransition`
+and the new save fades in, including when it overwrites an older one:
+
+```tsx
+<Group name="SlotContent" bind={{visible: "item.occupied"}} showTransition={{seconds: 0.5}}>...</Group>
+```
 
 When a native UI TypeRegistry manifest is available, use
 `validateUiDocument(ui, registry)` to check writable/bindable properties and

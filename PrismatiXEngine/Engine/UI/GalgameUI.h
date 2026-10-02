@@ -223,6 +223,9 @@ public:
                        std::vector<GalgameItem> legacyItems);
     Status ScrollBacklog(int rows);
     Status ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots);
+    // Hides the just-written slot's `item.occupied` for a couple of frames, so
+    // a control bound to it with a showTransition fades the new save in.
+    void RevealSaveSlot(std::string_view argument);
     enum class SaveLoadPrompt { None, Save, Load, Overwrite };
     [[nodiscard]] bool SupportsSaveLoadConfirmation() const;
     Status SetSaveLoadConfirmation(SaveLoadPrompt prompt);
@@ -302,6 +305,8 @@ private:
     // Bindings owned by UIContext unsubscribe during context destruction, so
     // the ViewModel must be declared first and therefore outlive it.
     ObservableViewModel m_viewModel;
+    std::optional<Variant> m_revealedSlots;
+    int m_revealFrames = 0;
     std::string m_uiContractDocument;
     UIContext m_context;
     ActionSink m_sink;

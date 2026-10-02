@@ -344,6 +344,7 @@ private:
     std::optional<vn::ActorActionTrack> m_windowAction;
     std::chrono::steady_clock::time_point m_windowActionStart{};
     PresentationTransition m_routeTransition;
+    PresentationTransition m_loadTransition;
     PresentationTransition m_splashTransition;
     bool m_splashTransitionConfigured = false;
     PresentationTransition m_titleTransition{"crossfade", 0.5f};

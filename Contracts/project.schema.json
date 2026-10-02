@@ -60,6 +60,8 @@
         "splashDuration":{"type":"number","minimum":0,"maximum":10},
         "titlePreset":{"enum":["none","fade","crossfade","slide-left","slide-right"]},
         "titleDuration":{"type":"number","minimum":0,"maximum":10},
+        "loadPreset":{"enum":["none","fade","crossfade","slide-left","slide-right"]},
+        "loadDuration":{"type":"number","minimum":0,"maximum":10},
         "routeOverrides":{"type":"array","maxItems":256,"items":{"type":"object","additionalProperties":false,"required":["from","to","preset","duration"],"properties":{
           "from":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
           "to":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},

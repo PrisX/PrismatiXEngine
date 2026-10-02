@@ -170,10 +170,12 @@ void PlayerApp::ActivateSlot(const bool saveMode, const std::string& argument) {
             : m_saves.Peek(number).exists ? "overwrite" : "save";
         RequestConfirm(operation, [this, number, saveMode] {
             if (saveMode) {
-                if (SaveSlot(number, m_menuThumb))
+                if (SaveSlot(number, m_menuThumb)) {
                     (void)m_ui.ShowSaveLoad(true, SaveItems(true));
+                    m_ui.RevealSaveSlot(std::to_string(number));
+                }
             } else if (LoadSlot(number)) {
-                BeginPresentationTransition(m_routeTransition);
+                BeginPresentationTransition(m_loadTransition);
             } else {
                 (void)m_ui.UpdateUiData("saveLoad.error.visible", Variant(true));
             }
@@ -189,10 +191,13 @@ void PlayerApp::ActivateSlot(const bool saveMode, const std::string& argument) {
                 : ui::GalgameUI::SaveLoadPrompt::Save;
         (void)m_ui.SetSaveLoadConfirmation(prompt);
     } else if (saveMode) {
-        SaveSlot(std::atoi(argument.c_str()), m_menuThumb);
+        const int number = std::atoi(argument.c_str());
+        const bool saved = SaveSlot(number, m_menuThumb);
         m_ui.ShowSaveLoad(true, SaveItems(true));
+        if (saved) m_ui.RevealSaveSlot(std::to_string(number));
     } else {
-        LoadSlot(std::atoi(argument.c_str()));
+        if (LoadSlot(std::atoi(argument.c_str())))
+            BeginPresentationTransition(m_loadTransition);
     }
 }
 
@@ -492,10 +497,12 @@ PlayerApp::ActionHandlers() {
             (void)app.m_ui.SetSaveLoadConfirmation(ui::GalgameUI::SaveLoadPrompt::None);
             if (!pending) return;
             if (app.m_pendingSaveLoadSaveMode) {
-                if (app.SaveSlot(*pending, app.m_menuThumb))
+                if (app.SaveSlot(*pending, app.m_menuThumb)) {
                     (void)app.m_ui.ShowSaveLoad(true, app.SaveItems(true));
+                    app.m_ui.RevealSaveSlot(std::to_string(*pending));
+                }
             } else if (app.LoadSlot(*pending)) {
-                app.BeginPresentationTransition(app.m_routeTransition);
+                app.BeginPresentationTransition(app.m_loadTransition);
             } else {
                 (void)app.m_ui.UpdateUiData("saveLoad.error.visible", Variant(true));
             }
