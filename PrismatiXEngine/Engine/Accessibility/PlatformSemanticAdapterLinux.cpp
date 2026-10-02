@@ -3,6 +3,7 @@
 #if defined(__linux__) && !defined(__ANDROID__)
 
 #include "Engine/Support/Logger.h"
+#include "Engine/SDK/ContractVersions.h"
 
 #include <SDL3/SDL.h>
 #include <dbus/dbus.h>
@@ -411,7 +412,7 @@ private:
             stringVariant("PrismatiX");
         else if (iface == kApplication &&
                  (property == "Version" || property == "ToolkitVersion"))
-            stringVariant("0.2.0");
+            stringVariant(std::string(::px::sdk::kEngineVersion));
         else if (iface == kApplication && property == "AtspiVersion")
             stringVariant("2.1");
         else if (iface == kApplication && property == "InterfaceVersion")

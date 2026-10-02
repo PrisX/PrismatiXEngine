@@ -27,6 +27,7 @@ import {
 } from "./resources.js";
 import {compileStoryProject, type StoryIndexDocument, type StoryProjectCompilationCache,
   type StoryProjectProgress} from "./story-project.js";
+import {ENGINE_VERSION} from "./version.js";
 import type {
   AuthoringDiagnostic,
   CharacterDocument,
@@ -167,7 +168,7 @@ export interface CompileProjectInput {
 }
 
 export interface BuildArtifact {
-  readonly engineVersion: "0.2.0";
+  readonly engineVersion: string;
   readonly project: ProjectDocument;
   readonly runtimeIr: RuntimeIrDocument;
   readonly sourceMap: RuntimeSourceMap;
@@ -610,7 +611,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
           path, "/requiredEngineVersion", extension.requiredEngineVersion,
           extension.requiredEngineVersion));
       else if (!compatible)
-        diagnostics.push(locatedIssue("PXBUILD1013", "Extension is incompatible with engine 0.2.0",
+        diagnostics.push(locatedIssue("PXBUILD1013", `Extension is incompatible with engine ${ENGINE_VERSION}`,
           path, "/requiredEngineVersion", extension.requiredEngineVersion,
           extension.requiredEngineVersion));
       else extensions.push(extension);
@@ -1540,7 +1541,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
 
   return {
     artifact: {
-      engineVersion: "0.2.0",
+      engineVersion: ENGINE_VERSION,
       project,
       runtimeIr: compiled.runtimeIr,
       sourceMap: compiled.sourceMap,

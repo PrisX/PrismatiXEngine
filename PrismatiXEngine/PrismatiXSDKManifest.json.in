@@ -1,8 +1,8 @@
 {
   "format": "PrismatiXSDKManifest",
   "schemaRevision": 2,
-  "sdkVersion": "0.2.0",
-  "nativeNamespace": "px::sdk::v0_2",
+  "sdkVersion": "@PRISMATIX_ENGINE_VERSION@",
+  "nativeNamespace": "px::sdk::api",
   "engineCommit": "@PRISMATIX_ENGINE_COMMIT@",
   "target": "@PRISMATIX_TARGET_TRIPLE@",
   "artifactSha256": "pending-finalization",

@@ -44,7 +44,7 @@ Each command explains itself with `prismatix <command> --help`. Others you will 
 | `test` | Runs `tests/journeys/*.ts` against a QA pack (see below) |
 
 The `@prismatix/*` packages are release candidates and are not on the public npm
-registry yet. The [0.2.0 delivery contract](docs/releases/0.2.0.md) lists the
+registry yet. The [delivery contract](docs/releases/delivery-contract.md) lists the
 supported targets.
 
 ## Story at a glance

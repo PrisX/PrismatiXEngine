@@ -482,7 +482,7 @@ Here `--runtime` supplies binaries for the candidate npm package; it is never pa
 
 Windows x64, Linux x64 and macOS x64/arm64 are intended desktop targets. Each exact platform/architecture needs its own candidate evidence. WASM Preview is separate from full Web game distribution; mobile, console and full Web shipping are outside this desktop release.
 
-Continue with the [cookbook](#story-author-cookbook), [placed UI item authoring](#data-driven-placed-ui-items), [layered portrait authoring](#layered-portrait-authoring), [custom effects](#custom-render-effects), [runtime extension contracts](../runtime-sdk/README.md) and [release compatibility](releases/0.2.0.md).
+Continue with the [cookbook](#story-author-cookbook), [placed UI item authoring](#data-driven-placed-ui-items), [layered portrait authoring](#layered-portrait-authoring), [custom effects](#custom-render-effects), [runtime extension contracts](../runtime-sdk/README.md) and [release compatibility](releases/delivery-contract.md).
 
 ## Story author cookbook
 

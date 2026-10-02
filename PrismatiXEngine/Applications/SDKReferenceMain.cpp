@@ -61,12 +61,12 @@ std::optional<std::string> Generate(const std::filesystem::path& contractsPath,
     }
 
     std::ostringstream output;
-    output << "# PrismatiX SDK Reference 0.2.0\n\n"
+    output << "# PrismatiX SDK Reference " << px::sdk::kEngineVersion << "\n\n"
               "> Generated from the canonical contract manifest and the Runtime UI "
               "TypeRegistry. Do not edit this artifact by hand.\n\n"
               "## Public entry points\n\n"
-              "- Native C++: `#include <Engine/SDK/V0_2.h>` and namespace "
-              "`px::sdk::v0_2`\n"
+              "- Native C++: `#include <Engine/SDK/Sdk.h>` and namespace "
+              "`px::sdk::api`\n"
               "- Authoring TypeScript: `@prismatix/authoring-sdk`\n"
               "- Extension TypeScript: `@prismatix/runtime`\n"
               "- CLI: `prismatix validate|build|run|pack|migrate|inspect-save`\n\n"

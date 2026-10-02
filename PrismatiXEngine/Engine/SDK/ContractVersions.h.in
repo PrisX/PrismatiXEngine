@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 
 namespace px::sdk {
 
+inline constexpr std::string_view kEngineVersion = "@PRISMATIX_ENGINE_VERSION@";
 inline constexpr std::uint32_t kCharacterResourcesContractRevision =
     @PRISMATIX_CHARACTER_RESOURCES_CONTRACT_REVISION@;
 inline constexpr std::uint32_t kGameCatalogResourcesContractRevision =

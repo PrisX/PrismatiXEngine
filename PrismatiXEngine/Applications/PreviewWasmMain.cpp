@@ -1,4 +1,4 @@
-#include "Engine/Preview/PreviewProtocolV2.h"
+#include "Engine/Preview/PreviewProtocol.h"
 #include "Engine/Preview/LocalizationPreview.h"
 #include "Engine/Preview/PerformancePreview.h"
 #include "Engine/Preview/ProgressionPreview.h"
@@ -2895,7 +2895,7 @@ private:
                 .dump());
     }
 
-    px::preview::PreviewProtocolV2 m_protocol;
+    px::preview::PreviewProtocol m_protocol;
     px::Runtime m_runtime;
     std::unique_ptr<px::RuntimeSession> m_session;
     std::unique_ptr<px::sdk::PreviewSession> m_previewSession;
@@ -3028,7 +3028,7 @@ EMSCRIPTEN_KEEPALIVE const char* px_preview_test_conformance(
             return response.c_str();
         }
         if (kind == "protocol" && request.contains("envelope")) {
-            px::preview::PreviewProtocolV2 protocol;
+            px::preview::PreviewProtocol protocol;
             const bool patch = request.value("patch", false);
             const auto accepted = protocol.AcceptApply(
                 request.at("envelope").dump(), patch);

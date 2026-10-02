@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/IO/Crypto.h"
+#include "Engine/SDK/ContractVersions.h"
 #include "Engine/Core/Result.h"
 #include "Engine/Audio/AudioEngine.h"
 #include "Engine/Animation/Timeline.h"
@@ -32,7 +33,7 @@ struct ExecutionAnchor {
 };
 
 struct SaveSnapshot {
-    std::string engineVersion = "0.2.0";
+    std::string engineVersion = std::string(::px::sdk::kEngineVersion);
     std::string gameId;
     std::string packageFingerprint;
     std::string contentVersion;

@@ -1,5 +1,5 @@
 #include "Engine/Animation/Timeline.h"
-#include "Engine/Preview/PreviewProtocolV2.h"
+#include "Engine/Preview/PreviewProtocol.h"
 #include "Tests/TestSupport/TestHarness.h"
 
 #include <chrono>
@@ -75,7 +75,7 @@ int main() {
                    {"runtimeFiles", std::move(runtimeFiles)}}}}
                 .dump();
 
-        px::preview::PreviewProtocolV2 protocol;
+        px::preview::PreviewProtocol protocol;
         const auto start = std::chrono::steady_clock::now();
         const auto accepted = protocol.AcceptApply(envelope, false);
         const auto elapsed = std::chrono::steady_clock::now() - start;

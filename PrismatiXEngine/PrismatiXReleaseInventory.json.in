@@ -1,7 +1,7 @@
 {
   "format": "PrismatiXReleaseInventory",
   "schemaRevision": 1,
-  "version": "0.2.0",
+  "version": "@PRISMATIX_ENGINE_VERSION@",
   "engineCommit": "@PRISMATIX_ENGINE_COMMIT@",
   "target": "@PRISMATIX_TARGET_TRIPLE@",
   "archiveFormat": "PDX5",
@@ -12,7 +12,7 @@
     "ASSET_PROVENANCE.json",
     "licenses/"
   ],
-  "documentation": ["docs/releases/0.2.0.md"],
+  "documentation": ["docs/releases/delivery-contract.md"],
   "shipping": {
     "desktopPlayer": true,
     "browserPreview": true,

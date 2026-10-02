@@ -54,7 +54,7 @@ struct ControlResult {
 // Owns protocol identity, monotonic revisions, fail-closed capability checks,
 // and event correlation. Rendering is deliberately outside this class so both
 // native contract tests and the Emscripten composition exercise the same rules.
-class PreviewProtocolV2 {
+class PreviewProtocol {
 public:
     [[nodiscard]] ApplyResult AcceptApply(std::string_view envelope,
                                           bool patch);

@@ -454,7 +454,7 @@ async function main() {
         "runtime-manifest.json", "PrismatiXUiTypeRegistry.json", "release-inventory.json", "LICENSE",
         "THIRD_PARTY_NOTICES.md", "ASSET_PROVENANCE.json",
         join("licenses", "fonts", "OFL-1.1.txt"),
-        join("docs", "releases", "0.2.0.md"),
+        join("docs", "releases", "delivery-contract.md"),
       ]) assert.ok(await exists(join(share, relative)),
         `Runtime release inventory is missing ${relative}`);
       const inventory = JSON.parse(await readFile(join(share, "release-inventory.json"), "utf8"));
@@ -588,7 +588,7 @@ async function main() {
       for (const relative of [
         "LICENSE", "THIRD_PARTY_NOTICES.md", "ASSET_PROVENANCE.json",
         "release-inventory.json", join("licenses", "fonts", "OFL-1.1.txt"),
-        join("docs", "releases", "0.2.0.md"),
+        join("docs", "releases", "delivery-contract.md"),
       ]) assert.ok(await exists(join(packageOutput, "Notices", relative)),
         `Packaged Player notice inventory is missing ${relative}`);
     }

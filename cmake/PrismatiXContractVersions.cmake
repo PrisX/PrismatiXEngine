@@ -2,6 +2,7 @@
 #
 # Templates and the generated C++ header consume these values. Do not duplicate
 # public revision numbers in manifests or source headers.
+set(PRISMATIX_ENGINE_VERSION 0.2.0)
 set(PRISMATIX_CHARACTER_RESOURCES_CONTRACT_REVISION 2)
 set(PRISMATIX_GAME_CATALOG_RESOURCES_CONTRACT_REVISION 2)
 set(PRISMATIX_PACKAGER_CONTRACT_REVISION 2)

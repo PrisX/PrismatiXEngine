@@ -38,6 +38,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "Engine/SDK/ContractVersions.h"
 #include "Engine/SDK/RuntimeIr.h"
 #include "Engine/SDK/SourceMap.h"
 #include "Engine/Core/SemanticVersion.h"
@@ -1833,7 +1834,7 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
     auto routesInOrder = request.routes;
     std::sort(routesInOrder.begin(), routesInOrder.end(), [](const auto& left, const auto& right) { return left.id < right.id; });
     detail::PackageManifest manifest;
-    manifest.engineVersion = "0.2.0";
+    manifest.engineVersion = std::string(::px::sdk::kEngineVersion);
     manifest.gameId = request.gameId;
     manifest.title = request.title;
     manifest.width = request.width;
@@ -3461,7 +3462,7 @@ bool PreparePackageContent(const PackageRequest& request,
     auto& entries = plan.entries;
     entries.reserve(inputs.size());
     std::string identityMaterial =
-        "PrismatiXPackageManifest|2|0.2.0|" + request.gameId + "|" +
+        "PrismatiXPackageManifest|2|" + std::string(::px::sdk::kEngineVersion) + "|" + request.gameId + "|" +
         request.contentVersion + "|" + std::to_string(request.saveVersion) + "|" +
         request.startScript + "|" + request.sourceMap + "|" + request.startRoute + "|" +
         request.graphicsTier + "|" +

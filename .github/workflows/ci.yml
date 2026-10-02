@@ -217,7 +217,7 @@ jobs:
         run: |
           $required = @(
             "out/ci/sdk-package/include/PrismatiX/Engine/SDK/RuntimeIr.h",
-            "out/ci/sdk-package/include/PrismatiX/Engine/SDK/V0_2.h",
+            "out/ci/sdk-package/include/PrismatiX/Engine/SDK/Sdk.h",
             "out/ci/sdk-package/include/PrismatiX/Engine/SDK/PreviewSession.h",
             "out/ci/sdk-package/share/PrismatiX/docs/PrismatiXSDKReference.md",
             "out/ci/sdk-package/share/PrismatiX/contracts/contracts.lock.json",
@@ -238,7 +238,7 @@ jobs:
           }
           $manifest = Get-Content -LiteralPath "out/ci/sdk-package/PrismatiXSDKManifest.json" -Raw | ConvertFrom-Json
           if ($manifest.schemaRevision -ne 2 -or
-              $manifest.nativeNamespace -ne 'px::sdk::v0_2' -or
+              $manifest.nativeNamespace -ne 'px::sdk::api' -or
               $manifest.artifactSha256 -notmatch '^[0-9a-f]{64}$' -or
               $manifest.manifestSha256 -notmatch '^[0-9a-f]{64}$') {
             throw "Finalized SDK manifest identity is invalid"

@@ -57,6 +57,7 @@ import {
   serializeStoryIdentityMap,
   storyRequiresIdentityMap,
   StoryProjectCompilationCache,
+  ENGINE_VERSION,
   stableSourceIdReport,
   synchronizeStoryIdentityMap,
   validateDocument,
@@ -1266,7 +1267,7 @@ async function validateCommand(options: Options): Promise<number> {
       const source = object(asset)?.source;
       return typeof source === "string" && includedFiles.has(source);
     }).length;
-    process.stdout.write(`${JSON.stringify({valid: true, engineVersion: "0.2.0",
+    process.stdout.write(`${JSON.stringify({valid: true, engineVersion: ENGINE_VERSION,
       project: loaded.projectPath, resourceFiles: result.artifact!.dependencies.length,
       includeRoots: Object.keys(loaded.includedResources).length,
       includedFiles: Object.values(loaded.includedResources).reduce((sum, files) => sum + files.length, 0),

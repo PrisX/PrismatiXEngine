@@ -1,4 +1,4 @@
-#include "Engine/Preview/PreviewProtocolV2.h"
+#include "Engine/Preview/PreviewProtocol.h"
 #include "Engine/SDK/ContractVersions.h"
 
 #include <nlohmann/json.hpp>
@@ -24,7 +24,7 @@ int main() {
     const auto manifest = nlohmann::json::parse(stream, nullptr, false);
     Check(!manifest.is_discarded(), "configured SDK manifest must be valid JSON");
     Check(manifest.at("sdkVersion") == "0.2.0" &&
-              manifest.at("nativeNamespace") == "px::sdk::v0_2",
+              manifest.at("nativeNamespace") == "px::sdk::api",
           "SDK manifest must publish the 0.2 versioned Native namespace");
     Check(manifest.at("contracts").at("uiTypeRegistry") ==
               std::to_string(px::sdk::kUiTypeRegistryContractRevision),

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {compileProject, StoryProjectCompilationCache} from "../src/index.js";
+import {compileProject, ENGINE_VERSION, StoryProjectCompilationCache} from "../src/index.js";
 
 const rootId = "11111111-1111-4111-8111-111111111111";
 const uiId = "22222222-2222-4222-8222-222222222222";
@@ -421,7 +421,7 @@ test("compileProject produces one deterministic RuntimeIR BuildArtifact", () => 
   });
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
   assert.ok(result.artifact);
-  assert.equal(result.artifact.engineVersion, "0.2.0");
+  assert.equal(result.artifact.engineVersion, ENGINE_VERSION);
   assert.equal(result.artifact.runtimeIr.documentId, "commercial-sample");
   assert.equal(result.artifact.runtimeIr.committedRevision, 7);
   assert.ok(result.artifact.files["Runtime/main.pxir"]?.includes("PrismatiXRuntimeIR"));

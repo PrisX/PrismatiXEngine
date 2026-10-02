@@ -1,7 +1,7 @@
 import {readFile} from "node:fs/promises";
 import {resolve} from "node:path";
 
-import {compileProject, loadStorySourceFiles,
+import {compileProject, ENGINE_VERSION, loadStorySourceFiles,
   type StoryIndexDocument} from "@prismatix/authoring-sdk";
 
 const sampleRoot = resolve("Samples/CommercialVN");
@@ -59,7 +59,7 @@ const result = compileProject({project, documents, sourceFiles, locales,
   projectPath: "project.pxproject"});
 if (!result.valid || result.artifact === undefined)
   throw new Error(`Commercial sample did not compile: ${JSON.stringify(result.diagnostics)}`);
-if (result.artifact.engineVersion !== "0.2.0" ||
+if (result.artifact.engineVersion !== ENGINE_VERSION ||
     result.artifact.sourceMap.mappings.length === 0 ||
     result.artifact.localeArtifacts["ja-JP"] === undefined)
   throw new Error("BuildArtifact omitted its version, source map, or locale programs");

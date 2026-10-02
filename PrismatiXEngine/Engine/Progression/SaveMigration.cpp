@@ -335,7 +335,7 @@ Result<SaveSnapshot> MigrateSaveSnapshot(
             return Result<SaveSnapshot>::Failure(applied.Diagnostics());
         }
     }
-    candidate.engineVersion = "0.2.0";
+    candidate.engineVersion = std::string(::px::sdk::kEngineVersion);
     candidate.packageFingerprint = target.packageFingerprint;
     return Result<SaveSnapshot>::Success(std::move(candidate));
 }

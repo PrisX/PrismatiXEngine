@@ -2,6 +2,7 @@
 
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Core/SemanticVersion.h"
+#include "Engine/SDK/ContractVersions.h"
 #include "Engine/Animation/Timeline.h"
 #include "Engine/Audio/AudioEngine.h"
 #include "Engine/Graphics/Renderer2D.h"
@@ -4184,7 +4185,8 @@ bool JavaScriptHost::LoadExtensionManifestIntoCurrentRealm(
         if (!*engineCompatible)
             throw std::invalid_argument(
                 "extension requires engine '" + requiredEngineVersion +
-                "' but this Player is 0.2.0");
+                "' but this Player is " +
+                std::string(::px::sdk::kEngineVersion));
         stagedExtensionId = id;
         m_impl->extensionId = id;
 

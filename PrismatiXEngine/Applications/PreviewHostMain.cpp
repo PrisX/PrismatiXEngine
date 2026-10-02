@@ -23,7 +23,7 @@
 #include <vector>
 
 #include "Engine/Diagnostics/Diagnostic.h"
-#include "Engine/Preview/PreviewProtocolV2.h"
+#include "Engine/Preview/PreviewProtocol.h"
 #include "Engine/Preview/PreviewSessionFactory.h"
 #include "Engine/Script/ScriptFrameScheduler.h"
 #include "Engine/Script/ScriptHost.h"

@@ -167,7 +167,7 @@ install(FILES
 )
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKConfigVersion.cmake"
-    VERSION 0.2.0
+    VERSION ${PRISMATIX_ENGINE_VERSION}
     COMPATIBILITY SameMinorVersion
 )
 configure_package_config_file(
@@ -667,7 +667,7 @@ install(FILES
     COMPONENT PrismatiXRuntime
 )
 install(FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/../docs/releases/0.2.0.md"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../docs/releases/delivery-contract.md"
     DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX/docs/releases
     COMPONENT PrismatiXRuntime
 )
@@ -767,14 +767,14 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
         add_compile_options(-UNDEBUG)
     endif()
 
-    add_executable(PrismatiXPreviewProtocolV2Tests
-                   Tests/PreviewProtocolV2Tests.cpp)
-    target_link_libraries(PrismatiXPreviewProtocolV2Tests PRIVATE
+    add_executable(PrismatiXPreviewProtocolTests
+                   Tests/PreviewProtocolTests.cpp)
+    target_link_libraries(PrismatiXPreviewProtocolTests PRIVATE
                           PrismatiXRuntimeCore)
-    prismatix_configure_target(PrismatiXPreviewProtocolV2Tests)
-    add_test(NAME PrismatiX.Preview.WasmProtocolV2
-             COMMAND PrismatiXPreviewProtocolV2Tests)
-    set_tests_properties(PrismatiX.Preview.WasmProtocolV2
+    prismatix_configure_target(PrismatiXPreviewProtocolTests)
+    add_test(NAME PrismatiX.Preview.WasmProtocol
+             COMMAND PrismatiXPreviewProtocolTests)
+    set_tests_properties(PrismatiX.Preview.WasmProtocol
                          PROPERTIES LABELS "preview;wasm;contract")
 
     add_executable(PrismatiXPreviewSessionContractTests

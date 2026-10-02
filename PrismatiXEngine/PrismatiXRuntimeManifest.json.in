@@ -1,7 +1,7 @@
 {
   "format": "PrismatiXRuntimeManifest",
   "schemaRevision": 1,
-  "version": "0.2.0",
+  "version": "@PRISMATIX_ENGINE_VERSION@",
   "target": "@PRISMATIX_TARGET_TRIPLE@",
   "binDir": "@PRISMATIX_RUNTIME_BIN_DIR@",
   "tools": {

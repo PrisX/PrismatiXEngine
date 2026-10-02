@@ -1,4 +1,4 @@
-#include "Engine/Preview/PreviewProtocolV2.h"
+#include "Engine/Preview/PreviewProtocol.h"
 
 #include <cassert>
 #include <nlohmann/json.hpp>
@@ -96,7 +96,7 @@ bool ContainsCode(const Json& events, const std::string& code) {
 }  // namespace
 
 int main() {
-    px::preview::PreviewProtocolV2 protocol;
+    px::preview::PreviewProtocol protocol;
 
     const auto applied = protocol.AcceptApply(
         Envelope("apply", 7, RuntimeIr(7), Performance(7), RuntimeFiles()),
@@ -122,7 +122,7 @@ int main() {
     assert(events.front().value("type", std::string{}) == "state");
     assert(events.front().value("status", std::string{}) == "applying");
 
-    px::preview::PreviewProtocolV2 malformedProtocol;
+    px::preview::PreviewProtocol malformedProtocol;
     const auto malformedRuntimeFiles = malformedProtocol.AcceptApply(
         Envelope("apply", 1, RuntimeIr(1), nullptr,
                  Json{{"virtualPath", "/project/Content/Extensions/game.js"}}),

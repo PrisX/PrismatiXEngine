@@ -1,4 +1,4 @@
-#include "Engine/Preview/PreviewProtocolV2.h"
+#include "Engine/Preview/PreviewProtocol.h"
 
 #include "Engine/SDK/RuntimeIr.h"
 
@@ -74,7 +74,7 @@ Json Envelope(const std::string_view type, const std::string& sessionId,
 
 }  // namespace
 
-ApplyResult PreviewProtocolV2::AcceptApply(const std::string_view envelope,
+ApplyResult PreviewProtocol::AcceptApply(const std::string_view envelope,
                                            const bool patch) {
     ApplyResult result;
     const Json request = Json::parse(envelope, nullptr, false);
@@ -272,7 +272,7 @@ ApplyResult PreviewProtocolV2::AcceptApply(const std::string_view envelope,
     return result;
 }
 
-ControlResult PreviewProtocolV2::AcceptControl(
+ControlResult PreviewProtocol::AcceptControl(
     const std::string_view envelope) {
     ControlResult result;
     const Json request = Json::parse(envelope, nullptr, false);
@@ -341,7 +341,7 @@ ControlResult PreviewProtocolV2::AcceptControl(
     return result;
 }
 
-void PreviewProtocolV2::CommitApply(const ApplyRequest& request) {
+void PreviewProtocol::CommitApply(const ApplyRequest& request) {
     m_sessionId = request.sessionId;
     m_requestId = request.requestId;
     m_documentId = request.documentId;
@@ -351,7 +351,7 @@ void PreviewProtocolV2::CommitApply(const ApplyRequest& request) {
     m_correlationRevision = request.revision;
 }
 
-void PreviewProtocolV2::Emit(const std::string_view type,
+void PreviewProtocol::Emit(const std::string_view type,
                              const std::string_view payloadJson) {
     Json event = Envelope(type,
                           m_correlationSessionId.empty()
@@ -372,7 +372,7 @@ void PreviewProtocolV2::Emit(const std::string_view type,
     m_events.push_back(event.dump());
 }
 
-std::string PreviewProtocolV2::DrainEvents() {
+std::string PreviewProtocol::DrainEvents() {
     Json events = Json::array();
     for (const auto& event : m_events)
         events.push_back(Json::parse(event));
@@ -380,7 +380,7 @@ std::string PreviewProtocolV2::DrainEvents() {
     return events.dump();
 }
 
-void PreviewProtocolV2::Reset() {
+void PreviewProtocol::Reset() {
     m_sessionId.clear();
     m_requestId.clear();
     m_documentId.clear();
@@ -391,7 +391,7 @@ void PreviewProtocolV2::Reset() {
     m_events.clear();
 }
 
-void PreviewProtocolV2::EmitError(const std::string_view code,
+void PreviewProtocol::EmitError(const std::string_view code,
                                   const std::string_view message,
                                   const std::string_view requestId,
                                   const bool resync) {

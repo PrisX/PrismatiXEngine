@@ -1,4 +1,5 @@
 #include "Engine/Package/PackageManifest.h"
+#include "Engine/SDK/ContractVersions.h"
 
 #include <algorithm>
 #include <array>
@@ -170,7 +171,7 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
         else
             AddDiagnostic(result.diagnostics, "PXPKG1404",
                           "saveVersion is invalid");
-        if (manifest.engineVersion != "0.2.0" ||
+        if (manifest.engineVersion != ::px::sdk::kEngineVersion ||
             !IsIdentifier(manifest.gameId) || manifest.title.empty() ||
             manifest.contentVersion.empty() ||
             !IsFingerprint(manifest.packageFingerprint) ||

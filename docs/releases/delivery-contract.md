@@ -1,4 +1,4 @@
-# PrismatiXEngine 0.2.0 delivery contract
+# PrismatiXEngine delivery contract
 
 PrismatiXEngine 0.2.0 is the first versioned public authoring/runtime boundary.
 The intended desktop targets are Windows x64, Linux x64 and macOS

@@ -30,9 +30,9 @@ if(PACKAGER_API MATCHES "PackageManifest|ParsePackageManifest")
     list(APPEND VIOLATIONS
          "Engine/SDK/Packager.h: public Native SDK leaks the Player package manifest")
 endif()
-if(NOT EXISTS "${ROOT}/Engine/SDK/V0_2.h")
+if(NOT EXISTS "${ROOT}/Engine/SDK/Sdk.h")
     list(APPEND VIOLATIONS
-         "Engine/SDK/V0_2.h: versioned Native SDK entrypoint is missing")
+         "Engine/SDK/Sdk.h: versioned Native SDK entrypoint is missing")
 endif()
 if(NOT PREVIEW_SESSION_API MATCHES "SeekStory" OR
    NOT PREVIEW_SESSION_API MATCHES "ApplyTimeline" OR

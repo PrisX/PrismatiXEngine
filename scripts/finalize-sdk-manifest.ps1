@@ -62,7 +62,7 @@ $contractFiles = [ordered]@{
     previewSession = "include/PrismatiX/Engine/SDK/PreviewSession.h"
     ui = "include/PrismatiX/Engine/SDK/Ui.h"
     uiTypeRegistry = "include/PrismatiX/Engine/SDK/UiTypeRegistry.h"
-    nativeV0_2 = "include/PrismatiX/Engine/SDK/V0_2.h"
+    nativeHeader = "include/PrismatiX/Engine/SDK/Sdk.h"
 }
 $contractHashes = [ordered]@{}
 foreach ($entry in $contractFiles.GetEnumerator()) {
