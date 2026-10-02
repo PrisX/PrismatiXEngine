@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream>
 #include <cstdlib>
+#include <span>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -37,6 +38,7 @@
 #include "Engine/SDK/Packager.h"
 #include "Engine/Package/PackageManifest.h"
 #include "Engine/SDK/CharacterResources.h"
+#include "Engine/SDK/FontIntegrity.h"
 #include "Engine/SDK/GameCatalogResources.h"
 #include "Engine/SDK/RuntimeIr.h"
 #include "Engine/Session/RuntimeSession.h"
@@ -2741,6 +2743,37 @@ int main() {
                          !std::filesystem::exists(uncovered.outputDir /
                                                   "Content.pdx"),
                      "missing glyph coverage fails before output promotion");
+
+        // `sed -i` over a starter template on Windows drops every CR byte from
+        // the font. FreeType still opens the result but draws no glyphs, so
+        // the title screen lost all its text without a single warning.
+        const std::string intactFont = Read(fontPath);
+        const auto fontBytes = [](const std::string& text) {
+            return std::span(reinterpret_cast<const std::uint8_t*>(text.data()), text.size());
+        };
+        suite.Expect(px::sdk::FindFontFileDamage(fontBytes(intactFont)).empty(),
+                     "an unmodified font passes the table integrity check");
+        std::string strippedFont = intactFont;
+        std::erase(strippedFont, '\r');
+        suite.Expect(strippedFont.size() < intactFont.size() &&
+                         !px::sdk::FindFontFileDamage(fontBytes(strippedFont)).empty(),
+                     "a font with its CR bytes stripped is reported as damaged");
+        Write(localePath, R"({
+          "format":"PrismatiXLocale","schemaRevision":2,
+          "locale":"ja-JP","fontChain":["Content/Fonts/NotoSansTC-Bold.ttf"],
+          "strings":{"snow":"雪"}
+        })");
+        Write(fontPath, strippedFont);
+        auto damaged = covered;
+        damaged.requestId = "damaged-locale-font";
+        damaged.outputDir = fixture.path / "Build/DamagedLocaleFont";
+        for (auto& input : damaged.inputs) input = Input(root, input.uri);
+        const auto damagedResult = px::sdk::RunPackager(damaged);
+        suite.Expect(!damagedResult.Completed() &&
+                         HasDiagnostic(damagedResult, "PXPKG1271") &&
+                         !std::filesystem::exists(damaged.outputDir / "Content.pdx"),
+                     "a damaged font fails packaging instead of shipping blank text");
+        Write(fontPath, intactFont);
         Write(localePath, originalLocale);
     });
 

@@ -43,6 +43,7 @@
 #include "Engine/Core/SemanticVersion.h"
 #include "Engine/SDK/Ui.h"
 #include "Engine/SDK/CharacterResources.h"
+#include "Engine/SDK/FontIntegrity.h"
 #include "Engine/SDK/GameCatalogResources.h"
 
 #ifdef _WIN32
@@ -1408,6 +1409,27 @@ void ValidateLocaleFontCoverage(
     }
 }
 
+// FreeType opens a font whose tables were shifted or truncated and then draws
+// every glyph empty, so damage must be caught here rather than at runtime.
+void ValidateFontFiles(const std::vector<ValidatedInput>& inputs,
+                       std::vector<PackageDiagnostic>& diagnostics) {
+    for (const auto& input : inputs) {
+        const std::string uri = Lower(input.input.uri);
+        if (!uri.ends_with(".ttf") && !uri.ends_with(".otf") && !uri.ends_with(".ttc"))
+            continue;
+        const auto bytes = ReadFile(input.source, input.input.size);
+        if (!bytes) continue;
+        const auto damage = FindFontFileDamage(*bytes);
+        if (damage.empty()) continue;
+        AddDiagnostic(diagnostics, "PXPKG1271",
+                      "font file is damaged (" + damage +
+                          ") and would draw no text; restore an unmodified copy and keep "
+                          "text tools such as sed away from binary files: " +
+                          input.input.uri,
+                      false, input.input.uri);
+    }
+}
+
 bool IsUuid(const std::string_view value) {
     if (value.size() != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-') {
         return false;
@@ -2292,6 +2314,7 @@ ValidationResult Validate(const PackageRequest& request,
                                    next->second->toSaveVersion);
         }
     }
+    ValidateFontFiles(result.inputs, diagnostics);
     const auto projectInput = std::find_if(
         result.inputs.begin(), result.inputs.end(), [](const auto& input) {
             return input.input.uri == "project.pxproject";

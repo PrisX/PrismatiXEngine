@@ -3,6 +3,7 @@
 
 #include "Engine/Support/Logger.h"
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/SDK/FontIntegrity.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
@@ -721,6 +722,11 @@ TTF_Font* AssetCache::Font(const std::string& styledPath, int size, int outline)
             bytes = m_vfs.Read(candidate);
         }
         if (!bytes) return std::shared_ptr<io::Bytes>{};
+        // A damaged font still opens but draws nothing; say so once per file.
+        if (const auto damage = sdk::FindFontFileDamage(*bytes); !damage.empty()) {
+            PX_LOG_WARN("AssetCache: font '{}' is damaged: {}", candidate, damage);
+            AssetDiagnostic("PXASSET7016", candidate, "Font asset is damaged", damage);
+        }
         auto shared = std::make_shared<io::Bytes>(std::move(*bytes));
         m_fontFiles.emplace(candidate, shared);
         return shared;
