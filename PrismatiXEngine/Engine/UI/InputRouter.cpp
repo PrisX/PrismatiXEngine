@@ -257,7 +257,13 @@ void InputRouter::Update(const Input& input) {
         Control* captured = m_captured;
         Dispatch(captured, UIEvent{.type = UIEventType::PointerUp, .position = pointer});
         m_captured = nullptr;
-        if (captured && captured == hit) { Dispatch(captured, UIEvent{.type = UIEventType::Click, .position = pointer}); m_lastFrameConsumed = true; }
+        if (captured && captured == hit) {
+            Dispatch(captured, UIEvent{.type = UIEventType::Click, .position = pointer});
+            // A touch tap presses and releases in one frame; the press above
+            // already decided whether the control swallows it. Otherwise a tap
+            // on the message window could never advance the dialogue.
+            if (!input.LeftClick()) m_lastFrameConsumed = true;
+        }
     }
     if (input.WheelY() != 0.0f) Dispatch(hit, UIEvent{.type = UIEventType::Scroll, .position = pointer, .wheel = input.WheelY()});
 

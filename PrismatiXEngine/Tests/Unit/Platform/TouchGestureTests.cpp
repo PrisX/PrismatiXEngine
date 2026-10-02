@@ -1,5 +1,6 @@
 #include "Engine/Platform/Input.h"
 #include "Engine/Platform/TouchGestures.h"
+#include "Engine/UI/InputRouter.h"
 #include "Tests/TestSupport/TestHarness.h"
 
 #include <SDL3/SDL.h>
@@ -294,6 +295,28 @@ int main() {
         auto off = TouchInput(px::TouchProfile::Off);
         off.Process(Finger(SDL_EVENT_FINGER_DOWN, 1, 0.5f, 0.5f, 0));
         suite.Expect(!off.TouchActive(), "off never reports touch");
+    });
+
+    suite.Run("TapOnPassiveControlLeavesTheClickToTheGame", [&] {
+        // A tap presses and releases in one frame. Tapping the message
+        // window (a pass-through control) must still advance the dialogue.
+        for (const auto filter : {px::ui::MouseFilter::Pass, px::ui::MouseFilter::Stop}) {
+            px::ui::Container root;
+            auto child = std::make_unique<px::ui::Container>("Window");
+            child->SetMouseFilter(filter);
+            child->SetAnchors({0.0f, 0.0f, 1.0f, 1.0f});
+            (void)root.AddChild(std::move(child));
+            root.Arrange({0.0f, 0.0f, 1000.0f, 500.0f});
+            px::ui::InputRouter router(root);
+            auto input = TouchInput();
+            input.Process(Finger(SDL_EVENT_FINGER_DOWN, 1, 0.5f, 0.5f, 0));
+            input.Process(Finger(SDL_EVENT_FINGER_UP, 1, 0.5f, 0.5f, 90));
+            router.Update(input);
+            const bool stop = filter == px::ui::MouseFilter::Stop;
+            suite.Expect(input.LeftClick() && router.LastFrameConsumed() == stop,
+                         stop ? "a tap on a button is consumed"
+                              : "a tap on a passive control is not consumed");
+        }
     });
 
     return suite.Finish();
