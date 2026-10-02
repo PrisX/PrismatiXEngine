@@ -210,8 +210,9 @@ int main() {
         twoFinger.Process(Finger(SDL_EVENT_FINGER_UP, 1, 0.2f, 0.5f, 120));
         twoFinger.Process(Finger(SDL_EVENT_FINGER_UP, 2, 0.6f, 0.5f, 130));
         suite.Expect(twoFinger.ActionPressed(px::InputAction::Menu) &&
-                         !twoFinger.RightClick() && !twoFinger.LeftClick(),
-                     "two-finger tap = menu, without also clicking");
+                         twoFinger.ActionPressed(px::InputAction::Cancel) &&
+                         twoFinger.RightClick() && !twoFinger.LeftClick(),
+                     "two-finger tap = right click (cancel + menu), never a left click");
 
         auto swipe = TouchInput();
         swipe.Process(Finger(SDL_EVENT_FINGER_DOWN, 1, 0.5f, 0.8f, 0));
@@ -295,6 +296,16 @@ int main() {
         auto off = TouchInput(px::TouchProfile::Off);
         off.Process(Finger(SDL_EVENT_FINGER_DOWN, 1, 0.5f, 0.5f, 0));
         suite.Expect(!off.TouchActive(), "off never reports touch");
+    });
+
+    suite.Run("AndroidBackActsAsRightClick", [&] {
+        px::Input input;
+        SDL_Event back{};
+        back.type = SDL_EVENT_KEY_DOWN;
+        back.key.scancode = SDL_SCANCODE_AC_BACK;
+        input.Process(back);
+        suite.Expect(input.RightClick() && input.ActionPressed(px::InputAction::Cancel),
+                     "the Back button closes menus like a right click");
     });
 
     suite.Run("TapOnPassiveControlLeavesTheClickToTheGame", [&] {

@@ -345,6 +345,7 @@ private:
     void AppendGestureAction(std::string_view action);
     void AppendPrimaryPress(float x, float y, std::uint64_t pointerId);
     void AppendPrimaryRelease(float x, float y, std::uint64_t pointerId);
+    void AppendSecondaryClick(float x, float y);
     std::set<int> m_keysPressed;
     bool m_keyCaptureActive = false;
     std::optional<int> m_capturedKey;

@@ -732,9 +732,11 @@ mouse, keyboard or gamepad already fires:
 | --- | --- | --- |
 | Tap | Left click | Advance the text, or activate the control under the finger |
 | Long press (0.5 s) | `toggle-ui` (H) | Hide or show the message window |
-| Two-finger tap | `menu` (Escape, gamepad B) | Whatever the project binds to `menu` in `inputActions` |
+| Two-finger tap | Right click | Close the open menu (back one screen); in the game, whatever right click does |
 | Swipe up | `backlog` (B, wheel up) | Open the backlog |
 | Drag | Held left button | Sliders and other draggable controls |
+
+The Android Back button is a right click too.
 
 A tap acts when the finger lifts, so a swipe or long press never advances
 the text as well. SDL's synthetic mouse copies of touches are ignored.

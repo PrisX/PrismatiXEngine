@@ -1004,6 +1004,29 @@ void Input::AppendPrimaryRelease(const float x, const float y,
                        .pointerButton=PointerButton::Primary});
 }
 
+void Input::AppendSecondaryClick(const float x, const float y) {
+    m_mouseX = x;
+    m_mouseY = y;
+    m_rightClick = true;
+    InputEvent press;
+    press.type = InputEventType::PointerDown;
+    press.button = PointerButton::Secondary;
+    press.x = x;
+    press.y = y;
+    const std::uint64_t sourceId = AppendEvent(
+        std::move(press),
+        {.kind=EventSourceKind::Pointer, .pointerButton=PointerButton::Secondary});
+    AppendPointerDefaultActions(PointerButton::Secondary, sourceId);
+    InputEvent release;
+    release.type = InputEventType::PointerUp;
+    release.button = PointerButton::Secondary;
+    release.x = x;
+    release.y = y;
+    (void)AppendEvent(std::move(release),
+                      {.kind=EventSourceKind::Pointer,
+                       .pointerButton=PointerButton::Secondary});
+}
+
 void Input::AppendGestureAction(const std::string_view action) {
     if (!HasAction(action)) return;
     InputEvent event;
@@ -1028,7 +1051,9 @@ void Input::ApplyGestures() {
             AppendGestureAction(ActionName(InputAction::ToggleUi));
             break;
         case TouchGesture::TwoFingerTap:
-            AppendGestureAction(ActionName(InputAction::Menu));
+            // A two-finger tap is the touch right click: it backs out of
+            // menus and does whatever a right click does in the game.
+            AppendSecondaryClick(gesture.x, gesture.y);
             break;
         case TouchGesture::SwipeUp:
             AppendGestureAction(ActionName(InputAction::Backlog));
@@ -1310,6 +1335,9 @@ void Input::Process(const SDL_Event& event) {
                 }
                 m_keysPressed.insert(scancode);
                 AppendActionEventsForKey(scancode);
+                // Android's Back button backs out the way a right click does.
+                if (event.key.scancode == SDL_SCANCODE_AC_BACK)
+                    AppendSecondaryClick(m_mouseX, m_mouseY);
             }
             m_keysDown.insert(static_cast<int>(event.key.scancode));
             break;
