@@ -12,8 +12,21 @@ bool GraphicsDevice::Create(SDL_Window* window,
                             const GraphicsTier requiredTier) {
     Destroy();
     if (!window) return false;
+#if defined(PRISMATIX_WEB_PLAYER)
+    // Request WebGL 2 directly instead of SDL first probing a GLES 2 context.
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#endif
     if (requiredTier == GraphicsTier::GpuEffects) {
-#if defined(__EMSCRIPTEN__)
+#if defined(PRISMATIX_WEB_PLAYER)
+        m_renderer = SDL_CreateRenderer(window, "opengles2");
+        if (!m_renderer) return false;
+        m_tier = GraphicsTier::GpuEffects;
+        m_driver = "web-effects";
+        PX_LOG_INFO("Graphics device created tier=gpu-effects driver={}", m_driver);
+        return true;
+#elif defined(__EMSCRIPTEN__)
         PX_LOG_ERROR("SDL_GPU effects tier is unavailable in WASM Preview");
         return false;
 #else

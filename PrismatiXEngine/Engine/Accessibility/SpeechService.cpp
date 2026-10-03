@@ -1,4 +1,12 @@
 #include "Engine/Accessibility/SpeechService.h"
+#if defined(PRISMATIX_WEB_PLAYER)
+#include <emscripten/emscripten.h>
+EM_JS(int, WebSpeechAvailable, (), { return !!globalThis.speechSynthesis; });
+EM_JS(void, WebSpeak, (const char* text, bool interrupt), {
+    Module.prismatix.accessibility.speak(UTF8ToString(text), interrupt);
+});
+EM_JS(void, WebStopSpeech, (), { globalThis.speechSynthesis?.cancel(); });
+#endif
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -110,7 +118,9 @@ void CallVoid(void* voice, const char* method) {
 #endif
 
 SpeechService::SpeechService() {
-#ifdef _WIN32
+#if defined(PRISMATIX_WEB_PLAYER)
+    if (WebSpeechAvailable()) m_voice = reinterpret_cast<void*>(1);
+#elif defined(_WIN32)
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     m_comInitialized = SUCCEEDED(initialized);
     ISpVoice* voice = nullptr;
@@ -147,7 +157,9 @@ SpeechService::~SpeechService() {
 }
 
 void SpeechService::Speak(const std::string& utf8Text, const bool interrupt) {
-#ifdef _WIN32
+#if defined(PRISMATIX_WEB_PLAYER)
+    if (m_voice && !utf8Text.empty()) WebSpeak(utf8Text.c_str(), interrupt);
+#elif defined(_WIN32)
     if (!m_voice || utf8Text.empty()) return;
     const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8Text.c_str(),
                                           static_cast<int>(utf8Text.size()), nullptr, 0);
@@ -177,7 +189,9 @@ void SpeechService::Speak(const std::string& utf8Text, const bool interrupt) {
 }
 
 void SpeechService::Stop() {
-#ifdef _WIN32
+#if defined(PRISMATIX_WEB_PLAYER)
+    WebStopSpeech();
+#elif defined(_WIN32)
     if (m_voice) static_cast<ISpVoice*>(m_voice)->Speak(L"", SPF_ASYNC | SPF_PURGEBEFORESPEAK, nullptr);
 #elif defined(__ANDROID__)
     CallVoid(m_voice, "stop");

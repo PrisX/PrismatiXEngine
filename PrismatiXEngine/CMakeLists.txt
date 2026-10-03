@@ -757,6 +757,61 @@ if(PRISMATIX_BUILD_WASM_PREVIEW)
         VERBATIM)
 endif()
 
+if(PRISMATIX_BUILD_WASM_PLAYER)
+    option(PRISMATIX_WEB_DIAGNOSTICS "Keep Web Player function names and runtime assertions" OFF)
+    target_compile_definitions(PrismatiXRuntimeCore PRIVATE PRISMATIX_WEB_PLAYER=1)
+    file(GLOB_RECURSE PRISMATIX_WEB_PLATFORM_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Engine/IO/*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Engine/Platform/*.cpp")
+    add_library(PrismatiXRuntimePlatformWeb STATIC
+        ${PRISMATIX_WEB_PLATFORM_SOURCES}
+        Engine/Runtime.cpp
+        Engine/Accessibility/SpeechService.cpp
+        Engine/Accessibility/PlatformSemanticAdapter.cpp
+        Engine/Resources/AssetRegistry.cpp
+        Engine/UI/UITypeManifest.cpp
+        Engine/Progression/GameSettings.cpp
+        Engine/Progression/GlobalProfileStore.cpp
+        Engine/Progression/Persist.cpp
+        Engine/Progression/SaveSystem.cpp)
+    target_compile_definitions(PrismatiXRuntimePlatformWeb PRIVATE PRISMATIX_WEB_PLAYER=1)
+    target_include_directories(PrismatiXRuntimePlatformWeb PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Engine)
+    target_link_libraries(PrismatiXRuntimePlatformWeb PUBLIC
+        PrismatiXRuntimeCore prismatix_mbedcrypto zstd::libzstd)
+    target_link_libraries(PrismatiXRuntimeCore PRIVATE PrismatiXRuntimePlatformWeb)
+    prismatix_configure_target(PrismatiXRuntimePlatformWeb)
+    add_executable(PrismatiXPlayerWeb
+        Applications/PlayerWasmMain.cpp
+        Applications/Player/PlayerApp.cpp
+        Applications/Player/PlayerActions.cpp
+        Applications/Player/PlayerSettings.cpp
+        Applications/Player/QaIpc.cpp)
+    target_compile_definitions(PrismatiXPlayerWeb PRIVATE PRISMATIX_WEB_PLAYER=1 PRISMATIX_QA_HOOKS=0)
+    target_link_libraries(PrismatiXPlayerWeb PRIVATE PrismatiXRuntimePlatformWeb)
+    prismatix_configure_target(PrismatiXPlayerWeb)
+    # The shipping Player catches malformed resources and persistence errors.
+    # Emscripten otherwise strips C++ catch paths and aborts on those inputs.
+    foreach(web_target PrismatiXRuntimeCore PrismatiXRuntimePlatformWeb PrismatiXPlayerWeb)
+        target_compile_options(${web_target} PRIVATE -fexceptions)
+    endforeach()
+    set_target_properties(PrismatiXPlayerWeb PROPERTIES OUTPUT_NAME "prismatix-player" SUFFIX ".mjs")
+    target_link_options(PrismatiXPlayerWeb PRIVATE
+        -fexceptions
+        "-sMODULARIZE=1" "-sEXPORT_ES6=1" "-sEXPORT_NAME=createPrismatiXPlayer"
+        "-sALLOW_MEMORY_GROWTH=1" "-sMAXIMUM_MEMORY=2147483648"
+        "-sSTACK_SIZE=1048576"
+        "-sENVIRONMENT=web" "-sFILESYSTEM=1" "-sASYNCIFY=1"
+        "-sASYNCIFY_STACK_SIZE=262144" "-sFORCE_FILESYSTEM=1"
+        "-sMIN_WEBGL_VERSION=2" "-sMAX_WEBGL_VERSION=2"
+        "-sEXIT_RUNTIME=0" "-lidbfs.js"
+        "-sEXPORTED_RUNTIME_METHODS=['FS','ENV','callMain','stringToNewUTF8','requestFullscreen']"
+        "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']")
+    if(PRISMATIX_WEB_DIAGNOSTICS)
+        target_link_options(PrismatiXPlayerWeb PRIVATE "--profiling-funcs" "-sASSERTIONS=1")
+    endif()
+endif()
+
 if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
     # Contract and integration tests use assert() as their executable test
     # primitive. Keep those checks active in Release/RelWithDebInfo quality

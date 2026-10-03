@@ -1,4 +1,34 @@
 #include "Applications/Player/PlayerApp.h"
+
+#if defined(__EMSCRIPTEN__)
+#include <emscripten/emscripten.h>
+EM_ASYNC_JS(void, WaitWebFrame, (), {
+    await new Promise(resolve => {
+        let frame;
+        const finish = () => {
+            if (frame) cancelAnimationFrame(frame);
+            document.removeEventListener("visibilitychange", finish);
+            resolve();
+        };
+        document.addEventListener("visibilitychange", finish, {once: true});
+        if (document.hidden) setTimeout(finish, 16);
+        else frame = requestAnimationFrame(finish);
+    });
+});
+#if defined(PRISMATIX_WEB_PLAYER)
+EM_JS(int, TakeWebPersistenceRequest, (), {
+    if (!Module.prismatix.flushRequested) return 0;
+    Module.prismatix.flushActive = Module.prismatix.flushRequested;
+    Module.prismatix.flushRequested = null;
+    return 1;
+});
+EM_JS(void, FinishWebPersistenceRequest, (int saved), {
+    const request = Module.prismatix.flushActive;
+    Module.prismatix.flushActive = null;
+    request?.resolve(!!saved);
+});
+#endif
+#endif
 #include "Applications/Player/PlayerControls.h"
 #include "Applications/Player/PlayerSupport.h"
 #include "Applications/Player/QaHooks.h"
@@ -1921,9 +1951,7 @@ void PlayerApp::BeginRuntimeIrPreload() {
     m_runtimePreloadPath = m_script;
     PX_LOG_INFO("Player Runtime IR preload started script={}", m_script);
     try {
-        m_runtimePreload = std::async(
-            std::launch::async,
-            [session = m_session.get(), path = m_script] {
+        auto prepare = [session = m_session.get(), path = m_script] {
                 const auto started = std::chrono::steady_clock::now();
                 auto program = session->PrepareRuntimeIr(path);
                 const auto elapsed =
@@ -1933,7 +1961,14 @@ void PlayerApp::BeginRuntimeIrPreload() {
                     "Player Runtime IR preload finished script={} ms={} operations={}",
                     path, elapsed.count(), program ? program->code.size() : 0);
                 return program;
-            });
+            };
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+        std::promise<std::shared_ptr<const vn::Program>> prepared;
+        m_runtimePreload = prepared.get_future();
+        prepared.set_value(prepare());
+#else
+        m_runtimePreload = std::async(std::launch::async, std::move(prepare));
+#endif
     } catch (const std::exception& error) {
         m_runtimePreloadPath.clear();
         PX_LOG_WARN(
@@ -3778,7 +3813,13 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
 }
 
 void PlayerApp::MainLoop() {
-    while (!m_quitRequested && m_runtime.BeginFrame()) {
+    while (!m_quitRequested) {
+#if defined(__EMSCRIPTEN__)
+        // Yield between complete frames. Asyncify also lets remote PDX reads
+        // await fetch without freezing input or the browser's loading screen.
+        WaitWebFrame();
+#endif
+        if (!m_runtime.BeginFrame()) break;
         m_uiTransitionStartedThisFrame = false;
         UpdateRouteVisualPreload();
         px::Input& input = m_runtime.GetInput();
@@ -3805,6 +3846,22 @@ void PlayerApp::MainLoop() {
         UpdateScriptScheduler(dt);
         FlushProfileIfDue();
         HarvestBackgroundSave(false);
+#if defined(PRISMATIX_WEB_PLAYER)
+        if (TakeWebPersistenceRequest()) {
+            // Run this in the existing Asyncify frame, never from a DOM/SDL
+            // callback while another WASM stack is suspended.
+            bool slotSaved = true;
+            if (m_appState == AppState::Game && !m_gameStartTransitionActive &&
+                m_ui.CurrentScreen() != ui::GalgameUI::Screen::Video) {
+                SDL_Surface* frame = graphics::CaptureFrameSurface(m_runtime.Renderer().Handle());
+                slotSaved = SaveSlot(kAutoSaveSlot, graphics::EncodeThumbnailPng(frame, 256, 144));
+            }
+            HarvestBackgroundSave(true);
+            const bool settingsSaved = SaveSettingsIfWritable();
+            const bool profileSaved = SaveProfileIfWritable();
+            FinishWebPersistenceRequest(slotSaved && settingsSaved && profileSaved);
+        }
+#endif
 
         if(m_appState==AppState::BootSplash){
             SplashFrame(dt);

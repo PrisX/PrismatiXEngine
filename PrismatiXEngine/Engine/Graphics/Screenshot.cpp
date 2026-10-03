@@ -2,6 +2,8 @@
 
 #include "Engine/Support/Logger.h"
 
+#include "Engine/Platform/Web/WebEffects.h"
+
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
 
@@ -10,6 +12,16 @@
 #include <unordered_set>
 
 namespace px::graphics {
+namespace {
+SDL_Texture* UploadSurface(SDL_Renderer* renderer, SDL_Surface* surface) {
+#if defined(PRISMATIX_WEB_PLAYER)
+    return CreateWebTextureFromSurface(renderer, surface);
+#else
+    return SDL_CreateTextureFromSurface(renderer, surface);
+#endif
+}
+}
+
 
 std::vector<std::uint8_t> CaptureThumbnailPng(SDL_Renderer* renderer, int w, int h) {
     return EncodeThumbnailPng(CaptureFrameSurface(renderer), w, h);
@@ -91,7 +103,7 @@ SDL_Texture* DecodePngTexture(SDL_Renderer* renderer, const std::vector<std::uin
     if (!surface) {
         return nullptr;
     }
-    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_Texture* texture = UploadSurface(renderer, surface);
     SDL_DestroySurface(surface);
     return texture;
 }

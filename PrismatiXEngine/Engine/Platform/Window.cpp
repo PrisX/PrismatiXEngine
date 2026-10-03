@@ -32,7 +32,9 @@ bool Window::Create(const std::string& title, int width, int height, bool resiza
         return false;
     }
 
+#if !defined(PRISMATIX_WEB_PLAYER)
     SDL_SetRenderVSync(Renderer(), 1);
+#endif
     PX_LOG_INFO("Window created: {}x{} ('{}')", width, height, title);
     return true;
 }
@@ -74,9 +76,15 @@ bool Window::Resize(const int width, const int height) {
 }
 
 void Window::SetVSync(bool enabled) {
+#if defined(PRISMATIX_WEB_PLAYER)
+    // The Web Player yields to requestAnimationFrame. SDL's swap interval
+    // implementation expects an emscripten_set_main_loop callback instead.
+    (void)enabled;
+#else
     if (Renderer()) {
         SDL_SetRenderVSync(Renderer(), enabled ? 1 : 0);
     }
+#endif
 }
 
 void Window::SetAspectRatio(float ratio) {

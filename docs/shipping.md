@@ -8,6 +8,7 @@ Packaging and maintaining a released game: patches and overlays, save compatibil
 - [Importing stories from other formats](#importing-stories-from-other-formats)
 - [Resolving assets while importing Story](#resolving-assets-while-importing-story)
 - [Android (experimental)](#android-experimental)
+- [Web export](web-export.md)
 
 ## Signed PDX content overlays
 

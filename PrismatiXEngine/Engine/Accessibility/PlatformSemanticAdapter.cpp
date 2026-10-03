@@ -1080,7 +1080,7 @@ std::string_view PlatformAccessibilityBackend() { return "Windows UI Automation"
 
 }  // namespace px::accessibility
 
-#elif !defined(__APPLE__) && (!defined(__linux__) || defined(__ANDROID__))
+#elif !defined(PRISMATIX_WEB_PLAYER) && !defined(__APPLE__) && (!defined(__linux__) || defined(__ANDROID__))
 
 namespace px::accessibility {
 namespace {

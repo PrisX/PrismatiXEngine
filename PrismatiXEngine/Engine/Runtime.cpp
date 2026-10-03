@@ -13,6 +13,10 @@
 #include "Engine/Video/VideoPlayer.h"
 #endif
 #include "Engine/Support/Logger.h"
+#if defined(PRISMATIX_WEB_PLAYER)
+#include <emscripten/emscripten.h>
+EM_JS(bool, PrismatiXWebHidden, (), { return document.hidden; });
+#endif
 
 namespace px {
 
@@ -29,7 +33,12 @@ bool Runtime::Init(const RuntimeConfig& config) {
     // event pumping (on the thread that pumps), before the OS suspends the
     // app; a polled copy could arrive only after resuming. Desktop platforms
     // never send them.
+#if !defined(PRISMATIX_WEB_PLAYER)
     m_lifecycleWatch = SDL_AddEventWatch(&Runtime::LifecycleEventWatch, this);
+#endif
+    // Browser beforeunload callbacks cannot await IndexedDB and may run while
+    // the main Asyncify frame is suspended. Web lifecycle persistence instead
+    // runs at the normal frame boundary when document visibility changes.
     if (!TTF_Init()) {
         PX_LOG_ERROR("TTF_Init failed: {}", SDL_GetError());
         SDL_Quit();
@@ -179,6 +188,10 @@ bool Runtime::BeginFrame() {
     diag::FrameProfiler::Instance().BeginFrame();
     const diag::ScopedFramePhase profiled(diag::FramePhase::Events);
     m_input.NewFrame();
+#if defined(PRISMATIX_WEB_PLAYER)
+    m_lifecycle.Handle(PrismatiXWebHidden() ? platform::LifecycleEvent::DidEnterBackground
+                                         : platform::LifecycleEvent::DidEnterForeground);
+#endif
     SDL_Event event;
     bool resized = false;
     while (SDL_PollEvent(&event)) HandleEvent(event, resized);
@@ -187,7 +200,14 @@ bool Runtime::BeginFrame() {
     // paused; this also covers platforms that keep pumping.
     while (m_lifecycle.Suspended() && !m_input.QuitRequested() &&
            !m_lifecycle.TerminateRequested()) {
+#if defined(PRISMATIX_WEB_PLAYER)
+        emscripten_sleep(16);
+        m_lifecycle.Handle(PrismatiXWebHidden() ? platform::LifecycleEvent::DidEnterBackground
+                                             : platform::LifecycleEvent::DidEnterForeground);
+        while (SDL_PollEvent(&event)) HandleEvent(event, resized);
+#else
         if (SDL_WaitEventTimeout(&event, 250)) HandleEvent(event, resized);
+#endif
     }
     m_input.UpdateTouch(SDL_GetTicksNS());
     if (m_lifecycle.ConsumeResumed()) {

@@ -74,6 +74,16 @@ Result<std::filesystem::path> ResolvePackagedUserDataDirectory(
     // Hashing also avoids collisions between identifiers containing punctuation.
     const std::string appName = "Game " + crypto::Sha256Hex(gameId);
     std::filesystem::path directory;
+#if defined(PRISMATIX_WEB_PLAYER)
+    // SDL captures its environment before callMain, and its default Web
+    // preference path is MEMFS. Always place shipped Web saves on IDBFS.
+    directory = std::filesystem::path("/persist") / PathFromUtf8(appName);
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (error)
+        return Result<std::filesystem::path>::Failure(DataError(
+            directory, "Could not create browser persistence directory", error.message()));
+#else
     if (const char* overrideRoot = SDL_getenv("PRISMATIX_PLAYER_DATA_ROOT");
         overrideRoot && *overrideRoot) {
         const auto parent = PathFromUtf8(overrideRoot);
@@ -96,6 +106,7 @@ Result<std::filesystem::path> ResolvePackagedUserDataDirectory(
         directory = PathFromUtf8(prefPath);
         SDL_free(prefPath);
     }
+#endif
     return Result<std::filesystem::path>::Success(directory.lexically_normal());
 }
 

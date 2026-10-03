@@ -40,10 +40,14 @@ option(PRISMATIX_PERFORMANCE_TESTS "Enable scheduled large-scene performance sce
 option(PRISMATIX_STRESS_TESTS "Enable long-running performance and 50,000-asset stress tests" OFF)
 option(PRISMATIX_HEAVY_STRESS_TESTS "Enable commercial-scale 100k-dialogue acceptance tests" OFF)
 option(PRISMATIX_BUILD_WASM_PREVIEW "Build the Studio-only Emscripten preview runtime" OFF)
+option(PRISMATIX_BUILD_WASM_PLAYER "Build the shipping Emscripten Web Player" OFF)
 
-if(PRISMATIX_BUILD_WASM_PREVIEW AND NOT EMSCRIPTEN)
+if((PRISMATIX_BUILD_WASM_PREVIEW OR PRISMATIX_BUILD_WASM_PLAYER) AND NOT EMSCRIPTEN)
     message(FATAL_ERROR
-        "PRISMATIX_BUILD_WASM_PREVIEW requires the Emscripten toolchain (configure with emcmake).")
+        "WASM Player and Preview require the Emscripten toolchain (configure with emcmake).")
+endif()
+if(PRISMATIX_BUILD_WASM_PREVIEW AND PRISMATIX_BUILD_WASM_PLAYER)
+    message(FATAL_ERROR "WASM Player and Preview use separate platform compositions; configure them in separate build directories.")
 endif()
 
 function(prismatix_configure_target target)

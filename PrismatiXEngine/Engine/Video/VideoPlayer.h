@@ -104,6 +104,10 @@ private:
     bool m_lifecycleSuspended = false;
     std::string m_lastError;
     std::unique_ptr<FfmpegState> m_ffmpeg;
+#if defined(__EMSCRIPTEN__)
+    int m_browserHandle = 0;
+    bool m_resumeAfterLifecycle = false;
+#endif
 };
 
 }

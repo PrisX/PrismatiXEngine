@@ -4,16 +4,23 @@
 #include "Engine/IO/Crypto.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Support/Logger.h"
+#include "Engine/Platform/Web/WebEffects.h"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <ranges>
 
 namespace px::graphics {
 
 namespace {
+#if defined(PRISMATIX_WEB_PLAYER)
+constexpr auto kTargetFormat = SDL_PIXELFORMAT_RGBA32;
+#else
+constexpr auto kTargetFormat = SDL_PIXELFORMAT_RGBA8888;
+#endif
 
 struct alignas(16) CustomUniforms {
     float texelSize[2];
@@ -55,7 +62,10 @@ Compositor2D::~Compositor2D() {
 }
 
 bool Compositor2D::CreateGpuState() {
-#if defined(__EMSCRIPTEN__)
+#if defined(PRISMATIX_WEB_PLAYER)
+    m_renderState = reinterpret_cast<SDL_GPURenderState*>(1);
+    return InitializeWebEffects();
+#elif defined(__EMSCRIPTEN__)
     return false;
 #else
     SDL_GPUDevice* device = SDL_GetGPURendererDevice(m_renderer);
@@ -128,7 +138,11 @@ bool Compositor2D::CreateGpuState() {
 }
 
 void Compositor2D::DestroyGpuState() {
-#if !defined(__EMSCRIPTEN__)
+#if defined(PRISMATIX_WEB_PLAYER)
+    DestroyWebEffects();
+    m_customEffects.clear();
+    m_renderState = nullptr;
+#elif !defined(__EMSCRIPTEN__)
     SDL_GPUDevice* device = SDL_GetGPURendererDevice(m_renderer);
     for (auto& [_, effect] : m_customEffects) {
         for (auto& [__, state] : effect.transitionStates)
@@ -155,7 +169,25 @@ void Compositor2D::DestroyGpuState() {
 
 bool Compositor2D::LoadCustomEffects(
     const std::vector<CustomEffectDescriptor>& effects, const io::VFS& vfs) {
-#if defined(__EMSCRIPTEN__)
+#if defined(PRISMATIX_WEB_PLAYER)
+    (void)vfs;
+    std::unordered_map<std::string, CustomEffectState> candidate;
+    for (const auto& descriptor : effects) {
+        const auto artifact = std::ranges::find(descriptor.artifacts, "spirv", &CustomEffectArtifactDescriptor::format);
+        if (!m_enabled || artifact == descriptor.artifacts.end() ||
+            !IsCustomEffectTarget(descriptor.targetLayer) || descriptor.schemaRevision != 1 ||
+            descriptor.samplerCount != (descriptor.targetLayer == "transition" ? 2u : 1u) ||
+            descriptor.uniformBufferCount != 1 || candidate.contains(descriptor.id)) return false;
+        const int handle = LoadWebEffect(descriptor.id, artifact->fingerprint);
+        if (!handle) return false;
+        CustomEffectState state;
+        state.descriptor = descriptor;
+        state.state = reinterpret_cast<SDL_GPURenderState*>(static_cast<std::uintptr_t>(handle));
+        candidate.emplace(descriptor.id, std::move(state));
+    }
+    m_customEffects = std::move(candidate);
+    return true;
+#elif defined(__EMSCRIPTEN__)
     (void)vfs;
     return effects.empty();
 #else
@@ -367,7 +399,7 @@ void Compositor2D::SetLogicalSize(const int width, const int height) {
 bool Compositor2D::EnsureTarget() {
     if (!m_enabled || !m_renderer || m_width <= 0 || m_height <= 0) return false;
     if (m_stage) return true;
-    m_stage = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA8888,
+    m_stage = SDL_CreateTexture(m_renderer, kTargetFormat,
                                 SDL_TEXTUREACCESS_TARGET, m_width, m_height);
     if (!m_stage) {
         m_enabled = false;
@@ -375,7 +407,7 @@ bool Compositor2D::EnsureTarget() {
     }
     SDL_SetTextureBlendMode(m_stage, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(m_stage, SDL_SCALEMODE_LINEAR);
-    m_intermediate = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA8888,
+    m_intermediate = SDL_CreateTexture(m_renderer, kTargetFormat,
                                        SDL_TEXTUREACCESS_TARGET, m_width, m_height);
     if (!m_intermediate) {
         SDL_DestroyTexture(m_stage);
@@ -385,10 +417,20 @@ bool Compositor2D::EnsureTarget() {
     }
     SDL_SetTextureBlendMode(m_intermediate, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(m_intermediate, SDL_SCALEMODE_LINEAR);
+#if defined(PRISMATIX_WEB_PLAYER)
+    m_webOutput = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA32,
+        SDL_TEXTUREACCESS_TARGET, m_width, m_height);
+    if (!m_webOutput) { DestroyTarget(); m_enabled = false; return false; }
+    SDL_SetTextureBlendMode(m_webOutput, SDL_BLENDMODE_BLEND);
+#endif
     return true;
 }
 
 void Compositor2D::DestroyTarget() {
+#if defined(PRISMATIX_WEB_PLAYER)
+    if (m_webOutput) SDL_DestroyTexture(m_webOutput);
+    m_webOutput = nullptr;
+#endif
     if (m_stage) SDL_DestroyTexture(m_stage);
     m_stage = nullptr;
     if (m_intermediate) SDL_DestroyTexture(m_intermediate);
@@ -430,6 +472,14 @@ void Compositor2D::EndStage(const StagePostEffects& effects) {
     const auto custom = m_customEffects.find(effects.customEffect);
     if (custom == m_customEffects.end() ||
         custom->second.descriptor.targetLayer != "stage") {
+#if defined(PRISMATIX_WEB_PLAYER)
+        if (uniforms.blur == 0 && uniforms.vignette == 0 &&
+            uniforms.colorGrade == 0 && uniforms.grayscale == 0) {
+            const SDL_FRect destination{0, 0, static_cast<float>(m_width), static_cast<float>(m_height)};
+            (void)SDL_RenderTexture(m_renderer, m_stage, nullptr, &destination);
+            return;
+        }
+#endif
         (void)ApplyRenderState(m_renderState, m_stage, m_previousTarget,
                                &uniforms, sizeof(uniforms));
         return;
@@ -465,7 +515,22 @@ bool Compositor2D::BeginNodeEffect(
     const std::string_view id, const float progress, const float randomSeed,
     const std::array<std::array<float, 4>, 8>& parameters,
     const std::array<float, 4>& viewport) {
-#if defined(__EMSCRIPTEN__)
+#if defined(PRISMATIX_WEB_PLAYER)
+    const auto found = m_customEffects.find(std::string(id));
+    if (found == m_customEffects.end() || found->second.descriptor.targetLayer != "node") return false;
+    CustomUniforms uniforms{};
+    uniforms.texelSize[0] = 1.0f / static_cast<float>(m_width);
+    uniforms.texelSize[1] = 1.0f / static_cast<float>(m_height);
+    uniforms.progress = std::clamp(progress, 0.0f, 1.0f);
+    uniforms.randomSeed = randomSeed;
+    for (std::size_t slot = 0; slot < parameters.size(); ++slot)
+        std::ranges::copy(parameters[slot], uniforms.parameters[slot]);
+    std::ranges::copy(viewport, uniforms.viewport);
+    static_assert(sizeof(uniforms) == sizeof(m_webNodeUniforms));
+    std::memcpy(m_webNodeUniforms.data(), &uniforms, sizeof(uniforms));
+    m_webNodeEffect = static_cast<int>(reinterpret_cast<std::uintptr_t>(found->second.state));
+    return true;
+#elif defined(__EMSCRIPTEN__)
     (void)id; (void)progress; (void)randomSeed; (void)parameters; (void)viewport;
     return false;
 #else
@@ -481,7 +546,9 @@ bool Compositor2D::BeginNodeEffect(
 }
 
 void Compositor2D::EndNodeEffect() {
-#if !defined(__EMSCRIPTEN__)
+#if defined(PRISMATIX_WEB_PLAYER)
+    m_webNodeEffect = 0;
+#elif !defined(__EMSCRIPTEN__)
     (void)SDL_SetGPURenderState(m_renderer, nullptr);
 #endif
 }
@@ -490,7 +557,23 @@ bool Compositor2D::ApplyCustomTransition(
     const std::string_view id, SDL_Texture* outgoing, SDL_Texture* incoming,
     const float progress, const float randomSeed,
     const std::array<std::array<float, 4>, 8>& parameters) {
-#if defined(__EMSCRIPTEN__)
+#if defined(PRISMATIX_WEB_PLAYER)
+    const auto found = m_customEffects.find(std::string(id));
+    if (found == m_customEffects.end() || found->second.descriptor.targetLayer != "transition" || !EnsureTarget()) return false;
+    CustomUniforms uniforms{};
+    uniforms.texelSize[0] = 1.0f / static_cast<float>(m_width);
+    uniforms.texelSize[1] = 1.0f / static_cast<float>(m_height);
+    uniforms.progress = std::clamp(progress, 0.0f, 1.0f);
+    uniforms.randomSeed = randomSeed;
+    for (std::size_t slot = 0; slot < parameters.size(); ++slot)
+        std::ranges::copy(parameters[slot], uniforms.parameters[slot]);
+    uniforms.viewport[2] = static_cast<float>(m_width);
+    uniforms.viewport[3] = static_cast<float>(m_height);
+    if (!ApplyWebEffect(m_renderer, static_cast<int>(reinterpret_cast<std::uintptr_t>(found->second.state)),
+                        outgoing, incoming, m_webOutput, &uniforms, sizeof(uniforms))) return false;
+    const SDL_FRect destination{0, 0, static_cast<float>(m_width), static_cast<float>(m_height)};
+    return SDL_RenderTexture(m_renderer, m_webOutput, nullptr, &destination);
+#elif defined(__EMSCRIPTEN__)
     (void)id; (void)outgoing; (void)incoming; (void)progress;
     (void)randomSeed; (void)parameters;
     return false;
@@ -606,6 +689,17 @@ bool Compositor2D::ApplyRenderState(SDL_GPURenderState* state,
                                     const void* uniforms,
                                     const std::uint32_t uniformBytes) {
     if (!state || !source || !uniforms || uniformBytes == 0) return false;
+#if defined(PRISMATIX_WEB_PLAYER)
+    if (!ApplyWebEffect(m_renderer, static_cast<int>(reinterpret_cast<std::uintptr_t>(state)),
+                        source, nullptr, m_webOutput, uniforms, uniformBytes)) return false;
+    if (!SDL_SetRenderTarget(m_renderer, target)) return false;
+    if (target == m_intermediate) {
+        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 0);
+        SDL_RenderClear(m_renderer);
+    }
+    const SDL_FRect destination{0, 0, static_cast<float>(m_width), static_cast<float>(m_height)};
+    return SDL_RenderTexture(m_renderer, m_webOutput, nullptr, &destination);
+#else
     const auto fail = [this] {
         (void)SDL_SetGPURenderState(m_renderer, nullptr);
         (void)SDL_SetRenderTarget(m_renderer, m_previousTarget);
@@ -635,6 +729,16 @@ bool Compositor2D::ApplyRenderState(SDL_GPURenderState* state,
         return fail();
     }
     return true;
+#endif
 }
+
+#if defined(PRISMATIX_WEB_PLAYER)
+bool Compositor2D::DrawWebGeometry(SDL_Texture* texture, const SDL_Vertex* vertices,
+                                  const int count, const int* indices, const int indexCount) {
+    if (!m_webNodeEffect) return false;
+    return DrawWebEffectGeometry(m_renderer, m_webNodeEffect, texture, vertices, count,
+                                 indices, indexCount, m_webNodeUniforms.data(), sizeof(m_webNodeUniforms));
+}
+#endif
 
 }  // namespace px::graphics

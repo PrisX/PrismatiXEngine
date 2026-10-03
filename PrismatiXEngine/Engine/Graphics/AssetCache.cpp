@@ -5,6 +5,9 @@
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/SDK/FontIntegrity.h"
 
+#include "Engine/Platform/Web/WebEffects.h"
+#include "Engine/Platform/PlatformInfo.h"
+
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
 #include <SDL3_ttf/SDL_ttf.h>
@@ -23,6 +26,14 @@
 namespace px::graphics {
 
 namespace {
+SDL_Texture* UploadSurface(SDL_Renderer* renderer, SDL_Surface* surface) {
+#if defined(PRISMATIX_WEB_PLAYER)
+    return CreateWebTextureFromSurface(renderer, surface);
+#else
+    return SDL_CreateTextureFromSurface(renderer, surface);
+#endif
+}
+
 constexpr std::size_t kMaximumEncodedImageBytes = 128u * 1024u * 1024u;
 
 std::optional<io::Bytes> ReadImageInput(io::VFS& vfs, const std::string& path) {
@@ -110,7 +121,9 @@ AssetCache::~AssetCache() {
 }
 
 bool AssetCache::MobileTextureBudget() {
-#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+#if defined(PRISMATIX_WEB_PLAYER)
+    return CurrentPlatform().mobile;
+#elif defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
     return true;
 #else
     return false;
@@ -459,7 +472,7 @@ void AssetCache::HarvestPendingTextures() {
 
         SDL_Texture* nativeTexture = nullptr;
         if (currentSession && requested && decoded.surface && m_renderer)
-            nativeTexture = SDL_CreateTextureFromSurface(m_renderer, decoded.surface);
+            nativeTexture = UploadSurface(m_renderer, decoded.surface);
         if (decoded.surface) SDL_DestroySurface(decoded.surface);
         TextureResource texture = TextureResource::Adopt(
             TextureBackend::SdlRenderer, nativeTexture, decoded.width,
@@ -587,7 +600,7 @@ TextureHandle AssetCache::Texture(const std::string& path) {
     }
 
     SDL_Texture* nativeTexture =
-        SDL_CreateTextureFromSurface(m_renderer, surface);
+        UploadSurface(m_renderer, surface);
     const int width = surface->w;
     const int height = surface->h;
     SDL_DestroySurface(surface);
@@ -657,7 +670,7 @@ TextureHandle AssetCache::RegisterMemoryTexture(const std::string& key,
         return {};
     }
     SDL_Texture* nativeTexture =
-        SDL_CreateTextureFromSurface(m_renderer, surface);
+        UploadSurface(m_renderer, surface);
     const int width = surface->w;
     const int height = surface->h;
     SDL_DestroySurface(surface);

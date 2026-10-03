@@ -4,6 +4,8 @@
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Support/Logger.h"
 
+#include "Engine/Platform/Web/WebEffects.h"
+
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
@@ -16,6 +18,11 @@
 namespace px::graphics {
 
 namespace {
+#if defined(PRISMATIX_WEB_PLAYER)
+constexpr auto kTargetFormat = SDL_PIXELFORMAT_RGBA32;
+#else
+constexpr auto kTargetFormat = SDL_PIXELFORMAT_RGBA8888;
+#endif
 constexpr std::size_t kTextCacheLimit = 600;
 
 SDL_Texture* NativeTexture(const TextureHandle texture) {
@@ -64,6 +71,14 @@ std::string MakeKey(const std::string& text, const std::string& font, int size, 
            std::to_string(ss)+"\x01"+std::to_string(alignment)+"\x01"+locale;
 }
 }  // namespace
+
+bool Renderer2D::RenderGeometry(SDL_Texture* texture, const SDL_Vertex* vertices,
+                                const int count, const int* indices, const int indexCount) {
+#if defined(PRISMATIX_WEB_PLAYER)
+    if (m_compositor.DrawWebGeometry(texture, vertices, count, indices, indexCount)) return true;
+#endif
+    return SDL_RenderGeometry(m_renderer, texture, vertices, count, indices, indexCount);
+}
 
 Renderer2D::Renderer2D(SDL_Renderer* renderer, AssetCache& assets,
                        const bool gpuEffects)
@@ -123,7 +138,7 @@ void Renderer2D::GetLogicalSize(int& width, int& height) const {
 }
 
 void Renderer2D::DrawRect(const Rect& rect, Color color) {
-    color=TransformColor(color);const auto p0=TransformPoint({rect.x,rect.y}),p1=TransformPoint({rect.x+rect.w,rect.y}),p2=TransformPoint({rect.x+rect.w,rect.y+rect.h}),p3=TransformPoint({rect.x,rect.y+rect.h});const SDL_FColor fc=ToFColor(color);SDL_Vertex vertices[4]{{{p0.x,p0.y},fc,{}},{{p1.x,p1.y},fc,{}},{{p2.x,p2.y},fc,{}},{{p3.x,p3.y},fc,{}}};constexpr int indices[6]{0,1,2,0,2,3};SDL_SetRenderDrawBlendMode(m_renderer,SDL_BLENDMODE_BLEND);SDL_RenderGeometry(m_renderer,nullptr,vertices,4,indices,6);
+    color=TransformColor(color);const auto p0=TransformPoint({rect.x,rect.y}),p1=TransformPoint({rect.x+rect.w,rect.y}),p2=TransformPoint({rect.x+rect.w,rect.y+rect.h}),p3=TransformPoint({rect.x,rect.y+rect.h});const SDL_FColor fc=ToFColor(color);SDL_Vertex vertices[4]{{{p0.x,p0.y},fc,{}},{{p1.x,p1.y},fc,{}},{{p2.x,p2.y},fc,{}},{{p3.x,p3.y},fc,{}}};constexpr int indices[6]{0,1,2,0,2,3};SDL_SetRenderDrawBlendMode(m_renderer,SDL_BLENDMODE_BLEND);RenderGeometry(nullptr,vertices,4,indices,6);
 }
 
 void Renderer2D::DrawRoundedRect(const Rect& rect, float radius, Color color) {
@@ -165,7 +180,7 @@ void Renderer2D::DrawRoundedRect(const Rect& rect, float radius, Color color) {
 
     for(auto& vertex:fan){const auto transformed=TransformPoint({vertex.position.x,vertex.position.y});vertex.position={transformed.x,transformed.y};}
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-    SDL_RenderGeometry(m_renderer, nullptr, fan.data(), static_cast<int>(fan.size()), nullptr, 0);
+    RenderGeometry(nullptr, fan.data(), static_cast<int>(fan.size()), nullptr, 0);
 }
 
 Status Renderer2D::RegisterScreenEffect(ScreenEffectDefinition definition) {
@@ -242,7 +257,7 @@ bool Renderer2D::EnsureFrameTargets() {
     if (m_frameTarget && m_presentedTarget && m_outgoingTarget) return true;
     const auto create = [this]() {
         SDL_Texture* texture = SDL_CreateTexture(
-            m_renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+            m_renderer, kTargetFormat, SDL_TEXTUREACCESS_TARGET,
             m_logicalW, m_logicalH);
         if (texture) {
             SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
@@ -320,7 +335,7 @@ bool Renderer2D::BeginPresentationHold() {
     if (!EnsureFrameTargets()) return false;
     if (!m_presentationHoldTarget) {
         m_presentationHoldTarget = SDL_CreateTexture(
-            m_renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+            m_renderer, kTargetFormat, SDL_TEXTUREACCESS_TARGET,
             m_logicalW, m_logicalH);
         if (!m_presentationHoldTarget) return false;
         (void)SDL_SetTextureBlendMode(m_presentationHoldTarget,
@@ -436,7 +451,7 @@ ScreenEffectHandle Renderer2D::PlayRuleScreenTransition(
     if (!m_ruleScreenMask) {
         m_ruleScreenMask = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_ABGR8888,
                                              SDL_TEXTUREACCESS_STREAMING, width, height);
-        m_ruleScreenMasked = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA8888,
+        m_ruleScreenMasked = SDL_CreateTexture(m_renderer, kTargetFormat,
                                                SDL_TEXTUREACCESS_TARGET, width, height);
         // Keeps the outgoing colour and multiplies its alpha by the mask.
         const SDL_BlendMode maskAlpha = SDL_ComposeCustomBlendMode(
@@ -812,7 +827,7 @@ void Renderer2D::Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha)
     if (!texture) {
         return;
     }
-    const auto p0=TransformPoint({dst.x,dst.y}),p1=TransformPoint({dst.x+dst.w,dst.y}),p2=TransformPoint({dst.x+dst.w,dst.y+dst.h}),p3=TransformPoint({dst.x,dst.y+dst.h});const Color color=TransformColor({255,255,255,alpha});const SDL_FColor fc=ToFColor(color);SDL_Vertex vertices[4]{{{p0.x,p0.y},fc,{0,0}},{{p1.x,p1.y},fc,{1,0}},{{p2.x,p2.y},fc,{1,1}},{{p3.x,p3.y},fc,{0,1}}};constexpr int indices[6]{0,1,2,0,2,3};SDL_RenderGeometry(m_renderer,texture,vertices,4,indices,6);
+    const auto p0=TransformPoint({dst.x,dst.y}),p1=TransformPoint({dst.x+dst.w,dst.y}),p2=TransformPoint({dst.x+dst.w,dst.y+dst.h}),p3=TransformPoint({dst.x,dst.y+dst.h});const Color color=TransformColor({255,255,255,alpha});const SDL_FColor fc=ToFColor(color);SDL_Vertex vertices[4]{{{p0.x,p0.y},fc,{0,0}},{{p1.x,p1.y},fc,{1,0}},{{p2.x,p2.y},fc,{1,1}},{{p3.x,p3.y},fc,{0,1}}};constexpr int indices[6]{0,1,2,0,2,3};RenderGeometry(texture,vertices,4,indices,6);
 }
 
 void Renderer2D::BlitRegion(SDL_Texture* texture,const Rect& sourcePixels,const Rect& dst,const std::uint8_t alpha){
@@ -823,7 +838,7 @@ void Renderer2D::BlitRegion(SDL_Texture* texture,const Rect& sourcePixels,const 
     const Rect clippedDestination{dst.x+dst.w*xFraction,dst.y+dst.h*yFraction,dst.w*(rightFraction-xFraction),dst.h*(bottomFraction-yFraction)};
     const float u0=sourceLeft/nativeWidth,v0=sourceTop/nativeHeight,u1=sourceRight/nativeWidth,v1=sourceBottom/nativeHeight;
     const auto p0=TransformPoint({clippedDestination.x,clippedDestination.y}),p1=TransformPoint({clippedDestination.x+clippedDestination.w,clippedDestination.y}),p2=TransformPoint({clippedDestination.x+clippedDestination.w,clippedDestination.y+clippedDestination.h}),p3=TransformPoint({clippedDestination.x,clippedDestination.y+clippedDestination.h});const SDL_FColor color=ToFColor(TransformColor({255,255,255,alpha}));
-    SDL_Vertex vertices[4]{{{p0.x,p0.y},color,{u0,v0}},{{p1.x,p1.y},color,{u1,v0}},{{p2.x,p2.y},color,{u1,v1}},{{p3.x,p3.y},color,{u0,v1}}};constexpr int indices[6]{0,1,2,0,2,3};SDL_RenderGeometry(m_renderer,texture,vertices,4,indices,6);
+    SDL_Vertex vertices[4]{{{p0.x,p0.y},color,{u0,v0}},{{p1.x,p1.y},color,{u1,v0}},{{p2.x,p2.y},color,{u1,v1}},{{p3.x,p3.y},color,{u0,v1}}};constexpr int indices[6]{0,1,2,0,2,3};RenderGeometry(texture,vertices,4,indices,6);
 }
 
 void Renderer2D::DrawImage(const std::string& path, const Rect& dst,
@@ -912,15 +927,24 @@ void Renderer2D::DrawTextureRegion(const TextureHandle texture,
 
 void Renderer2D::BlitUntransformed(SDL_Texture* texture) {
     if (!m_renderer || !texture) return;
+#if defined(PRISMATIX_WEB_PLAYER)
+    const SDL_FColor white{1, 1, 1, 1};
+    const float width = static_cast<float>(m_logicalW), height = static_cast<float>(m_logicalH);
+    const SDL_Vertex vertices[4]{{{0, 0}, white, {0, 0}}, {{width, 0}, white, {1, 0}},
+        {{width, height}, white, {1, 1}}, {{0, height}, white, {0, 1}}};
+    constexpr int indices[6]{0, 1, 2, 0, 2, 3};
+    (void)RenderGeometry(texture, vertices, 4, indices, 6);
+#else
     SDL_FRect destination{0.0f, 0.0f, static_cast<float>(m_logicalW),
                           static_cast<float>(m_logicalH)};
     (void)SDL_RenderTexture(m_renderer, texture, nullptr, &destination);
+#endif
 }
 
 bool Renderer2D::BeginComposition() {
     if (!m_renderer || m_logicalW <= 0 || m_logicalH <= 0) return false;
     SDL_Texture* texture = SDL_CreateTexture(
-        m_renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+        m_renderer, kTargetFormat, SDL_TEXTUREACCESS_TARGET,
         m_logicalW, m_logicalH);
     if (!texture) return false;
     (void)SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
@@ -1001,9 +1025,9 @@ bool Renderer2D::BeginAlphaMask() {
         return false;
     if (!m_maskContentTarget || !m_maskCoverageTarget) {
         DestroyMaskTargets();
-        m_maskContentTarget = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA8888,
+        m_maskContentTarget = SDL_CreateTexture(m_renderer, kTargetFormat,
             SDL_TEXTUREACCESS_TARGET, m_logicalW, m_logicalH);
-        m_maskCoverageTarget = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA8888,
+        m_maskCoverageTarget = SDL_CreateTexture(m_renderer, kTargetFormat,
             SDL_TEXTUREACCESS_TARGET, m_logicalW, m_logicalH);
         if (!m_maskContentTarget || !m_maskCoverageTarget ||
             !SDL_SetTextureBlendMode(m_maskContentTarget, PremultipliedBlendMode()) ||
@@ -1114,7 +1138,7 @@ void Renderer2D::DrawSpriteBatch(
     }
     if (vertices.empty()) return;
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-    if (SDL_RenderGeometry(m_renderer, texture, vertices.data(),
+    if (RenderGeometry(texture, vertices.data(),
                            static_cast<int>(vertices.size()), indices.data(),
                            static_cast<int>(indices.size()))) {
         ++m_geometryBatchCount;
@@ -1241,7 +1265,12 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
     TTF_SetFontWrapAlignment(font,TTF_HORIZONTAL_ALIGN_LEFT);
     if(!surface){WarnTextOnce("rasterizing failed",SDL_GetError());return nullptr;}
     CachedText entry;
-    entry.texture=SDL_CreateTextureFromSurface(m_renderer,surface);entry.w=surface->w/ss;entry.h=surface->h/ss;SDL_DestroySurface(surface);if(!entry.texture){WarnTextOnce("texture upload failed",SDL_GetError());return nullptr;}SDL_SetTextureBlendMode(entry.texture,SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(entry.texture,SDL_SCALEMODE_LINEAR);
+#if defined(PRISMATIX_WEB_PLAYER)
+    entry.texture=CreateWebTextureFromSurface(m_renderer,surface);
+#else
+    entry.texture=SDL_CreateTextureFromSurface(m_renderer,surface);
+#endif
+    entry.w=surface->w/ss;entry.h=surface->h/ss;SDL_DestroySurface(surface);if(!entry.texture){WarnTextOnce("texture upload failed",SDL_GetError());return nullptr;}SDL_SetTextureBlendMode(entry.texture,SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(entry.texture,SDL_SCALEMODE_LINEAR);
 
     auto [it, _] = m_textCache.emplace(key, entry);
     return &it->second;

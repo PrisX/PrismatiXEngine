@@ -38,6 +38,7 @@ import {builtinRoutes, ejectBuiltinUi} from "./eject.js";
 import {AndroidExportError, androidSettings, checkAndroidInputs, checkKeystoreEnvironment,
   claimAndroidOutput, collectAndroidOutputs, findAndroidSdk, findGradle, resolveAndroidPlayer,
   runGradle, stageGradleProject, templateSdlVersion} from "./android-export.js";
+import {exportWeb, resolveWebPlayer} from "./web-export.js";
 import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
 import {transcodeMedia, type TranscodedFile} from "./media-transcode.js";
 import {testCommand, testHelp} from "./test-command.js";
@@ -98,7 +99,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   dev: {values: "runtime preview-host debounce ui-registry at", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space no-transcode"},
-  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target android-player gradle android-sdk", flags: "encrypt ignore-disk-space check verify-media debug no-transcode"},
+  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target android-player gradle android-sdk web-player web-package ffmpeg", flags: "encrypt ignore-disk-space check verify-media debug no-transcode"},
   run: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: ""},
@@ -180,8 +181,12 @@ function parseOptions(command: string, args: readonly string[]): Options {
   // pack's --target names a platform; the patch and overlay commands use
   // --target for a distribution path.
   if (command === "pack" && values.has("target") &&
-      !["desktop", "android"].includes(values.get("target")!))
-    throw new Error("--target must be desktop or android");
+      !["desktop", "android", "web"].includes(values.get("target")!))
+    throw new Error("--target must be desktop, android or web");
+  const web = command === "pack" && values.get("target") === "web";
+  for (const name of ["web-player", "web-package", "ffmpeg"])
+    if (values.has(name) && !web) throw new Error(`--${name} requires --target web`);
+  if (web && flags.has("check")) throw new Error("--check cannot be combined with --target web");
   const android = command === "pack" && values.get("target") === "android";
   for (const name of ["android-player", "gradle", "android-sdk"])
     if (values.has(name) && !android) throw new Error(`--${name} requires --target android`);
@@ -2301,6 +2306,7 @@ async function androidPackCommand(options: Options): Promise<number> {
 
 async function packCommand(options: Options): Promise<number> {
   if (options.values.get("target") === "android") return androidPackCommand(options);
+  if (options.values.get("target") === "web") return webPackCommand(options);
   try { const result = await packProject(options); process.stdout.write(machineOutput
     ? `${JSON.stringify(result.validatedOnly
       ? {validated: true, packed: false,
@@ -2315,6 +2321,36 @@ async function packCommand(options: Options): Promise<number> {
       [diagnostic("PXCLI1201", "Pack failed", options.positional[0], String(error))]);
     return 1;
   }
+}
+
+async function webPackCommand(options: Options): Promise<number> {
+  let temporary: string | undefined;
+  try {
+    const location = await resolveProjectPath(options.positional[0]);
+    const argument = options.values.get("web-player");
+    if (!argument) throw new Error("--target web needs --web-player <shipping WASM Player directory>");
+    const playerDirectory = await resolveWebPlayer(argument);
+    const output = resolve(options.values.get("output") ?? join(location.root, "dist", "web"));
+    let distribution = options.values.get("web-package");
+    if (!distribution) {
+      temporary = await mkdtemp(join(tmpdir(), "prismatix-web-"));
+      const values = new Map(options.values);
+      for (const name of ["target", "web-player", "web-package", "ffmpeg"]) values.delete(name);
+      values.set("output", join(temporary, "package"));
+      distribution = (await packProject({values, flags: new Set(options.flags), positional: [...options.positional]})).output;
+    }
+    const result = await exportWeb({projectRoot: location.root, distribution,
+      playerDirectory, output,
+      ...(options.values.has("ffmpeg") ? {ffmpeg: options.values.get("ffmpeg")!} : {}),
+      onProgress: message => progress({severity: "information", code: "PXCLI1261", message})});
+    process.stdout.write(machineOutput ? `${JSON.stringify({packed: true, ...result})}\n`
+      : `Web game exported: ${result.output}\n  ${result.files} resource files, ${result.videos} videos\n`);
+    return 0;
+  } catch (error) {
+    printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure ? error.diagnostics :
+      [diagnostic("PXCLI1260", "Web export failed", options.positional[0], String(error))]);
+    return 1;
+  } finally { if (temporary) await rm(temporary, {recursive: true, force: true}); }
 }
 
 async function runCommand(options: Options): Promise<number> {
@@ -3000,7 +3036,8 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "prismatix pack [project] --artifact <dir> --check [--verify-media]",
     "prismatix pack [project] --target android --android-player <arm64-v8a dir> [--artifact <dir>] [--output <dir>]",
     "    [--gradle <gradle>] [--android-sdk <dir>] [--debug]   APK, plus an AAB when distribution.android.keystore is set;",
-    "    needs JAVA_HOME (JDK 17+), Gradle 8.9+ and an Android SDK with platform 35 (ANDROID_HOME)"],
+    "    needs JAVA_HOME (JDK 17+), Gradle 8.9+ and an Android SDK with platform 35 (ANDROID_HOME)",
+    "prismatix pack [project] --target web --web-player <WASM Player dir> [--web-package <distribution>] [--output <dir>] [--ffmpeg <path>]"],
   run: ["Build a distribution and start its Player.", "prismatix run [project] [--runtime <dir>]"],
   release: ["Validate, build, pack and verify a release candidate in one step.",
     "prismatix release [project] [--output <dir>] [--runtime <dir>]",

@@ -17,6 +17,7 @@ struct SDL_GPURenderState;
 struct SDL_GPUTexture;
 struct SDL_GPUSampler;
 struct SDL_Texture;
+struct SDL_Vertex;
 
 namespace px::graphics {
 
@@ -60,6 +61,10 @@ public:
         const std::array<std::array<float, 4>, 8>& parameters,
         const std::array<float, 4>& viewport);
     void EndNodeEffect();
+#if defined(PRISMATIX_WEB_PLAYER)
+    bool DrawWebGeometry(SDL_Texture* texture, const SDL_Vertex* vertices,
+                         int count, const int* indices, int indexCount);
+#endif
     [[nodiscard]] bool ApplyCustomTransition(
         std::string_view id, SDL_Texture* outgoing, SDL_Texture* incoming,
         float progress, float randomSeed,
@@ -111,6 +116,11 @@ private:
     bool m_enabled = false;
     bool m_required = false;
     bool m_recording = false;
+#if defined(PRISMATIX_WEB_PLAYER)
+    SDL_Texture* m_webOutput = nullptr;
+    int m_webNodeEffect = 0;
+    std::array<float, 40> m_webNodeUniforms{};
+#endif
 };
 
 }  // namespace px::graphics

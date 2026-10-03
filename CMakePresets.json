@@ -162,6 +162,17 @@
             }
         },
         {
+            "name": "wasm-player",
+            "displayName": "Emscripten Web Player",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/out/build/wasm-player",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_TESTING": "OFF",
+                "PRISMATIX_BUILD_WASM_PLAYER": "ON"
+            }
+        },
+        {
             "name": "wasm-preview",
             "displayName": "Emscripten Studio Preview",
             "generator": "Ninja",
@@ -213,6 +224,12 @@
             "name": "android-arm64",
             "configurePreset": "android-arm64",
             "targets": ["PrismatiXPlayer"]
+        },
+        {
+            "name": "wasm-player",
+            "configurePreset": "wasm-player",
+            "inheritConfigureEnvironment": true,
+            "targets": ["PrismatiXPlayerWeb"]
         },
         {
             "name": "wasm-preview",

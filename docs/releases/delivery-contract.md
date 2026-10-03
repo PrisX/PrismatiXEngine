@@ -4,9 +4,11 @@ PrismatiXEngine 0.2.0 is the first versioned public authoring/runtime boundary.
 The intended desktop targets are Windows x64, Linux x64 and macOS
 x64/arm64 Player bundles produced by the matching Packager. Each architecture
 requires its own candidate installation and native acceptance evidence before
-it is declared supported. The Emscripten
-artifact is a Studio browser Preview and is not a web-game shipping target.
-Mobile and console targets are not supported by this release.
+it is declared supported. Emscripten has separate Studio Preview and shipping
+Web Player targets. `pack --target web` selects the shipping runtime explicitly;
+Preview cannot substitute for it. See [Web export](../web-export.md) for build,
+hosting and browser acceptance limits. Native Android remains experimental;
+console targets are not supported by this release.
 
 ## Compatibility
 
@@ -54,6 +56,9 @@ inventory next to the Player under `Notices/`.
    a release restricted to the verified desktop SDK targets.
 6. Verify notices, font hashes and sample provenance before publishing an
    artifact.
+7. For a Web release, verify shipping runtime hashes and notices, real-browser
+   canvas/media/effect behavior, persistent saves and migration, complete offline
+   playback and accepted updates. Record tested browsers/devices explicitly.
 
 Debug builds and repository-local executions are useful diagnostics, but they
 do not substitute for these release gates.

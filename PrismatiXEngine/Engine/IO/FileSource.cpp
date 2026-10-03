@@ -11,6 +11,10 @@
 
 namespace px::io {
 
+#if defined(PRISMATIX_WEB_PLAYER)
+std::shared_ptr<const FileSource> WebFileSource();
+#endif
+
 namespace {
 
 // Resolves a cursor move against [0, size]. Shared by both stream types so
@@ -324,7 +328,9 @@ std::shared_ptr<const FileSource> SdlFileSource() {
 }
 
 std::shared_ptr<const FileSource> PackageFileSource() {
-#if defined(__ANDROID__)
+#if defined(PRISMATIX_WEB_PLAYER)
+    return WebFileSource();
+#elif defined(__ANDROID__)
     return SdlFileSource();
 #else
     return NativeFileSource();

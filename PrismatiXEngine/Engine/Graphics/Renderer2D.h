@@ -315,6 +315,8 @@ public:
     [[nodiscard]] SDL_Renderer* Handle() const { return m_renderer; }
 
 private:
+    bool RenderGeometry(SDL_Texture* texture, const SDL_Vertex* vertices,
+                         int count, const int* indices, int indexCount);
     struct TransformState {
         float a=1,b=0,c=0,d=1,tx=0,ty=0;
         Color modulate{255,255,255,255};

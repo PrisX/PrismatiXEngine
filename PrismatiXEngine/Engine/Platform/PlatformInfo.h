@@ -15,6 +15,9 @@ struct PlatformInfo {
     bool mobile = false;
 };
 
+#if defined(PRISMATIX_WEB_PLAYER)
+[[nodiscard]] PlatformInfo CurrentPlatform();
+#else
 [[nodiscard]] constexpr PlatformInfo CurrentPlatform() {
 #if defined(__ANDROID__)
     return {"android", true};
@@ -32,5 +35,6 @@ struct PlatformInfo {
     return {"linux", false};
 #endif
 }
+#endif
 
 }  // namespace px

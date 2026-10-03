@@ -43,7 +43,7 @@ set(SDLIMAGE_QOI OFF CACHE BOOL "" FORCE)
 set(SDLIMAGE_SVG OFF CACHE BOOL "" FORCE)
 set(SDLIMAGE_TGA OFF CACHE BOOL "" FORCE)
 set(SDLIMAGE_TIF OFF CACHE BOOL "" FORCE)
-set(SDLIMAGE_WEBP OFF CACHE BOOL "" FORCE)
+set(SDLIMAGE_WEBP ${PRISMATIX_BUILD_WASM_PLAYER} CACHE BOOL "" FORCE)
 set(SDLIMAGE_XCF OFF CACHE BOOL "" FORCE)
 set(SDLIMAGE_XPM OFF CACHE BOOL "" FORCE)
 set(SDLIMAGE_XV OFF CACHE BOOL "" FORCE)
@@ -109,7 +109,7 @@ set(SDLMIXER_MOD OFF CACHE BOOL "" FORCE)
 set(SDLMIXER_MP3 ON CACHE BOOL "" FORCE)
 set(SDLMIXER_MP3_DRMP3 ON CACHE BOOL "" FORCE)
 set(SDLMIXER_MP3_MPG123 OFF CACHE BOOL "" FORCE)
-set(SDLMIXER_OPUS OFF CACHE BOOL "" FORCE)
+set(SDLMIXER_OPUS ${PRISMATIX_BUILD_WASM_PLAYER} CACHE BOOL "" FORCE)
 set(SDLMIXER_VORBIS_STB ON CACHE BOOL "" FORCE)
 set(SDLMIXER_VORBIS_TREMOR OFF CACHE BOOL "" FORCE)
 set(SDLMIXER_VORBIS_VORBISFILE OFF CACHE BOOL "" FORCE)
@@ -275,3 +275,29 @@ set_target_properties(prismatix_fribidi_wasm PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES
         "${PRISMATIX_WASM_FRIBIDI_INSTALL}/include")
 add_dependencies(prismatix_fribidi_wasm prismatix_fribidi_external)
+
+# The shipping Player keeps the native PDX, signature and save contracts. These
+# libraries are compiled for WASM; native packages are never linked into it.
+if(PRISMATIX_BUILD_WASM_PLAYER)
+    set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(prismatix_mbedtls
+        GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
+        GIT_TAG v3.6.4
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(prismatix_mbedtls)
+    add_library(prismatix_mbedcrypto INTERFACE)
+    target_link_libraries(prismatix_mbedcrypto INTERFACE mbedcrypto)
+
+    set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(prismatix_zstd
+        GIT_REPOSITORY https://github.com/facebook/zstd.git
+        GIT_TAG v1.5.7
+        GIT_SHALLOW TRUE
+        SOURCE_SUBDIR build/cmake)
+    FetchContent_MakeAvailable(prismatix_zstd)
+    add_library(zstd::libzstd ALIAS libzstd_static)
+endif()

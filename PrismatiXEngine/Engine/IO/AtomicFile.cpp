@@ -7,6 +7,10 @@
 #include <chrono>
 #include <fstream>
 
+#if defined(PRISMATIX_WEB_PLAYER)
+#include <emscripten/emscripten.h>
+#endif
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
@@ -15,6 +19,18 @@
 namespace px::io {
 
 namespace {
+#if defined(PRISMATIX_WEB_PLAYER)
+EM_ASYNC_JS(int, FlushWebPersistence, (), {
+    try {
+        await new Promise((resolve, reject) => FS.syncfs(false, error =>
+            error ? reject(error) : resolve()));
+        return 1;
+    } catch (error) {
+        Module.prismatix.error(error);
+        return 0;
+    }
+});
+#endif
 std::atomic<std::uint64_t> g_tempId{ 0 };
 
 diag::Diagnostic FileError(const std::filesystem::path& path, std::string message,
@@ -55,6 +71,10 @@ Status Commit(const std::filesystem::path& temp, const std::filesystem::path& ta
         return Status::Fail(FileError(target, "Could not replace the destination file atomically.",
                                       ec.message()));
     }
+#endif
+#if defined(PRISMATIX_WEB_PLAYER)
+    if (!FlushWebPersistence())
+        return Status::Fail(FileError(target, "Could not persist the save in browser storage."));
 #endif
     return Status::Ok();
 }

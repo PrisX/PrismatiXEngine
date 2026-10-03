@@ -39,6 +39,7 @@ Each command explains itself with `prismatix <command> --help`. Others you will 
 | `eject ui <route>` | Copies a built-in screen (title, hud, save, settings...) into the project as TSX |
 | `import artemis <extracted> [project]` | Converts an Artemis game; game-specific tables go in `artemis-import.json` |
 | `pack --target android` | Builds an APK and AAB with the Android Player (experimental, see the shipping guide) |
+| `pack --target web --web-player <dir>` | Exports the full WASM Player, chunked content, MP4 movies and browser persistence |
 | `ids --sync` | Reviews save identities after adding or removing Story lines |
 | `create-patch`, `create-overlay` | Signed single-file updates for a shipped game |
 | `test` | Runs `tests/journeys/*.ts` against a QA pack (see below) |
@@ -92,6 +93,8 @@ and Ogg as Opus in builds, which cut Sakura no Uta's media from 7.6 to 2.1 GiB.
   portraits, TSX UI, input, motion, custom effects, Player settings.
 - [Shipping guide](docs/shipping.md): packaging, patches and overlays, save
   compatibility and migrations, importing other engines, Android.
+- [Web export](docs/web-export.md): build the shipping WASM Player, export a
+  game, preview it locally and deploy offline-capable browser versions.
 
 ## Building the engine
 
