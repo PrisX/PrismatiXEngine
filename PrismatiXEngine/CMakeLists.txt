@@ -942,6 +942,14 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
     # The journey itself is Tests/journeys/catalog.mjs, run by `prismatix
     # test` (packages/cli, built by `npm run build`) over the QA IPC.
     find_program(PRISMATIX_NODE_EXECUTABLE node)
+    if(PRISMATIX_NODE_EXECUTABLE)
+        add_test(NAME PrismatiX.SDK.PackageVerifierColdStart
+            COMMAND "${PRISMATIX_NODE_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test-package-verifier-cold-start.mjs"
+                    $<TARGET_FILE:PrismatiXPackager>)
+        set_tests_properties(PrismatiX.SDK.PackageVerifierColdStart PROPERTIES
+            LABELS "sdk;contract;packager;native" TIMEOUT 90)
+    endif()
     add_test(
         NAME PrismatiX.Player.CatalogNativeAcceptance
         COMMAND PrismatiXPlayerCatalogNativeAcceptanceTests

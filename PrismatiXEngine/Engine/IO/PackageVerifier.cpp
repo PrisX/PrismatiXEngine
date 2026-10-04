@@ -198,10 +198,18 @@ unsigned VerificationWorkers(const std::size_t archives, const bool encrypted) {
     return static_cast<unsigned>(std::min<std::size_t>(workers, archives));
 }
 
+bool EnsureVerificationCryptoInitialized() {
+    // Some distributions build Mbed TLS without MBEDTLS_THREADING_C. Its
+    // process-global RNG/key-store initialization must never race between
+    // archive workers, even though each SHA operation has its own context.
+    static const bool initialized = psa_crypto_init() == PSA_SUCCESS;
+    return initialized;
+}
+
 std::optional<std::string> FingerprintStream(
     SeekableReadStream& stream,
     const std::optional<std::uint32_t> expectedCrc = std::nullopt) {
-    if (psa_crypto_init() != PSA_SUCCESS) return std::nullopt;
+    if (!EnsureVerificationCryptoInitialized()) return std::nullopt;
     psa_hash_operation_t operation = PSA_HASH_OPERATION_INIT;
     if (psa_hash_setup(&operation, PSA_ALG_SHA_256) != PSA_SUCCESS)
         return std::nullopt;
@@ -243,7 +251,7 @@ std::optional<std::string> FingerprintStream(
 }
 
 std::optional<std::string> FingerprintText(const std::string_view value) {
-    if (psa_crypto_init() != PSA_SUCCESS) return std::nullopt;
+    if (!EnsureVerificationCryptoInitialized()) return std::nullopt;
     std::array<std::uint8_t, 32> digest{};
     std::size_t size = 0;
     if (psa_hash_compute(PSA_ALG_SHA_256,
@@ -326,7 +334,7 @@ std::optional<std::string> FingerprintRegularFile(
     const auto status = std::filesystem::symlink_status(path, error);
     if (error || !std::filesystem::is_regular_file(status) ||
         std::filesystem::is_symlink(status) ||
-        psa_crypto_init() != PSA_SUCCESS) return std::nullopt;
+        !EnsureVerificationCryptoInitialized()) return std::nullopt;
     std::ifstream input(path, std::ios::binary);
     psa_hash_operation_t digest = PSA_HASH_OPERATION_INIT;
     if (!input || psa_hash_setup(&digest, PSA_ALG_SHA_256) != PSA_SUCCESS)
@@ -615,6 +623,9 @@ PackageContentVerification VerifyPackageContents(
         previousUri = uri;
     }
 
+    // Complete initialization on the caller before any archive worker starts.
+    if (!EnsureVerificationCryptoInitialized())
+        return Fail("Package verification crypto initialization failed");
     const auto key = manifest.encrypted
         ? std::optional<crypto::Key>{crypto::DeriveKey(manifest.archiveKey)}
         : std::nullopt;

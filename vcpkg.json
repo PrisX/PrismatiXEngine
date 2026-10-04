@@ -33,7 +33,15 @@
     "fribidi",
     "libunibreak",
     "spdlog",
-    "mbedtls",
+    {
+      "name": "mbedtls",
+      "features": [
+        {
+          "name": "pthreads",
+          "platform": "osx"
+        }
+      ]
+    },
     "zstd",
     "ffmpeg",
     "libwebp",
