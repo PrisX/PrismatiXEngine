@@ -182,3 +182,21 @@ test("ItemsPlaced choiceLayout lowers to the choice properties the Player reads"
   assert.throws(() => ItemsPlaced({name: "Bad", items: {path: "dialogue.choices", key: "key",
     placement: "rect"}, choiceLayout: {area: [0, 0, 100, 10], rows: {2: [0]}}}), /row 2 needs 2/u);
 });
+
+test("a prop no lowering uses is reported instead of silently ignored", () => {
+  const result = compileJsxUi(jsx(Scene, {name: "Unused", width: 640, height: 360,
+    children: jsx(Group, {name: "Root", fill: true, fontt: "x"} as never)}));
+  assert.deepEqual(result.diagnostics.map(({code, details}) => [code, details]),
+    [["PXSDKJSX1103", "nodes[0].fontt"]]);
+});
+
+test("style box decoration lowers to canonical appearance fields", () => {
+  const result = compileJsxUi(jsx(Scene, {name: "Box", width: 640, height: 360,
+    children: jsx(Group, {name: "Card", fill: true, style: {gradient: ["#FFFFFFCC", "#EEF2FCB3"],
+      radius: 22, border: [1.5, "#FFFFFFF0"], shadow: {color: "#00000033", blur: 26, y: 8}}})}));
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const card = result.value!.nodes.find((node) => node.name === "Card")!;
+  assert.deepEqual(card.appearance, {backgroundColor: "#FFFFFFCC", gradientColor: "#EEF2FCB3",
+    cornerRadius: 22, borderWidth: 1.5, borderColor: "#FFFFFFF0", shadowColor: "#00000033",
+    shadowBlur: 26, shadowOffsetX: 0, shadowOffsetY: 8});
+});

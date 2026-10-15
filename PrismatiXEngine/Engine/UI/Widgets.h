@@ -69,12 +69,24 @@ public:
     void SetVerticalAlignment(VerticalTextAlignment value) { m_verticalAlignment=value; }
     [[nodiscard]] HorizontalTextAlignment HorizontalAlignment() const { return m_horizontalAlignment; }
     [[nodiscard]] VerticalTextAlignment VerticalAlignment() const { return m_verticalAlignment; }
+    // The whole line while a typewriter shows a prefix of it: wrapping is
+    // decided on the whole line, so characters never jump to the next line
+    // as they appear.
+    void SetLayoutReference(std::string value) { m_layoutReference = std::move(value); }
 
 protected:
     Vec2 MeasureOverride(Vec2 available) override;
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
+    // Wrapped text with line breaks at UAX #14 opportunities and 禁則.
+    [[nodiscard]] std::string ReflowedText(graphics::Renderer2D& renderer, const std::string& font,
+                                           int size, float width) const;
+    // Subclasses that position extra glyphs by byte offset (ruby) opt out.
+    [[nodiscard]] virtual bool AllowsReflow() const { return true; }
 
 private:
+    std::string m_layoutReference;
+    mutable std::string m_reflowKey;
+    mutable std::vector<std::size_t> m_reflowBreaks;
     std::string m_text;
     bool m_wrap = false;
     int m_fontSize = 0;
@@ -520,6 +532,7 @@ public:
     [[nodiscard]] std::size_t VerticalRows() const{return m_verticalRows;}
     [[nodiscard]] AccessibilitySemantics DescribeAccessibility() const override;
 protected:
+    [[nodiscard]] bool AllowsReflow() const override { return m_ruby.empty(); }
     Vec2 MeasureOverride(Vec2 available) override;
     void DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) override;
 private:

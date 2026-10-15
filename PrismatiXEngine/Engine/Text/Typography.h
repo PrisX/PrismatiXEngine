@@ -3,6 +3,7 @@
 #include "Engine/Core/Types.h"
 
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -57,6 +58,14 @@ struct BidiLayoutInfo {
 [[nodiscard]] std::vector<std::size_t> LineBreakBoundaries(
     std::string_view text, std::string_view language = {});
 [[nodiscard]] std::string ApplyCjkKinsoku(std::string_view text,std::size_t maxColumns);
+// Byte offsets where a line break must be inserted so every line of `text`
+// fits `width` as reported by `measure`: UAX #14 opportunities, with 禁則 (no
+// closing punctuation or small kana at a line start, no opening bracket at a
+// line end). Existing newlines are kept and not reported.
+[[nodiscard]] std::vector<std::size_t> WrapBreaks(
+    std::string_view text, float width,
+    const std::function<float(std::string_view)>& measure,
+    std::string_view language = "ja");
 struct VerticalGlyph { std::string glyph; int column=0; int row=0; bool rotate=false; };
 [[nodiscard]] std::vector<VerticalGlyph> LayoutVertical(std::string_view text,std::size_t rowsPerColumn);
 }  // namespace px::text

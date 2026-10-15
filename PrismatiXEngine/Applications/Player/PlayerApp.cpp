@@ -2774,6 +2774,15 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
     view.choices = m_choiceTexts;
     view.nvlMode = m_nvlMode;
     view.face = MessageFacePath();
+    if (!view.speaker.empty() && !dialogue.faceCharacter.empty())
+        if (const auto* character = m_catalog.FindCharacter(dialogue.faceCharacter);
+            character && character->nameColor.size() >= 7) {
+            const auto channel = [&](const std::size_t at) {
+                return static_cast<std::uint8_t>(std::stoi(character->nameColor.substr(at, 2), nullptr, 16));
+            };
+            view.speakerColor = Color{channel(1), channel(3), channel(5),
+                                      character->nameColor.size() == 9 ? channel(7) : std::uint8_t{255}};
+        }
     view.autoMode = m_autoMode;
     view.skipMode = m_skipMode;
     view.waiting = dialogue.finished && !dialogue.fullText.empty() &&

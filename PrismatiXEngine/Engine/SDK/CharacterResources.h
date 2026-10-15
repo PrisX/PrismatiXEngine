@@ -36,6 +36,8 @@ struct CharacterResource {
     std::string id;
     std::string displayName;
     std::unordered_map<std::string, std::string> displayNames;
+    // Speaker name colour in the message window; empty keeps the HUD's.
+    std::string nameColor;
     // Compatibility lookup keys retained by the one-time Game.pxres
     // migration. The UUID remains authoritative.
     std::vector<std::string> aliases;

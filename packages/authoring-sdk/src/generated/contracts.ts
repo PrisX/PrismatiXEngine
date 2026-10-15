@@ -384,6 +384,10 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "id": {
         "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
       },
+      "nameColor": {
+        "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$",
+        "type": "string"
+      },
       "revision": {
         "minimum": 0,
         "type": "integer"
@@ -4907,7 +4911,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
 
 export const contractHashes: Readonly<Record<string, string>> = {
   "animation.schema.json": "ef9ccdba9dbc8a08a00848e487cb2a6938c23f88b891ff0c85bf9d16783254a7",
-  "character.schema.json": "add85d9937b6d58d1ef0ede35143607f2f8eeb28e6b4baa12567fd113ab63137",
+  "character.schema.json": "2da9dd7fe36f0c9fa18806625375714802371bacf9248a5f24498db3e4f0ef8b",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
   "effect.schema.json": "8707b1b1d75154000786f797b06561643a5f9881df968708a0994546e3f782bd",
   "extension.schema.json": "f644ab7d736add644057cc1a199db6dd042901802c8ba91c8e7cebfde5bfda5b",

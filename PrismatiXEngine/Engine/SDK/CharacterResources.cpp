@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 #include <nlohmann/json.hpp>
+#include <regex>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -312,6 +313,16 @@ CharacterResourcesLoadResult LoadCharacterResources(
                     source, id);
                 continue;
             }
+        }
+        if (const auto nameColor = document.find("nameColor"); nameColor != document.end()) {
+            const bool valid = nameColor->is_string() &&
+                std::regex_match(nameColor->get_ref<const std::string&>(),
+                                 std::regex("#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})"));
+            if (!valid) {
+                Add(result, "PXCHAR1032", "nameColor must be #RRGGBB or #RRGGBBAA", source, id);
+                continue;
+            }
+            character.nameColor = nameColor->get<std::string>();
         }
         const auto aliases = document.find("aliases");
         if (aliases != document.end()) {

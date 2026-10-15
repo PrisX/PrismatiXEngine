@@ -57,6 +57,8 @@ struct DialoguePresentation {
     bool nvlMode = false;
     // Message-window face image; empty hides the Face control.
     std::string face;
+    // The speaking character's nameColor; unset keeps the Speaker label's own.
+    std::optional<Color> speakerColor;
     bool autoMode = false;
     bool skipMode = false;
     // The line is fully shown and the Player waits for a click: the HUD's
@@ -289,6 +291,8 @@ private:
     Control* m_choiceList = nullptr;
     ChoiceLayout m_choiceLayout;
     Color m_dialogueBaseColor{0, 0, 0, 255};
+    Color m_speakerBaseColor{255, 255, 255, 255};
+    bool m_speakerHasBaseColor = false;
     bool m_dialogueDimmed = false;
     OptionSource m_optionSource;
     Status Install(std::unique_ptr<Control> root, Screen screen,

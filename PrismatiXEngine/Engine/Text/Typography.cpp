@@ -259,5 +259,70 @@ std::string ApplyCjkKinsoku(std::string_view text,std::size_t maxColumns){
     }
     return output;
 }
+std::vector<std::size_t> WrapBreaks(const std::string_view text, const float width,
+                                    const std::function<float(std::string_view)>& measure,
+                                    const std::string_view language) {
+    std::vector<std::size_t> result;
+    if (text.empty() || width <= 0.0f || !measure) return result;
+    // 禁則: closing punctuation, small kana and prolonged sound marks never
+    // start a line; opening brackets never end one.
+    constexpr std::string_view noStart =
+        "、。，．・：；？！ー…‥」』）〕］｝〉》】〙〗’”々ゝゞヽヾぁぃぅぇぉっゃゅょゎゕゖ"
+        "ァィゥェォッャュョヮヵヶ‐゠–〜～!),.:;?]}";
+    constexpr std::string_view noEnd = "「『（〔［｛〈《【〘〖‘“([{";
+    const auto glyphs = GraphemeBoundaries(text);
+    const auto glyphAt = [&](const std::size_t offset) {
+        const auto found = std::upper_bound(glyphs.begin(), glyphs.end(), offset);
+        const std::size_t end = found == glyphs.end() ? text.size() : *found;
+        return text.substr(offset, end - offset);
+    };
+    const auto glyphBefore = [&](const std::size_t offset) {
+        const auto found = std::lower_bound(glyphs.begin(), glyphs.end(), offset);
+        const std::size_t start = found == glyphs.begin() ? 0 : *std::prev(found);
+        return text.substr(start, offset - start);
+    };
+    std::vector<std::size_t> candidates;
+    for (const std::size_t boundary : LineBreakBoundaries(text, language)) {
+        if (boundary == 0) continue;
+        const bool forced = text[boundary - 1] == '\n';
+        if (!forced && boundary < text.size() &&
+            (In(glyphAt(boundary), noStart) || In(glyphBefore(boundary), noEnd)))
+            continue;
+        candidates.push_back(boundary);
+    }
+    std::size_t lineStart = 0;
+    std::size_t lastFit = std::string_view::npos;
+    const auto fits = [&](const std::size_t end) {
+        std::string_view line = text.substr(lineStart, end - lineStart);
+        while (!line.empty() && (line.back() == '\n' || line.back() == ' ')) line.remove_suffix(1);
+        return measure(line) <= width;
+    };
+    for (const std::size_t boundary : candidates) {
+        if (fits(boundary)) {
+            lastFit = boundary;
+        } else if (lastFit != std::string_view::npos && lastFit > lineStart) {
+            result.push_back(lastFit);
+            lineStart = lastFit;
+            lastFit = fits(boundary) ? boundary : std::string_view::npos;
+            if (lastFit == std::string_view::npos && boundary < text.size()) {
+                // One unbreakable run wider than the line: let it overflow.
+                result.push_back(boundary);
+                lineStart = boundary;
+            }
+        } else if (boundary < text.size()) {
+            result.push_back(boundary);
+            lineStart = boundary;
+            lastFit = std::string_view::npos;
+        }
+        if (text[boundary - 1] == '\n') {
+            lineStart = boundary;
+            lastFit = std::string_view::npos;
+        }
+    }
+    // Explicit newlines already break; only report inserted ones.
+    std::erase_if(result, [&](const std::size_t at) { return at == 0 || text[at - 1] == '\n'; });
+    return result;
+}
+
 std::vector<VerticalGlyph> LayoutVertical(std::string_view text,std::size_t rowsPerColumn){rowsPerColumn=std::max<std::size_t>(1,rowsPerColumn);std::vector<VerticalGlyph> result;int column=0,row=0;for(const auto& glyph:Glyphs(text)){if(glyph=="\n"||row>=static_cast<int>(rowsPerColumn)){++column;row=0;if(glyph=="\n")continue;}const bool rotate=glyph.size()==1&&glyph[0]>=0x21&&glyph[0]<=0x7e;result.push_back({glyph,column,row++,rotate});}return result;}
 }  // namespace px::text

@@ -436,6 +436,22 @@ void TestCjkRubyAndVerticalText() {
     Check(rich.plain == "漢字\n測試" && rich.ruby.size() == 1 && rich.ruby.front().reading == "かんじ", "rich text should retain CJK ruby annotations");
     const auto wrapped = px::text::ApplyCjkKinsoku("這是一段測試，不能讓標點出現在行首。", 6);
     Check(wrapped.find("\n，") == std::string::npos && wrapped.find("\n。") == std::string::npos, "CJK wrapping should enforce kinsoku punctuation rules");
+    {
+        // Each character measures 10 px, so 6 fit on a line of 60 px.
+        const auto measure = [](const std::string_view line) {
+            return static_cast<float>(px::text::GraphemeBoundaries(line).size() - 1) * 10.0f;
+        };
+        const std::string line = "整齊的紮進洋紅色的長裙（竟然是短袖），腳踝以下";
+        const auto breaks = px::text::WrapBreaks(line, 60.0f, measure);
+        Check(!breaks.empty(), "a long CJK line should wrap");
+        for (const std::size_t at : breaks) {
+            const std::string next = line.substr(at, 3);
+            Check(next != "）" && next != "，" && next != "。",
+                  "WrapBreaks must not start a line with closing punctuation");
+            Check(line.substr(at - 3, 3) != "（", "WrapBreaks must not end a line with an opening bracket");
+        }
+        Check(px::text::WrapBreaks("短句", 60.0f, measure).empty(), "a line that fits needs no break");
+    }
     const auto vertical = px::text::LayoutVertical("縱書ABC", 4);
     Check(!vertical.empty() && vertical.back().column > 0 && vertical[2].rotate, "vertical layout should rotate Latin glyphs and advance columns");
     const std::string clusters = "👩‍💻é🇯🇵";

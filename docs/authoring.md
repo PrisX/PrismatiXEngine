@@ -125,7 +125,11 @@ edited media is encoded again, and `--no-transcode` packs the originals:
 `quality` is 1-100 or `"lossless"`, `effort` (0-6, default 4) trades encode
 time for size, Opus `bitrate` is in kbit/s (default 96), and Vorbis takes
 `quality` from -1 to 10 instead. Engine contributors can
-pass a local build directory as `--runtime out/build/x64-release/PrismatiXEngine`.
+pass a local build directory as `--runtime out/build/x64-release/PrismatiXEngine`;
+a CLI linked from an engine checkout finds that checkout's build by itself
+(`PRISMATIX_NO_CHECKOUT_RUNTIME=1` turns this off), and `create` run from a
+checkout links the new project to it with `file:` dependencies, so it works
+offline.
 Scaffold the files you would otherwise write by hand, and see any command's
 options with `--help`:
 
@@ -135,6 +139,10 @@ prismatix add scene chapter2 --chapter chapter-1 --title "放學後"
 prismatix eject ui hud
 prismatix release --help
 ```
+
+`add character` makes `normal.png` (or `default`/`neutral`) the default
+expression and, without `--from`, registers a character with no sprite, such
+as a first-person protagonist who still needs a name.
 
 `prismatix create my-game --template adv` starts with the HUD, Save, Load,
 Settings and Backlog already ejected this way. `eject ui <route>` (or `all`) copies a stock Player screen (`title`, `hud`,
@@ -540,6 +548,11 @@ save identities and the Runtime IR do not depend on which spelling you use.
 - A prose line ending in `\` continues on the next line; both lines are shown
   in one advance with a line break. Write `\\` for a literal trailing
   backslash.
+- An expression is addressed by its name or any of its aliases
+  (`[show kei smile]` for an expression named `smile`).
+- Command arguments are separated by ASCII spaces only, so a CJK title keeps
+  its ideographic space, and `[chapter 第一章 天台]` takes every word as the
+  chapter title (shown in the HUD notice and in save slots).
 - In `[show alias ...]`, words after the alias are the expression or the
   position in either order. Showing a visible character again without a
   position keeps its slot, offset and scale, so expression changes no longer
@@ -565,8 +578,10 @@ Short resource names come from author-only search roots in `prismatix.json`:
 ```
 
 Kinds are `bg`, `rule`, `sprite`, `voice`, `bgm`, `se`, `ambience` and `video`.
-A name is looked up only among files the build already packages
-(`resourceIncludes` and cataloged `assets`). Roots are tried in order; inside
+A name is looked up among the files under these roots (and among
+`resourceIncludes` and cataloged `assets`); only the files Story actually
+names are packaged, so a root needs no matching `resourceIncludes` entry.
+Roots are tried in order; inside
 one root an exact relative path wins over a path without its extension, then a
 file name, then a file name without its extension (`kei/k001` or `k001` for
 `Assets/voice/kei/k001.ogg`). Several matches at the same level are an error
@@ -787,6 +802,28 @@ saves and rollback understand, and string variables written from the Player,
 all of which belong to the Player UI rather than the Story compiler. Until
 then, let a TSX screen collect the name and set a `profile` or `session`
 variable through the runtime SDK, and use `{name}` substitution in text.
+
+#### Speaker name colours
+
+`"nameColor": "#F4BFD0"` in a `.pxcharacter` colours that character's name in
+the HUD's `Speaker` label while they speak; other lines keep the label's own
+colour. Lines already read are drawn halfway to grey (`dimReadText`), which
+stays legible on light and dark message windows.
+
+The Player publishes booleans for HUD details that would otherwise need
+code: `dialogue.hasSpeaker` (a name plate that hides during narration),
+`dialogue.waiting` (the line is complete and waits for a click: bind a
+click-wait glyph's `visible` to it), and `hud.auto` / `hud.skip`.
+
+Wrapped text breaks at Unicode line-break opportunities with 禁則: closing
+punctuation and small kana never start a line and opening brackets never end
+one. The message window decides the breaks on the whole line, so characters
+do not jump to the next line while the typewriter reveals them.
+
+`validate` and `build` warn (`PXCLI1060`) about Story characters that no font
+of the locale's `fontChain` can draw, listing each with the line that first
+uses it; add a covering font to the chain (for example a Japanese font for 凪
+in a Traditional Chinese project).
 
 #### Message-window face
 
@@ -1253,6 +1290,32 @@ A registered `.pxtimeline` can be played using its resource reference:
 ```
 
 Create the actual clip with typed authoring contracts or adapt the existing sample's Timeline. Story's `timeline` accepts the clip reference; it does not expose every runtime playback option. For image-layer animations in UI, see [`.pxmotion` authoring](#authoring-layered-motion); for image-based lettering without a node per possible character, see [SpriteText](#sprite-lettering-without-one-control-per-glyph). For keyboard shortcuts, see [named input actions](#authoring-input-actions). See also [the React-free TSX example](examples/jsx-ui-authoring.tsx), [custom effects](#custom-render-effects), and [the runtime SDK](../runtime-sdk/README.md) for richer authored UI and presentation APIs.
+
+#### Panels without textures
+
+Any group, button or image can be a rounded, bordered, gradient or shadowed
+panel; the engine draws it behind the control's content:
+
+```tsx
+<Group name="Card" position={[120, 180]} size={[820, 420]}
+  style={{gradient: ["#FFFFFFCC", "#F2F5FDB8"], radius: 22, border: [1.5, "#FFFFFFF0"],
+    shadow: {color: "#2A3A7A2E", blur: 26, y: 8}}} />
+<Button name="Start" text="開始遊戲" font="Content/Fonts/NotoSerifTC-Bold.ttf"
+  style={{background: "#FFFFFF10", hoverBackground: "#E9CF942E", radius: 21,
+    border: [1, "#FFFFFF33"], hoverBorderColor: "#E9CF94FF", hoverTextColor: "#F6E6BEFF"}} />
+```
+
+`radius`, `border`, `gradient` (`[from, to]`, or `[from, to, "horizontal"]`) and
+`shadow` are shorthands for the appearance fields `cornerRadius`,
+`borderWidth`/`borderColor`, `backgroundColor`/`gradientColor`/`gradientDirection`
+and `shadowColor`/`shadowBlur`/`shadowOffsetX`/`shadowOffsetY`;
+`hoverBackgroundColor`, `hoverBorderColor` and `hoverTextColor` style the
+pointer-over state. A transparent circle with only a large `shadow` makes a
+soft ambient glow. The stock Player screens are built this way. `Button`,
+`TextureButton`, `Text` and `RichTextLabel` take `font` for their caption.
+
+A prop that TypeScript accepts but no lowering uses is warned about
+(`PXSDKJSX1103`) instead of being dropped silently.
 
 #### Typed TSX props instead of runtimeProperties
 

@@ -154,15 +154,52 @@ int Label::FontSizeToFit(std::string_view content, int requested,
     return low;
 }
 
+std::string Label::ReflowedText(graphics::Renderer2D& renderer, const std::string& font,
+                                const int size, const float width) const {
+    if (m_text.empty() || width <= 0.0f) return m_text;
+    const bool prefix = m_layoutReference.size() > m_text.size() &&
+                        m_layoutReference.compare(0, m_text.size(), m_text) == 0;
+    const std::string& source = prefix ? m_layoutReference : m_text;
+    std::string key = source;
+    key += '\x01'; key += font; key += '\x01'; key += std::to_string(size);
+    key += '\x01'; key += std::to_string(static_cast<int>(width));
+    if (key != m_reflowKey) {
+        m_reflowKey = std::move(key);
+        m_reflowBreaks = text::WrapBreaks(source, width, [&](const std::string_view line) {
+            return renderer.MeasureText(std::string(line), font, size).x;
+        });
+    }
+    if (m_reflowBreaks.empty()) return m_text;
+    std::string shown;
+    shown.reserve(m_text.size() + m_reflowBreaks.size());
+    std::size_t from = 0;
+    for (const std::size_t at : m_reflowBreaks) {
+        if (at >= m_text.size()) break;
+        shown.append(m_text, from, at - from);
+        // A break replaces the space it falls on (Latin text).
+        while (!shown.empty() && shown.back() == ' ') shown.pop_back();
+        shown += '\n';
+        from = at;
+    }
+    shown.append(m_text, from, std::string::npos);
+    return shown;
+}
+
 void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     const auto& style = theme.Resolve(*this);
     const int size = m_fontSize > 0 ? m_fontSize : style.fontSize;
     const std::string& font = m_fontPath.empty() ? style.font : m_fontPath;
     const Color color = m_hasColor ? m_color : (Enabled() ? style.text : style.textDisabled);
     if (m_letterSpacing == 0.0f || m_wrap || m_text.find('\n') != std::string::npos) {
-        renderer.DrawTextInRect(m_text,LayoutRect(),font,size,color,
+        // Reflowed text carries its own line breaks; SDL_ttf must not wrap it
+        // again with its slightly different measurements.
+        const bool reflow = m_wrap && AllowsReflow();
+        const std::string shown = reflow
+            ? ReflowedText(renderer, font, size, LayoutRect().w - 2.0f * static_cast<float>(m_outlineSize))
+            : m_text;
+        renderer.DrawTextInRect(shown,LayoutRect(),font,size,color,
                                 Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),m_wrap,
-                                255,m_outlineSize,m_outlineColor);
+                                255,m_outlineSize,m_outlineColor,reflow);
         return;
     }
     // Tracked text: lay each UTF-8 character out on its own so the gap between

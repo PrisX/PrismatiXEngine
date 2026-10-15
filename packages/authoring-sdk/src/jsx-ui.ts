@@ -592,6 +592,14 @@ const documentType = Symbol.for("prismatix.ui.authoring.document");
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const structuralNodeKinds = new Set<UiNodeKind>(["control", "stack", "hbox", "vbox", "grid", "group"]);
 
+/** Node props the scene visitor reads; anything else left after lowering is unused. */
+const consumedNodeProps = new Set(["placement", "arguments", "argumentBindings", "overrides", "publicProperties",
+  "publicSignals", "id", "stableId", "key", "name", "visible", "locked", "layout", "position", "size", "x", "y",
+  "width", "height", "margin", "align", "fill", "anchor", "pivot", "appearance", "style", "runtimeProperties",
+  "bindings", "bind", "textKey", "visibleWhen", "enabledWhen", "onClick", "action", "accessibilityLabel",
+  "accessibilityRole", "accessibilityDescription", "accessibilityFocusOrder", "componentInstance",
+  "componentSlot", "itemSource", "children", "text", "assetId", "kind", "runtimeType"]);
+
 function definitionElement(type: symbol, definition: NodeDefinition | DocumentDefinition): UiElement {
   return {[uiElementMarker]: true, type, props: {definition}};
 }
@@ -1216,6 +1224,13 @@ function lowerDocument(element: UiElement, path?: string,
       parentWidth, parentHeight);
     const jsxSource = item[uiJsxSourceMarker];
     if (jsxSource !== undefined) onNodeSource?.(nodes.length, jsxSource);
+    // A prop TypeScript accepted but no lowering consumed would silently do
+    // nothing (a font on a label kind that ignores it, a misspelled key).
+    for (const key of Object.keys(source.props))
+      if (!consumedNodeProps.has(key) && (source.props as Record<string, unknown>)[key] !== undefined)
+        lints.push({severity: "warning", code: "PXSDKJSX1103",
+          message: `${source.runtimeType ?? source.kind} ignores the ${key} prop`,
+          ...(path === undefined ? {} : {path}), details: `nodes[${nodes.length}].${key}`});
     for (const lint of item[uiLintMarker] ?? [])
       lints.push({severity: "warning", code: lint.code, message: lint.message,
         ...(path === undefined ? {} : {path}),

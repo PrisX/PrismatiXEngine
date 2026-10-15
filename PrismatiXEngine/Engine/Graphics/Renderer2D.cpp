@@ -1384,7 +1384,8 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
     const SDL_Color col{color.r,color.g,color.b,color.a};
     const auto wrapAlignment=alignment==HorizontalAlignment::Center?TTF_HORIZONTAL_ALIGN_CENTER:alignment==HorizontalAlignment::Right?TTF_HORIZONTAL_ALIGN_RIGHT:TTF_HORIZONTAL_ALIGN_LEFT;
     TTF_SetFontWrapAlignment(font,wrapAlignment);
-    SDL_Surface* surface=wrap>0?TTF_RenderText_Blended_Wrapped(font,text.c_str(),text.size(),col,wrap*ss):TTF_RenderText_Blended(font,text.c_str(),text.size(),col);
+    // wrap < 0: the text is already broken into lines; break only at newlines.
+    SDL_Surface* surface=wrap!=0?TTF_RenderText_Blended_Wrapped(font,text.c_str(),text.size(),col,wrap>0?wrap*ss:0):TTF_RenderText_Blended(font,text.c_str(),text.size(),col);
     TTF_SetFontWrapAlignment(font,TTF_HORIZONTAL_ALIGN_LEFT);
     if(!surface){WarnTextOnce("rasterizing failed",SDL_GetError());return nullptr;}
     CachedText entry;
@@ -1514,8 +1515,8 @@ void Renderer2D::DrawTextInRect(const std::string& text, const Rect& bounds,
                                 const std::string& fontPath, int size, Color color,
                                 HorizontalAlignment horizontal, VerticalAlignment vertical,
                                 bool wrap, std::uint8_t alpha,
-                                int outlineSize, Color outlineColor) {
-    const int wrapWidth=wrap?std::max(1,static_cast<int>(std::floor(bounds.w))):0;
+                                int outlineSize, Color outlineColor, bool newlinesOnly) {
+    const int wrapWidth=newlinesOnly?-1:wrap?std::max(1,static_cast<int>(std::floor(bounds.w))):0;
     const CachedText* t=AcquireText(text,fontPath,size,color,0,wrapWidth,horizontal);if(!t)return;
     float x=bounds.x,y=bounds.y;
     if(horizontal==HorizontalAlignment::Center)x+=(bounds.w-t->w)*.5f;else if(horizontal==HorizontalAlignment::Right)x+=bounds.w-t->w;

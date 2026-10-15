@@ -186,6 +186,8 @@ export interface CharacterDocument {
   readonly displayName: string;
   /** Optional Story speaker names by locale; falls back to displayName. */
   readonly displayNames?: Readonly<Record<string, string>>;
+  /** Colour of the speaker name in the message window, `#RRGGBB(AA)`. */
+  readonly nameColor?: string;
   readonly aliases: readonly string[];
   readonly defaultExpressionId?: string | null;
   readonly expressions: readonly CharacterExpression[];

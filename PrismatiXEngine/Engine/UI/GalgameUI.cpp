@@ -1,4 +1,5 @@
 #include "Engine/UI/GalgameUI.h"
+#include "Engine/Text/Typography.h"
 #include "Engine/UI/BuiltinUiPackage.h"
 #include "Engine/UI/Actions/BuiltInActionProvider.h"
 
@@ -781,7 +782,7 @@ Status GalgameUI::InstallRouteTemplate(const std::string_view route){
     }else{
         return GalgameFailure("PXUI2805","Registered UI template has no document");
     }
-    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_presentedChoices.clear();m_mode=FindNamed<Label>(m_context.Root(),"ModeState");m_noticePanel=FindNamed<EdgeRevealContainer>(m_context.Root(),"NoticePanel");m_chapterNotice=FindNamed<Label>(m_context.Root(),"ChapterNotice");m_musicNotice=FindNamed<Label>(m_context.Root(),"MusicNotice");m_messageWindow=FindNamed<Control>(m_context.Root(),"MessageWindow");m_choiceList=FindNamed<Control>(m_context.Root(),"ChoiceList");m_lastChapterTitle.clear();m_lastMusicTitle.clear();m_activeDialogueEffect.clear();m_dialogueEffectFinished=false;m_dialogueDimmed=false;if(m_dialogue){m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;m_dialogueBaseColor=m_dialogue->GetColor();}}
+    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_presentedChoices.clear();m_mode=FindNamed<Label>(m_context.Root(),"ModeState");m_noticePanel=FindNamed<EdgeRevealContainer>(m_context.Root(),"NoticePanel");m_chapterNotice=FindNamed<Label>(m_context.Root(),"ChapterNotice");m_musicNotice=FindNamed<Label>(m_context.Root(),"MusicNotice");m_messageWindow=FindNamed<Control>(m_context.Root(),"MessageWindow");m_choiceList=FindNamed<Control>(m_context.Root(),"ChoiceList");m_lastChapterTitle.clear();m_lastMusicTitle.clear();m_activeDialogueEffect.clear();m_dialogueEffectFinished=false;m_dialogueDimmed=false;if(m_dialogue){m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;m_dialogueBaseColor=m_dialogue->GetColor();}if(m_speaker){m_speakerHasBaseColor=m_speaker->HasColor();m_speakerBaseColor=m_speaker->GetColor();}}
     return Status::Ok();
 }
 
@@ -1000,10 +1001,18 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     if (m_dialogue && p.dimReadText != m_dialogueDimmed) {
         m_dialogueDimmed = p.dimReadText;
         // textaread_color in the original message table.
-        m_dialogue->SetColor(m_dialogueDimmed ? Color{0x50, 0x50, 0x50, 255} : m_dialogueBaseColor);
+        // Read text keeps its hue but fades halfway to grey, so it stays
+        // legible on light and dark message windows alike.
+        const Color base = m_dialogueBaseColor;
+        const auto toward = [](const std::uint8_t channel) {
+            return static_cast<std::uint8_t>((static_cast<int>(channel) * 11 + 128 * 9) / 20);
+        };
+        m_dialogue->SetColor(m_dialogueDimmed ? Color{toward(base.r), toward(base.g), toward(base.b), base.a}
+                                              : m_dialogueBaseColor);
     }
     if (m_dialogue) {
         SetPresentationText(m_dialogue, p.text);
+        m_dialogue->SetLayoutReference(text::ParseRubyMarkup(p.fullText).plain);
         const int requested = static_cast<int>(std::lround(
             m_dialogueBaseFontSize * std::clamp(p.textScale, .75f, 2.0f)));
         const Rect bounds = m_dialogue->LayoutRect();
@@ -1039,6 +1048,10 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
                 return applied;
             m_dialogueEffectFinished = !looping && progress >= 1.0f;
         }
+    }
+    if (m_speaker) {
+        if (p.speakerColor) m_speaker->SetColor(*p.speakerColor);
+        else if (m_speakerHasBaseColor) m_speaker->SetColor(m_speakerBaseColor);
     }
     (void)m_viewModel.Write("dialogue.speaker",Variant(p.speaker));(void)m_viewModel.Write("dialogue.text",Variant(p.text));
     (void)m_viewModel.Write("chapter.title",Variant(p.chapterTitle));(void)m_viewModel.Write("music.title",Variant(p.musicTitle));

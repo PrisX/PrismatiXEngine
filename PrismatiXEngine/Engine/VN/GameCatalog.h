@@ -33,6 +33,7 @@ struct CatalogCharacter {
     std::string id;
     std::string name;
     std::unordered_map<std::string, std::string> displayNames;
+    std::string nameColor;
     std::vector<std::string> aliases;
     std::string voiceDirectory;
     std::string defaultExpression;
