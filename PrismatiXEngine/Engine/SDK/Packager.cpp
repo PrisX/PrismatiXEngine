@@ -1876,8 +1876,11 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
 
 bool RuntimeLibrary(const std::filesystem::path& path) {
     const std::string filename = Lower(px::PathToUtf8(path.filename()));
+    // Sanitizer runtimes sit beside instrumented test builds; no shipped
+    // binary loads them.
     if (filename == "dxil.dll" ||
-        filename.find("spirv-cross") != std::string::npos)
+        filename.find("spirv-cross") != std::string::npos ||
+        filename.starts_with("clang_rt."))
         return false;
     const std::string extension = Lower(px::PathToUtf8(path.extension()));
 #ifdef _WIN32
