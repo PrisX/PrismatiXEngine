@@ -229,6 +229,7 @@ bool PlayerApp::ApplyPlayerSettings(const nlohmann::json& settingsObject) {
         const auto safe = SafeVfsRelativePath(uiFont->get<std::string>());
         if (safe && m_runtime.VFS().Exists(*safe)) {
             m_runtime.Assets().PrefetchFontFile(*safe);
+            m_uiFontAuthored = true;
             if (const Status applied = m_ui.SetDefaultFont(*safe); !applied) {
                 for (const auto& diagnostic : applied.Diagnostics())
                     diag::Emit(diagnostic);

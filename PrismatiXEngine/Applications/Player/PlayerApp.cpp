@@ -668,6 +668,9 @@ bool PlayerApp::LoadLocale(std::string locale, const bool refreshPresentation) {
     if (!localizedNvl.empty() || m_nvlLines.empty())
         m_nvlLines = std::move(localizedNvl);
     m_rollback = std::move(localizedRollback);
+    // Controls without a font use the locale's first font unless the project
+    // chose one (player.uiFont), so a game need not ship the stock UI font.
+    if (!fontChain.empty() && !m_uiFontAuthored) (void)m_ui.SetDefaultFont(fontChain.front());
     m_runtime.Renderer().SetTextLocale(m_settings.language,
                                        std::move(fontChain));
     // Locale and font-chain changes invalidate both render and measurement

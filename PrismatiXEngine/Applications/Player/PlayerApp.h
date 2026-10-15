@@ -245,6 +245,8 @@ private:
     // settings screen may bind as `settings.profileMuted.<id>`.
     std::vector<std::string> m_voiceProfileIds;
     std::vector<std::string> m_fontChoices;
+    // The project set player.uiFont; locale changes keep it.
+    bool m_uiFontAuthored = false;
     float m_messageWindowOpacity = 1.0f;
     bool m_dimReadText = false;
     bool m_uiEffects = true;
