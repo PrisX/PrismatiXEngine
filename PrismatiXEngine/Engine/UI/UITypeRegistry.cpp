@@ -555,6 +555,7 @@ Status RegisterBuiltinUITypes() {
     add(std::move(label));
 
     TypeInfo button{"Button", "Control", "UI/Input", [] { return std::make_unique<Button>(); }};
+    button.properties.push_back(StringProperty("fontPath","Theme",[](const Object& o){return As<Button>(o)->FontPath();},[](Object& o,std::string v){As<Button>(o)->SetFontPath(std::move(v));return Status::Ok();}));
     button.properties.push_back(StringProperty("text", "Content", [](const Object& o) { return As<Button>(o)->Text(); },
         [](Object& o, std::string v) { As<Button>(o)->SetText(std::move(v)); return Status::Ok(); }));
     button.properties.push_back(StringProperty("bindingAction", "Input",

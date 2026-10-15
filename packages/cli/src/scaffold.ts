@@ -37,9 +37,15 @@ function projectRelative(root: string, path: string): string {
   return value.split(sep).join("/");
 }
 
-/** Registers a character whose expressions are the images in one folder. */
+/** File stems that mark the expression a character shows by default. */
+const defaultStems = ["default", "normal", "neutral", "base", "idle"];
+
+/**
+ * Registers a character whose expressions are the images in one folder, or
+ * a character with no sprite (a narrator or the protagonist) without `from`.
+ */
 export async function addCharacter(root: string, alias: string, options: {
-  readonly from: string; readonly name?: string;
+  readonly from?: string; readonly name?: string;
 }): Promise<ScaffoldResult> {
   if (!identifier.test(alias)) throw new Error(`Character alias must be an identifier: ${alias}`);
   const manifestPath = join(root, "prismatix.json");
@@ -51,18 +57,24 @@ export async function addCharacter(root: string, alias: string, options: {
   if (taken !== undefined)
     throw new Error(`prismatix.json already registers ${String(taken.alias)} (${String(taken.displayName)}); ` +
       "Story addresses characters by alias and display name, so both must be unique");
-  const folder = resolve(root, options.from);
-  const images = (await readdir(folder, {withFileTypes: true}))
+  const folder = options.from === undefined ? undefined : resolve(root, options.from);
+  const images = folder === undefined ? [] : (await readdir(folder, {withFileTypes: true}))
     .filter((entry) => entry.isFile() && imageExtensions.has(extname(entry.name).toLowerCase()))
     .map((entry) => entry.name).sort((left, right) => left.localeCompare(right));
-  if (images.length === 0) throw new Error(`No .png, .webp, .jpg or .pxportrait images in ${options.from}`);
+  if (folder !== undefined && images.length === 0)
+    throw new Error(`No .png, .webp, .jpg or .pxportrait images in ${options.from}`);
+  // `normal.png` (or default/neutral/...) is the default expression; otherwise the first file.
+  const stemOf = (file: string) => basename(file, extname(file)).toLowerCase();
+  const preferred = defaultStems.map((stem) => images.find((file) => stemOf(file) === stem))
+    .find((file) => file !== undefined) ?? images[0];
   const expressionNames = new Set<string>();
-  const expressions = images.map((file, index) => {
+  const expressions = images.map((file) => {
     const stem = basename(file, extname(file));
     const name = expressionNames.has(stem) ? `${stem}-${extname(file).slice(1)}` : stem;
     expressionNames.add(name);
-    return {name, aliases: index === 0 ? ["default"] : [],
-      assetPath: projectRelative(root, join(folder, file)), thumbnailAssetId: null};
+    // Story addresses an expression by its name (`[show kei smile]`) or alias.
+    return {name, aliases: file === preferred && name.toLowerCase() !== "default" ? ["default"] : [],
+      assetPath: projectRelative(root, join(folder!, file)), thumbnailAssetId: null};
   });
   const source = `Characters/${alias}.pxcharacter`;
   const characterPath = join(root, source);

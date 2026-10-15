@@ -100,6 +100,9 @@ public:
     [[nodiscard]] int FontSize() const { return m_fontSize; }
     void SetTextColor(Color value) { m_textColor = value; m_hasTextColor = true; }
     void ClearTextColor() { m_hasTextColor = false; }
+    // A project font file for the caption; empty uses the theme font.
+    void SetFontPath(std::string value) { m_fontPath = std::move(value); InvalidateLayout(); }
+    [[nodiscard]] const std::string& FontPath() const { return m_fontPath; }
     [[nodiscard]] Color GetTextColor() const { return m_textColor; }
     [[nodiscard]] bool HasTextColor() const { return m_hasTextColor; }
     void SetOnActivated(Activated value) { m_activated = std::move(value); }
@@ -206,6 +209,7 @@ private:
     std::optional<int> m_replacingBindingKey;
     std::optional<PendingSharedBinding> m_pendingSharedBinding;
     int m_fontSize = 0;
+    std::string m_fontPath;
     Color m_textColor{};
     bool m_hasTextColor = false;
     ActionInvocation m_action;

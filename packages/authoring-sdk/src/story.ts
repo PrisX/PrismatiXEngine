@@ -154,7 +154,7 @@ function tokenizeCommand(value: string): {tokens: Token[]; error?: string} {
   const tokens: Token[] = [];
   let index = 0;
   while (index < value.length) {
-    while (index < value.length && /\s/u.test(value[index]!)) index += 1;
+    while (index < value.length && /[ \t\r\n]/u.test(value[index]!)) index += 1;
     if (index >= value.length) break;
     const start = index;
     let quote = "";
@@ -181,7 +181,7 @@ function tokenizeCommand(value: string): {tokens: Token[]; error?: string} {
       } else if (character === "}") {
         objectDepth -= 1;
         if (objectDepth < 0) return {tokens, error: "Unbalanced structured command argument"};
-      } else if (/\s/u.test(character) && squareDepth === 0 && objectDepth === 0) {
+      } else if (/[ \t\r\n]/u.test(character) && squareDepth === 0 && objectDepth === 0) {
         break;
       }
       index += 1;
@@ -1023,7 +1023,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     }
     const expression = authored.expression === undefined ? undefined
       : character?.expressions.find((value) => value.id === authored.expression ||
-        value.aliases.includes(authored.expression!));
+        value.aliases.includes(authored.expression!) || value.name === authored.expression);
     let valid = true;
     if (authored.expression !== undefined && character !== undefined && expression === undefined) {
       diagnostics.push(error("PXSTORY1114", `Unknown expression ${authored.expression} for ${alias}`, node.span));
@@ -1123,7 +1123,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       let faceArgument: string | undefined;
       if (face !== undefined) {
         const faceExpression = face === "none" ? undefined
-          : character?.expressions.find((value) => value.id === face || value.aliases.includes(face));
+          : character?.expressions.find((value) => value.id === face || value.aliases.includes(face) ||
+            value.name === face);
         if (face !== "none" && character !== undefined && faceExpression === undefined) {
           diagnostics.push(error("PXSTORY1114", `Unknown expression ${face} for ${node.name ?? ""}`, node.span));
           continue;
@@ -1213,7 +1214,10 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         break;
       }
       case "chapter": {
-        const title = named("title") ?? positional(0);
+        // `[chapter 第一章 天台]` takes every word as the title.
+        const words: string[] = [];
+        for (let index = 0; positional(index) !== undefined; index += 1) words.push(positional(index)!);
+        const title = named("title") ?? (words.length > 0 ? words.join(" ") : undefined);
         if (!title) diagnostics.push(error("PXSTORY1144", "chapter requires a title", node.span));
         else emit(node, "scene", {title});
         break;

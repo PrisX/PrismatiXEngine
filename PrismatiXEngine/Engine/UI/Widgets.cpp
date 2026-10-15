@@ -527,7 +527,7 @@ void Button::DrawTextContent(graphics::Renderer2D& renderer,
     Rect textArea=LayoutRect();textArea.x+=inset;textArea.w=std::max(0.0f,textArea.w-inset*2);
     Color color=Enabled()?(m_hasTextColor?m_textColor:style.text):style.textDisabled;
     if(Hovered()&&Enabled()&&GetBoxDecoration()&&GetBoxDecoration()->hoverText)color=*GetBoxDecoration()->hoverText;
-    renderer.DrawTextInRect(m_text,textArea,style.font,fontSize,color,
+    renderer.DrawTextInRect(m_text,textArea,m_fontPath.empty()?style.font:m_fontPath,fontSize,color,
                             Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),false);
 }
 
@@ -1181,6 +1181,7 @@ void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
                              const Theme& theme) {
     const auto& style = theme.Resolve(*this);
     const int baseSize = FontSize() > 0 ? FontSize() : style.fontSize;
+    const std::string& font = FontPath().empty() ? style.font : FontPath();
     if (!m_vertical && !m_runs.empty()) {
         DrawStyled(renderer, theme, baseSize);
         return;
@@ -1192,7 +1193,7 @@ void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
                              ? std::max(1, static_cast<int>(
                                                std::floor(LayoutRect().w)))
                              : 0;
-        const auto layout = renderer.LayoutText(Text(), style.font, baseSize,
+        const auto layout = renderer.LayoutText(Text(), font, baseSize,
                                                 wrap);
         Vec2 origin{LayoutRect().x, LayoutRect().y};
         if (HorizontalAlignment() == HorizontalTextAlignment::Center)
@@ -1216,7 +1217,7 @@ void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
             if (base.w <= 0.0f) continue;
             const int rubySize = std::max(8, baseSize / 2);
             const Vec2 reading = renderer.MeasureText(
-                ruby.reading, style.font, rubySize);
+                ruby.reading, font, rubySize);
             const float center = base.w > 0.0f
                                      ? base.x + base.w * 0.5f
                                      : 0.0f;
@@ -1225,34 +1226,34 @@ void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
             if(OutlineSize()>0)
                 renderer.DrawTextOutline(ruby.reading,
                     rubyX-static_cast<float>(OutlineSize()),
-                    rubyY-static_cast<float>(OutlineSize()),style.font,
+                    rubyY-static_cast<float>(OutlineSize()),font,
                     rubySize,style.text,OutlineColor(),OutlineSize());
-            else renderer.DrawText(ruby.reading,rubyX,rubyY,style.font,
+            else renderer.DrawText(ruby.reading,rubyX,rubyY,font,
                                    rubySize,style.text);
         }
         renderer.PopClip();
         return;
     }
     const auto layout = renderer.LayoutText(
-        Text(), style.font, baseSize,
+        Text(), font, baseSize,
         std::max(1, static_cast<int>(std::floor(LayoutRect().h))),
         text::TextOrientation::Vertical, m_verticalRows);
     const Vec2 origin{LayoutRect().x +
                           (LayoutRect().w - layout.Size().x) * 0.5f,
                       LayoutRect().y};
     renderer.PushClip(LayoutRect());
-    renderer.DrawTextLayout(layout, origin, style.font, baseSize, style.text);
+    renderer.DrawTextLayout(layout, origin, font, baseSize, style.text);
     for (const auto& ruby : m_ruby) {
         const Rect base = layout.BoundsForRange(ruby.prefix.size(),
                                                 ruby.base.size());
         const int rubySize = std::max(8, baseSize / 2);
         const auto rubyLayout = renderer.LayoutText(
-            ruby.reading, style.font, rubySize, 0,
+            ruby.reading, font, rubySize, 0,
             text::TextOrientation::Vertical);
         renderer.DrawTextLayout(rubyLayout,
                                 {origin.x + base.x + base.w,
                                  origin.y + base.y},
-                                style.font, rubySize, style.text);
+                                font, rubySize, style.text);
     }
     renderer.PopClip();
 }

@@ -18,6 +18,7 @@ import {
 import {fingerprintFile, publishDirectory, publishedInputs, retainPublishedDirectoryIfMatching,
   retirePublishedDirectory,
   verifiedPublishedInputs, type PublishedInput} from "./output-safety.js";
+import {storyGlyphWarnings} from "./glyph-coverage.js";
 import {augmentArtifact} from "./artifact-augment.js";
 import {assessPackageDiskSpace, availableBytesForOutput, formatDiskBytes} from "./disk-space.js";
 import {createStarter} from "./starter.js";
@@ -74,7 +75,7 @@ import {
 assertLocalBuildFresh(fileURLToPath(new URL("../..", import.meta.url)), "@prismatix/cli");
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
-interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly documentTexts: Readonly<Record<string, string>>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly uiNodeSpans: ReadonlyMap<string, ReadonlyMap<number, SourceSpan>>; readonly uiWarnings: readonly AuthoringDiagnostic[]; readonly storyPath?: string; readonly storyIndexSource?: string}
+interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly documentTexts: Readonly<Record<string, string>>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly storyAssetFiles: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly uiNodeSpans: ReadonlyMap<string, ReadonlyMap<number, SourceSpan>>; readonly uiWarnings: readonly AuthoringDiagnostic[]; readonly storyPath?: string; readonly storyIndexSource?: string}
 interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string; readonly dependencies: ReadonlySet<string>; readonly protectedPaths: readonly string[]}
 
 class PackagerFailure extends Error {
@@ -148,9 +149,7 @@ function parseOptions(command: string, args: readonly string[]): Options {
   }
   if (command === "add" && !flags.has("help")) {
     if (positional.length !== 2 || !["character", "scene"].includes(positional[0]!))
-      throw new Error("Use prismatix add character <alias> --from <folder> or prismatix add scene <id>");
-    if (positional[0] === "character" && !values.has("from"))
-      throw new Error("add character needs --from <folder of expression images>");
+      throw new Error("Use prismatix add character <alias> [--from <folder>] or prismatix add scene <id>");
     return {values, flags, positional};
   }
   if (command === "import" && !flags.has("help")) {
@@ -1007,7 +1006,13 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
       rememberText(path, sourceFiles[manifest.shader]!);
     }
   }
-  for (const locale of Array.isArray(raw.supportedLocales) ? raw.supportedLocales : []) {
+  // A single-locale project lists no supportedLocales; its defaultLocale file
+  // still carries the fontChain and strings.
+  const localeNames = new Set<unknown>(Array.isArray(raw.supportedLocales) ? raw.supportedLocales : []);
+  if (localeNames.size === 0 && typeof raw.defaultLocale === "string" &&
+      existsSync(projectFile(root, `Content/Localization/${raw.defaultLocale}.json`)))
+    localeNames.add(raw.defaultLocale);
+  for (const locale of localeNames) {
     if (typeof locale !== "string") continue;
     const localePath = projectFile(root, `Content/Localization/${locale}.json`);
     locales[locale] = await readSnapshotJson(localePath);
@@ -1074,6 +1079,36 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     includedResources[includeRoot] = files;
     for (const path of files) dependencies.add(projectFile(root, path));
   }
+  // storyAssets roots: the name index sees every file under them, while the
+  // build packages only the ones Story names. A missing root lists nothing.
+  const storyAssetFiles: Record<string, readonly string[]> = Object.create(null) as Record<string, readonly string[]>;
+  const storyAssetRoots = object(authoredRaw.storyAssets);
+  for (const roots of Object.values(storyAssetRoots ?? {})) {
+    if (!Array.isArray(roots)) continue;
+    for (const assetRoot of roots) {
+      if (typeof assetRoot !== "string" || !safeVirtualPath(assetRoot) || assetRoot in storyAssetFiles) continue;
+      const absolute = projectFile(root, assetRoot);
+      dependencies.add(absolute);
+      const files: string[] = [];
+      const visit = async (directory: string): Promise<void> => {
+        let entries;
+        try { entries = await readdir(directory, {withFileTypes: true}); }
+        catch { return; }
+        for (const entry of entries) {
+          const path = join(directory, entry.name);
+          if (entry.isDirectory()) await visit(path);
+          else if (entry.isFile() && files.length < 200_000) files.push(relative(root, path).split(sep).join("/"));
+        }
+      };
+      const real = await realpath(absolute).catch(() => undefined);
+      if (real !== undefined) {
+        const relativeReal = relative(canonicalRoot, real);
+        if (!(relativeReal === ".." || relativeReal.startsWith(`..${sep}`) || isAbsolute(relativeReal)))
+          await visit(absolute);
+      }
+      storyAssetFiles[assetRoot] = files.sort((left, right) => left.localeCompare(right, "en"));
+    }
+  }
   const storyIndexSource = typeof raw.storyIndex === "string"
     ? textSnapshots.get(projectFile(root, raw.storyIndex)) : undefined;
   const documentTexts = Object.create(null) as Record<string, string>;
@@ -1082,6 +1117,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     if (source !== undefined) documentTexts[virtualPath] = source;
   }
   return {root, projectPath, project, documents, documentTexts, sourceFiles, locales, dependencies, includedResources,
+    storyAssetFiles,
     uiNodeSpans, uiWarnings,
     textSnapshots, absentTextInputs,
     ...(storyIndexSource === undefined ? {} : {storyIndexSource}),
@@ -1230,6 +1266,7 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
       catch { return undefined; }
     },
     resolveResourceInclude: (path) => loaded.includedResources[path],
+    resolveStoryAssetRoot: (path) => loaded.storyAssetFiles[path],
     ...(onStoryProgress === undefined ? {} : {onStoryProgress}),
     ...(storyCompilationCache === undefined ? {} : {storyCompilationCache}),
     ...(committedRevision === undefined ? {} : {committedRevision}),
@@ -1254,6 +1291,9 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
       (Array.isArray(game.inputBindings) && game.inputBindings.length > 0));
   })) warnings.push({severity: "warning", code: "PXCLI1043",
     message: "Native input key names were not checked; select a Runtime with PrismatiXInputKeyRegistry.json"});
+  if (result.valid && result.artifact !== undefined)
+    warnings.push(...await storyGlyphWarnings(result.artifact, loaded.locales,
+      async (path) => readFile(projectFile(loaded.root, path))));
   return warnings.length === 0 ? result
     : {...result, diagnostics: [...result.diagnostics, ...warnings]};
 }
@@ -2177,7 +2217,8 @@ async function addCommand(options: Options): Promise<number> {
     const location = await resolveProjectPath(options.values.get("project"));
     const [kind, name] = options.positional as [string, string];
     const result = kind === "character"
-      ? await addCharacter(location.root, name, {from: options.values.get("from")!,
+      ? await addCharacter(location.root, name, {
+        ...(options.values.has("from") ? {from: options.values.get("from")!} : {}),
         ...(options.values.has("name") ? {name: options.values.get("name")!} : {})})
       : await addScene(location.root, name, {
         ...(options.values.has("chapter") ? {chapter: options.values.get("chapter")!} : {}),
@@ -3044,7 +3085,8 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "prismatix release [project] [--output <dir>] [--runtime <dir>]",
     "Defaults for --output, --compression and --archive-shards come from prismatix.json distribution."],
   add: ["Register a character from a folder of expression images, or add a scene to the story index.",
-    "prismatix add character <alias> --from <folder> [--name <display name>] [--project <dir>]",
+    "prismatix add character <alias> [--from <folder>] [--name <display name>] [--project <dir>]",
+    "normal.png (or default/neutral) becomes the default expression; without --from the character has no sprite.",
     "prismatix add scene <id> [--chapter <chapter-id>] [--title <title>] [--project <dir>]"],
   eject: ["Copy a built-in Player screen into the project as editable TSX and register it.",
     "prismatix eject ui <title|hud|backlog|save|load|gallery|settings|video|all> [--force] [--runtime <dir>]"],

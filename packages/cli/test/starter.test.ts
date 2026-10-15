@@ -22,7 +22,7 @@ test("starter prepares a compilable branch story and preserves binary font/image
   const root = await mkdtemp(join(tmpdir(), "px-starter-"));
   try {
     const target = join(root, "繁中 story");
-    const result = await createStarter(target, {name: 'My "story"', install: prepared});
+    const result = await createStarter(target, {name: 'My "story"', install: prepared, toolSource: "registry"});
     assert.equal(result.project, join(target, "prismatix.json"));
     const manifest = JSON.parse(await readFile(result.project, "utf8"));
     assert.equal(manifest.name, 'My "story"');

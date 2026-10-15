@@ -154,6 +154,12 @@ export interface CompileProjectInput {
   readonly resourceText?: (path: string) => string | undefined;
   /** IO-injected expansion of author-only `resourceIncludes` roots into files. */
   readonly resolveResourceInclude?: (path: string) => readonly string[] | undefined;
+  /**
+   * Lists the files under one `storyAssets` root, so short Story names
+   * (`[bg forest]`) resolve without a matching resourceIncludes entry. Only
+   * the files Story actually names are packaged.
+   */
+  readonly resolveStoryAssetRoot?: (root: string) => readonly string[] | undefined;
   /** Native UI TypeRegistry metadata for validating authored runtime properties. */
   readonly uiTypeRegistry?: UiTypeRegistryMetadata;
   /** Native Input key-name table for validating authored keyboard defaults. */
@@ -880,6 +886,10 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     : createStoryAssetIndex(normalized.value.storyAssets, [
       ...includedResources.map((reference) => reference.value),
       ...resourceAssets.map((asset) => asset.source),
+      ...Object.values(normalized.value.storyAssets).flat().flatMap((root) =>
+        (input.resolveStoryAssetRoot?.(root) ?? []).filter((path) =>
+          typeof path === "string" && isSafeResourcePath(path) && path.startsWith(`${root}/`) &&
+          !/\.(?:[jt]sx?|mjs|cjs|pxstory|pxui|pxuicomponent|pxproject|pxgame|pxindex|json)$/iu.test(path))),
     ]);
   // Shared macro files are parsed once for every scene and locale.
   let storyMacros: StoryMacroLibrary | undefined;

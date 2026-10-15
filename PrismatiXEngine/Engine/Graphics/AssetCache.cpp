@@ -696,7 +696,11 @@ void AssetCache::UnregisterTexture(const std::string& key) {
 }
 
 TTF_Font* AssetCache::Font(const std::string& styledPath, int size, int outline) {
-    const std::string key = styledPath + "|" + std::to_string(size) + "|" + std::to_string(outline);
+    // A font opened as another font's fallback is a separate object with no
+    // fallbacks of its own: sharing it with direct use would leave direct
+    // text without the chain (tofu), and chains between fonts could cycle.
+    const std::string key = styledPath + "|" + std::to_string(size) + "|" + std::to_string(outline) +
+                            (m_configuringFontFallbacks ? "|fallback" : "");
     if (auto it = m_fonts.find(key); it != m_fonts.end()) {
         return it->second.font;
     }

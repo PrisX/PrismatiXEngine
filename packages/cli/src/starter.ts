@@ -13,6 +13,12 @@ export interface StarterOptions {
   readonly height?: number;
   readonly npmRegistry?: string;
   readonly npmCache?: string;
+  /**
+   * Where the project's pinned tools come from: this CLI's registry version,
+   * or `file:` links to the engine checkout it runs from. Default: the
+   * checkout when there is one.
+   */
+  readonly toolSource?: "registry" | "checkout";
   /** Dependency-injection seam for isolated tests, not a CLI skip-install option. */
   readonly install?: (directory: string) => Promise<void>;
 }
@@ -72,12 +78,13 @@ async function installDependencies(directory: string, options: StarterOptions): 
  * engine source checkout links the checkout's packages with `file:` instead,
  * so `create` works offline and the project follows the engine you build.
  */
-async function pinTools(packagePath: string, id: string): Promise<void> {
+async function pinTools(packagePath: string, id: string, source?: "registry" | "checkout"): Promise<void> {
   const cliRoot = fileURLToPath(new URL("../../", import.meta.url));
   const sdkRoot = join(cliRoot, "..", "authoring-sdk");
   const own = JSON.parse(await readFile(join(cliRoot, "package.json"), "utf8")) as {version: string};
-  const isCheckout = await lstat(join(cliRoot, "src")).then(() => true, () => false) &&
-    await lstat(join(sdkRoot, "package.json")).then(() => true, () => false);
+  const isCheckout = source === "checkout" || (source === undefined &&
+    await lstat(join(cliRoot, "src")).then(() => true, () => false) &&
+    await lstat(join(sdkRoot, "package.json")).then(() => true, () => false));
   const link = (path: string) => `file:${resolve(path).split("\\").join("/")}`;
   const project = JSON.parse(await readFile(packagePath, "utf8")) as Record<string, unknown>;
   project.name = id.toLowerCase().replace(/[^a-z0-9._-]+/gu, "-");
@@ -136,7 +143,7 @@ export async function createStarter(targetArgument: string, options: StarterOpti
       }
     };
     await copy(templateRoot, staging);
-    await pinTools(join(staging, "package.json"), id);
+    await pinTools(join(staging, "package.json"), id, options.toolSource);
     const storyPath = join(staging, "Story", "main.pxstory");
     const story = await readFile(storyPath, "utf8");
     const identities = externalizeStoryIds(story, {path: "Story/main.pxstory"});

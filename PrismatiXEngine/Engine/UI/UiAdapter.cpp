@@ -600,7 +600,7 @@ protected:
         Color textColor = Hovered() && Enabled() ? m_hoverText : m_text;
         if (!Enabled()) textColor.a = static_cast<std::uint8_t>(textColor.a * m_disabledOpacity);
         const auto style = theme.Resolve(*this);
-        renderer.DrawTextInRect(Text(), textArea, style.font,
+        renderer.DrawTextInRect(Text(), textArea, FontPath().empty() ? style.font : FontPath(),
                                 FontSize() > 0 ? FontSize() : style.fontSize,
                                 textColor,
                                 graphics::HorizontalAlignment::Center,

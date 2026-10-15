@@ -305,6 +305,8 @@ export interface SpriteTextProps extends Omit<UiNodeProps, "children"> {
 export interface ButtonProps extends Omit<UiNodeProps, "children"> {
   readonly text?: string;
   readonly fontSize?: number;
+  /** Project font file for the caption; the theme font is used otherwise. */
+  readonly font?: string;
   readonly horizontalAlignment?: "Left" | "Center" | "Right";
   readonly verticalAlignment?: "Top" | "Center" | "Bottom";
   readonly children?: string | number | readonly (string | number)[];
@@ -813,10 +815,11 @@ export function SpriteText(props: SpriteTextProps): UiElement {
 
 function buttonNode(runtimeType: "Button" | "TextureButton", props: ButtonProps): UiElement {
   const text = props.text ?? textualChildren(props.children);
-  const {children: _children, fontSize, horizontalAlignment, verticalAlignment, ...rest} = props;
+  const {children: _children, fontSize, font, horizontalAlignment, verticalAlignment, ...rest} = props;
   return node("button", runtimeType, {...rest, ...(text === undefined ? {} : {text}),
     runtimeProperties: {...props.runtimeProperties,
       ...(fontSize === undefined ? {} : {fontSize}),
+      ...(font === undefined ? {} : {fontPath: font}),
       ...(horizontalAlignment === undefined ? {} : {horizontalAlignment}),
       ...(verticalAlignment === undefined ? {} : {verticalAlignment})}});
 }
@@ -955,7 +958,7 @@ export function WheelBindingButton(props: WheelBindingButtonProps): UiElement {
 export function RichTextLabel(props: RichTextLabelProps): UiElement {
   const text = props.markup ?? props.text ?? textualChildren(props.children);
   const {children: _children, markup: _markup, vertical, verticalRows,
-    fontSize, wrap, outlineSize, outlineColor, horizontalAlignment, verticalAlignment,
+    fontSize, font, letterSpacing, wrap, outlineSize, outlineColor, horizontalAlignment, verticalAlignment,
     ...rest} = props;
   return node("label", "RichTextLabel", {
     ...rest,
@@ -963,6 +966,8 @@ export function RichTextLabel(props: RichTextLabelProps): UiElement {
     runtimeProperties: {
       ...props.runtimeProperties,
       ...(fontSize === undefined ? {} : {fontSize}),
+      ...(font === undefined ? {} : {fontPath: font}),
+      ...(letterSpacing === undefined ? {} : {letterSpacing}),
       ...(wrap === undefined ? {} : {wrap}),
       ...(outlineSize === undefined ? {} : {outlineSize}),
       ...(outlineColor === undefined ? {} : {outlineColor: {type: "color", value: outlineColor}}),

@@ -622,14 +622,20 @@ struct QaOps {
     static void Jump(PlayerApp& app, const std::string& target) {
         const auto& program = app.m_session->VM().CurrentProgram();
         std::string label;
-        for (const auto& candidate : StoryLabelCandidates(target))
+        // Runtime IR labels are stored as `@pxscene.label.<hash>`.
+        for (const auto& candidate : StoryLabelCandidates(target)) {
             if (program.LabelIndex(candidate) >= 0) { label = candidate; break; }
+            if (program.LabelIndex("@" + candidate) >= 0) { label = "@" + candidate; break; }
+        }
         if (label.empty()) Fail("PXQA1008", "the story has no label for '" + target + "'");
         app.CloseAllModals();
         app.m_viewingCG.clear();
         app.m_session->Stage().ClearAll();
         app.m_session->Dialogue().Clear();
         app.m_session->Backlog().Clear();
+        // A jump starts fresh text, like a new scene: leave any NVL page.
+        app.m_nvlMode = false;
+        app.m_nvlLines.clear();
         app.m_runtime.Audio().StopVoice();
         app.m_runtime.Audio().StopAmbience(0);
         app.m_runtime.Audio().StopBGM(0);
