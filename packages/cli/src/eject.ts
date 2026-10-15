@@ -86,7 +86,13 @@ export function builtinScreenTsx(route: string, document: Json, width: number, h
     if (node.text !== undefined) out.push(`text=${literal(node.text)}`);
     const appearance = Object.fromEntries(Object.entries(node.appearance ?? {})
       .filter(([key, value]) => value !== defaultAppearance[key]));
-    if (Object.keys(appearance).length > 0) out.push(`appearance={${literal(appearance)}}`);
+    if (Object.keys(appearance).length > 0) {
+      // Box decoration sizes scale with the screen, like font sizes.
+      const scaledKeys = new Set(["cornerRadius", "borderWidth", "shadowBlur", "shadowOffsetX", "shadowOffsetY"]);
+      const fields = Object.entries(appearance).map(([key, value]) =>
+        `${key}: ${scaledKeys.has(key) && typeof value === "number" ? `sf(${value})` : literal(value)}`);
+      out.push(`appearance={{${fields.join(", ")}}}`);
+    }
     if (node.onClick !== undefined)
       out.push(Object.keys(node.onClick.arguments).length === 0 ? `action=${literal(node.onClick.id)}`
         : `action={${literal(node.onClick)}}`);
@@ -97,7 +103,7 @@ export function builtinScreenTsx(route: string, document: Json, width: number, h
     const runtime: Json = {...node.runtimeProperties};
     const scaled: string[] = [];
     // Mirrors the Runtime's own scaling of the built-in screens.
-    for (const key of ["fontSize", "separation"])
+    for (const key of ["fontSize", "separation", "letterSpacing", "showOffsetY"])
       if (typeof runtime[key] === "number") {
         const value = runtime[key] as number;
         delete runtime[key];
@@ -156,7 +162,8 @@ const width = ${width};
 const height = ${height};
 const sx = (value: number) => value * width / ${designWidth};
 const sy = (value: number) => value * height / ${designHeight};
-const sf = (value: number) => Math.max(1, Math.round(value * Math.min(width / ${designWidth}, height / ${designHeight})));
+const sf = (value: number) => Math.sign(value) *
+  Math.max(1, Math.round(Math.abs(value) * Math.min(width / ${designWidth}, height / ${designHeight})));
 
 export default (
   <Scene name=${literal(String(document.name))} width={width} height={height}>

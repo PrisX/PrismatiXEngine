@@ -201,6 +201,12 @@ GalgameUI::GalgameUI() {
     (void)m_viewModel.Define("dialogue.choices", Variant(VariantArray{}), true);
     (void)m_viewModel.Define("dialogue.nvl", Variant(false), true);
     (void)m_viewModel.Define("dialogue.face", Variant(std::string{}), true);
+    // Booleans for authored HUDs: a name plate that hides during narration,
+    // a click-wait glyph, and auto/skip indicators.
+    (void)m_viewModel.Define("dialogue.hasSpeaker", Variant(false), true);
+    (void)m_viewModel.Define("dialogue.waiting", Variant(false), true);
+    (void)m_viewModel.Define("hud.auto", Variant(false), true);
+    (void)m_viewModel.Define("hud.skip", Variant(false), true);
     (void)m_viewModel.Define("backlog.entries", Variant(VariantArray{}), true);
     for (const char* property : {"fullscreen", "windowed", "skipReadOnly", "skipAll"})
         (void)m_viewModel.Define(std::string("settings.") + property,
@@ -1057,6 +1063,10 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     if (m_nvlText) SetPresentationText(m_nvlText, NvlPageMarkup(p.nvlLines));
     (void)m_viewModel.Write("dialogue.nvl", Variant(p.nvlMode));
     (void)m_viewModel.Write("dialogue.face", Variant(p.face));
+    (void)m_viewModel.Write("dialogue.hasSpeaker", Variant(!p.speaker.empty() && !p.nvlMode));
+    (void)m_viewModel.Write("dialogue.waiting", Variant(p.waiting));
+    (void)m_viewModel.Write("hud.auto", Variant(p.autoMode));
+    (void)m_viewModel.Write("hud.skip", Variant(p.skipMode));
     if (auto* face = FindNamed<TextureRect>(m_context.Root(), "Face")) {
         if (!p.face.empty() && face->Path() != p.face) (void)face->SetPath(p.face);
         face->SetVisibility(!p.face.empty() && !p.nvlMode ? Visibility::Visible
@@ -1120,6 +1130,23 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
                     !status)
                     return status;
                 button = dynamic_cast<Button*>(m_choices->Children().back().get());
+                // Stock choices: glass bars that warm to gold under the pointer.
+                if (button) {
+                    BoxDecoration box;
+                    box.fill = {22, 30, 54, 225};
+                    box.fillEnd = Color{12, 17, 33, 235};
+                    box.hoverFill = Color{78, 66, 40, 240};
+                    box.radius = 14.0f;
+                    box.borderWidth = 1.0f;
+                    box.border = {255, 255, 255, 46};
+                    box.hoverBorder = Color{233, 207, 148, 255};
+                    box.hoverText = Color{246, 230, 190, 255};
+                    box.shadow = {0, 0, 0, 110};
+                    box.shadowBlur = 16.0f;
+                    box.shadowOffset = {0.0f, 4.0f};
+                    button->SetBoxDecoration(box);
+                    button->SetCustomMinimumSize({0.0f, 52.0f});
+                }
             } else {
                 button->SetText(p.choices[i]);
                 button->SetOnActivated([this, i] {

@@ -313,6 +313,28 @@ void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
     }
     Color tint=m_modulate;tint.a=static_cast<std::uint8_t>(static_cast<float>(tint.a)*m_opacity*visible);
     renderer.PushTransform({m_layoutRect.x+m_pivot.x*m_layoutRect.w+m_translation.x+slideX,m_layoutRect.y+m_pivot.y*m_layoutRect.h+m_translation.y+slide},m_scale,m_rotation,tint);
+    if (m_box) {
+        BoxDecoration box = *m_box;
+        if (!m_enabled) {
+            const auto dim = [&](Color& c) {
+                c.a = static_cast<std::uint8_t>(static_cast<float>(c.a) * box.disabledOpacity);
+            };
+            dim(box.fill); dim(box.border); dim(box.shadow);
+            if (box.fillEnd) dim(*box.fillEnd);
+        }
+        const Rect area = m_layoutRect;
+        if (box.shadow.a > 0)
+            renderer.DrawSoftShadow({area.x + box.shadowOffset.x, area.y + box.shadowOffset.y,
+                                     area.w, area.h}, box.radius, box.shadowBlur, box.shadow);
+        const bool hover = m_hovered && m_enabled;
+        const Color fill = hover && box.hoverFill ? *box.hoverFill : box.fill;
+        if (box.fillEnd && !(hover && box.hoverFill))
+            renderer.DrawRoundedRectGradient(area, box.radius, fill, *box.fillEnd, box.horizontal);
+        else if (fill.a > 0) renderer.DrawRoundedRect(area, box.radius, fill);
+        const Color border = hover && box.hoverBorder ? *box.hoverBorder : box.border;
+        if (box.borderWidth > 0.0f && border.a > 0)
+            renderer.DrawRoundedBorder(area, box.borderWidth, box.radius, border);
+    }
     if(m_clipContent)renderer.PushClip(m_layoutRect);
     DrawSelf(renderer, theme);
     for(const auto& child:Children())if(auto* control=dynamic_cast<Control*>(child.get()))control->Draw(renderer,theme);

@@ -51,7 +51,8 @@ std::size_t RunAt(const std::vector<text::TextRun>& runs, const std::size_t byte
 void DrawBox(graphics::Renderer2D& renderer, Rect area, const StyleBox& box) {
     renderer.DrawRoundedRect(area, box.cornerRadius, box.background);
     if (box.borderWidth <= 0.0f) return;
-    renderer.DrawBorder(area,box.borderWidth,box.cornerRadius,box.border);
+    if (box.cornerRadius > 0.5f) renderer.DrawRoundedBorder(area, box.borderWidth, box.cornerRadius, box.border);
+    else renderer.DrawBorder(area,box.borderWidth,box.cornerRadius,box.border);
 }
 
 graphics::HorizontalAlignment Horizontal(HorizontalTextAlignment value){switch(value){case HorizontalTextAlignment::Center:return graphics::HorizontalAlignment::Center;case HorizontalTextAlignment::Right:return graphics::HorizontalAlignment::Right;default:return graphics::HorizontalAlignment::Left;}}
@@ -109,6 +110,8 @@ Vec2 Panel::MeasureOverride(Vec2 available) {
 void Panel::ArrangeOverride(Rect finalRect) { Control::ArrangeOverride(finalRect); }
 
 void Panel::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
+    // An authored box decoration replaces the theme's panel box.
+    if (GetBoxDecoration()) return;
     DrawBox(renderer, LayoutRect(), StateBox(*this, theme.Resolve(*this)));
 }
 
@@ -506,9 +509,11 @@ Vec2 Button::MeasureOverride(Vec2) {
 }
 
 void Button::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
-    const auto& style = theme.Resolve(*this);
-    const auto& box = StateBox(*this, style);
-    DrawBox(renderer, LayoutRect(), box);
+    // An authored box decoration (drawn by Control::Draw) replaces the theme box.
+    if (!GetBoxDecoration()) {
+        const auto& style = theme.Resolve(*this);
+        DrawBox(renderer, LayoutRect(), StateBox(*this, style));
+    }
     DrawTextContent(renderer, theme);
 }
 
@@ -517,9 +522,12 @@ void Button::DrawTextContent(graphics::Renderer2D& renderer,
     if (m_text.empty()) return;
     const auto& style = theme.Resolve(*this);
     const int fontSize = m_fontSize > 0 ? m_fontSize : style.fontSize;
-    Rect textArea=LayoutRect();textArea.x+=12;textArea.w=std::max(0.0f,textArea.w-24);
-    renderer.DrawTextInRect(m_text,textArea,style.font,fontSize,
-                            Enabled()?(m_hasTextColor?m_textColor:style.text):style.textDisabled,
+    // Narrow buttons (toolbar captions) keep less padding so text is not clipped.
+    const float inset=std::min(12.0f,LayoutRect().w*0.08f);
+    Rect textArea=LayoutRect();textArea.x+=inset;textArea.w=std::max(0.0f,textArea.w-inset*2);
+    Color color=Enabled()?(m_hasTextColor?m_textColor:style.text):style.textDisabled;
+    if(Hovered()&&Enabled()&&GetBoxDecoration()&&GetBoxDecoration()->hoverText)color=*GetBoxDecoration()->hoverText;
+    renderer.DrawTextInRect(m_text,textArea,style.font,fontSize,color,
                             Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),false);
 }
 
@@ -873,7 +881,7 @@ void ProgressBar::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     renderer.DrawRoundedRect(fill, LayoutRect().h * 0.5f, style.focused.border);
 }
 
-void ColorRect::DrawSelf(graphics::Renderer2D& renderer,const Theme&){renderer.DrawRect(LayoutRect(),m_color);}
+void ColorRect::DrawSelf(graphics::Renderer2D& renderer,const Theme&){if(GetBoxDecoration())return;renderer.DrawRect(LayoutRect(),m_color);}
 
 void CheckBox::HandleEvent(UIEvent& event){
     if(event.type==UIEventType::Click||event.type==UIEventType::Activate){m_checked=!m_checked;SetVisualChecked(m_checked);EmitSignal("toggled",{{"value",m_checked}});if(m_toggled)m_toggled(m_checked);Activate();event.handled=true;return;}
@@ -1508,7 +1516,7 @@ void OptionButton::SetOptions(std::vector<std::string> options){m_options=std::m
 void OptionButton::SetSelected(const int value){if(m_options.empty()){m_selected=-1;SetText({});return;}m_selected=std::clamp(value,0,static_cast<int>(m_options.size()-1));SetText(m_options[static_cast<std::size_t>(m_selected)]);}
 void OptionButton::SelectFromUser(const int value){const int before=m_selected;SetSelected(value);if(m_selected!=before)EmitSignal("itemSelected",{{"index",static_cast<std::int64_t>(m_selected)},{"text",Text()}});}
 void OptionButton::HandleEvent(UIEvent& event){if(event.type==UIEventType::Click||event.type==UIEventType::Activate){if(!m_options.empty())SelectFromUser((m_selected+1)%static_cast<int>(m_options.size()));Activate();event.handled=true;return;}Button::HandleEvent(event);}
-void OptionButton::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){Button::DrawSelf(renderer,theme);const auto& style=theme.Resolve(*this);Rect arrow=LayoutRect();arrow.x=arrow.x+arrow.w-30;arrow.w=22;renderer.DrawTextInRect("▾",arrow,style.font,style.fontSize,style.text,graphics::HorizontalAlignment::Center,graphics::VerticalAlignment::Center,false);}
+void OptionButton::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){Button::DrawSelf(renderer,theme);const auto& style=theme.Resolve(*this);Rect arrow=LayoutRect();arrow.x=arrow.x+arrow.w-30;arrow.w=22;renderer.DrawTextInRect("▼",arrow,style.font,std::max(8,style.fontSize*2/3),style.text,graphics::HorizontalAlignment::Center,graphics::VerticalAlignment::Center,false);}
 
 SpinBox::SpinBox(std::string name):Control(std::move(name)){SetFocusMode(FocusMode::All);}
 void SpinBox::SetRange(const double minimum,const double maximum,const double step){m_minimum=minimum;m_maximum=std::max(minimum,maximum);m_step=std::max(0.000001,step);SetValue(m_value);}

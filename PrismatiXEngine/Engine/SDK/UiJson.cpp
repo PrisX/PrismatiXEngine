@@ -83,6 +83,20 @@ Json Node(const UiNode& node) {
     if (node.appearance.hoverBackgroundColor)
         appearance["hoverBackgroundColor"] = *node.appearance.hoverBackgroundColor;
     if (node.appearance.focusColor) appearance["focusColor"] = *node.appearance.focusColor;
+    // Box decoration is written only when used, so documents without it keep
+    // their canonical bytes.
+    const auto& box = node.appearance;
+    if (box.cornerRadius != 0.0f) appearance["cornerRadius"] = box.cornerRadius;
+    if (box.borderWidth != 0.0f) appearance["borderWidth"] = box.borderWidth;
+    if (box.borderColor) appearance["borderColor"] = *box.borderColor;
+    if (box.hoverBorderColor) appearance["hoverBorderColor"] = *box.hoverBorderColor;
+    if (box.hoverTextColor) appearance["hoverTextColor"] = *box.hoverTextColor;
+    if (box.gradientColor) appearance["gradientColor"] = *box.gradientColor;
+    if (box.gradientHorizontal) appearance["gradientDirection"] = "horizontal";
+    if (box.shadowColor) appearance["shadowColor"] = *box.shadowColor;
+    if (box.shadowBlur != 0.0f) appearance["shadowBlur"] = box.shadowBlur;
+    if (box.shadowOffsetX != 0.0f) appearance["shadowOffsetX"] = box.shadowOffsetX;
+    if (box.shadowOffsetY != 0.0f) appearance["shadowOffsetY"] = box.shadowOffsetY;
 
     Json out{{"id", node.id},
              {"parentId", node.parentId ? Json(*node.parentId) : Json(nullptr)},

@@ -66,6 +66,34 @@ void AppendArc(std::vector<SDL_Vertex>& out, float cx, float cy, float radius, f
     }
 }
 
+// The outline of a rounded rectangle, clockwise from the top-right corner.
+// Corners get more segments as they grow so large radii stay smooth.
+std::vector<SDL_FPoint> RoundedOutline(const Rect& rect, float radius) {
+    constexpr float kPi = 3.14159265358979323846f;
+    const float r = std::clamp(radius, 0.0f, std::min(rect.w, rect.h) * 0.5f);
+    const int segments = std::clamp(static_cast<int>(r * 0.5f), 6, 32);
+    const float left = rect.x, top = rect.y, right = rect.x + rect.w, bottom = rect.y + rect.h;
+    std::vector<SDL_FPoint> out;
+    out.reserve(4 * (segments + 1));
+    const auto arc = [&](float cx, float cy, float a0, float a1) {
+        for (int i = 0; i <= segments; ++i) {
+            const float a = a0 + (a1 - a0) * static_cast<float>(i) / static_cast<float>(segments);
+            out.push_back({cx + std::cos(a) * r, cy + std::sin(a) * r});
+        }
+    };
+    arc(right - r, top + r, -kPi * 0.5f, 0.0f);
+    arc(right - r, bottom - r, 0.0f, kPi * 0.5f);
+    arc(left + r, bottom - r, kPi * 0.5f, kPi);
+    arc(left + r, top + r, kPi, kPi * 1.5f);
+    return out;
+}
+
+SDL_FColor LerpColor(SDL_FColor a, SDL_FColor b, float t) {
+    t = std::clamp(t, 0.0f, 1.0f);
+    return {a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
+            a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
+}
+
 std::string MakeKey(const std::string& text, const std::string& font, int size, Color c, int outline, int wrap, int ss, int alignment, const std::string& locale) {
     return text + "\x01" + font + "\x01" + std::to_string(size) + "\x01" + std::to_string(c.r) + "," + std::to_string(c.g) + "," + std::to_string(c.b) + "," + std::to_string(c.a) + "\x01" + std::to_string(outline) + "\x01" + std::to_string(wrap) + "\x01" +
            std::to_string(ss)+"\x01"+std::to_string(alignment)+"\x01"+locale;
@@ -181,6 +209,101 @@ void Renderer2D::DrawRoundedRect(const Rect& rect, float radius, Color color) {
     for(auto& vertex:fan){const auto transformed=TransformPoint({vertex.position.x,vertex.position.y});vertex.position={transformed.x,transformed.y};}
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
     RenderGeometry(nullptr, fan.data(), static_cast<int>(fan.size()), nullptr, 0);
+}
+
+void Renderer2D::DrawRoundedRectGradient(const Rect& rect, float radius, Color from,
+                                         Color to, bool horizontal) {
+    if (rect.w <= 0.0f || rect.h <= 0.0f) return;
+    const SDL_FColor a = ToFColor(TransformColor(from));
+    const SDL_FColor b = ToFColor(TransformColor(to));
+    const auto colorAt = [&](SDL_FPoint p) {
+        return LerpColor(a, b, horizontal ? (p.x - rect.x) / rect.w : (p.y - rect.y) / rect.h);
+    };
+    // A fan from the centre reproduces a linear gradient exactly, because
+    // the colour is a linear function of position.
+    const auto ring = RoundedOutline(rect, radius);
+    const SDL_FPoint centre{rect.x + rect.w * 0.5f, rect.y + rect.h * 0.5f};
+    std::vector<SDL_Vertex> fan;
+    fan.reserve(ring.size() * 3);
+    const auto vertex = [&](SDL_FPoint p) {
+        const auto t = TransformPoint({p.x, p.y});
+        return SDL_Vertex{{t.x, t.y}, colorAt(p), {}};
+    };
+    for (std::size_t i = 0; i < ring.size(); ++i) {
+        fan.push_back(vertex(centre));
+        fan.push_back(vertex(ring[i]));
+        fan.push_back(vertex(ring[(i + 1) % ring.size()]));
+    }
+    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+    RenderGeometry(nullptr, fan.data(), static_cast<int>(fan.size()), nullptr, 0);
+}
+
+void Renderer2D::DrawRoundedBorder(const Rect& rect, float width, float radius,
+                                   Color color) {
+    if (rect.w <= 0.0f || rect.h <= 0.0f || width <= 0.0f) return;
+    const float r = std::clamp(radius, 0.0f, std::min(rect.w, rect.h) * 0.5f);
+    const float stroke = std::min(width, std::min(rect.w, rect.h) * 0.5f);
+    // Both outlines use the outer radius's segment count so their points pair up.
+    auto outer = RoundedOutline(rect, r);
+    const Rect inset{rect.x + stroke, rect.y + stroke,
+                     std::max(0.0f, rect.w - stroke * 2), std::max(0.0f, rect.h - stroke * 2)};
+    std::vector<SDL_FPoint> inner;
+    inner.reserve(outer.size());
+    const float innerRadius = std::max(0.0f, r - stroke);
+    // Shrink each outer point toward its corner centre instead of rebuilding,
+    // so the inner outline has exactly as many points.
+    const int perCorner = static_cast<int>(outer.size() / 4);
+    const float cr = std::clamp(r, 0.0f, std::min(rect.w, rect.h) * 0.5f);
+    const SDL_FPoint centres[4]{{rect.x + rect.w - cr, rect.y + cr},
+                                {rect.x + rect.w - cr, rect.y + rect.h - cr},
+                                {rect.x + cr, rect.y + rect.h - cr},
+                                {rect.x + cr, rect.y + cr}};
+    const SDL_FPoint innerCentres[4]{
+        {inset.x + inset.w - innerRadius, inset.y + innerRadius},
+        {inset.x + inset.w - innerRadius, inset.y + inset.h - innerRadius},
+        {inset.x + innerRadius, inset.y + inset.h - innerRadius},
+        {inset.x + innerRadius, inset.y + innerRadius}};
+    for (std::size_t i = 0; i < outer.size(); ++i) {
+        const int corner = std::min(3, static_cast<int>(i) / std::max(1, perCorner));
+        const SDL_FPoint c = centres[corner];
+        const float dx = outer[i].x - c.x, dy = outer[i].y - c.y;
+        const float length = std::sqrt(dx * dx + dy * dy);
+        const float ux = length > 0.0f ? dx / length : 0.0f;
+        const float uy = length > 0.0f ? dy / length : 0.0f;
+        inner.push_back({innerCentres[corner].x + ux * innerRadius,
+                         innerCentres[corner].y + uy * innerRadius});
+    }
+    const SDL_FColor fc = ToFColor(TransformColor(color));
+    std::vector<SDL_Vertex> strip;
+    strip.reserve(outer.size() * 6);
+    const auto vertex = [&](SDL_FPoint p) {
+        const auto t = TransformPoint({p.x, p.y});
+        return SDL_Vertex{{t.x, t.y}, fc, {}};
+    };
+    for (std::size_t i = 0; i < outer.size(); ++i) {
+        const std::size_t j = (i + 1) % outer.size();
+        strip.push_back(vertex(outer[i])); strip.push_back(vertex(outer[j])); strip.push_back(vertex(inner[i]));
+        strip.push_back(vertex(inner[i])); strip.push_back(vertex(outer[j])); strip.push_back(vertex(inner[j]));
+    }
+    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+    RenderGeometry(nullptr, strip.data(), static_cast<int>(strip.size()), nullptr, 0);
+}
+
+void Renderer2D::DrawSoftShadow(const Rect& rect, float radius, float blur, Color color) {
+    if (rect.w <= 0.0f || rect.h <= 0.0f || color.a == 0) return;
+    if (blur <= 0.5f) { DrawRoundedRect(rect, radius, color); return; }
+    // Stacked translucent rounded rectangles, widest and faintest first: a
+    // cheap blur that needs no offscreen pass and works on every tier.
+    const int layers = std::clamp(static_cast<int>(blur / 2.0f), 3, 12);
+    const float total = static_cast<float>(color.a);
+    for (int i = layers; i >= 1; --i) {
+        const float spread = blur * static_cast<float>(i) / static_cast<float>(layers);
+        Color layer = color;
+        layer.a = static_cast<std::uint8_t>(std::clamp(total / static_cast<float>(layers) * 1.6f, 1.0f, 255.0f));
+        DrawRoundedRect({rect.x - spread * 0.5f, rect.y - spread * 0.5f,
+                         rect.w + spread, rect.h + spread},
+                        radius + spread * 0.5f, layer);
+    }
 }
 
 Status Renderer2D::RegisterScreenEffect(ScreenEffectDefinition definition) {

@@ -576,18 +576,28 @@ public:
           m_focus(appearance.focusColor ? ParseColor(*appearance.focusColor)
                                         : ParseColor(appearance.textColor)),
           m_text(ParseColor(appearance.textColor)),
+          m_hoverText(appearance.hoverTextColor
+                          ? ParseColor(*appearance.hoverTextColor) : m_text),
           m_disabledOpacity(appearance.disabledOpacity) {}
 
 protected:
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override {
-        Color fill = Hovered() ? m_hover : m_background;
-        if (!Enabled()) fill.a = static_cast<std::uint8_t>(fill.a * m_disabledOpacity);
-        renderer.DrawRoundedRect(LayoutRect(), 8.0f, fill);
-        if (Focused()) renderer.DrawBorder(LayoutRect(), 2.0f, 8.0f, m_focus);
+        // With a box decoration Control::Draw has already painted the panel
+        // (including its hover state); otherwise keep the stock rounded fill.
+        const auto& box = GetBoxDecoration();
+        const float radius = box ? box->radius : 8.0f;
+        if (!box) {
+            Color fill = Hovered() ? m_hover : m_background;
+            if (!Enabled()) fill.a = static_cast<std::uint8_t>(fill.a * m_disabledOpacity);
+            renderer.DrawRoundedRect(LayoutRect(), 8.0f, fill);
+        }
+        if (FocusVisible() || (!box && Focused()))
+            renderer.DrawRoundedBorder(LayoutRect(), 2.0f, radius, m_focus);
+        const float inset = std::min(12.0f, LayoutRect().w * 0.08f);
         Rect textArea = LayoutRect();
-        textArea.x += 12.0f;
-        textArea.w = std::max(0.0f, textArea.w - 24.0f);
-        Color textColor = m_text;
+        textArea.x += inset;
+        textArea.w = std::max(0.0f, textArea.w - inset * 2.0f);
+        Color textColor = Hovered() && Enabled() ? m_hoverText : m_text;
         if (!Enabled()) textColor.a = static_cast<std::uint8_t>(textColor.a * m_disabledOpacity);
         const auto style = theme.Resolve(*this);
         renderer.DrawTextInRect(Text(), textArea, style.font,
@@ -602,8 +612,30 @@ private:
     Color m_hover;
     Color m_focus;
     Color m_text;
+    Color m_hoverText;
     float m_disabledOpacity;
 };
+
+std::optional<BoxDecoration> DecorationFor(const sdk::UiAppearance& appearance) {
+    const bool used = appearance.cornerRadius > 0.0f || appearance.borderWidth > 0.0f ||
+                      appearance.gradientColor || appearance.shadowColor;
+    if (!used) return std::nullopt;
+    BoxDecoration box;
+    box.fill = ParseColor(appearance.backgroundColor);
+    if (appearance.gradientColor) box.fillEnd = ParseColor(*appearance.gradientColor);
+    box.horizontal = appearance.gradientHorizontal;
+    if (appearance.hoverBackgroundColor) box.hoverFill = ParseColor(*appearance.hoverBackgroundColor);
+    box.radius = appearance.cornerRadius;
+    box.borderWidth = appearance.borderWidth;
+    if (appearance.borderColor) box.border = ParseColor(*appearance.borderColor);
+    if (appearance.hoverBorderColor) box.hoverBorder = ParseColor(*appearance.hoverBorderColor);
+    if (appearance.hoverTextColor) box.hoverText = ParseColor(*appearance.hoverTextColor);
+    if (appearance.shadowColor) box.shadow = ParseColor(*appearance.shadowColor);
+    box.shadowBlur = appearance.shadowBlur;
+    box.shadowOffset = {appearance.shadowOffsetX, appearance.shadowOffsetY};
+    box.disabledOpacity = appearance.disabledOpacity;
+    return box;
+}
 
 std::unique_ptr<Control> CreateControl(
     const sdk::UiNode& node, const sdk::UiLayout* parentLayout,
@@ -712,6 +744,7 @@ std::unique_ptr<Control> CreateControl(
         label->SetColor(ParseColor(node.appearance.textColor));
     if (auto* button = dynamic_cast<Button*>(control.get()))
         button->SetTextColor(ParseColor(node.appearance.textColor));
+    control->SetBoxDecoration(DecorationFor(node.appearance));
     control->SetId(*id);
     control->SetName(node.name);
     control->SetAccessibilityLabel(node.accessibilityLabel);
@@ -778,6 +811,15 @@ std::unique_ptr<Control> CreateControl(
             value, *property, theme, assetResolver, result, node.id);
         if (!runtimeValue) continue;
         AppendStatus(property->set(*control, *runtimeValue), result, node.id);
+    }
+    // A ColorRect keeps its colour as a runtime property; a decorated one
+    // fills its box with that colour unless the appearance names another.
+    if (auto* rect = dynamic_cast<ColorRect*>(control.get());
+        rect && control->GetBoxDecoration() &&
+        control->GetBoxDecoration()->fill.a == 0 && node.runtimeType) {
+        auto box = *control->GetBoxDecoration();
+        box.fill = rect->GetColor();
+        control->SetBoxDecoration(box);
     }
     if (node.onClick) {
         auto* button = dynamic_cast<Button*>(control.get());

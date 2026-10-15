@@ -67,6 +67,26 @@ async function installDependencies(directory: string, options: StarterOptions): 
   });
 }
 
+/**
+ * Pins the project's tools to this CLI's own version. A CLI running from an
+ * engine source checkout links the checkout's packages with `file:` instead,
+ * so `create` works offline and the project follows the engine you build.
+ */
+async function pinTools(packagePath: string, id: string): Promise<void> {
+  const cliRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const sdkRoot = join(cliRoot, "..", "authoring-sdk");
+  const own = JSON.parse(await readFile(join(cliRoot, "package.json"), "utf8")) as {version: string};
+  const isCheckout = await lstat(join(cliRoot, "src")).then(() => true, () => false) &&
+    await lstat(join(sdkRoot, "package.json")).then(() => true, () => false);
+  const link = (path: string) => `file:${resolve(path).split("\\").join("/")}`;
+  const project = JSON.parse(await readFile(packagePath, "utf8")) as Record<string, unknown>;
+  project.name = id.toLowerCase().replace(/[^a-z0-9._-]+/gu, "-");
+  project.devDependencies = isCheckout
+    ? {"@prismatix/cli": link(cliRoot), "@prismatix/authoring-sdk": link(sdkRoot)}
+    : {"@prismatix/cli": own.version, "@prismatix/authoring-sdk": own.version};
+  await writeFile(packagePath, `${JSON.stringify(project, null, 2)}\n`, "utf8");
+}
+
 /** Prepare everything in a sibling directory and publish only after npm succeeds. */
 export async function createStarter(targetArgument: string, options: StarterOptions = {}): Promise<{root: string; project: string}> {
   const target = resolve(targetArgument);
@@ -116,6 +136,7 @@ export async function createStarter(targetArgument: string, options: StarterOpti
       }
     };
     await copy(templateRoot, staging);
+    await pinTools(join(staging, "package.json"), id);
     const storyPath = join(staging, "Story", "main.pxstory");
     const story = await readFile(storyPath, "utf8");
     const identities = externalizeStoryIds(story, {path: "Story/main.pxstory"});

@@ -1575,7 +1575,32 @@ UiParseResult ParseUi(const std::string_view text) {
                 node.appearance.opacity < 0.0f || node.appearance.opacity > 1.0f ||
                 node.appearance.disabledOpacity < 0.0f || node.appearance.disabledOpacity > 1.0f ||
                 !readOptionalColor("hoverBackgroundColor", node.appearance.hoverBackgroundColor) ||
-                !readOptionalColor("focusColor", node.appearance.focusColor)) appearanceValid = false;
+                !readOptionalColor("focusColor", node.appearance.focusColor) ||
+                !readOptionalColor("borderColor", node.appearance.borderColor) ||
+                !readOptionalColor("hoverBorderColor", node.appearance.hoverBorderColor) ||
+                !readOptionalColor("hoverTextColor", node.appearance.hoverTextColor) ||
+                !readOptionalColor("gradientColor", node.appearance.gradientColor) ||
+                !readOptionalColor("shadowColor", node.appearance.shadowColor)) appearanceValid = false;
+            const auto readBoxNumber = [&](const char* key, float& output,
+                                           const float minimum, const float maximum) {
+                const auto found = appearance->find(key);
+                if (found == appearance->end()) return true;
+                return found->is_number() && ReadFiniteFloat(*appearance, key, output) &&
+                       output >= minimum && output <= maximum;
+            };
+            if (!readBoxNumber("cornerRadius", node.appearance.cornerRadius, 0.0f, 4096.0f) ||
+                !readBoxNumber("borderWidth", node.appearance.borderWidth, 0.0f, 256.0f) ||
+                !readBoxNumber("shadowBlur", node.appearance.shadowBlur, 0.0f, 2048.0f) ||
+                !readBoxNumber("shadowOffsetX", node.appearance.shadowOffsetX, -4096.0f, 4096.0f) ||
+                !readBoxNumber("shadowOffsetY", node.appearance.shadowOffsetY, -4096.0f, 4096.0f))
+                appearanceValid = false;
+            if (const auto direction = appearance->find("gradientDirection");
+                direction != appearance->end()) {
+                if (!direction->is_string() ||
+                    (*direction != "vertical" && *direction != "horizontal"))
+                    appearanceValid = false;
+                else node.appearance.gradientHorizontal = *direction == "horizontal";
+            }
             if (!appearanceValid) {
                 AddDiagnostic(result, "PXSDKUI1023", "UI node appearance is invalid", index);
                 valid = false;
@@ -1719,7 +1744,12 @@ UiParseResult ParseUi(const std::string_view text) {
                 "appearance.backgroundColor", "appearance.textColor",
                 "appearance.opacity", "appearance.styleToken",
                 "appearance.hoverBackgroundColor", "appearance.focusColor",
-                "appearance.disabledOpacity", "onClick",
+                "appearance.disabledOpacity", "appearance.cornerRadius",
+                "appearance.borderWidth", "appearance.borderColor",
+                "appearance.hoverBorderColor", "appearance.hoverTextColor",
+                "appearance.gradientColor", "appearance.gradientDirection",
+                "appearance.shadowColor", "appearance.shadowBlur",
+                "appearance.shadowOffsetX", "appearance.shadowOffsetY", "onClick",
                 "accessibilityLabel", "accessibilityRole",
                 "accessibilityDescription", "accessibilityFocusOrder"};
             bool instanceValid = componentInstance->is_object() &&

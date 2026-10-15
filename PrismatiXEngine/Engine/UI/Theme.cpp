@@ -22,11 +22,13 @@ StylePropertyMap BaseProperties() {
 
 StyleBlock ButtonDefaults() {
     StyleBlock block;
-    block.properties["background.color"] = Literal(Color{27, 32, 43, 235});
+    block.properties["background.color"] = Literal(Color{26, 32, 50, 235});
+    block.properties["radius.all"] = Literal(12.0);
+    block.properties["border.color"] = Literal(Color{255, 255, 255, 40});
     block.stateOverrides[StateMask(StyleState::Hover)]["background.color"] =
-        Literal(Color{62, 56, 42, 245});
+        Literal(Color{44, 54, 86, 245});
     block.stateOverrides[StateMask(StyleState::Hover)]["border.color"] =
-        Literal(Color{230, 194, 122, 150});
+        Literal(Color{233, 207, 148, 200});
     block.stateOverrides[StateMask(StyleState::Pressed)]["background.color"] =
         Literal(Color{20, 24, 32, 255});
     return block;
@@ -55,7 +57,7 @@ Theme::Theme() {
         Literal(Color{27, 31, 40, 150});
     auto& focused = m_styleData.globalDefaults.stateOverrides[StateMask(StyleState::Focused)];
     focused["background.color"] = Literal(Color{38, 44, 58, 245});
-    focused["border.color"] = Literal(Color{230, 194, 122, 255});
+    focused["border.color"] = Literal(Color{233, 207, 148, 255});
 
     for (const char* type : {"Button", "IconButton", "CheckBox", "OptionButton", "RadioButton"})
         m_styleData.controlTypeDefaults.emplace(type, ButtonDefaults());

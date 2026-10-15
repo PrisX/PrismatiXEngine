@@ -216,6 +216,29 @@ bool ApplyComponentProperty(sdk::UiNode& target, const std::string_view path, co
         target.appearance.focusColor.reset();
     else if (path == "appearance.disabledOpacity" && number)
         target.appearance.disabledOpacity = static_cast<float>(*number);
+    else if (path == "appearance.cornerRadius" && number)
+        target.appearance.cornerRadius = static_cast<float>(*number);
+    else if (path == "appearance.borderWidth" && number)
+        target.appearance.borderWidth = static_cast<float>(*number);
+    else if (path == "appearance.shadowBlur" && number)
+        target.appearance.shadowBlur = static_cast<float>(*number);
+    else if (path == "appearance.shadowOffsetX" && number)
+        target.appearance.shadowOffsetX = static_cast<float>(*number);
+    else if (path == "appearance.shadowOffsetY" && number)
+        target.appearance.shadowOffsetY = static_cast<float>(*number);
+    else if (path == "appearance.gradientDirection" && text)
+        target.appearance.gradientHorizontal = *text == "horizontal";
+    else if (path.starts_with("appearance.") && (text || nullValue)) {
+        std::optional<std::string>* color =
+            path == "appearance.borderColor" ? &target.appearance.borderColor
+            : path == "appearance.hoverBorderColor" ? &target.appearance.hoverBorderColor
+            : path == "appearance.hoverTextColor" ? &target.appearance.hoverTextColor
+            : path == "appearance.gradientColor" ? &target.appearance.gradientColor
+            : path == "appearance.shadowColor" ? &target.appearance.shadowColor
+            : nullptr;
+        if (!color) return false;
+        if (text) *color = *text; else color->reset();
+    }
     else if (path == "accessibilityLabel" && text)
         target.accessibilityLabel = *text;
     else if (path == "accessibilityRole" && text)

@@ -2776,6 +2776,8 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
     view.face = MessageFacePath();
     view.autoMode = m_autoMode;
     view.skipMode = m_skipMode;
+    view.waiting = dialogue.finished && !dialogue.fullText.empty() &&
+                   m_choiceTexts.empty() && !m_skipMode;
     view.textScale=m_settings.textScale;view.reducedMotion=m_settings.reducedMotion;
     view.windowOpacity = m_messageWindowOpacity;
     view.dimReadText = m_dimReadText && m_session->VM().CurrentLineSeen();

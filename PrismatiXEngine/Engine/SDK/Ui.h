@@ -51,6 +51,21 @@ struct UiAppearance {
     std::optional<std::string> hoverBackgroundColor;
     std::optional<std::string> focusColor;
     float disabledOpacity = 0.5f;
+    // Box decoration: drawn behind the control's own content, so a group or
+    // button can be a rounded, bordered, gradient or shadowed panel without
+    // a texture. All default to "off".
+    float cornerRadius = 0.0f;
+    float borderWidth = 0.0f;
+    std::optional<std::string> borderColor;
+    std::optional<std::string> hoverBorderColor;
+    std::optional<std::string> hoverTextColor;
+    // The background fades from backgroundColor to gradientColor.
+    std::optional<std::string> gradientColor;
+    bool gradientHorizontal = false;
+    std::optional<std::string> shadowColor;
+    float shadowBlur = 0.0f;
+    float shadowOffsetX = 0.0f;
+    float shadowOffsetY = 0.0f;
 };
 
 struct UiVec2Value {

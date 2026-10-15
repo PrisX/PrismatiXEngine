@@ -59,7 +59,7 @@
         "assetId": {"oneOf": [{"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, {"type": "null"}]},
         "appearance": {
           "type": "object", "additionalProperties": false,
-          "properties": {"backgroundColor": {"type": "string"}, "textColor": {"type": "string"}, "opacity": {"type": "number", "minimum": 0, "maximum": 1}, "styleToken": {"type": ["string", "null"]}, "hoverBackgroundColor": {"type": ["string", "null"]}, "focusColor": {"type": ["string", "null"]}, "disabledOpacity": {"type": "number", "minimum": 0, "maximum": 1}}
+          "properties": {"backgroundColor": {"type": "string"}, "textColor": {"type": "string"}, "opacity": {"type": "number", "minimum": 0, "maximum": 1}, "styleToken": {"type": ["string", "null"]}, "hoverBackgroundColor": {"type": ["string", "null"]}, "focusColor": {"type": ["string", "null"]}, "disabledOpacity": {"type": "number", "minimum": 0, "maximum": 1}, "cornerRadius": {"type": "number", "minimum": 0, "maximum": 4096}, "borderWidth": {"type": "number", "minimum": 0, "maximum": 256}, "borderColor": {"type": ["string", "null"]}, "hoverBorderColor": {"type": ["string", "null"]}, "hoverTextColor": {"type": ["string", "null"]}, "gradientColor": {"type": ["string", "null"]}, "gradientDirection": {"enum": ["vertical", "horizontal"]}, "shadowColor": {"type": ["string", "null"]}, "shadowBlur": {"type": "number", "minimum": 0, "maximum": 2048}, "shadowOffsetX": {"type": "number", "minimum": -4096, "maximum": 4096}, "shadowOffsetY": {"type": "number", "minimum": -4096, "maximum": 4096}}
         },
         "onClick": {"$ref": "#/$defs/action"},
         "accessibilityLabel": {"type": "string", "maxLength": 1024},

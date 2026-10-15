@@ -12,7 +12,7 @@ import {fileURLToPath, pathToFileURL} from "node:url";
 import * as ts from "typescript-compiler";
 
 import {
-  discoverRuntimeTool, discoverRuntimeBundle, RuntimeDiscoveryFailure, runtimeDiscoveryHint,
+  checkoutRuntimeFile, discoverRuntimeTool, discoverRuntimeBundle, RuntimeDiscoveryFailure, runtimeDiscoveryHint,
   type RuntimeDiscoveryOptions,
 } from "./runtime-discovery.js";
 import {fingerprintFile, publishDirectory, publishedInputs, retainPublishedDirectoryIfMatching,
@@ -1124,6 +1124,7 @@ async function loadUiRegistry(override?: string, runtimeHint?: string,
     if (path === undefined && runtimeHint !== undefined)
       throw new Error(`UI TypeRegistry manifest was not found in --runtime ${hint}; use --ui-registry or build PrismatiXUiTypeRegistryManifest`);
   } else if (existsSync(bundled)) path = bundled;
+  else path = await checkoutRuntimeFile("PrismatiXUiTypeRegistry.json");
   if (path === undefined) return undefined;
   const emitter = join(dirname(path), process.platform === "win32"
     ? "PrismatiXUiTypeManifest.exe" : "PrismatiXUiTypeManifest");

@@ -165,6 +165,14 @@ public:
     void DrawRect(const Rect& rect, Color color);
     void DrawRoundedRect(const Rect& rect, float radius, Color color);
     void DrawBorder(const Rect& rect, float width, float radius, Color color);
+    // A rounded rectangle whose colour fades from `from` (top or left) to
+    // `to` (bottom or right).
+    void DrawRoundedRectGradient(const Rect& rect, float radius, Color from, Color to,
+                                 bool horizontal = false);
+    // A stroke that follows the rounded corners, unlike DrawBorder.
+    void DrawRoundedBorder(const Rect& rect, float width, float radius, Color color);
+    // A blurred drop shadow approximated by stacked rounded rectangles.
+    void DrawSoftShadow(const Rect& rect, float radius, float blur, Color color);
     void PushTransform(Vec2 pivot, Vec2 scale = {1,1}, float rotationDegrees = 0.0f,
                        Color modulate = {255,255,255,255});
     void PushAffineTransform(const AffineTransform2D& transform,

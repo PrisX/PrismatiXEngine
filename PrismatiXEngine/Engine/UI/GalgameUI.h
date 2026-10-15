@@ -59,6 +59,9 @@ struct DialoguePresentation {
     std::string face;
     bool autoMode = false;
     bool skipMode = false;
+    // The line is fully shown and the Player waits for a click: the HUD's
+    // click-wait glyph (dialogue.waiting) shows.
+    bool waiting = false;
     float textScale = 1.0f;
     bool reducedMotion = false;
     // Opacity of the control named "MessageWindow", 0..1.

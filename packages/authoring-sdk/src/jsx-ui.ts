@@ -58,6 +58,19 @@ export interface UiAppearance {
   readonly hoverBackgroundColor?: string | null;
   readonly focusColor?: string | null;
   readonly disabledOpacity?: number;
+  /** Box decoration, drawn behind the control without a texture. */
+  readonly cornerRadius?: number;
+  readonly borderWidth?: number;
+  readonly borderColor?: string | null;
+  readonly hoverBorderColor?: string | null;
+  readonly hoverTextColor?: string | null;
+  /** The background fades from `backgroundColor` to this colour. */
+  readonly gradientColor?: string | null;
+  readonly gradientDirection?: "vertical" | "horizontal";
+  readonly shadowColor?: string | null;
+  readonly shadowBlur?: number;
+  readonly shadowOffsetX?: number;
+  readonly shadowOffsetY?: number;
 }
 
 /** Friendly authoring aliases; these are lowered to canonical appearance fields. */
@@ -67,7 +80,19 @@ export interface UiStyle extends UiAppearance {
   readonly token?: string | null;
   readonly hoverBackground?: string | null;
   readonly focus?: string | null;
+  /** `cornerRadius` */
+  readonly radius?: number;
+  /** `[width, color]`: `borderWidth` and `borderColor` */
+  readonly border?: readonly [number, string];
+  /** `[from, to]` or `[from, to, "horizontal"]`: `backgroundColor` fading to `gradientColor` */
+  readonly gradient?: readonly [string, string] | readonly [string, string, "vertical" | "horizontal"];
+  /** `{color, blur, x, y}`: the soft drop shadow */
+  readonly shadow?: {readonly color: string; readonly blur?: number; readonly x?: number; readonly y?: number};
 }
+
+const boxAppearanceKeys = ["cornerRadius", "borderWidth", "borderColor", "hoverBorderColor",
+  "hoverTextColor", "gradientColor", "gradientDirection", "shadowColor", "shadowBlur",
+  "shadowOffsetX", "shadowOffsetY"] as const;
 
 export interface UiBinding {
   readonly path: string;
@@ -1103,6 +1128,18 @@ function nodeAppearance(props: UiNodeProps): UiAppearance | undefined {
     ...(style?.focusColor === undefined && style?.focus === undefined
       ? {} : {focusColor: style.focusColor ?? style.focus}),
     ...(style?.disabledOpacity === undefined ? {} : {disabledOpacity: style.disabledOpacity}),
+    ...Object.fromEntries(boxAppearanceKeys.filter((key) => style?.[key] !== undefined)
+      .map((key) => [key, style![key]])),
+    ...(style?.radius === undefined ? {} : {cornerRadius: style.radius}),
+    ...(style?.border === undefined ? {} : {borderWidth: style.border[0], borderColor: style.border[1]}),
+    ...(style?.gradient === undefined ? {} : {
+      ...(style.backgroundColor === undefined && style.background === undefined
+        ? {backgroundColor: style.gradient[0]} : {}),
+      gradientColor: style.gradient[1],
+      ...(style.gradient[2] === undefined ? {} : {gradientDirection: style.gradient[2]})}),
+    ...(style?.shadow === undefined ? {} : {
+      shadowColor: style.shadow.color, shadowBlur: style.shadow.blur ?? 12,
+      shadowOffsetX: style.shadow.x ?? 0, shadowOffsetY: style.shadow.y ?? 4}),
   };
 }
 

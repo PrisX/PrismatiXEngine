@@ -13,6 +13,13 @@ export interface RuntimeDiscoveryOptions {
   readonly path?: string;
   /** Developer-only fallback. Normal author discovery never searches PATH or the checkout. */
   readonly allowSystemRuntime?: boolean;
+  /**
+   * A CLI running from an engine source checkout (linked with `file:`) uses
+   * that checkout's own native build when no runtime is bundled. Defaults to
+   * on with the real process environment; PRISMATIX_NO_CHECKOUT_RUNTIME=1
+   * turns it off.
+   */
+  readonly checkoutFallback?: boolean;
 }
 export interface DiscoveredRuntimeTool {
   readonly path: string;
@@ -135,6 +142,20 @@ function repoFallbackRoots(): string[] {
     "out/build/x64-release/PrismatiXEngine", "out/build/x64-relwithdebinfo/PrismatiXEngine", "out/build/x64-debug/PrismatiXEngine", "build/PrismatiXEngine"]
     .map(path => resolve(root, path));
 }
+async function isSourceCheckout(): Promise<boolean> {
+  const exists = (path: string) => stat(path).then(() => true, () => false);
+  return await exists(join(packageRoot, "src")) &&
+    await exists(resolve(packageRoot, "..", "..", "CMakePresets.json"));
+}
+/** The engine checkout's native build directory holding `file`, for a source-checkout CLI. */
+export async function checkoutRuntimeFile(file: string,
+  environment: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+  if (environment.PRISMATIX_NO_CHECKOUT_RUNTIME === "1" || !(await isSourceCheckout())) return undefined;
+  for (const root of repoFallbackRoots())
+    for (const candidate of [join(root, file), join(root, "share", "PrismatiX", file)])
+      if (await existingFile(candidate)) return candidate;
+  return undefined;
+}
 export async function discoverRuntimeTool(tool: RuntimeTool, options: RuntimeDiscoveryOptions = {}): Promise<DiscoveredRuntimeTool> {
   const environment = options.environment ?? process.env;
   const attempts: string[] = [];
@@ -171,7 +192,16 @@ export async function discoverRuntimeTool(tool: RuntimeTool, options: RuntimeDis
       const fromRepo = await fromHint(root, tool, "repository fallback", true, attempts);
       if (fromRepo) return fromRepo;
     }
-  } else attempts.push("PATH/repository fallback disabled; developer opt-in: PRISMATIX_ALLOW_SYSTEM_RUNTIME=1");
+  } else {
+    const checkout = (options.checkoutFallback ?? options.environment === undefined) &&
+      environment.PRISMATIX_NO_CHECKOUT_RUNTIME !== "1" && await isSourceCheckout();
+    if (checkout)
+      for (const root of repoFallbackRoots()) {
+        const fromRepo = await fromHint(root, tool, "engine checkout", true, attempts);
+        if (fromRepo) return fromRepo;
+      }
+    attempts.push("PATH/repository fallback disabled; developer opt-in: PRISMATIX_ALLOW_SYSTEM_RUNTIME=1");
+  }
   throw new RuntimeDiscoveryFailure(tool, attempts);
 }
 

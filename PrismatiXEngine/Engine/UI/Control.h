@@ -21,6 +21,26 @@ namespace px::ui {
 
 class Theme;
 
+// A panel drawn behind a control's own content: rounded corners, a border,
+// a two-colour gradient and a soft drop shadow, all without a texture.
+struct BoxDecoration {
+    Color fill{0, 0, 0, 0};
+    std::optional<Color> fillEnd;
+    bool horizontal = false;
+    std::optional<Color> hoverFill;
+    float radius = 0.0f;
+    float borderWidth = 0.0f;
+    Color border{0, 0, 0, 0};
+    std::optional<Color> hoverBorder;
+    // Caption colour on hover, for buttons that draw text.
+    std::optional<Color> hoverText;
+    Color shadow{0, 0, 0, 0};
+    float shadowBlur = 0.0f;
+    Vec2 shadowOffset{};
+    // Alpha multiplier while the control is disabled.
+    float disabledOpacity = 1.0f;
+};
+
 enum class Visibility { Visible, Hidden, Collapsed };
 enum class MouseFilter { Stop, Pass, Ignore };
 enum class FocusMode { None, Click, All };
@@ -247,6 +267,10 @@ public:
     void EmitSignal(std::string_view signal, const SignalArguments& arguments = {});
     virtual void Update(float deltaSeconds);
     virtual void Draw(graphics::Renderer2D& renderer, const Theme& theme);
+    void SetBoxDecoration(std::optional<BoxDecoration> decoration) {
+        m_box = std::move(decoration);
+    }
+    [[nodiscard]] const std::optional<BoxDecoration>& GetBoxDecoration() const { return m_box; }
 
     [[nodiscard]] bool Hovered() const { return m_hovered; }
     [[nodiscard]] bool Pressed() const { return m_pressed; }
@@ -321,6 +345,7 @@ private:
     bool m_linearTransition = false;
     Color m_modulate{255,255,255,255};
     bool m_clipContent = false;
+    std::optional<BoxDecoration> m_box;
     std::string m_accessibilityLabel;
     std::string m_accessibilityRole;
     std::string m_accessibilityDescription;

@@ -4255,6 +4255,22 @@ export const contractSchemas: Readonly<Record<string, object>> = {
               "backgroundColor": {
                 "type": "string"
               },
+              "borderColor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "borderWidth": {
+                "maximum": 256,
+                "minimum": 0,
+                "type": "number"
+              },
+              "cornerRadius": {
+                "maximum": 4096,
+                "minimum": 0,
+                "type": "number"
+              },
               "disabledOpacity": {
                 "maximum": 1,
                 "minimum": 0,
@@ -4266,7 +4282,31 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                   "null"
                 ]
               },
+              "gradientColor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "gradientDirection": {
+                "enum": [
+                  "vertical",
+                  "horizontal"
+                ]
+              },
               "hoverBackgroundColor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "hoverBorderColor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "hoverTextColor": {
                 "type": [
                   "string",
                   "null"
@@ -4275,6 +4315,27 @@ export const contractSchemas: Readonly<Record<string, object>> = {
               "opacity": {
                 "maximum": 1,
                 "minimum": 0,
+                "type": "number"
+              },
+              "shadowBlur": {
+                "maximum": 2048,
+                "minimum": 0,
+                "type": "number"
+              },
+              "shadowColor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "shadowOffsetX": {
+                "maximum": 4096,
+                "minimum": -4096,
+                "type": "number"
+              },
+              "shadowOffsetY": {
+                "maximum": 4096,
+                "minimum": -4096,
                 "type": "number"
               },
               "styleToken": {
@@ -4861,5 +4922,5 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "story-index.schema.json": "15cc9991af509f264db6ecfb50858352ca7ae11a207cfbd5d12eb7caa6fb8da2",
   "timeline.schema.json": "c38698ec2cb9567e750581d5846198f1a99c08fcbebb0ad3dd6b3e620876d420",
   "ui-component.schema.json": "41b43c338c77d6f5b1d9c635d581b3f783c95a786434cb88d1153a2960ac999c",
-  "ui.schema.json": "6472c6c2edbe4545225c70e6b27737c21cbc574e02cee7546a5cb46fb59392b7"
+  "ui.schema.json": "14e1fa56a27a5bb293170922feb502039c3eb5f6736915e2f21f41741dc361ca"
 };

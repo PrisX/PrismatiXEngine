@@ -385,6 +385,7 @@ px::ui::DialoguePresentation DialogueView(const px::RuntimeSession& session, con
     view.choices = choices;
     view.effect = dialogue.effect;
     view.effectProgress = dialogue.effectProgress;
+    view.waiting = dialogue.finished && !dialogue.fullText.empty() && choices.empty();
     return view;
 }
 
