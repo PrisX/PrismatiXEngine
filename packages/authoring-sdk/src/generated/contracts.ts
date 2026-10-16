@@ -1826,6 +1826,47 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     "type": "object"
   },
   "portrait.schema.json": {
+    "$defs": {
+      "frames": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "height": {
+              "exclusiveMinimum": 0,
+              "maximum": 16384,
+              "type": "number"
+            },
+            "path": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            },
+            "width": {
+              "exclusiveMinimum": 0,
+              "maximum": 16384,
+              "type": "number"
+            },
+            "x": {
+              "maximum": 1000000,
+              "minimum": -1000000,
+              "type": "number"
+            },
+            "y": {
+              "maximum": 1000000,
+              "minimum": -1000000,
+              "type": "number"
+            }
+          },
+          "required": [
+            "path",
+            "width",
+            "height"
+          ],
+          "type": "object"
+        },
+        "maxItems": 16,
+        "minItems": 1,
+        "type": "array"
+      }
+    },
     "$id": "https://prismatix.dev/contracts/portrait.schema.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -1878,10 +1919,16 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "items": {
           "additionalProperties": false,
           "properties": {
+            "blink": {
+              "$ref": "#/$defs/frames"
+            },
             "height": {
               "exclusiveMinimum": 0,
               "maximum": 16384,
               "type": "number"
+            },
+            "mouth": {
+              "$ref": "#/$defs/frames"
             },
             "opacity": {
               "maximum": 255,
@@ -4918,7 +4965,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "game.schema.json": "a2614c48076fc5e7554934e446f37319c556adb9f13a28f24c8592813f0dfd23",
   "locale.schema.json": "391e4abe7616d74554af376e2ae3563961215b1631cdd04faf5034016aaff774",
   "motion.schema.json": "6cc663c16bc82c6d966609bb2410bb2873ae43a16d5da3611234bec041d54268",
-  "portrait.schema.json": "ff39099daa65276854bb8a54ed54e82ddf81229f5edc4d35bbd95a7ae211c334",
+  "portrait.schema.json": "ca95b26741547fda727696a570e35df4933b03103f260041d0144adfc0194a6f",
   "project.schema.json": "11b902f7474e93322a36f247fb61401649102cd14e76cfd2d82a5da3a3601014",
   "runtime-ir.schema.json": "87c80cfb6dbdff136db7b7117e209a85ce4cb7bc64f66bae38bb942cae1af3c3",
   "save-migration.schema.json": "dbeb66ade2f356f3540994a12c1ef66c51dbe81d8ca5148e0aff30293507cbe7",

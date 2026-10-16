@@ -3,6 +3,17 @@ import {createHash} from "node:crypto";
 import {serializeDocument, validateDocument} from "./contracts.js";
 import type {JsonValue, Result} from "./types.js";
 
+/** An image drawn over an expression layer while the eyes blink or the
+ * mouth moves. Coordinates are on the portrait canvas; `x`/`y` default to
+ * the owning layer's. */
+export interface LayeredPortraitFrame {
+  readonly path: string;
+  readonly width: number;
+  readonly height: number;
+  readonly x?: number;
+  readonly y?: number;
+}
+
 /** A texture layer is placed in the portrait's unscaled canvas coordinates. */
 export interface LayeredPortraitLayer {
   readonly path: string;
@@ -14,6 +25,12 @@ export interface LayeredPortraitLayer {
   readonly opacity?: number;
   /** Only changed expression layers may crossfade in auto mode. */
   readonly role?: "base" | "expression";
+  /** Expression layers only: eye frames from half-closed to closed. The
+   * Stage blinks at random every few seconds, playing them in and back. */
+  readonly blink?: readonly LayeredPortraitFrame[];
+  /** Expression layers only: mouth frames from slightly to fully open,
+   * chosen from the loudness of the speaking character's voice. */
+  readonly mouth?: readonly LayeredPortraitFrame[];
 }
 
 export interface LayeredPortraitDocument {
@@ -46,9 +63,18 @@ export function defineLayeredPortrait(input: LayeredPortraitInput): Result<Layer
       height: layer.height,
       opacity: layer.opacity ?? 255,
       ...(layer.role === undefined ? {} : {role: layer.role}),
+      ...(layer.blink === undefined ? {} : {blink: layer.blink.map(frame)}),
+      ...(layer.mouth === undefined ? {} : {mouth: layer.mouth.map(frame)}),
     })),
   };
   return validateDocument<LayeredPortraitDocument>("portrait", document);
+}
+
+function frame(input: LayeredPortraitFrame): LayeredPortraitFrame {
+  return {path: input.path,
+    ...(input.x === undefined ? {} : {x: input.x}),
+    ...(input.y === undefined ? {} : {y: input.y}),
+    width: input.width, height: input.height};
 }
 
 /**

@@ -17,6 +17,19 @@ namespace {
 constexpr std::size_t kMaxSeTracks = 12;
 constexpr std::size_t kMaxAudioEntries = 24;
 
+template <typename Meter>
+void SDLCALL MeterVoice(void* userdata, MIX_Track*, const SDL_AudioSpec*,
+                        float* pcm, const int samples) {
+    if (samples <= 0) return;
+    double sum = 0.0;
+    for (int index = 0; index < samples; ++index)
+        sum += static_cast<double>(pcm[index]) * pcm[index];
+    auto* meter = static_cast<Meter*>(userdata);
+    meter->level.store(static_cast<float>(std::sqrt(sum / samples)),
+                       std::memory_order_relaxed);
+    meter->ticks.store(SDL_GetTicks(), std::memory_order_relaxed);
+}
+
 float ToGain(int volume) {
     if (volume < 0) volume = 0;
     return static_cast<float>(volume) / 128.0f;
@@ -58,6 +71,8 @@ bool AudioEngine::Init() {
         track = MIX_CreateTrack(m_mixer);
     }
     m_voiceTrack = MIX_CreateTrack(m_mixer);
+    if (m_voiceTrack)
+        MIX_SetTrackRawCallback(m_voiceTrack, MeterVoice<VoiceMeter>, &m_voiceMeter);
     m_ambienceTrack=MIX_CreateTrack(m_mixer);
     m_initialized = true;
     PX_LOG_INFO("AudioEngine initialized ({} Hz).", m_sampleRate);
@@ -494,6 +509,17 @@ void AudioEngine::StopMusicTracks(const int fadeMs) {
         if (track) MIX_StopTrack(track, frames);
     m_bgmPath.clear();
     m_pendingLoop.clear();
+}
+
+float AudioEngine::VoiceLevel() const {
+    if (!m_initialized || !m_voiceTrack || m_voicePath.empty() || m_suspended ||
+        !MIX_TrackPlaying(m_voiceTrack))
+        return 0.0f;
+    // The mixer stops calling back for a paused or finished track; a stale
+    // reading must not hold a mouth open.
+    if (SDL_GetTicks() - m_voiceMeter.ticks.load(std::memory_order_relaxed) > 150)
+        return 0.0f;
+    return std::clamp(m_voiceMeter.level.load(std::memory_order_relaxed), 0.0f, 1.0f);
 }
 
 void AudioEngine::StopVoiceTrack() {

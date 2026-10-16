@@ -26,15 +26,13 @@ that is still open, roughly in priority order.
   arguments; QA `jump` reaches in-scene labels.
 - Controls without a font use the locale's first `fontChain` font unless
   `player.uiFont` is set, instead of a hard-coded Noto Sans TC path.
+- Portrait blink and lip sync: `.pxportrait` expression layers take `blink`
+  and `mouth` frame lists; the Stage blinks on a random 2.5-6 s timer and
+  opens the speaking character's mouth with the voice track's RMS level
+  (metered by a raw callback on the voice track). Not saved.
 
 ## Open, larger items
 
-1. **Sprite eye blink and lip sync.** Artemis (`fg` blink/lip tables), KiriKiri
-   E-mote and most modern titles animate eyes and mouths. Proposal: optional
-   `blink` and `mouth` frame lists on a `.pxportrait` expression layer; the
-   Stage cycles blink frames on a randomised timer and drives mouth frames from
-   the playing voice's amplitude (the audio engine already meters buses).
-   Saves need no new state.
 2. **Save management.** Senren/Sakura offer copy, swap, delete and an editable
    comment per slot; the Player has no deletion at all (Sakura's port omits its
    `del` dialog for that reason). Add `save.delete`, `save.copy`,

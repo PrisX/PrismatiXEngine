@@ -4,6 +4,7 @@
 #include "Engine/IO/VFS.h"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -193,6 +194,10 @@ public:
     [[nodiscard]] bool SEChannelPlaying(int channel) const;
     void PlayVoice(const std::string& path);
     void StopVoice();
+    // Loudness of the playing voice line, 0..1 (RMS of the decoded samples
+    // before volume and ducking), for portrait lip sync. 0 when no voice is
+    // audible, including while it is paused.
+    [[nodiscard]] float VoiceLevel() const;
     // Reads a voice or sound effect on a worker thread so the line that
     // plays it does not wait for the disk. Holds the last few requests.
     void Prefetch(const std::string& path);
@@ -321,6 +326,11 @@ private:
     // holds at most one entry per worker thread.
     std::vector<jobs::Job<std::optional<io::Bytes>>> m_retiredPrefetches;
     AudioEntry m_voiceAudio;  // current voice line only (not cached)
+    // Written by the mixer thread's raw callback on the voice track.
+    struct VoiceMeter {
+        std::atomic<float> level{0.0f};
+        std::atomic<std::uint64_t> ticks{0};
+    } m_voiceMeter;
     bool m_suspended = false;
     std::vector<MIX_Track*> m_suspendedTracks;
 

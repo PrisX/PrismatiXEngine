@@ -675,6 +675,18 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
           diagnostics.push(issue("PXSDKSEM1350",
             "A portrait layer must reference a texture, not another .pxportrait descriptor",
             path, layer.path));
+        for (const kind of ["blink", "mouth"] as const) {
+          const frames = objects(layer[kind]);
+          if (frames.length > 0 && layer.role !== "expression")
+            diagnostics.push(issue("PXSDKSEM1351",
+              `Only an expression layer can have ${kind} frames`, path, String(layer.path)));
+          for (const frame of frames)
+            if (typeof frame.path === "string" &&
+                frame.path.toLowerCase().endsWith(".pxportrait"))
+              diagnostics.push(issue("PXSDKSEM1350",
+                "A portrait frame must reference a texture, not another .pxportrait descriptor",
+                path, frame.path));
+        }
       }
       break;
     }

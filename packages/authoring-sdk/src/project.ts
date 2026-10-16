@@ -1392,9 +1392,14 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     resourceSourceDocuments.set(descriptorPath, {document: parsed.value,
       text: typeof authored === "string" ? authored :
         input.documentSources?.[descriptorPath]});
-    for (const [index, layer] of parsed.value.layers.entries())
+    for (const [index, layer] of parsed.value.layers.entries()) {
       addResourceRef(layer.path, `${descriptorPath}:layers[${index}].path`,
         descriptorPath, `/layers/${index}/path`);
+      for (const kind of ["blink", "mouth"] as const)
+        for (const [frame, image] of (layer[kind] ?? []).entries())
+          addResourceRef(image.path, `${descriptorPath}:layers[${index}].${kind}[${frame}].path`,
+            descriptorPath, `/layers/${index}/${kind}/${frame}/path`);
+    }
   }
   // A motion descriptor is itself a package resource; every image referenced
   // by it must join the dependency graph before ownership/fingerprint checks.

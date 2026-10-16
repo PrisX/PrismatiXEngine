@@ -349,6 +349,93 @@ int main() {
         SDL_DestroySurface(surface);
     });
 
+    suite.Run("PortraitBlinksAndMovesItsMouthWithTheVoice", [&] {
+        px::test::TempDirectory fixture("portrait-face-frames");
+        suite.Require(SaveSolidBmp(fixture.path / "body.bmp", 16, 16, {240, 20, 30, 255}) &&
+                          SaveSolidBmp(fixture.path / "face.bmp", 8, 8, {20, 40, 240, 255}) &&
+                          SaveSolidBmp(fixture.path / "half.bmp", 8, 4, {200, 200, 200, 255}) &&
+                          SaveSolidBmp(fixture.path / "shut.bmp", 8, 4, {20, 240, 40, 255}) &&
+                          SaveSolidBmp(fixture.path / "ajar.bmp", 4, 2, {250, 200, 20, 255}) &&
+                          SaveSolidBmp(fixture.path / "open.bmp", 4, 2, {250, 20, 250, 255}),
+                      "face frame images are available");
+        {
+            std::ofstream descriptor(fixture.path / "hero.pxportrait");
+            descriptor << R"({"format":"PrismatiXLayeredPortrait","schemaRevision":1,
+                "width":16,"height":16,"layers":[
+                {"path":"body.bmp","width":16,"height":16,"role":"base"},
+                {"path":"face.bmp","x":4,"width":8,"height":8,"role":"expression",
+                 "blink":[{"path":"half.bmp","y":2,"width":8,"height":4},
+                          {"path":"shut.bmp","y":2,"width":8,"height":4}],
+                 "mouth":[{"path":"ajar.bmp","x":6,"y":6,"width":4,"height":2},
+                          {"path":"open.bmp","x":6,"y":6,"width":4,"height":2}]}]})";
+        }
+        SDL_Surface* surface = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+        suite.Require(surface != nullptr, "face frame surface initializes");
+        SDL_Renderer* native = SDL_CreateSoftwareRenderer(surface);
+        suite.Require(native != nullptr, "face frame renderer initializes");
+        {
+            px::io::VFS vfs;
+            vfs.MountDirectory(fixture.path.string());
+            px::graphics::AssetCache assets(native, vfs);
+            px::graphics::Renderer2D renderer(native, assets);
+            renderer.SetLogicalSize(64, 64);
+            for (const char* path : {"body.bmp", "face.bmp", "half.bmp", "shut.bmp",
+                                     "ajar.bmp", "open.bmp"})
+                suite.Require(static_cast<bool>(assets.Texture(path)),
+                              "face frame texture decodes before rendering");
+            px::vn::Stage stage(renderer, assets);
+            stage.SetCharacter("hero", "hero.pxportrait", 2, false);
+            const auto render = [&] {
+                SDL_SetRenderDrawColor(native, 0, 0, 0, 255);
+                SDL_RenderClear(native);
+                stage.Render();
+                SDL_RenderPresent(native);
+            };
+            render();  // parses the descriptor
+            // The portrait sits at x 24..40, y 48..64; eyes at y 50..54,
+            // the mouth at x 30..34, y 54..56.
+            bool sawHalf = false, sawShut = false, reopened = false, shutPixel = false;
+            for (int step = 0; step < 700 && !reopened; ++step) {
+                stage.Update(0.01f);
+                const auto frames = stage.CharacterFaceFrames("hero");
+                suite.Require(frames.has_value(), "face frames are reported for the actor");
+                if (frames->blink == 0) sawHalf = true;
+                if (frames->blink == 1 && !sawShut) {
+                    sawShut = true;
+                    render();
+                    const Pixel eyes = ReadPixel(surface, 31, 51);
+                    shutPixel = eyes.g > 220 && eyes.r < 60 && eyes.b < 80;
+                }
+                if (sawShut && frames->blink == -1) reopened = true;
+            }
+            suite.Expect(sawHalf && sawShut && reopened,
+                         "the eyes close and reopen within the longest blink interval");
+            suite.Expect(shutPixel, "the closed-eye frame is drawn over the expression");
+            render();
+            const Pixel open = ReadPixel(surface, 31, 51);
+            suite.Expect(open.b > 220 && open.g < 60, "open eyes show the expression itself");
+
+            stage.SetLipSync("hero", 0.5f);
+            stage.Update(0.1f);
+            suite.Expect(stage.CharacterFaceFrames("hero")->mouth == 1,
+                         "a loud voice opens the mouth fully");
+            render();
+            const Pixel mouth = ReadPixel(surface, 31, 54);
+            suite.Expect(mouth.r > 220 && mouth.b > 220 && mouth.g < 60,
+                         "the open-mouth frame is drawn");
+            stage.SetLipSync("hero", 0.05f);
+            stage.Update(0.1f);
+            suite.Expect(stage.CharacterFaceFrames("hero")->mouth == 0,
+                         "a quiet voice opens the mouth a little");
+            stage.SetLipSync("someone-else", 0.5f);
+            stage.Update(0.1f);
+            suite.Expect(stage.CharacterFaceFrames("hero")->mouth == -1,
+                         "another character's voice leaves the mouth closed");
+        }
+        SDL_DestroyRenderer(native);
+        SDL_DestroySurface(surface);
+    });
+
     suite.Run("LegacyLayersAreGraphLeaves", [&] {
         Fixture fixture;
         fixture.stage.SetLayer("mist", "Assets/mist.webp", 10.0f, 20.0f,

@@ -29,6 +29,25 @@ constexpr float kAlphaSpeed = 6.0f;
 constexpr float kSlideSpeed = 9.0f;
 constexpr float kSlideOffset = 40.0f;
 constexpr int kNodeOrderLimit = 1'000'000;
+// Portrait face animation. A blink shows each frame this long, closing and
+// then opening again; the eyes stay open 2.5-6 s between blinks.
+constexpr float kBlinkFrameSeconds = 0.05f;
+constexpr float kBlinkMinWait = 2.5f;
+constexpr float kBlinkMaxWait = 6.0f;
+// Voice RMS below kMouthQuiet keeps the mouth shut; kMouthLoud opens it
+// fully. A frame holds kMouthFrameSeconds so syllables do not flicker.
+constexpr float kMouthQuiet = 0.02f;
+constexpr float kMouthLoud = 0.16f;
+constexpr float kMouthFrameSeconds = 0.07f;
+
+// The blink frame of a layer with `count` frames, `seconds` into a blink.
+int BlinkFrame(const float seconds, const std::size_t count) {
+    if (seconds < 0.0f || count == 0) return -1;
+    const int step = static_cast<int>(seconds / kBlinkFrameSeconds);
+    const int frames = static_cast<int>(count);
+    const int frame = step < frames ? step : 2 * frames - 2 - step;
+    return frame >= 0 ? frame : -1;
+}
 
 float Approach(float value, float target, float rate, float dt) {
     const float t = std::min(1.0f, rate * dt);
@@ -227,9 +246,14 @@ const Stage::LayeredPortrait* Stage::ResolveLayeredPortrait(
         PX_LOG_WARN("Stage: invalid layered portrait descriptor '{}'",path);
         return nullptr;
     }
-    for(const auto& layer:portrait->layers)
+    for(const auto& layer:portrait->layers){
         m_assets.PreloadTexture(layer.path,
             graphics::AssetPreloadPriority::High);
+        for(const auto* frames:{&layer.blink,&layer.mouth})
+            for(const auto& frame:*frames)
+                m_assets.PreloadTexture(frame.path,
+                    graphics::AssetPreloadPriority::High);
+    }
     return &m_layeredPortraits.emplace(path,std::move(*portrait)).first->second;
 }
 
@@ -252,8 +276,13 @@ void Stage::PreloadCharacter(const std::string& imagePath) {
         if(read->second.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return;
     }
     if(const auto* portrait=ResolveLayeredPortrait(imagePath)){
-        for(const auto& layer:portrait->layers)
+        for(const auto& layer:portrait->layers){
             m_assets.PreloadTexture(layer.path,graphics::AssetPreloadPriority::High);
+            for(const auto* frames:{&layer.blink,&layer.mouth})
+                for(const auto& frame:*frames)
+                    m_assets.PreloadTexture(frame.path,
+                        graphics::AssetPreloadPriority::High);
+        }
     }
 }
 
@@ -1300,6 +1329,75 @@ std::optional<std::string> Stage::CharacterImage(const std::string& name) const 
     return found->second.imagePath;
 }
 
+void Stage::SetLipSync(std::string character, const float level) {
+    m_lipSyncCharacter = std::move(character);
+    m_lipSyncLevel = std::isfinite(level) ? std::clamp(level, 0.0f, 1.0f) : 0.0f;
+}
+
+std::optional<Stage::FaceFrames> Stage::CharacterFaceFrames(
+    const std::string& name) const {
+    const auto found = m_actors.find(name);
+    if (found == m_actors.end() || found->second.exiting) return std::nullopt;
+    const Actor& actor = found->second;
+    FaceFrames frames;
+    frames.mouth = actor.mouthFrame;
+    if (const auto portrait = m_layeredPortraits.find(actor.imagePath);
+        portrait != m_layeredPortraits.end())
+        for (const auto& layer : portrait->second.layers)
+            frames.blink = std::max(frames.blink,
+                                    BlinkFrame(actor.blinkTime, layer.blink.size()));
+    return frames;
+}
+
+float Stage::NextBlinkWait() {
+    m_blinkRandom = m_blinkRandom * 1664525u + 1013904223u;
+    const float unit = static_cast<float>(m_blinkRandom >> 8) / 16777216.0f;
+    return kBlinkMinWait + (kBlinkMaxWait - kBlinkMinWait) * unit;
+}
+
+void Stage::UpdateFace(const std::string& name, Actor& actor, const float dt) {
+    std::size_t blinkFrames = 0;
+    std::size_t mouthFrames = 0;
+    // Only descriptors already parsed: the frame loop never reads a file.
+    if (const auto portrait = m_layeredPortraits.find(actor.imagePath);
+        portrait != m_layeredPortraits.end()) {
+        for (const auto& layer : portrait->second.layers) {
+            blinkFrames = std::max(blinkFrames, layer.blink.size());
+            mouthFrames = std::max(mouthFrames, layer.mouth.size());
+        }
+    }
+    if (blinkFrames == 0 || m_fastForward || actor.exiting) {
+        actor.blinkTime = -1.0f;
+    } else {
+        if (actor.blinkWait < 0.0f) actor.blinkWait = NextBlinkWait();
+        if (actor.blinkTime >= 0.0f) {
+            actor.blinkTime += dt;
+            const float length = kBlinkFrameSeconds *
+                                 static_cast<float>(2 * blinkFrames - 1);
+            if (actor.blinkTime >= length) {
+                actor.blinkTime = -1.0f;
+                actor.blinkWait = NextBlinkWait();
+            }
+        } else if ((actor.blinkWait -= dt) <= 0.0f) {
+            actor.blinkTime = 0.0f;
+        }
+    }
+    int mouth = -1;
+    const float level = name == m_lipSyncCharacter ? m_lipSyncLevel : 0.0f;
+    if (mouthFrames > 0 && level > kMouthQuiet && !m_fastForward) {
+        const float open = std::min(1.0f, (level - kMouthQuiet) / (kMouthLoud - kMouthQuiet));
+        mouth = std::min(static_cast<int>(mouthFrames) - 1,
+                         static_cast<int>(open * static_cast<float>(mouthFrames)));
+    }
+    actor.mouthHold = std::max(0.0f, actor.mouthHold - dt);
+    if (mouthFrames == 0) {
+        actor.mouthFrame = -1;
+    } else if (mouth != actor.mouthFrame && actor.mouthHold <= 0.0f) {
+        actor.mouthFrame = mouth;
+        actor.mouthHold = kMouthFrameSeconds;
+    }
+}
+
 std::optional<std::string> Stage::CharacterPortraitBase(const std::string& name) {
     const auto image = CharacterImage(name);
     const auto* portrait = image ? ResolveLayeredPortrait(*image) : nullptr;
@@ -1606,6 +1704,7 @@ void Stage::Update(float dt) {
     for (auto it = m_actors.begin(); it != m_actors.end();) {
         Actor& a = it->second;
         AdvanceActorAction(a.action, dt);
+        UpdateFace(it->first, a, dt);
         a.alpha = Approach(a.alpha, a.targetAlpha, kAlphaSpeed, dt);
         a.x = Approach(a.x, a.targetX, kSlideSpeed, dt);
         if (!a.prevImagePath.empty()) {
@@ -1991,15 +2090,31 @@ void Stage::Render() {
             for(std::size_t index=firstLayer;
                 index<portrait->layers.size() && index<layerLimit; ++index){
                 const auto& layer=portrait->layers[index];
+                const auto layerAlpha=static_cast<std::uint8_t>(std::clamp(
+                    combinedAlpha*static_cast<float>(layer.opacity)/255.0f,
+                    0.0f,255.0f));
                 m_renderer.DrawImage(
                     layer.path,
                     {local.x+layer.x*spriteScale,
                      local.y+layer.y*spriteScale,
                      layer.width*spriteScale,
                      layer.height*spriteScale},
-                    static_cast<std::uint8_t>(std::clamp(
-                        combinedAlpha*static_cast<float>(layer.opacity)/255.0f,
-                        0.0f,255.0f)));
+                    layerAlpha);
+                // Blink and mouth frames cover the expression they belong
+                // to; an outgoing expression keeps its own still face.
+                if(path!=actor.imagePath)continue;
+                const auto drawFrame=[&](const std::vector<sdk::PortraitFrame>& frames,
+                                         const int frame){
+                    if(frame<0||frames.empty())return;
+                    const auto& image=frames[std::min<std::size_t>(
+                        static_cast<std::size_t>(frame),frames.size()-1)];
+                    m_renderer.DrawImage(image.path,
+                        {local.x+image.x*spriteScale,local.y+image.y*spriteScale,
+                         image.width*spriteScale,image.height*spriteScale},
+                        layerAlpha);
+                };
+                drawFrame(layer.blink,BlinkFrame(actor.blinkTime,layer.blink.size()));
+                drawFrame(layer.mouth,actor.mouthFrame);
             }
         }else{
             m_renderer.DrawImage(path,local,

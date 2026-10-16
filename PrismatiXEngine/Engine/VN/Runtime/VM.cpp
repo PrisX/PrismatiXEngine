@@ -1337,6 +1337,8 @@ void VM::EndTimerWait() {
 
 void VM::Update(std::uint64_t nowMs, float dt) {
     m_nowMs = nowMs;
+    // The line's character moves its mouth while its voice plays.
+    m_stage.SetLipSync(m_dialogue.State().faceCharacter, m_audio.VoiceLevel());
     m_stage.Update(dt);
     if (m_state == VMState::Running) {
         Run();

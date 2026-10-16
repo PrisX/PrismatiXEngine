@@ -928,6 +928,18 @@ test("compileProject validates portraits referenced outside Story and collects e
   assert.ok(catalogOnly.artifact?.dependencies.some((dependency) =>
     dependency.source === "Assets/Characters/Layers/face.png"));
 
+  const animated = compile(JSON.stringify({...descriptor, layers: [
+    {...descriptor.layers[0], role: "base"},
+    {...descriptor.layers[1], role: "expression",
+      blink: [{path: "Assets/Characters/Layers/eyes-shut.png", width: 174, height: 40}],
+      mouth: [{path: "Assets/Characters/Layers/mouth-open.png", x: 360, y: 200,
+        width: 40, height: 20}]}]}));
+  assert.equal(animated.valid, true, JSON.stringify(animated.diagnostics));
+  for (const path of ["Assets/Characters/Layers/eyes-shut.png",
+    "Assets/Characters/Layers/mouth-open.png"])
+    assert.ok(animated.artifact?.dependencies.some((dependency) =>
+      dependency.source === path), `${path} (a face frame) is packaged`);
+
   const invalid = compile(JSON.stringify({...descriptor, height: 0}));
   assert.equal(invalid.valid, false);
   assert.ok(invalid.diagnostics.some((diagnostic) =>

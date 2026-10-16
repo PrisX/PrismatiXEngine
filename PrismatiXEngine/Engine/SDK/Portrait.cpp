@@ -32,6 +32,32 @@ bool SafePath(const std::string_view path) {
     }
     return true;
 }
+bool Frames(const Json& layer, const char* name, const PortraitLayer& owner,
+            std::vector<PortraitFrame>& out) {
+    const auto field = layer.find(name);
+    if (field == layer.end()) return true;
+    if (!field->is_array() || field->empty() || field->size() > 16 ||
+        owner.role != PortraitLayer::Role::Expression)
+        return false;
+    out.reserve(field->size());
+    for (const auto& value : *field) {
+        if (!value.is_object()) return false;
+        const auto path = value.find("path");
+        if (path == value.end() || !path->is_string() ||
+            !SafePath(path->get_ref<const std::string&>()) ||
+            path->get_ref<const std::string&>().ends_with(".pxportrait"))
+            return false;
+        PortraitFrame frame{path->get<std::string>(), owner.x, owner.y, 0.0f, 0.0f};
+        if (!Number(value, "x", frame.x, -1000000, 1000000, false) ||
+            !Number(value, "y", frame.y, -1000000, 1000000, false) ||
+            !Number(value, "width", frame.width, 0, 16384, true) ||
+            !Number(value, "height", frame.height, 0, 16384, true) ||
+            frame.width <= 0 || frame.height <= 0)
+            return false;
+        out.push_back(std::move(frame));
+    }
+    return true;
+}
 }  // namespace
 
 std::optional<LayeredPortrait> ParseLayeredPortrait(const std::string_view source) {
@@ -82,6 +108,9 @@ std::optional<LayeredPortrait> ParseLayeredPortrait(const std::string_view sourc
         if (name == "base") layer.role = PortraitLayer::Role::Base;
         else if (name == "expression") layer.role = PortraitLayer::Role::Expression;
         else return std::nullopt;
+        if (!Frames(value, "blink", layer, layer.blink) ||
+            !Frames(value, "mouth", layer, layer.mouth))
+            return std::nullopt;
         portrait.layers.push_back(std::move(layer));
     }
     return portrait;

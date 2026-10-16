@@ -1813,6 +1813,38 @@ count, roles, and all `base` layers are identical while at least one
 `false` retain their explicit behavior, including on portraits without roles. This makes a changed outfit or pose safe without per-story-line
 transition flags; it does not infer semantic roles from filenames.
 
+### Blinking and lip sync
+
+An `expression` layer can carry `blink` and `mouth` frame lists. Each frame
+is a texture drawn over the expression, in canvas coordinates (`x`/`y`
+default to the layer's own):
+
+```ts
+{path: "Assets/Characters/Layers/face-smile.png", x: 302, y: 153,
+  width: 174, height: 74, role: "expression",
+  blink: [
+    {path: "Assets/Characters/Layers/eyes-half.png", width: 174, height: 40},
+    {path: "Assets/Characters/Layers/eyes-shut.png", width: 174, height: 40},
+  ],
+  mouth: [
+    {path: "Assets/Characters/Layers/mouth-ajar.png", x: 372, y: 205, width: 34, height: 18},
+    {path: "Assets/Characters/Layers/mouth-open.png", x: 372, y: 205, width: 34, height: 18},
+  ]}
+```
+
+- **Blink** frames go from half-closed to closed. Every 2.5–6 seconds (at
+  random, per character) the Stage plays them in order and back, 50 ms each.
+- **Mouth** frames go from slightly to fully open. While a line's voice
+  plays, the character named by the line (`hero: ...` or `char=`) opens its
+  mouth with the voice's loudness; quiet passages show the expression's own
+  closed mouth. Other characters on stage keep their mouths shut.
+
+Frames are drawn only on the expression currently shown (an expression that
+is fading out keeps its still face), stop while skipping, and are not saved:
+a loaded game simply starts a new blink timer. Frames need the layer to be
+an `expression` layer (`PXSDKSEM1351`), and their textures are packaged with
+the descriptor.
+
 When a character's expressions are role-tagged descriptors, `[face alias
 e0023]` changes only the face: the compiler finds, for each set of `base`
 layers, the expression whose `expression` layer file is named `e0023`, and

@@ -190,6 +190,17 @@ public:
         const std::string& name) const;
     // The image a visible (not exiting) character shows, if any.
     [[nodiscard]] std::optional<std::string> CharacterImage(const std::string& name) const;
+    // Lip sync: the character whose voice line is playing and its loudness
+    // (0..1). Expression layers with mouth frames open with the level;
+    // other actors keep their expression's own mouth. Not saved.
+    void SetLipSync(std::string character, float level);
+    // The blink and mouth frame a visible actor draws now (-1: none).
+    struct FaceFrames {
+        int blink = -1;
+        int mouth = -1;
+    };
+    [[nodiscard]] std::optional<FaceFrames> CharacterFaceFrames(
+        const std::string& name) const;
     // The `base` layer paths (one per line) of the layered
     // portrait a visible character shows; Story [face] matches its body.
     [[nodiscard]] std::optional<std::string> CharacterPortraitBase(const std::string& name);
@@ -398,6 +409,11 @@ private:
         bool exiting = false;
         ActorActionState action;
         float rotation = 0.0f;  // placement turn about the sprite centre
+        // Face animation is not saved; a loaded game blinks on a new timer.
+        float blinkWait = -1.0f;  // seconds until the next blink, <0 unset
+        float blinkTime = -1.0f;  // seconds into the current blink, <0 none
+        int mouthFrame = -1;
+        float mouthHold = 0.0f;   // a mouth frame shows at least this long
     };
 
     struct Layer {
@@ -546,6 +562,8 @@ private:
     [[nodiscard]] graphics::TextureHandle ReadyTexture(const std::string& path);
     void UpdateTweens(float dt);
     void UpdateMotion(float dt);
+    void UpdateFace(const std::string& name, Actor& actor, float dt);
+    [[nodiscard]] float NextBlinkWait();
     // Parses descriptors that finished reading and preloads their layers.
     void HarvestPortraitReads();
     void EmitMotionMarkers(double from, double to, bool includeStart);
@@ -618,6 +636,9 @@ private:
     // Descriptors lookahead is reading on a worker thread.
     std::unordered_map<std::string, jobs::Job<std::optional<std::string>>> m_portraitReads;
     std::uint64_t m_portraitAssetSession = 0;
+    std::string m_lipSyncCharacter;
+    float m_lipSyncLevel = 0.0f;
+    std::uint32_t m_blinkRandom = 0x9e3779b9u;
 };
 
 }
