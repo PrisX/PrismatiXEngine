@@ -795,6 +795,40 @@ test("validate reads shared storyMacros files and reports a missing one", async 
   assert.equal(validated.status, 0, validated.stdout + validated.stderr);
 });
 
+test("ids skips shared storyMacros files: calls are identified where they are made", async () => {
+  const value = await fixture();
+  const manifest = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
+  await write(value.project, JSON.stringify({...manifest, storyMacros: ["Story/_macros.pxstory"]}));
+  const macroPath = join(value.root, "Story/_macros.pxstory");
+  const macroSource = "[macro hello who]\n@%who Hello.\n[endmacro]\n";
+  await write(macroPath, macroSource);
+  const scenePath = join(value.root, "Story/main.pxstory");
+  await write(scenePath, "[hello guide]\n[end]\n");
+  const externalized = run(["ids", value.project, "--external", "--write"]);
+  assert.equal(externalized.status, 0, externalized.stderr);
+  assert.equal((await stat(`${scenePath}.pxids.json`)).isFile(), true);
+  await assert.rejects(stat(`${macroPath}.pxids.json`));
+  assert.equal(run(["ids", value.project, "--check"]).status, 0);
+  await write(scenePath, "; @prismatix-ids\n[hello guide]\nAfter the call.\n[end]\n");
+  const synced = run(["ids", value.project, "--sync", "--write", "--accept-removals"]);
+  assert.equal(synced.status, 0, synced.stdout + synced.stderr);
+  assert.doesNotMatch(synced.stderr, /PXSTORY1411/u);
+  assert.equal(run(["ids", value.project, "--sync", "--check"]).status, 0);
+  await assert.rejects(stat(`${macroPath}.pxids.json`));
+  assert.equal(await readFile(macroPath, "utf8"), macroSource);
+  const validated = run(["validate", value.project]);
+  assert.equal(validated.status, 0, validated.stdout + validated.stderr);
+  // A macro file registered after the scenes went external needs no sidecar either.
+  await write(join(value.root, "Story/_more.pxstory"), "[macro bye who]\n@%who Bye.\n[endmacro]\n");
+  await write(value.project, JSON.stringify({...manifest,
+    storyMacros: ["Story/_macros.pxstory", "Story/_more.pxstory"]}));
+  await write(scenePath, "; @prismatix-ids\n[hello guide]\nAfter the call.\n[bye guide]\n[end]\n");
+  const later = run(["ids", value.project, "--sync", "--write", "--accept-removals"]);
+  assert.equal(later.status, 0, later.stdout + later.stderr);
+  assert.equal(run(["ids", value.project, "--check"]).status, 0);
+  assert.equal(run(["validate", value.project]).status, 0);
+});
+
 test("resourceIncludes package unreferenced UI families and audio without artifact post-processing", async () => {
   const value = await fixture();
   const manifest = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;

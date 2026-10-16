@@ -2815,8 +2815,12 @@ async function identitySources(argument?: string): Promise<{
   const raw = object(loaded.project) ?? {};
   const name = typeof raw.name === "string" ? raw.name : "PrismatiX Game";
   const documentId = typeof raw.id === "string" ? raw.id : starterProjectId(name);
+  // Shared macro files (storyMacros) emit no operations of their own; each
+  // expansion is identified at its call site, so they need no identity map.
+  const macroFiles = new Set((Array.isArray(raw.storyMacros) ? raw.storyMacros : [])
+    .filter((path): path is string => typeof path === "string"));
   const sources = Object.entries(loaded.sourceFiles)
-    .filter(([path]) => path.toLowerCase().endsWith(".pxstory"))
+    .filter(([path]) => path.toLowerCase().endsWith(".pxstory") && !macroFiles.has(path))
     .map(([virtualPath, source]) => ({absolutePath: projectFile(loaded.root, virtualPath),
       virtualPath, source}));
   if (sources.length === 0) throw new Error("Project dependency graph contains no Story source files");
