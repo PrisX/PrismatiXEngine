@@ -27,7 +27,7 @@ test("starter prepares a compilable branch story and preserves binary font/image
     const manifest = JSON.parse(await readFile(result.project, "utf8"));
     assert.equal(manifest.name, 'My "story"');
     assert.equal(manifest.defaultLocale, "zh-TW");
-    for (const file of ["Content/Fonts/NotoSansTC-Bold.ttf", "Assets/window.png", "Assets/guide.png"]) {
+    for (const file of ["Content/Fonts/NotoSansTC-Bold.ttf", "Assets/room-dusk.jpg", "Assets/hachi-smile.png"]) {
       const actual = await readFile(join(target, file));
       const expected = await readFile(join(packageRoot, "templates/minimal", file));
       assert.deepEqual(actual, expected);
@@ -43,7 +43,7 @@ test("starter prepares a compilable branch story and preserves binary font/image
     assert.doesNotMatch(story, /\[id\s/u);
     // The starter shows the shortest forms: storyAssets names, a choice
     // block and positional jump targets.
-    assert.match(story, /\[bg window\]/u);
+    assert.match(story, /\[bg room-dusk\]/u);
     assert.match(story, /\[choice\]\r?\n- 一起看看星星 -> stars\r?\n/u);
     assert.match(story, /\[jump finish\]/u);
     assert.equal(identities.format, "PrismatiXStoryIdentityMap");

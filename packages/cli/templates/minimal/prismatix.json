@@ -6,7 +6,9 @@
   "uiEntryPoints": {"title": "Content/UI/Title.tsx"},
   "storyAssets": {"bg": ["Assets"]},
   "assets": [
-    {"id":"10000000-0000-4000-8000-000000000001","name":"Window at dusk","kind":"background","source":"Assets/window.png"},
+    {"id":"10000000-0000-4000-8000-000000000001","name":"Room at dusk","kind":"background","source":"Assets/room-dusk.jpg"},
+    {"id":"10000000-0000-4000-8000-000000000002","name":"Room at night","kind":"background","source":"Assets/room-night.jpg"},
+    {"id":"10000000-0000-4000-8000-000000000003","name":"Coast road at sunset","kind":"background","source":"Assets/coast-sunset.jpg"},
     {"id":"30000000-0000-4000-8000-000000000001","name":"Noto Sans TC","kind":"font","source":"Content/Fonts/NotoSansTC-Bold.ttf"},
     {"id":"40000000-0000-4000-8000-000000000001","name":"Font license","kind":"license","source":"Content/Fonts/OFL-1.1.txt"},
     {"id":"50000000-0000-4000-8000-000000000001","name":"Starter provenance","kind":"provenance","source":"ASSET_PROVENANCE.md"}

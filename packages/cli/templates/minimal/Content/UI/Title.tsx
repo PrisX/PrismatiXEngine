@@ -20,7 +20,7 @@ const menu = [
 export default (
   <Scene name={`${title} Title`} width={width} height={height}>
     <Group name="TitleRoot" fill accessibilityRole="window" accessibilityLabel={title}>
-      <Image name="Backdrop" path="Assets/window.png" fill scaleMode="Fill" />
+      <Image name="Backdrop" path="Assets/coast-sunset.jpg" fill scaleMode="Fill" />
       {/* Darkens the left third, where the title and menu sit. */}
       <ColorRect name="Scrim" fill color="#000000B3"
         style={{gradient: ["#000000B3", "#00000000", "horizontal"]}} />

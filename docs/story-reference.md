@@ -229,7 +229,7 @@ that character speaks. Give it in the `.pxcharacter` as `facePath` (lowered
 to a cataloged `faceAssetId`, like `assetPath`):
 
 ```json
-{"name": "微笑", "aliases": ["smile"], "assetPath": "Assets/guide.png",
+{"name": "微笑", "aliases": ["smile"], "assetPath": "Assets/hachi-smile.png",
  "facePath": "Assets/Faces/guide-smile.png"}
 ```
 
@@ -407,10 +407,10 @@ Macros every scene repeats belong in shared macro files, listed in
 
 ## Characters, backgrounds and sound
 
-The starter registers `guide`, its `smile` expression and an original background. Reuse these without hand-writing another UUID:
+The starter registers `guide`, its `smile`, `happy` and `talk` expressions and three backgrounds. Reuse these without hand-writing another UUID:
 
 ```pxstory
-[bg window]
+[bg room-dusk]
 [show guide expression=smile position=left x=0 y=0 scale=0.8]
 @guide
 這裡就是新的背景。
@@ -424,8 +424,8 @@ the background or independent stage layers. The same operation is available
 to runtime scripts as `Engine.ClearCharacters(false)` or through the typed
 runtime SDK as `ctx.stage.clearCharacters(false)`.
 
-`[bg window]` works because the starter's `prismatix.json` declares
-`"storyAssets": {"bg": ["Assets"]}`; `[bg Assets/window.png]` is the same
+`[bg room-dusk]` works because the starter's `prismatix.json` declares
+`"storyAssets": {"bg": ["Assets"]}`; `[bg Assets/room-dusk.jpg]` is the same
 operation.
 
 Characters and image layers are hidden with the same verb:

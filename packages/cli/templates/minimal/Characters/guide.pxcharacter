@@ -2,5 +2,9 @@
   "format":"PrismatiXCharacter","schemaRevision":1,
   "revision":1,
   "displayName":"小光","aliases":["guide"],
-  "expressions":[{"name":"微笑","aliases":["smile","default"],"assetPath":"Assets/guide.png","thumbnailAssetId":null}]
+  "expressions":[
+    {"name":"微笑","aliases":["smile","default"],"assetPath":"Assets/hachi-smile.png","thumbnailAssetId":null},
+    {"name":"開心","aliases":["happy"],"assetPath":"Assets/hachi-happy.png","thumbnailAssetId":null},
+    {"name":"說話","aliases":["talk"],"assetPath":"Assets/hachi-talk.png","thumbnailAssetId":null}
+  ]
 }

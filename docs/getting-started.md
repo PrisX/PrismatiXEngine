@@ -96,7 +96,7 @@ A name after `@` speaks; an empty line returns to narration. Labels are
 a character:
 
 ```pxstory
-[bg window]
+[bg room-dusk]
 [show guide smile left]
 @guide 這裡就是新的背景。
 [move guide position=right duration=400]

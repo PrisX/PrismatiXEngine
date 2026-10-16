@@ -1,6 +1,6 @@
 ; Edit dialogue, save, and watch Preview update. The SDK keeps stable save IDs beside this file.
 *start
-[bg window]
+[bg room-dusk]
 [show guide smile center]
 @guide
 你好，我是小光。這是你的第一個故事。
@@ -12,13 +12,14 @@
 [endchoice]
 
 *stars
-@guide
-我們打開窗，等第一顆星亮起。明天也一起來吧！
+[bg room-night duration=800ms]
+@guide[happy] 天黑了。我們把燈關掉，等第一顆星亮起。
+@guide 明天也一起來吧！
 [jump finish]
 
 *story
-@guide
-那就從「很久很久以前」開始。下一句，交給你來寫。
+@guide[talk] 那就從「很久很久以前」開始。
+@guide 下一句，交給你來寫。
 
 *finish
 你可以用對話框右上角的 SAVE／LOAD 保存或讀取進度，再試另一個選項。
