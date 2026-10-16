@@ -115,7 +115,13 @@ test("the contract names every control the C++ Player looks up by a literal name
   const {playerLookupNames} = await import("../src/index.js");
   const root = new URL("../../../../PrismatiXEngine/", import.meta.url);
   const sources: string[] = [];
-  for (const file of ["Engine/UI/GalgameUI.cpp", "Applications/Player/PlayerApp.cpp"]) {
+  const {readdir} = await import("node:fs/promises");
+  let playerFiles: string[];
+  try {
+    playerFiles = (await readdir(new URL("Applications/Player/", root)))
+      .filter((name) => name.endsWith(".cpp")).map((name) => `Applications/Player/${name}`);
+  } catch { t.skip("engine sources are not beside this package"); return; }
+  for (const file of ["Engine/UI/GalgameUI.cpp", ...playerFiles]) {
     try { sources.push(await readFile(new URL(file, root), "utf8")); }
     catch { t.skip("engine sources are not beside this package"); return; }
   }
@@ -166,4 +172,30 @@ test("save management, settings preview and the SlotComment field are published 
   new Map([["Content/UI/Save.pxui", save as never]]));
   assert.deepEqual(diagnostics.map(({code, details}) => [code, details?.split(":")[1]]),
     [["PXBUILD1101", "SlotComment"]]);
+});
+
+test("the named-node table keeps each route's names and the types the Player casts to", async () => {
+  const {playerNamedNodes, playerLookupNames, validatePlayerUiContract: validate} = await import("../src/index.js");
+  const table = playerNamedNodes();
+  assert.deepEqual(table.routes.hud!.TextInput, ["LineEdit"]);
+  assert.deepEqual(table.routes.hud!.Dialogue, ["Label", "RichTextLabel"]);
+  assert.deepEqual(table.routes.save!.Slots, ["GridView"]);
+  assert.deepEqual(table.routes.settings!.Master, ["Slider"]);
+  assert.equal(table.routes.title, undefined);
+  assert.deepEqual(table.anyRoute.ConfirmDialog, []);
+  assert.ok(table.prefixes.includes("VoiceProfile_"));
+  // The flat name set is the union of the table.
+  const {names} = playerLookupNames();
+  assert.deepEqual(new Set([...Object.values(table.routes).flatMap(Object.keys),
+    ...Object.keys(table.anyRoute)]), names);
+  // Callers get a copy; the contract itself cannot be edited through it.
+  (table.routes.hud!.TextInput as string[]).push("Label");
+  assert.deepEqual(playerNamedNodes().routes.hud!.TextInput, ["LineEdit"]);
+  // A TextInput of the wrong type in the HUD is reported like the others.
+  const hud = document([
+    jsx(Text, {name: "Dialogue", text: "", position: [0, 0], size: [200, 20]}),
+    jsx(Text, {name: "TextInput", text: "", position: [0, 30], size: [200, 20]}),
+  ]);
+  assert.deepEqual(validate({uiEntryPoints: {hud: "Content/UI/HUD.tsx"}},
+    new Map([["Content/UI/HUD.pxui", hud as never]])).map(({code}) => code), ["PXBUILD1101"]);
 });

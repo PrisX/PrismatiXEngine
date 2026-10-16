@@ -25,6 +25,8 @@ const namedNodes: Readonly<Record<string, Readonly<Record<string, readonly strin
     ChapterNumber: ["SpriteText"], ChapterBanner: anyType, ChoiceList: anyType,
     Face: ["TextureRect"], NVLPanel: anyType, ADVPanel: anyType, MessageWindow: anyType,
     DockArea: anyType,
+    // Story [input] types into this field (PlayerActions BeginTextInput).
+    TextInput: ["LineEdit"],
   },
   save: saveLoadNodes,
   load: saveLoadNodes,
@@ -48,6 +50,28 @@ const anyRouteNodes: Readonly<Record<string, readonly string[]>> = {
 };
 // Name prefixes the Player completes at runtime (per voice profile or slot).
 const namedNodePrefixes = ["VoiceProfile_", "VoiceProfileValue_", "VoiceProfileMute_", "Slot"];
+
+/**
+ * The controls the stock Player finds by name: per route (`hud`, `save`,
+ * `settings`, ...), in whichever route is showing (`anyRoute`), and by
+ * name prefix. Each name maps to the runtime types the Player casts it to;
+ * an empty list means any type. For editors that show which names matter.
+ */
+export interface PlayerNamedNodeTable {
+  readonly routes: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>>;
+  readonly anyRoute: Readonly<Record<string, readonly string[]>>;
+  readonly prefixes: readonly string[];
+}
+
+export function playerNamedNodes(): PlayerNamedNodeTable {
+  const copy = (table: Readonly<Record<string, readonly string[]>>) =>
+    Object.fromEntries(Object.entries(table).map(([name, types]) => [name, [...types]]));
+  return {
+    routes: Object.fromEntries(Object.entries(namedNodes).map(([route, table]) => [route, copy(table)])),
+    anyRoute: copy(anyRouteNodes),
+    prefixes: [...namedNodePrefixes],
+  };
+}
 
 /** Every control name the stock Player looks up, for contract drift tests. */
 export function playerLookupNames(): {readonly names: ReadonlySet<string>;
