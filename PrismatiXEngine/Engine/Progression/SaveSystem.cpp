@@ -1560,6 +1560,7 @@ bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
     if (!s.thumbnailPng.empty()) {
         state["thumb"] = Base64Encode(s.thumbnailPng);
     }
+    if (!s.comment.empty()) state["comment"] = s.comment;
     j["state"] = std::move(state);
     j["integrityHash"] = crypto::Sha256Hex(j.dump());
     return SaveJson(SlotPath(slot), j, m_encrypt ? &m_key : nullptr);
@@ -1672,6 +1673,7 @@ std::optional<SaveSnapshot> ParseSaveEnvelope(
             if(!payload["thumb"].is_string()){SaveLoadError(path,"Save thumbnail must be a string");return std::nullopt;}
             s.thumbnailPng = Base64Decode(payload["thumb"].get<std::string>());
         }
+        s.comment = payload.value("comment", std::string{});
         return s;
     } catch(const Json::exception& error) {
         SaveLoadError(path,"Save payload has invalid field types",error.what());
@@ -1719,6 +1721,7 @@ SlotInfo SaveSystem::Peek(int slot) const {
             if(!payload["thumb"].is_string()){SaveLoadError(path,"Save thumbnail must be a string");return info;}
             info.thumbnailPng = Base64Decode(payload["thumb"].get<std::string>());
         }
+        info.comment = payload.value("comment", std::string{});
         info.exists = true;
     } catch(const std::exception& error) {
         SaveLoadError(path,"Save metadata has invalid field types",error.what());
@@ -1738,6 +1741,67 @@ std::vector<SlotInfo> SaveSystem::List(int count) const {
 bool SaveSystem::Delete(int slot) {
     std::error_code ec;
     return std::filesystem::remove(PathFromUtf8(SlotPath(slot)), ec);
+}
+
+// Saves do not record their slot, so a copy or move is a file operation and
+// the bytes (and their encryption) stay exactly as written.
+bool SaveSystem::Copy(const int from, const int to) {
+    if (from == to || !Peek(from).exists) return false;
+    std::error_code ec;
+    std::filesystem::copy_file(PathFromUtf8(SlotPath(from)), PathFromUtf8(SlotPath(to)),
+                               std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) SaveLoadError(SlotPath(to), "Could not copy the save", ec.message());
+    return !ec;
+}
+
+bool SaveSystem::Move(const int from, const int to) {
+    if (from == to || !Peek(from).exists) return false;
+    const auto source = PathFromUtf8(SlotPath(from));
+    const auto target = PathFromUtf8(SlotPath(to));
+    std::error_code ec;
+    if (!std::filesystem::exists(target, ec)) {
+        std::filesystem::rename(source, target, ec);
+        if (ec) SaveLoadError(SlotPath(to), "Could not move the save", ec.message());
+        return !ec;
+    }
+    // Swap through a temporary name; on failure undo what was done.
+    auto parked = target;
+    parked += ".swap";
+    std::filesystem::rename(target, parked, ec);
+    if (ec) {
+        SaveLoadError(SlotPath(to), "Could not swap the saves", ec.message());
+        return false;
+    }
+    std::filesystem::rename(source, target, ec);
+    if (ec) {
+        std::error_code undo;
+        std::filesystem::rename(parked, target, undo);
+        SaveLoadError(SlotPath(to), "Could not swap the saves", ec.message());
+        return false;
+    }
+    std::filesystem::rename(parked, source, ec);
+    if (ec) {
+        std::error_code undo;
+        std::filesystem::rename(target, source, undo);
+        std::filesystem::rename(parked, target, undo);
+        SaveLoadError(SlotPath(from), "Could not swap the saves", ec.message());
+        return false;
+    }
+    return true;
+}
+
+// Edits the envelope itself, so no other field passes through a reload.
+bool SaveSystem::SetComment(const int slot, const std::string& comment) {
+    const std::string path = SlotPath(slot);
+    auto loaded = LoadJsonWithFallback(path, m_encrypt ? &m_key : nullptr, m_fallbackKeys);
+    if (!loaded.Loaded() || !ParseSaveEnvelope(loaded.value->dump(), path)) return false;
+    if (loaded.UsedFallback() && !BackupPersistenceFile(path)) return false;
+    Json j = std::move(*loaded.value);
+    if (comment.empty()) j["state"].erase("comment");
+    else j["state"]["comment"] = comment;
+    j.erase("integrityHash");
+    j["integrityHash"] = crypto::Sha256Hex(j.dump());
+    return SaveJson(path, j, m_encrypt ? &m_key : nullptr);
 }
 
 }

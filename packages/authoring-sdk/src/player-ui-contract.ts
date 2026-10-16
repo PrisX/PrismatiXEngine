@@ -12,7 +12,7 @@ const labelTypes = ["Label", "RichTextLabel"];
 const anyType: readonly string[] = [];
 const saveLoadNodes = {
   Slots: ["GridView"], SlotButton: ["Button", "TextureButton"],
-  SaveLoadConfirm: anyType, SaveLoadError: anyType,
+  SaveLoadConfirm: anyType, SaveLoadError: anyType, SlotComment: ["LineEdit"],
 };
 // Route-scoped node names the Player looks up, and the types it casts to.
 // PlayerUiContractTests keeps this in step with the C++ lookups.
@@ -57,7 +57,8 @@ export function playerLookupNames(): {readonly names: ReadonlySet<string>;
 }
 
 const itemFields: Readonly<Record<string, readonly string[]>> = {
-  "saveLoad.slots": ["key", "number", "argument", "image", "occupied", "title", "subtitle", "enabled"],
+  "saveLoad.slots": ["key", "number", "argument", "image", "occupied", "title", "subtitle",
+    "comment", "pending", "enabled"],
   "gallery.items": ["key", "title", "image", "enabled", "locked"],
   "backlog.entries": ["key", "speaker", "text", "voice", "choice"],
   "dialogue.choices": ["key", "text", "rect"],
@@ -69,7 +70,8 @@ const reservedRoots = new Set(["dialogue", "chapter", "music", "saveLoad", "gall
 
 /** Player operations `player.confirmations` may ask before. */
 export const confirmableOperations = ["quickSave", "quickLoad", "save", "overwrite", "load",
-  "returnToTitle", "exit", "backlogJump", "previousChoice", "nextChoice", "resetSettings"] as const;
+  "returnToTitle", "exit", "backlogJump", "previousChoice", "nextChoice", "resetSettings",
+  "deleteSave", "copySave", "moveSave"] as const;
 
 /** Player behaviours a `player.options` entry may bind with `binds`. */
 export const optionBindings = ["textSpeed", "autoWait", "skipUnread", "messageWindowOpacity",
@@ -130,13 +132,15 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
   return new Set([
     "dialogue.speaker", "dialogue.text", "dialogue.choices", "chapter.title", "music.title",
     "saveLoad.slots", "gallery.items", "backlog.entries", "title.confirm.visible",
-    ...Array.from({length: 12}, (_, slot) => ["image", "title", "subtitle", "enabled"]
+    ...Array.from({length: 12}, (_, slot) => ["image", "title", "subtitle", "comment", "enabled"]
       .map((field) => `saveLoad.slot${slot}.${field}`)).flat(),
     ...["fullscreen", "windowed", "skipReadOnly", "skipAll", "masterValue", "bgmValue",
       "seValue", "voiceValue", "textSpeedValue", "duckOn", "duckOff",
       "voiceCarryOn", "voiceCarryOff"].map((field) => `settings.${field}`),
     ...["visible", "save", "load", "overwrite"].map((field) => `saveLoad.confirm.${field}`),
     "saveLoad.error.visible",
+    ...["visible", "copy", "move", "slot"].map((field) => `saveLoad.pending.${field}`),
+    ...["visible", "slot"].map((field) => `saveLoad.comment.${field}`),
     ...["visible", "reset", "exit"].map((field) => `system.confirm.${field}`),
     ...range("settings.page", 4), ...range("replay.page", 4),
     ...range("saveLoad.page", Number.isSafeInteger(pages) && pages > 0 ? pages : 1),

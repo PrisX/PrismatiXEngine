@@ -726,7 +726,8 @@ export interface TextFieldProps extends UiNodeProps {
 /**
  * A single-line text field. Name it `TextInput` in the HUD and a Story
  * `[input var=name]` uses it to ask the player for text; Enter or an
- * `input.accept` button stores the text.
+ * `input.accept` button stores the text. On a save or load screen, name it
+ * `SlotComment` to edit slot comments (`actions.save.comment`).
  */
 export function TextField(props: TextFieldProps): UiElement {
   const {text, placeholder, ...rest} = props;

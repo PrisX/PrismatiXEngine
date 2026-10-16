@@ -35,6 +35,10 @@ struct GalgameItem {
     bool disabled = false;
     std::string command;
     std::string argument;
+    // Save slots only: the player's comment, and whether the slot is the
+    // source of a copy or move waiting for its target.
+    std::string comment;
+    bool pending = false;
 };
 // One line of the backlog as authored UI sees it (backlog.entries).
 struct BacklogEntryPresentation {

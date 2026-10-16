@@ -30,13 +30,14 @@ that is still open, roughly in priority order.
   and `mouth` frame lists; the Stage blinks on a random 2.5-6 s timer and
   opens the speaking character's mouth with the voice track's RMS level
   (metered by a raw callback on the voice track). Not saved.
+- Save management: `save.delete`, `save.copy`, `save.move` (a move onto a
+  save swaps them; the next activated slot is the target), `save.comment`
+  with a `SlotComment` field, and `deleteSave`/`copySave`/`moveSave`
+  confirmations. Copies and moves are file operations, so saves stay
+  byte-identical.
 
 ## Open, larger items
 
-2. **Save management.** Senren/Sakura offer copy, swap, delete and an editable
-   comment per slot; the Player has no deletion at all (Sakura's port omits its
-   `del` dialog for that reason). Add `save.delete`, `save.copy`,
-   `save.move` actions with confirmations, and a `comment` slot field.
 3. **Live preview in settings.** Artemis shows sample text typing at the chosen
    speed and auto-advancing. Publish a `settings.preview` typewriter string the
    Config screen can bind.

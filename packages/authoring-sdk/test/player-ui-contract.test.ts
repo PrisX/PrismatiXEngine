@@ -145,3 +145,23 @@ test("textKey binds locale strings, and an unknown key is reported", () => {
     ["PXBUILD1100", "The Player publishes no UI data at strings.save.incompatable; did you mean strings.save.incompatible?"],
   ]);
 });
+
+test("save management data and the SlotComment field are part of the save contract", () => {
+  const save = document([
+    jsx(Text, {name: "Picking", text: "", position: [0, 0], size: [100, 20],
+      bind: {visible: "saveLoad.pending.visible", text: "saveLoad.pending.slot"}}),
+    jsx(Text, {name: "Editing", text: "", position: [0, 30], size: [100, 20],
+      bind: {visible: "saveLoad.comment.visible", text: "saveLoad.slot3.comment"}}),
+    jsx(ItemsGrid, {name: "Slots", position: [0, 60], size: [400, 200],
+      items: {path: "saveLoad.slots", key: "key"}, columns: 2, itemExtent: [200, 50],
+      children: jsx(Group, {name: "Cell", size: [200, 50], children: [
+        jsx(Text, {name: "Note", text: "", position: [0, 0], size: [200, 20],
+          bind: {text: "item.comment", visible: "!item.pending"}})]})}),
+    jsx(Text, {name: "SlotComment", text: "", position: [0, 270], size: [100, 20]}),
+  ]);
+  const diagnostics = validatePlayerUiContract({uiEntryPoints: {save: "Content/UI/Save.tsx"},
+    settings: {"player.confirmations": {deleteSave: {kind: "erase"}, moveSave: {}}}},
+  new Map([["Content/UI/Save.pxui", save as never]]));
+  assert.deepEqual(diagnostics.map(({code, details}) => [code, details?.split(":")[1]]),
+    [["PXBUILD1101", "SlotComment"]]);
+});

@@ -32,6 +32,22 @@ std::optional<int> IntegerArgument(const std::string& text) {
     return static_cast<int>(value);
 }
 
+// Trims surrounding spaces, then cuts at maxLength code points.
+std::string TrimmedInput(std::string text, const std::size_t maxLength) {
+    constexpr std::string_view kSpace = " \t\r\n";
+    const auto first = text.find_first_not_of(kSpace);
+    text = first == std::string::npos ? std::string{}
+        : text.substr(first, text.find_last_not_of(kSpace) - first + 1);
+    std::size_t points = 0, end = 0;
+    while (end < text.size() && points < maxLength) {
+        ++points;
+        ++end;
+        while (end < text.size() && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80) ++end;
+    }
+    text.resize(end);
+    return text;
+}
+
 using Settings = progress::GameSettings;
 
 struct AudioBus {
@@ -158,7 +174,121 @@ void PlayerApp::CloseAllModals() {
         (void)m_session->Routes().CloseModal();
 }
 
+// A slot the player can manage: one on the save pages, or the autosave.
+bool PlayerApp::ManagedSlot(const int slot) const {
+    return slot == kAutoSaveSlot ||
+           (slot >= m_saveFirstSlot &&
+            slot < m_saveFirstSlot + m_savePages * m_saveSlotsPerPage);
+}
+
+void PlayerApp::RefreshSaveLoad() {
+    const auto& operation = m_slotOperation;
+    (void)m_ui.UpdateUiData("saveLoad.pending.visible", Variant(operation.has_value()));
+    (void)m_ui.UpdateUiData("saveLoad.pending.copy",
+                            Variant(operation.has_value() && !operation->move));
+    (void)m_ui.UpdateUiData("saveLoad.pending.move",
+                            Variant(operation.has_value() && operation->move));
+    (void)m_ui.UpdateUiData("saveLoad.pending.slot",
+        Variant(operation ? std::to_string(operation->slot) : std::string{}));
+    const auto screen = m_ui.CurrentScreen();
+    if (screen != ui::GalgameUI::Screen::Save && screen != ui::GalgameUI::Screen::Load) return;
+    const bool saveMode = screen == ui::GalgameUI::Screen::Save;
+    (void)m_ui.ShowSaveLoad(saveMode, SaveItems(saveMode));
+}
+
+// save.copy / save.move on a slot picks it as the source; the next slot the
+// player activates (save.slot, load.slot, or the same action) is the target.
+void PlayerApp::BeginSlotOperation(const bool move, const std::string& argument) {
+    const auto slot = IntegerArgument(argument);
+    if (!slot || !ManagedSlot(*slot)) return;
+    if (m_slotOperation) {
+        FinishSlotOperation(*slot);
+        return;
+    }
+    // The autosave belongs to the Player: it can be copied, not moved.
+    if (!m_saves.Peek(*slot).exists || (move && *slot == kAutoSaveSlot)) return;
+    m_slotOperation = SlotOperation{move, *slot};
+    RefreshSaveLoad();
+}
+
+void PlayerApp::FinishSlotOperation(const int target) {
+    if (!m_slotOperation || !ManagedSlot(target) || target == kAutoSaveSlot) return;
+    const SlotOperation operation = *m_slotOperation;
+    if (target == operation.slot) {
+        m_slotOperation.reset();
+        RefreshSaveLoad();
+        return;
+    }
+    const auto apply = [this, operation, target] {
+        m_slotOperation.reset();
+        const bool done = operation.move ? m_saves.Move(operation.slot, target)
+                                         : m_saves.Copy(operation.slot, target);
+        RefreshSaveLoad();
+        if (done) m_ui.RevealSaveSlot(std::to_string(target));
+        else (void)m_ui.UpdateUiData("saveLoad.error.visible", Variant(true));
+    };
+    // Only replacing (copy) or swapping (move) an occupied slot needs a yes.
+    if (m_saves.Peek(target).exists)
+        RequestConfirm(operation.move ? "moveSave" : "copySave", apply);
+    else
+        apply();
+}
+
+void PlayerApp::DeleteSlot(const std::string& argument) {
+    const auto slot = IntegerArgument(argument);
+    if (!slot || !ManagedSlot(*slot) || !m_saves.Peek(*slot).exists) return;
+    m_slotOperation.reset();
+    const int number = *slot;
+    RequestConfirm("deleteSave", [this, number] {
+        if (!m_saves.Delete(number))
+            (void)m_ui.UpdateUiData("saveLoad.error.visible", Variant(true));
+        RefreshSaveLoad();
+    });
+}
+
+// save.comment fills the screen's SlotComment field with the slot's comment
+// and focuses it; Enter or saveLoad.comment.accept stores the text.
+void PlayerApp::BeginSlotComment(const std::string& argument) {
+    const auto slot = IntegerArgument(argument);
+    if (!slot || !ManagedSlot(*slot)) return;
+    const auto info = m_saves.Peek(*slot);
+    if (!info.exists) return;
+    auto* field = FindUiControlNamed<ui::LineEdit>(m_ui.Root(), "SlotComment");
+    if (!field) {
+        diag::Emit(diag::Diagnostic{.severity = diag::Severity::Warning,
+                                    .code = "PXPLAYER5030",
+                                    .category = "Player.Save",
+                                    .message = "save.comment needs a LineEdit named SlotComment on this screen"});
+        return;
+    }
+    m_commentSlot = *slot;
+    field->SetText(info.comment);
+    field->SetOnSubmitted([this](const std::string&) {
+        HandleUIAction({"saveLoad.comment.accept", {}});
+    });
+    (void)m_ui.UpdateUiData("saveLoad.comment.slot", Variant(std::to_string(*slot)));
+    (void)m_ui.UpdateUiData("saveLoad.comment.visible", Variant(true));
+    m_ui.FocusControl(field);
+}
+
+void PlayerApp::FinishSlotComment(const bool accept) {
+    const auto slot = std::exchange(m_commentSlot, std::nullopt);
+    (void)m_ui.UpdateUiData("saveLoad.comment.visible", Variant(false));
+    m_ui.FocusControl(nullptr);
+    if (!accept || !slot) return;
+    std::string text;
+    if (const auto* field = FindUiControlNamed<ui::LineEdit>(m_ui.Root(), "SlotComment"))
+        text = field->Text();
+    if (!m_saves.SetComment(*slot, TrimmedInput(std::move(text), kMaxSlotComment)))
+        (void)m_ui.UpdateUiData("saveLoad.error.visible", Variant(true));
+    RefreshSaveLoad();
+}
+
 void PlayerApp::ActivateSlot(const bool saveMode, const std::string& argument) {
+    if (m_slotOperation) {
+        if (const auto target = IntegerArgument(argument)) FinishSlotOperation(*target);
+        return;
+    }
     const auto slot = IntegerArgument(argument);
     const bool valid = slot && *slot >= m_saveFirstSlot &&
         *slot < m_saveFirstSlot + m_savePages * m_saveSlotsPerPage &&
@@ -238,18 +368,7 @@ void PlayerApp::FinishTextInput() {
     std::string text;
     if (const auto* field = FindUiControlNamed<ui::LineEdit>(m_ui.Root(), "TextInput"))
         text = field->Text();
-    // Trim surrounding spaces, then cut at maxLength code points.
-    constexpr std::string_view kSpace = " \t\r\n";
-    const auto first = text.find_first_not_of(kSpace);
-    text = first == std::string::npos ? std::string{}
-        : text.substr(first, text.find_last_not_of(kSpace) - first + 1);
-    std::size_t points = 0, end = 0;
-    while (end < text.size() && points < request->maxLength) {
-        ++points;
-        ++end;
-        while (end < text.size() && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80) ++end;
-    }
-    text.resize(end);
+    text = TrimmedInput(std::move(text), request->maxLength);
     if (text.empty()) text = request->fallback;
     m_session->Variables().SetValue(request->variable, Variant(text),
         request->profile ? vn::VariableScope::Profile : vn::VariableScope::Session);
@@ -507,6 +626,21 @@ PlayerApp::ActionHandlers() {
                 (void)app.m_ui.UpdateUiData("saveLoad.error.visible", Variant(true));
             }
         });
+        on("save.delete", [](PlayerApp& app, A action) { app.DeleteSlot(action.argument); });
+        on("save.copy", [](PlayerApp& app, A action) {
+            app.BeginSlotOperation(false, action.argument);
+        });
+        on("save.move", [](PlayerApp& app, A action) {
+            app.BeginSlotOperation(true, action.argument);
+        });
+        on("saveLoad.pending.cancel", [](PlayerApp& app, A) {
+            if (!app.m_slotOperation) return;
+            app.m_slotOperation.reset();
+            app.RefreshSaveLoad();
+        });
+        on("save.comment", [](PlayerApp& app, A action) { app.BeginSlotComment(action.argument); });
+        on("saveLoad.comment.accept", [](PlayerApp& app, A) { app.FinishSlotComment(true); });
+        on("saveLoad.comment.cancel", [](PlayerApp& app, A) { app.FinishSlotComment(false); });
         on("saveLoad.confirm.cancel", [](PlayerApp& app, A) {
             app.m_pendingSaveLoadSlot.reset();
             (void)app.m_ui.SetSaveLoadConfirmation(ui::GalgameUI::SaveLoadPrompt::None);

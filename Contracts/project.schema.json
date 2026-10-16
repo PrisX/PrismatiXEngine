@@ -77,7 +77,7 @@
         "binds":{"enum":["textSpeed","autoWait","skipUnread","messageWindowOpacity","dimReadText","uiEffects","font","keepSkipAfterChoice","keepAutoAfterChoice","cursorHideDelay","dialogCursorWarp","dockPinned","messageFace"]},
         "scale":{"type":"number"},"offset":{"type":"number"}
       }}},
-      "player.confirmations":{"type":"object","propertyNames":{"enum":["quickSave","quickLoad","save","overwrite","load","returnToTitle","exit","backlogJump","previousChoice","nextChoice","resetSettings"]},"additionalProperties":{"type":"object","additionalProperties":false,"properties":{
+      "player.confirmations":{"type":"object","propertyNames":{"enum":["quickSave","quickLoad","save","overwrite","load","returnToTitle","exit","backlogJump","previousChoice","nextChoice","resetSettings","deleteSave","copySave","moveSave"]},"additionalProperties":{"type":"object","additionalProperties":false,"properties":{
         "kind":{"type":"string","pattern":"^[A-Za-z0-9_]{1,48}$"},
         "dontAskOption":{"type":"string","pattern":"^[A-Za-z0-9_]{1,48}$"}
       }}},

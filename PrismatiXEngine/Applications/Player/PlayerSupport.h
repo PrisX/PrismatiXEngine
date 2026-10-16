@@ -19,7 +19,8 @@ inline constexpr int kAutoSaveSlot = -1;
 // Player operations `player.confirmations` may ask before.
 inline constexpr std::string_view kConfirmableOperations[] = {
     "quickSave", "quickLoad", "save", "overwrite", "load", "returnToTitle",
-    "exit", "backlogJump", "previousChoice", "nextChoice", "resetSettings"};
+    "exit", "backlogJump", "previousChoice", "nextChoice", "resetSettings",
+    "deleteSave", "copySave", "moveSave"};
 
 inline bool IsConfirmableOperation(const std::string_view operation) {
     return std::ranges::find(kConfirmableOperations, operation) !=

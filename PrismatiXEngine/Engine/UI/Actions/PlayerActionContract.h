@@ -98,6 +98,16 @@ inline constexpr PlayerActionSpec kPlayerActions[] = {
     detail::Plain("saveLoad.error.dismiss", "Save"),
     detail::Plain("save.quick", "Save"),
     detail::Plain("load.quick", "Save"),
+    // Save management. save.copy/save.move pick the source slot; the next
+    // slot activated is the target (a move onto a save swaps the two).
+    detail::With("save.delete", "slot", detail::Integer, "Save"),
+    detail::With("save.copy", "slot", detail::Integer, "Save"),
+    detail::With("save.move", "slot", detail::Integer, "Save"),
+    detail::Plain("saveLoad.pending.cancel", "Save"),
+    // Edits the slot's comment in the screen's SlotComment LineEdit.
+    detail::With("save.comment", "slot", detail::Integer, "Save"),
+    detail::Plain("saveLoad.comment.accept", "Save"),
+    detail::Plain("saveLoad.comment.cancel", "Save"),
     // Settings
     detail::With("set.master.value", "value", detail::Integer, "Settings"),
     detail::With("set.bgm.value", "value", detail::Integer, "Settings"),

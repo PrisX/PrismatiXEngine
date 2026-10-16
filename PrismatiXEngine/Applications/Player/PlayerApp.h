@@ -153,6 +153,15 @@ private:
     void ScrollNamedList(std::string_view controlName, std::string_view command);
     void CloseAllModals();
     void ActivateSlot(bool saveMode, const std::string& argument);
+    // Save management: delete, copy or move a slot, and its comment.
+    [[nodiscard]] bool ManagedSlot(int slot) const;
+    void RefreshSaveLoad();
+    void BeginSlotOperation(bool move, const std::string& argument);
+    void FinishSlotOperation(int target);
+    void DeleteSlot(const std::string& argument);
+    void BeginSlotComment(const std::string& argument);
+    void FinishSlotComment(bool accept);
+    static constexpr std::size_t kMaxSlotComment = 64;  // code points
     void ReturnToTitle();
     // Story [input]: the HUD's TextInput field asks for text, the VM waits,
     // and input.accept stores it in the variable.
@@ -410,6 +419,13 @@ private:
     std::optional<SavePresentationState> m_beforeSavePresentation;
     std::optional<int> m_pendingSaveLoadSlot;
     bool m_pendingSaveLoadSaveMode = false;
+    // A copy or move waiting for its target slot.
+    struct SlotOperation {
+        bool move = false;
+        int slot = 0;
+    };
+    std::optional<SlotOperation> m_slotOperation;
+    std::optional<int> m_commentSlot;
     ui::GalgameUI::SystemPrompt m_pendingSystemPrompt =
         ui::GalgameUI::SystemPrompt::None;
     std::vector<std::uint8_t> m_menuThumb;

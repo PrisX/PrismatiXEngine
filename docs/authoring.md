@@ -1481,7 +1481,8 @@ and, optionally, the option that stores "do not ask again":
 
 Operations: `quickSave`, `quickLoad`, `save` (into an empty slot), `overwrite`
 (an occupied slot), `load`, `returnToTitle`, `exit`, `backlogJump`,
-`previousChoice`, `nextChoice` and `resetSettings`. Several operations may share
+`previousChoice`, `nextChoice`, `resetSettings`, `deleteSave`, and `copySave` /
+`moveSave` (asked only when the target slot holds a save). Several operations may share
 a kind. An operation asks only while the mounted route has a control named
 `ConfirmDialog` and its `dontAskOption` is 0; unlisted operations run at once.
 The dialog reads `dialog.visible`, `dialog.skipNext` and
@@ -1492,6 +1493,51 @@ rejects a `dontAskOption` that `player.options` does not declare
 (`PXBUILD1104`), a binding to an undeclared `dialog.kind.<kind>`
 (`PXBUILD1100`) and warns about a `ConfirmDialog` when nothing is listed
 (`PXBUILD1103`).
+
+#### Managing saves
+
+Save and load screens can delete, copy and move saves and let the player
+write a comment on a slot:
+
+```tsx
+<ItemsGrid name="Slots" items={{path: "saveLoad.slots", key: "key"}} ...>
+  <Group name="Cell" size={[420, 120]}>
+    <TextureButton name="SlotButton" skin="Assets/UI/save/slot" action={actions.save.slot("$key")} />
+    <Text name="Note" bind={{text: "item.comment", visible: "item.occupied"}} ... />
+    <TextureButton name="Copy" skin="Assets/UI/save/copy" action={actions.save.copy("$key")} ... />
+    <TextureButton name="Move" skin="Assets/UI/save/move" action={actions.save.move("$key")} ... />
+    <TextureButton name="Erase" skin="Assets/UI/save/erase" action={actions.save.delete("$key")} ... />
+    <TextureButton name="Comment" skin="Assets/UI/save/note" action={actions.save.comment("$key")} ... />
+  </Group>
+</ItemsGrid>
+<Group name="Picking" visibleWhen="saveLoad.pending.visible" ...>
+  <Text text="Choose where to copy it" visibleWhen="saveLoad.pending.copy" ... />
+  <Button text="Cancel" action={actions.saveLoad.cancelPending} ... />
+</Group>
+<Group name="CommentEditor" visibleWhen="saveLoad.comment.visible" ...>
+  <TextField name="SlotComment" placeholder="A note on this save" ... />
+  <Button text="OK" action={actions.saveLoad.acceptComment} ... />
+  <Button text="Cancel" action={actions.saveLoad.cancelComment} ... />
+</Group>
+```
+
+- `save.delete` removes the save (ask first with `deleteSave`).
+- `save.copy` / `save.move` pick the source; the next slot the player
+  activates is the target, whether through its ordinary `save.slot` /
+  `load.slot` button or the same action. While a copy or move waits, every
+  slot except the autosave accepts it, on both screens and across pages;
+  `item.pending` marks the source, and `saveLoad.pending.visible`, `.copy`,
+  `.move` and `.slot` describe the wait. Choosing the source again,
+  `saveLoad.pending.cancel` or leaving the screen drops it. A copy replaces
+  the target; a move onto another save swaps the two. The autosave can be
+  copied but not moved.
+- `save.comment` fills the screen's `TextField` named `SlotComment` with the
+  slot's comment and focuses it; Enter or `saveLoad.comment.accept` stores up
+  to 64 characters (empty removes the comment). `saveLoad.comment.visible`
+  and `.slot` show the editor. The comment is `item.comment` (and
+  `saveLoad.slot<N>.comment`); saving into a slot starts it without one.
+
+A failed operation shows `saveLoad.error.visible`.
 
 Any control can fade out when hidden instead of vanishing:
 `showTransition={{seconds: 0.2, offset: [0, -50]}}`,

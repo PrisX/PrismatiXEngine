@@ -2686,10 +2686,14 @@ std::vector<ui::GalgameItem> PlayerApp::SaveItems(bool saveMode) {
                 }
             }
         }
+        // While a copy or move waits for its target, every other slot can
+        // receive it, in either screen.
+        const bool picking = m_slotOperation && slot != kAutoSaveSlot;
         items.push_back({"slot-" + std::to_string(slot), label, subtitle, image,
-                         (saveMode && m_appState != AppState::Game) ||
-                             (!saveMode && !info.exists),
-                         action, std::to_string(slot)});
+                         !picking && ((saveMode && m_appState != AppState::Game) ||
+                                      (!saveMode && !info.exists)),
+                         action, std::to_string(slot), info.comment,
+                         m_slotOperation && m_slotOperation->slot == slot});
     };
 
     if (!saveMode && m_savePages == 1 && m_saveFirstSlot == 0) {
@@ -3137,6 +3141,11 @@ void PlayerApp::OpenScreen(const std::string& route) {
                                     Variant(page == 1));
     }
     if (target == "save" || target == "load") {
+        // A copy, move or comment edit does not outlive its screen.
+        m_slotOperation.reset();
+        if (m_commentSlot) FinishSlotComment(false);
+        for (const char* field : {"visible", "copy", "move"})
+            (void)m_ui.UpdateUiData(std::string("saveLoad.pending.") + field, Variant(false));
         (void)m_ui.UpdateUiData("saveLoad.error.visible", Variant(false));
         for (int page = 1; page <= m_savePages; ++page)
             (void)m_ui.UpdateUiData("saveLoad.page" + std::to_string(page),

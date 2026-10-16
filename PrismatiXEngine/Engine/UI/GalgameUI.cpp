@@ -189,14 +189,23 @@ GalgameUI::GalgameUI() {
             {"occupied", Variant(false)},
             {"title", Variant(std::string{})},
             {"subtitle", Variant(std::string{})},
+            {"comment", Variant(std::string{})},
+            {"pending", Variant(false)},
             {"enabled", Variant(false)},
         });
         const std::string prefix = "saveLoad.slot" + std::to_string(slot) + ".";
         (void)m_viewModel.Define(prefix + "image", Variant(std::string{}), true);
         (void)m_viewModel.Define(prefix + "title", Variant(std::string{}), true);
         (void)m_viewModel.Define(prefix + "subtitle", Variant(std::string{}), true);
+        (void)m_viewModel.Define(prefix + "comment", Variant(std::string{}), true);
         (void)m_viewModel.Define(prefix + "enabled", Variant(false), true);
     }
+    // A save.copy / save.move waiting for its target, and save.comment.
+    for (const char* field : {"visible", "copy", "move"})
+        (void)m_viewModel.Define(std::string("saveLoad.pending.") + field, Variant(false), true);
+    (void)m_viewModel.Define("saveLoad.pending.slot", Variant(std::string{}), true);
+    (void)m_viewModel.Define("saveLoad.comment.visible", Variant(false), true);
+    (void)m_viewModel.Define("saveLoad.comment.slot", Variant(std::string{}), true);
     (void)m_viewModel.Define("saveLoad.slots", Variant(std::move(initialSlots)), true);
     (void)m_viewModel.Define("gallery.items", Variant(VariantArray{}), true);
     (void)m_viewModel.Define("dialogue.choices", Variant(VariantArray{}), true);
@@ -1247,6 +1256,8 @@ Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
             {"occupied", Variant(item && !item->title.empty())},
             {"title", Variant(item ? item->title : std::string{})},
             {"subtitle", Variant(item ? item->subtitle : std::string{})},
+            {"comment", Variant(item->comment)},
+            {"pending", Variant(item->pending)},
             {"enabled", Variant(item && !item->disabled)},
         });
         // Only the first twelve slots have legacy per-slot paths.
@@ -1255,6 +1266,7 @@ Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
         (void)m_viewModel.Write(prefix + "image", Variant(item ? item->image : std::string{}));
         (void)m_viewModel.Write(prefix + "title", Variant(item ? item->title : std::string{}));
         (void)m_viewModel.Write(prefix + "subtitle", Variant(item ? item->subtitle : std::string{}));
+        (void)m_viewModel.Write(prefix + "comment", Variant(item->comment));
         (void)m_viewModel.Write(prefix + "enabled", Variant(item && !item->disabled));
     }
     const Status populated = m_viewModel.Write("saveLoad.slots", Variant(std::move(slotValues)));

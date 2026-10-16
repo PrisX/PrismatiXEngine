@@ -48,6 +48,8 @@ test("every typed action builder produces a valid Player action", () => {
   walk(actions);
   built.push(actions.screen.settingsPage(2), actions.screen.open("chapter3"),
     actions.save.slot(3), actions.load.slot(1), actions.save.page(2), actions.load.page(1),
+    actions.save.delete(2), actions.save.copy(1), actions.save.move(4),
+    actions.save.comment(5),
     actions.choice.select(0), actions.backlog.voice(4), actions.backlog.rollback(4),
     actions.backlog.scroll(-3), actions.gallery.view("cg01"), actions.replay.launch("start01"),
     actions.option.set("dock", 1), actions.setting.volume("bgm", 64),

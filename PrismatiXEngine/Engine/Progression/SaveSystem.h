@@ -71,6 +71,8 @@ struct SaveSnapshot {
     std::uint64_t timestamp = 0;
     std::uint64_t playtimeMs = 0;
     std::vector<std::uint8_t> thumbnailPng;
+    // The player's note on the slot (save.comment); a new save has none.
+    std::string comment;
 };
 
 struct SlotInfo {
@@ -78,6 +80,7 @@ struct SlotInfo {
     std::string chapter;
     std::uint64_t timestamp = 0;
     std::vector<std::uint8_t> thumbnailPng;
+    std::string comment;
 };
 
 // Save migrations are deliberately pure-data transforms. The Player reads
@@ -126,6 +129,12 @@ public:
     [[nodiscard]] SlotInfo Peek(int slot) const;
     [[nodiscard]] std::vector<SlotInfo> List(int count) const;
     bool Delete(int slot);
+    // Copies a readable save over `to` (replacing what is there).
+    bool Copy(int from, int to);
+    // Moves a readable save to `to`; an occupied `to` swaps places with it.
+    bool Move(int from, int to);
+    // Rewrites the slot's comment (empty removes it), keeping everything else.
+    bool SetComment(int slot, const std::string& comment);
 
     [[nodiscard]] std::string SlotPath(int slot) const;
 

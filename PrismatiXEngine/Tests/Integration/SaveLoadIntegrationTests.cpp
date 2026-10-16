@@ -1243,6 +1243,51 @@ void TestPackagedUserDataMigration() {
           "UTF-8 save-slot path can be deleted without ACP conversion");
 }
 
+void TestSlotManagement() {
+    px::test::TempDirectory temp("save-slot-management");
+    const auto key = px::crypto::DeriveKey("slot-management");
+    px::progress::SaveSystem saves;
+    saves.Configure(px::PathToUtf8(temp.path), &key);
+    px::progress::SaveSnapshot snapshot;
+    snapshot.gameId = "slot-test";
+    snapshot.packageFingerprint = std::string(64, 'a');
+    snapshot.contentVersion = "1";
+    snapshot.saveVersion = 1;
+    snapshot.anchor = {"runtime-main", "line-1", "operation-1"};
+    snapshot.scriptPath = "Runtime/main.pxir";
+    snapshot.vm.scriptPath = snapshot.scriptPath;
+    snapshot.chapter = "first";
+    Check(saves.Save(1, snapshot), "first slot saves");
+    snapshot.chapter = "second";
+    Check(saves.Save(2, snapshot), "second slot saves");
+
+    Check(saves.SetComment(1, "before the bridge") &&
+              saves.Peek(1).comment == "before the bridge" &&
+              saves.Load(1)->comment == "before the bridge" &&
+              saves.Load(1)->chapter == "first",
+          "a comment is stored without changing the save");
+    Check(saves.SetComment(1, "") && saves.Peek(1).comment.empty(),
+          "an empty comment removes it");
+    Check(!saves.SetComment(5, "nothing here"), "an empty slot takes no comment");
+
+    Check(saves.Copy(1, 3) && saves.Peek(3).chapter == "first" &&
+              saves.Peek(1).exists,
+          "copy duplicates a save and keeps the source");
+    Check(saves.Copy(2, 3) && saves.Peek(3).chapter == "second",
+          "copy replaces an occupied target");
+    Check(!saves.Copy(7, 4) && !saves.Peek(4).exists, "an empty source copies nothing");
+
+    Check(saves.Move(1, 4) && !saves.Peek(1).exists && saves.Peek(4).chapter == "first",
+          "move to an empty slot leaves the source empty");
+    Check(saves.Move(4, 2) && saves.Peek(2).chapter == "first" &&
+              saves.Peek(4).chapter == "second",
+          "move onto an occupied slot swaps the two saves");
+    Check(!std::filesystem::exists(px::PathFromUtf8(saves.SlotPath(2) + ".swap")),
+          "a swap leaves no temporary file");
+    Check(saves.Delete(2) && !saves.Peek(2).exists && saves.Peek(4).exists,
+          "delete removes only its slot");
+}
+
 void TestOptionalPackPreferenceAtomicWrite() {
     px::test::TempDirectory temp("optional-pack-preference");
     const auto preference = temp.path / "optional-pack.txt";
@@ -1280,6 +1325,7 @@ int main() {
         TestPersistenceKeyUpgradeAndFailurePreservation);
     Run("Persistence_PackagedUserDataMigration",
         TestPackagedUserDataMigration);
+    Run("Save_SlotCommentCopyMoveDelete", TestSlotManagement);
     Run("Persistence_OptionalPackPreferenceAtomicWrite",
         TestOptionalPackPreferenceAtomicWrite);
     if (g_failures == 0) std::cout << "PASS: runtime-save-load integration\n";

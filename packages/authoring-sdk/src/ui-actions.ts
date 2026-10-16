@@ -38,6 +38,14 @@ export const actions = {
     quick: action("save.quick"),
     slot: (value: Slot) => slot("save.slot", value),
     page: (page: number) => action("saveLoad.page", {argument: String(page)}),
+    /** Deletes the slot (asks first when `player.confirmations.deleteSave` is set). */
+    delete: (value: Slot) => slot("save.delete", value),
+    /** Picks the slot to copy; the next slot the player activates receives it. */
+    copy: (value: Slot) => slot("save.copy", value),
+    /** Picks the slot to move; moving onto another save swaps the two. */
+    move: (value: Slot) => slot("save.move", value),
+    /** Edits the slot's comment in the screen's `SlotComment` LineEdit. */
+    comment: (value: Slot) => slot("save.comment", value),
   },
   load: {
     quick: action("load.quick"),
@@ -47,6 +55,10 @@ export const actions = {
   saveLoad: {
     accept: action("saveLoad.confirm.accept"), cancel: action("saveLoad.confirm.cancel"),
     dismissError: action("saveLoad.error.dismiss"),
+    /** Drops a copy or move that is waiting for its target slot. */
+    cancelPending: action("saveLoad.pending.cancel"),
+    acceptComment: action("saveLoad.comment.accept"),
+    cancelComment: action("saveLoad.comment.cancel"),
   },
   choice: {
     select: (index: number | ItemPlaceholder) => action("choice.select", {index}),
