@@ -21,7 +21,10 @@ import {fingerprintFile, publishDirectory, publishedInputs, retainPublishedDirec
 import {glyphWarnings} from "./glyph-coverage.js";
 import {augmentArtifact} from "./artifact-augment.js";
 import {assessPackageDiskSpace, availableBytesForOutput, formatDiskBytes} from "./disk-space.js";
-import {createStarter, type PackageManager} from "./starter.js";
+import {createStarter, detectPackageManager, pnpmInstalled, type PackageManager} from "./starter.js";
+import {changeDirectory, cliVersion, createWizard, type CreateAnswers, projectMenu, runScript, say} from "./interactive.js";
+import * as tui from "./tui.js";
+import {canPrompt} from "./tui.js";
 import {importCommand, importFormats} from "./importers/command.js";
 import {inspectSaveWithRuntime} from "./save-inspection.js";
 import {planPackagePatch} from "./package-diff.js";
@@ -504,28 +507,90 @@ function packageManagerOption(options: Options): PackageManager {
 }
 
 async function createCommand(options: Options): Promise<number> {
-  const target = resolve(options.positional[0] ?? "my-prismatix-game");
+  // In a terminal, `create` without a folder asks for the rest; scripts, CI
+  // and --json keep the non-interactive defaults.
+  const interactive = canPrompt();
+  const wizard = interactive && options.positional[0] === undefined;
+  if (interactive) tui.intro(`PrismatiX ${cliVersion}`);
+  let answers: CreateAnswers | undefined;
   try {
+    const template = options.values.get("template");
+    if (template !== undefined && template !== "minimal" && template !== "adv")
+      throw new Error("--template must be minimal or adv");
+    if (wizard) {
+      const detected = options.values.has("package-manager") ? packageManagerOption(options) : detectPackageManager();
+      const asked = await createWizard({
+        ...(options.values.has("name") ? {name: options.values.get("name")!} : {}),
+        ...(options.values.has("locale") ? {locale: options.values.get("locale")!} : {}),
+        ...(template !== undefined ? {template} : {}),
+        ...(options.values.has("width") ? {width: integerOption(options, "width", 1280, 1, 16384)} : {}),
+        ...(options.values.has("height") ? {height: integerOption(options, "height", 720, 1, 16384)} : {}),
+        ...(options.values.has("package-manager") ? {packageManager: detected} : {}),
+        detected, pnpmFound: await pnpmInstalled(),
+      });
+      if (tui.isCancel(asked)) { tui.cancelled(say("已取消，沒有建立任何東西。", "Cancelled; nothing was created.")); return 130; }
+      answers = asked;
+    }
+  } catch (error) {
+    printDiagnostics([diagnostic("PXCLI0001", "Invalid command arguments", undefined, String(error))]);
+    return 2;
+  }
+  const target = answers?.target ?? resolve(options.positional[0] ?? "my-prismatix-game");
+  const template = answers?.template ?? options.values.get("template") ?? "minimal";
+  const progress = interactive ? tui.spinner() : undefined;
+  try {
+    progress?.start(say("複製範本與素材", "Copying the template and art"));
     const result = await createStarter(target, {
-      ...(options.values.has("name") ? {name: options.values.get("name")!} : {}),
+      ...(answers ? {name: answers.name} : options.values.has("name") ? {name: options.values.get("name")!} : {}),
       ...(options.values.has("id") ? {id: options.values.get("id")!} : {}),
-      ...(options.values.has("locale") ? {locale: options.values.get("locale")!} : {}),
-      width: integerOption(options, "width", 1280, 1, 16384),
-      height: integerOption(options, "height", 720, 1, 16384),
-      ...(options.values.has("package-manager") ? {packageManager: packageManagerOption(options)} : {}),
+      ...(answers ? {locale: answers.locale} : options.values.has("locale") ? {locale: options.values.get("locale")!} : {}),
+      width: answers?.width ?? integerOption(options, "width", 1280, 1, 16384),
+      height: answers?.height ?? integerOption(options, "height", 720, 1, 16384),
+      ...(answers ? {packageManager: answers.packageManager}
+        : options.values.has("package-manager") ? {packageManager: packageManagerOption(options)} : {}),
+      ...(progress ? {quiet: true, onInstall: (manager: PackageManager) =>
+        progress.message(say(`用 ${manager} 安裝專案工具`, `Installing the project's tools with ${manager}`))} : {}),
     });
     // The "adv" template starts from editable copies of the stock screens
     // a typical ADV game restyles first.
-    const template = options.values.get("template") ?? "minimal";
-    if (template === "adv")
+    if (template === "adv") {
+      progress?.message(say("複製可修改的介面 TSX", "Copying editable screen TSX"));
       await ejectBuiltinUi(result.root, ["hud", "save", "load", "settings", "backlog"],
         await builtinUiDirectory(options), true);
-    else if (template !== "minimal") throw new Error("--template must be minimal or adv");
-    process.stdout.write(machineOutput ? `${JSON.stringify({created: true, ...result,
-      next: [`prismatix dev ${JSON.stringify(target)}`]})}\n` :
-      `Created ${result.root}\nEdit Story/main.pxstory, then run: prismatix dev ${JSON.stringify(target)}\n`);
+    }
+    if (progress === undefined) {
+      process.stdout.write(machineOutput ? `${JSON.stringify({created: true, ...result,
+        next: [`prismatix dev ${JSON.stringify(target)}`]})}\n` :
+        `Created ${result.root}\nEdit Story/main.pxstory, then run: prismatix dev ${JSON.stringify(target)}\n`);
+      return 0;
+    }
+    const shown = relative(process.cwd(), result.root);
+    const where = shown && !shown.startsWith("..") && !isAbsolute(shown) ? shown : result.root;
+    progress.stop(say(`已建立 ${where}`, `Created ${where}`));
+    const manager: PackageManager = answers?.packageManager ??
+      (await regularFile(join(result.root, "pnpm-lock.yaml")) ? "pnpm" : "npm");
+    tui.note(say("下一步", "Next steps"), [
+      changeDirectory(result.root),
+      `${runScript(manager, "dev")}      ${tui.color.dim(say("# 開啟預覽，存檔就會更新", "# live preview, updates on save"))}`,
+      tui.color.dim(say("劇本在 Story/main.pxstory", "The story is in Story/main.pxstory")),
+    ]);
+    if (wizard) {
+      const start = await tui.confirm({message: say("現在開啟預覽嗎？", "Open the preview now?"),
+        active: say("好", "Yes"), inactive: say("等等再說", "Not now")});
+      if (start === true) {
+        tui.outro(tui.color.dim(`prismatix dev ${JSON.stringify(result.root)}`));
+        return dispatch("dev", [result.root]);
+      }
+    }
+    tui.outro(say("祝創作愉快！", "Happy writing!"));
     return 0;
   } catch (error) {
+    if (progress) {
+      progress.stop(say("建立失敗", "Could not create the project"), true);
+      tui.log.error(error instanceof Error ? error.message : String(error));
+      tui.cancelled(say("專案沒有建立完成；修正後再試一次。", "The project was not completed; fix this and try again."));
+      return 1;
+    }
     printDiagnostics([diagnostic("PXCLI1501", "Project could not be created", target, String(error))]);
     return 1;
   }
@@ -3065,6 +3130,7 @@ async function inspectSaveCommand(options: Options): Promise<number> {
 // One line of purpose and the usual invocations for `prismatix <command> --help`.
 const commandHelp: Readonly<Record<string, readonly string[]>> = {
   create: ["Create a new project with a starter story, title screen and pinned tools.",
+    "prismatix create   (in a terminal: asks for the title, folder, template, resolution, language and package manager)",
     "prismatix create my-game [--name \"My Game\"] [--id my-game] [--locale zh-TW] [--width 1920 --height 1080]",
     "prismatix create my-game --template adv   (also editable HUD, Save, Load, Settings and Backlog TSX)",
     "prismatix create my-game --package-manager pnpm   (pnpm-lock.yaml; the default is the manager that ran the CLI, else npm)"],
@@ -3152,6 +3218,7 @@ function commandUsage(command: string): void {
 
 function usage(): void {
   process.stderr.write("Usage: prismatix <create|add|eject|dev|validate|build|pack|run|release|import|augment|ids|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen|test> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("  prismatix  In a terminal, without a command: a menu of the common commands\n");
   process.stderr.write("  prismatix <command> --help  Purpose, examples and options of one command\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
   process.stderr.write("  prismatix create-overlay --base <distribution> --artifact <published-artifact> --output <patch.pdx> [--signing-key <private-key>]  Patch without a target distribution\n");
@@ -3587,13 +3654,28 @@ async function projectTool(command: string, options: Options, args: string[]): P
 
 async function main(): Promise<number> {
   const [command, ...args] = process.argv.slice(2);
+  if (command === undefined && canPrompt()) {
+    // `prismatix` alone in a terminal: a menu of the common commands.
+    tui.intro(`PrismatiX ${cliVersion}`);
+    const chosen = await projectMenu();
+    if (tui.isCancel(chosen)) { tui.cancelled(say("已取消。", "Cancelled.")); return 130; }
+    const [next, ...rest] = chosen;
+    if (next === "--help") { tui.outro(tui.color.dim("prismatix --help")); usage(); return 0; }
+    if (next !== "create") tui.outro(tui.color.dim(`prismatix ${chosen.join(" ")}`));
+    return dispatch(next!, rest);
+  }
   if (command === undefined || command === "--help") { usage(); return 0; }
+  return dispatch(command, args);
+}
+
+/** Runs one command line, after the project's pinned CLI has had the chance to take it. */
+async function dispatch(command: string, args: readonly string[]): Promise<number> {
   let options: Options;
   try { options = parseOptions(command, args); }
   catch (error) { printDiagnostics([diagnostic("PXCLI0001", "Invalid command arguments", undefined, String(error))]); return 2; }
   if (options.flags.has("help")) { commandUsage(command); return 0; }
   try {
-    const delegated = await projectTool(command, options, args);
+    const delegated = await projectTool(command, options, [...args]);
     if (delegated !== undefined) return delegated;
   } catch (error) {
     printDiagnostics([diagnostic("PXCLI0002", "Project tool preparation failed", options.positional[0], String(error))]);

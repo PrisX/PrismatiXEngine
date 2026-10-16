@@ -24,6 +24,13 @@ export interface StarterOptions {
    * (pnpm-lock.yaml). Default: whichever package manager ran this CLI.
    */
   readonly packageManager?: PackageManager;
+  /**
+   * Captures the package manager's output and shows it only in the error of a
+   * failed install, for interactive create, which draws its own progress.
+   */
+  readonly quiet?: boolean;
+  /** Called when the install starts, with the package manager that runs it. */
+  readonly onInstall?: (manager: PackageManager) => void;
   /** Dependency-injection seam for isolated tests, not a CLI skip-install option. */
   readonly install?: (directory: string) => Promise<void>;
 }
@@ -90,15 +97,24 @@ async function pnpmCommand(): Promise<string[]> {
   throw new Error("pnpm was not found on PATH. Install pnpm (https://pnpm.io/installation) or enable it with `corepack enable pnpm`, then retry create, or pass --package-manager npm.");
 }
 
+/** Whether pnpm can be found, so interactive create offers it. */
+export async function pnpmInstalled(): Promise<boolean> {
+  return pnpmCommand().then(() => true, () => false);
+}
+
 /** Runs a package manager in `directory`; a failure leaves the destination unchanged. */
 async function runPackageManager(command: string[], args: string[], directory: string,
-  failure: string): Promise<string> {
+  failure: string, quiet = false): Promise<string> {
   return new Promise<string>((accept, reject) => {
     const [executable, ...prefix] = command;
+    const capture = quiet || args[0] === "--version";
     const child = spawn(executable!, [...prefix, ...args], {cwd: directory, shell: false, windowsHide: true,
-      stdio: ["ignore", args[0] === "--version" ? "pipe" : "inherit", "inherit"]});
+      stdio: ["ignore", capture ? "pipe" : "inherit", quiet ? "pipe" : "inherit"]});
     let output = "";
-    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
+    let log = "";
+    const keep = (chunk: string): void => { log = (log + chunk).slice(-4000); };
+    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; keep(chunk); });
+    child.stderr?.setEncoding("utf8").on("data", keep);
     let cancelled = false;
     const cancel = () => { cancelled = true; child.kill(); };
     const timer = setTimeout(cancel, 180_000);
@@ -111,7 +127,7 @@ async function runPackageManager(command: string[], args: string[], directory: s
     child.once("close", (code, signal) => {
       cleanup();
       if (code === 0 && !cancelled) accept(output.trim());
-      else reject(new Error(`${failure} (${code ?? signal}).`));
+      else reject(new Error(`${failure} (${code ?? signal}).${quiet && log.trim() ? `\n${log.trim()}` : ""}`));
     });
   });
 }
@@ -121,7 +137,8 @@ const preparationFailure = (manager: PackageManager): string =>
 
 async function installDependencies(directory: string, options: StarterOptions,
   manager: PackageManager, command: string[]): Promise<void> {
-  process.stderr.write(`Preparing the project's pinned PrismatiX tools with ${manager}…\n`);
+  if (options.onInstall) options.onInstall(manager);
+  else process.stderr.write(`Preparing the project's pinned PrismatiX tools with ${manager}…\n`);
   const args = manager === "npm"
     ? ["install", "--ignore-scripts", "--no-audit", "--no-fund"]
     // A project created inside a pnpm workspace is still its own project.
@@ -130,7 +147,7 @@ async function installDependencies(directory: string, options: StarterOptions,
   if (options.npmCache !== undefined) args.push(...manager === "npm"
     ? ["--cache", options.npmCache]
     : ["--store-dir", join(options.npmCache, "pnpm-store"), "--cache-dir", join(options.npmCache, "pnpm-cache")]);
-  await runPackageManager(command, args, directory, preparationFailure(manager));
+  await runPackageManager(command, args, directory, preparationFailure(manager), options.quiet);
 }
 
 /**
@@ -143,7 +160,8 @@ async function relinkDependencies(directory: string, options: StarterOptions, co
   if (options.npmCache !== undefined)
     args.push("--store-dir", join(options.npmCache, "pnpm-store"), "--cache-dir", join(options.npmCache, "pnpm-cache"));
   await runPackageManager(command, args, directory,
-    "pnpm could not relink the created project's node_modules from its store; run pnpm install in the project");
+    "pnpm could not relink the created project's node_modules from its store; run pnpm install in the project",
+    options.quiet);
 }
 
 /**

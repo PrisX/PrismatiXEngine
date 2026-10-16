@@ -24,7 +24,8 @@ executable line has a stable ID.
 
 ```bash
 npm install -g @prismatix/cli                 # or: pnpm add -g @prismatix/cli
-prismatix create my-game --template adv       # editable HUD, save/load, settings and backlog
+prismatix create                              # asks for title, folder, template, resolution...
+prismatix create my-game --template adv       # or non-interactive: editable HUD, save/load, settings and backlog
 prismatix dev my-game                         # live Preview; --at chapter2:120 starts at a line or label
 prismatix add character hero --from art/hero --project my-game
 prismatix add scene chapter2 --project my-game

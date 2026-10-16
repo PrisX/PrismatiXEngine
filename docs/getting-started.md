@@ -24,6 +24,13 @@ prismatix create my-game
 prismatix dev my-game
 ```
 
+Run `prismatix create` without a folder to be asked for the title, folder,
+template, resolution, story language and package manager instead. `prismatix`
+on its own opens a menu: inside a project it offers preview, checks, builds,
+tests and adding characters or scenes; elsewhere it offers to create a game.
+Prompts appear only in a terminal; scripts, CI and `--json` never wait for
+input, and options you pass are not asked again.
+
 With pnpm, `pnpm add -g @prismatix/cli` (or `pnpm dlx @prismatix/cli create my-game`)
 works the same way. `create` installs the project's tools with the package
 manager that ran it, or with the one `--package-manager npm|pnpm` names.
