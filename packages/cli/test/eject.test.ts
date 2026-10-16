@@ -99,7 +99,7 @@ async function compileTsx(source: string, directory: string) {
 
 test("ejected screens use typed props, so they validate without PXSDKJSX1100 warnings", async () => {
   const tsx = builtinScreenTsx("hud", hud, 1920, 1080);
-  assert.match(tsx, /<Text name="WaitGlyph"[^>]*showTransition=\{\{seconds: 0\.3, offset: \[0, sf\(-4\)\]\}\}/su);
+  assert.match(tsx, /<Text name="WaitGlyph"[^>]*showTransition=\{\{seconds: 0\.3, offset: \{y: sf\(-4\)\}\}\}/su);
   assert.match(tsx, /<Group name="Panel"[^>]*mouseFilter="Pass"[^>]*clipContent[^>]*linearTransition=\{false\}[^>]*hideTransition=\{\{seconds: 0\.15, ease: "cubic"\}\}/su);
   assert.doesNotMatch(tsx, /runtimeProperties=/u);
   const directory = await mkdtemp(join(tmpdir(), "prismatix-eject-tsx-"));
@@ -108,8 +108,9 @@ test("ejected screens use typed props, so they validate without PXSDKJSX1100 war
     assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
     assert.deepEqual(compiled.diagnostics.filter((item) => item.severity === "warning"), []);
     const glyph = compiled.value!.nodes.find((item) => item.name === "WaitGlyph")!;
-    // 1920x1080 is 1.5x the 1280x720 design: the slide offset scales with it.
+    // 1920x1080 is 1.5x the 1280x720 design: the slide offset scales with it,
+    // and only the authored axis is set, as in the built-in screen.
     assert.deepEqual(glyph.runtimeProperties, {fontSize: 15, showTransitionSeconds: 0.3,
-      showOffsetX: 0, showOffsetY: -6});
+      showOffsetY: -6});
   } finally { await rm(directory, {recursive: true, force: true}); }
 });

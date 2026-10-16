@@ -136,7 +136,10 @@ Any control can fade out when hidden instead of vanishing:
 `hideTransition={{seconds: 0.2, offset: [0, 50]}}` and `linearTransition`
 slide and fade it. `ease` picks the slide curve: `quad` (default), `linear`,
 `cubic`, or `back`, which overshoots and settles on show and pulls back before
-leaving on hide. A toolbar that springs up from the bottom edge:
+leaving on hide. `offset: {y: -50}` or `{x: 40}` sets one axis and keeps the
+Runtime default of the other: without an offset a control slides up 8px as it
+appears and does not slide as it hides. A toolbar that springs up from the
+bottom edge:
 
 ```tsx
 <Group name="HudDock" fill bind={{visible: "hud.dockShown"}}

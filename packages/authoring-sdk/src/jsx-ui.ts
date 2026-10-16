@@ -200,8 +200,12 @@ export interface UiNodeProps {
 
 export interface UiVisibilityTransition {
   readonly seconds: number;
-  /** Pixels the control slides from (show) or to (hide). */
-  readonly offset?: readonly [x: number, y: number];
+  /**
+   * Pixels the control slides from (show) or to (hide): `[x, y]`, or
+   * `{x}` / `{y}` to set one axis and keep the Runtime default of the other
+   * (a control slides up 8px on show and does not slide on hide).
+   */
+  readonly offset?: readonly [x: number, y: number] | {readonly x?: number; readonly y?: number};
   /** Slide curve: `quad` (default), `linear`, `cubic`, or `back`, which
    * overshoots and settles on show and pulls back before leaving on hide. */
   readonly ease?: "quad" | "linear" | "cubic" | "back";
@@ -616,6 +620,15 @@ function textualChildren(value: TextProps["children"] | ButtonProps["children"])
   return values.join("");
 }
 
+function offsetProperties(phase: "show" | "hide", offset: UiVisibilityTransition["offset"]):
+  Record<string, number> {
+  if (offset === undefined) return {};
+  const pair = (value: unknown): value is readonly [number, number] => Array.isArray(value);
+  const {x, y} = pair(offset) ? {x: offset[0], y: offset[1]} : offset;
+  return {...(x === undefined ? {} : {[`${phase}OffsetX`]: x}),
+    ...(y === undefined ? {} : {[`${phase}OffsetY`]: y})};
+}
+
 function node(
   kind: UiNodeKind,
   runtimeType: string | undefined,
@@ -626,8 +639,7 @@ function node(
   const transition = (phase: "show" | "hide", value: UiVisibilityTransition | undefined) =>
     value === undefined ? {} : {
       [`${phase}TransitionSeconds`]: value.seconds,
-      ...(value.offset === undefined ? {}
-        : {[`${phase}OffsetX`]: value.offset[0], [`${phase}OffsetY`]: value.offset[1]}),
+      ...offsetProperties(phase, value.offset),
       ...(value.ease === undefined ? {} : {[`${phase}TransitionEase`]: value.ease}),
     };
   return definitionElement(nodeType, {

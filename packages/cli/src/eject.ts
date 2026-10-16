@@ -83,9 +83,12 @@ function typedNodeProps(runtime: Json): string[] {
     const offsetX = take<number>(`${phase}OffsetX`, "number");
     const offsetY = take<number>(`${phase}OffsetY`, "number");
     const ease = take<string>(`${phase}TransitionEase`, "string");
-    const y = offsetY === undefined ? 0 : phase === "show" ? `sf(${offsetY})` : offsetY;
+    const y = offsetY === undefined ? undefined : phase === "show" ? `sf(${offsetY})` : String(offsetY);
+    // One authored axis stays one axis, so the other keeps its Runtime default.
+    const offset = offsetX !== undefined && y !== undefined ? `[${offsetX}, ${y}]`
+      : offsetX !== undefined ? `{x: ${offsetX}}` : y !== undefined ? `{y: ${y}}` : undefined;
     const fields = [`seconds: ${seconds}`,
-      ...(offsetX === undefined && offsetY === undefined ? [] : [`offset: [${offsetX ?? 0}, ${y}]`]),
+      ...(offset === undefined ? [] : [`offset: ${offset}`]),
       ...(ease === undefined ? [] : [`ease: ${literal(ease)}`])];
     out.push(`${phase}Transition={{${fields.join(", ")}}}`);
   }

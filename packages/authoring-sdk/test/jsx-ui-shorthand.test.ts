@@ -75,6 +75,23 @@ test("clipping, show/hide transitions and Slider option lower to runtime propert
   assert.equal(node("TextSpeed").runtimeProperties.optionKey, "mspeed");
 });
 
+test("a transition offset may set one axis and leave the Runtime default of the other", () => {
+  const node = compiled([
+    jsx(Group, {name: "Across", position: [0, 0], size: [10, 10],
+      showTransition: {seconds: 0.3, offset: {x: 40}}, hideTransition: {seconds: 0.2, offset: {y: 12}}}),
+    jsx(Group, {name: "Both", position: [0, 0], size: [10, 10],
+      showTransition: {seconds: 0.3, offset: {x: 5, y: -6}}}),
+    jsx(Group, {name: "Neither", position: [0, 0], size: [10, 10],
+      showTransition: {seconds: 0.3, offset: {}}}),
+  ]);
+  // No showOffsetY: the Runtime keeps its 8px rise for the vertical axis.
+  assert.deepEqual(node("Across").runtimeProperties, {showTransitionSeconds: 0.3, showOffsetX: 40,
+    hideTransitionSeconds: 0.2, hideOffsetY: 12});
+  assert.deepEqual(node("Both").runtimeProperties, {showTransitionSeconds: 0.3,
+    showOffsetX: 5, showOffsetY: -6});
+  assert.deepEqual(node("Neither").runtimeProperties, {showTransitionSeconds: 0.3});
+});
+
 test("runtimeProperties with a typed prop, Control sliders and skin-shaped paths are linted", () => {
   const result = compileJsxUi(jsx(Scene, {name: "Lint", width: 640, height: 360,
     children: jsxs(Group, {name: "Root", fill: true, children: [
