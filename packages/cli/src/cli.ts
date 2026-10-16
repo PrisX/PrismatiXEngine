@@ -101,7 +101,7 @@ const machineOutput = process.argv.includes("--json");
 
 const commandOptions: Readonly<Record<string, {values: string; flags: string}>> = {
   create: {values: "name id locale width height template runtime package-manager", flags: ""},
-  dev: {values: "runtime preview-host debounce ui-registry at", flags: "once smoke"},
+  dev: {values: "runtime preview-host debounce ui-registry at route", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space no-transcode"},
   pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target android-player gradle android-sdk web-player web-package ffmpeg", flags: "encrypt ignore-disk-space check verify-media debug no-transcode"},
@@ -2646,6 +2646,24 @@ function previewResponseError(action: string, response: PreviewMessage): Error {
   return new Error(`${action} was rejected (${code}): ${message}`);
 }
 
+/** Shows a registered UI route's screen in Preview (preview-safe: actions are reported, not run). */
+async function previewRoute(client: PreviewClient, build: BuildResult, route: string): Promise<void> {
+  const project = object(await readJson(join(build.output, "project.pxproject")));
+  const entries = object(project?.uiEntryPoints) ?? {};
+  const uiPath = entries[route];
+  if (typeof uiPath !== "string")
+    throw new Error(`--route ${route} names no uiEntryPoints route; this project registers ${
+      Object.keys(entries).join(", ") || "none"} (eject a built-in screen to preview it)`);
+  const document = object(await readJson(projectFile(build.output, uiPath)));
+  if (typeof document?.id !== "string" || typeof document.revision !== "number")
+    throw new Error(`${uiPath} is not a compiled UI scene`);
+  const response = await client.request("applyUiScene", build.artifact.runtimeIr.documentId,
+    document.revision, {projectRoot: build.output, sceneId: document.id, uiPath});
+  if (response.type !== "uiApplied") throw previewResponseError(`UI route ${route}`, response);
+  progress({event: "dev.route", severity: "information", code: "PXCLI1615", route, uiPath,
+    message: `Preview shows the ${route} screen (${uiPath})`});
+}
+
 async function applyPreviewBuild(client: PreviewClient, built: BuildResult,
   incremental: boolean): Promise<void> {
   const documentId = built.artifact.runtimeIr.documentId;
@@ -2763,9 +2781,14 @@ async function devCommand(options: Options): Promise<number> {
           pid: candidate.pid, message: `Preview started for revision ${revision}`});
         await applyPreviewBuild(candidate, updated, false);
         const at = options.values.get("at");
+        const route = options.values.get("route");
+        if (route !== undefined && at !== undefined) throw new Error("--route and --at are mutually exclusive");
         const played = await candidate.request("play", updated.artifact.runtimeIr.documentId,
-          updated.artifact.runtimeIr.committedRevision, {showTitle: built === undefined && at === undefined});
+          updated.artifact.runtimeIr.committedRevision,
+          {showTitle: built === undefined && at === undefined && route === undefined});
         if (played.type !== "playAccepted") throw previewResponseError("Play", played);
+        // --route shows one registered screen instead of the title, after every rebuild.
+        if (route !== undefined) await previewRoute(candidate, updated, route);
         // --at replays every revision up to the same Story position, so an
         // edit deep in a scene is seen without playing up to it again.
         if (at !== undefined) {
@@ -3309,6 +3332,7 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
   dev: ["Watch the project and replay it in Preview after every successful edit.",
     "prismatix dev [project] [--runtime <engine-build-or-install>]",
     "prismatix dev [project] --at chapter2:120 | --at chapter2:after_school | --at Story/zh-TW/chapter2.pxstory:120",
+    "prismatix dev [project] --route <ui route>   (shows that registered screen instead of the title, after every edit)",
     "prismatix dev [project] --json   (stderr: NDJSON records with event diagnostic, progress, dev.rebuild start/done,",
     "    dev.preview start/exit and dev.watching; stdout: the PreviewHost protocol)"],
   validate: ["Check Story, UI, catalog and resources without writing anything.",

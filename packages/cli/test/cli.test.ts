@@ -555,6 +555,48 @@ test("dev --json streams diagnostics and rebuild/Preview lifecycle as NDJSON rec
   assert.doesNotMatch(human.stderr, /dev\.rebuild|"event"/u);
 });
 
+test("dev --route shows one registered UI screen instead of the title", async () => {
+  const value = await fixture();
+  const preview = join(value.root, "mock-preview.mjs");
+  const log = join(value.root, "requests.jsonl");
+  await write(preview, `
+    import {createInterface} from "node:readline";
+    import {appendFileSync} from "node:fs";
+    const input = createInterface({input: process.stdin});
+    input.on("line", (line) => {
+      const request = JSON.parse(line);
+      appendFileSync(${JSON.stringify(log)}, line + "\\n");
+      const type = {hello: "ready", applyRuntimeIr: "runtimeIrApplied", play: "playAccepted",
+        applyUiScene: "uiApplied", shutdown: "shutdownAccepted"}[request.type];
+      process.stdout.write(JSON.stringify({...request, type, runtimeIrSchemaRevision: 1, uiSchemaRevision: 1,
+        applyMode: "fullRuntimeRestart", appliedRevision: request.revision}) + "\\n");
+      if (request.type === "shutdown") { input.close(); process.exit(0); }
+    });
+  `);
+  const shown = run(["dev", value.root, "--preview-host", preview, "--once", "--route", "title"]);
+  assert.equal(shown.status, 0, shown.stderr);
+  const requests = (await readFile(log, "utf8")).trim().split(/\r?\n/u)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.deepEqual(requests.map((request) => request.type),
+    ["hello", "applyRuntimeIr", "play", "applyUiScene", "shutdown"]);
+  assert.equal(requests[2]!.showTitle, false);
+  const title = JSON.parse(await readFile(join(value.root, "Content/UI/Title.pxui"), "utf8")) as
+    {id: string; revision: number};
+  const apply = requests[3]!;
+  assert.deepEqual([apply.sceneId, apply.revision, apply.uiPath], [title.id, title.revision, "Content/UI/Title.pxui"]);
+  assert.equal((await stat(join(String(apply.projectRoot), "Content/UI/Title.pxui"))).isFile(), true);
+  const route = shown.stderr.split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>)
+    .find((record) => record.code === "PXCLI1615");
+  assert.deepEqual([route?.event, route?.route], ["dev.route", "title"]);
+
+  const unknown = run(["dev", value.root, "--preview-host", preview, "--once", "--route", "settings"]);
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /--route settings names no uiEntryPoints route; this project registers title/u);
+  const both = run(["dev", value.root, "--preview-host", preview, "--once", "--route", "title", "--at", "main:1"]);
+  assert.equal(both.status, 1);
+  assert.match(both.stderr, /mutually exclusive/u);
+});
+
 test("dev reuses verified media and Story inputs without hiding changes", {timeout: 50_000}, async (t) => {
   const value = await fixture();
   const indexPath = join(value.root, "Story/story.pxindex");
