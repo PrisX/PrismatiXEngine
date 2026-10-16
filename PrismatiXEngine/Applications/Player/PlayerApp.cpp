@@ -1860,12 +1860,23 @@ void PlayerApp::FlushProfileIfDue() {
             std::future_status::ready)
             return;
         if (m_profileWrite.get()) m_profileTrusted = true;
+        else MarkProfileDirty(false);  // retried on the normal schedule
     }
     if (!m_profileDirty || !m_profileWritable) return;
     const std::uint64_t age = SDL_GetTicks() - m_profileDirtySince;
     if (age < (m_profileUrgent ? 2'000u : 30'000u)) return;
     if (!m_profileTrusted) {
-        (void)SaveProfileIfWritable();
+        // The first write checks that an existing file is ours. It runs on the
+        // persistence worker too: done inline it froze a frame for ~100 ms,
+        // often in the middle of a screen fade.
+        m_profileDirty = false;
+        m_profileUrgent = false;
+        m_profileWrite = m_persistenceWrites.Submit(
+            [profile = m_profile, path = PathToUtf8(m_saveDirectory / "profile.dat"),
+             key = m_saveKey, fallbacks = m_saveFallbackKeys] {
+                return progress::SaveGlobalProfilePreservingExisting(
+                    profile, path, &key, fallbacks);
+            });
         return;
     }
     nlohmann::json encoded;
@@ -2035,7 +2046,7 @@ void PlayerApp::BeginPresentationTransition(
     const PresentationTransition& transition) {
     if (m_uiTransitionStartedThisFrame || !m_uiEffects) return;
     const auto handle = m_runtime.Renderer().PlayScreenEffect(
-        transition.preset, transition.duration);
+        transition.preset, transition.duration, nullptr, true);
     if (handle) m_uiTransitionStartedThisFrame = true;
 }
 
@@ -2194,8 +2205,10 @@ bool PlayerApp::CommitStartGame() {
 
 void PlayerApp::GameStartTransitionFrame(const float dt,
                                          const std::uint64_t now) {
-    constexpr float duration=1.0f;
-    m_gameStartTransitionElapsed+=std::max(0.0f,dt);
+    constexpr float duration=0.8f;
+    // Capped like screen effects: the frame that commits the start loads the
+    // story and its first images, and must not swallow the fade-in.
+    m_gameStartTransitionElapsed+=std::clamp(dt,0.0f,1.0f/30.0f);
     int width=0,height=0;
     m_runtime.Renderer().GetLogicalSize(width,height);
     float alpha=1.0f;
@@ -2233,9 +2246,10 @@ void PlayerApp::GameStartTransitionFrame(const float dt,
         }
     }
     if(alpha>0.0f){
+        const float eased=alpha*alpha*(3.0f-2.0f*alpha);
         m_runtime.Renderer().DrawRect(
             Rect{0,0,static_cast<float>(width),static_cast<float>(height)},
-            Color{0,0,0,static_cast<std::uint8_t>(std::lround(alpha*255.0f))});
+            Color{0,0,0,static_cast<std::uint8_t>(std::lround(eased*255.0f))});
     }
 }
 
@@ -3819,7 +3833,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
             m_hudFade = target;
             m_hudFadeSnap = false;
         } else {
-            const float step = dt / m_hudFadeSeconds;
+            const float step = std::min(dt, 1.0f / 30.0f) / m_hudFadeSeconds;
             m_hudFade += std::clamp(target - m_hudFade, -step, step);
         }
         if (m_hudFade == target) m_hudFadeSeconds = kHudFadeSeconds;

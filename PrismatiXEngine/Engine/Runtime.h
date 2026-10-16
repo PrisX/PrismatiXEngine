@@ -88,6 +88,8 @@ private:
     Window m_window;
     Input m_input;
     Clock m_clock;
+    // The screen effect seen at the last BeginFrame; see BeginFrame.
+    std::uint64_t m_lastScreenEffect = 0;
     io::VFS m_vfs;
     std::unique_ptr<graphics::AssetCache> m_assets;
     std::unique_ptr<graphics::Renderer2D> m_renderer;

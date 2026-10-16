@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
+#include <algorithm>
 #include <utility>
 
 #if !defined(PRISMATIX_PREVIEW_WASM)
@@ -228,7 +229,19 @@ bool Runtime::BeginFrame() {
     if (m_audio) {
         m_audio->Update();
     }
-    m_renderer->UpdateScreenEffects(m_clock.DeltaSeconds());
+    {
+        // An effect started during the previous frame: that frame also built
+        // the incoming screen and loaded its images, so its time is not effect
+        // time (counting it skipped a third of a 0.3 s screen fade). Later
+        // stalls are capped so a fade slows for a frame instead of jumping.
+        constexpr float kMaxEffectStep = 1.0f / 30.0f;
+        const auto active = m_renderer->ActiveScreenEffect();
+        const std::uint64_t handle = active ? active->handle : 0;
+        const float step = handle != m_lastScreenEffect
+            ? 0.0f : std::min(m_clock.DeltaSeconds(), kMaxEffectStep);
+        m_lastScreenEffect = handle;
+        m_renderer->UpdateScreenEffects(step);
+    }
     if (!m_renderer->BeginFrame(m_config.clearColor))
         m_window.Clear(m_config.clearColor);
     return true;

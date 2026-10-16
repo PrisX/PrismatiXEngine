@@ -70,6 +70,7 @@ struct ScreenEffectPlayback {
     float durationSeconds = 0.0f;
     float elapsedSeconds = 0.0f;
     bool paused = false;
+    bool easeInOut = false;
     ScreenEffectStatus status = ScreenEffectStatus::Unknown;
     float randomSeed = 0.0f;
     std::array<std::array<float, 4>, 8> parameters{};
@@ -136,9 +137,13 @@ public:
     Status RegisterScreenEffect(ScreenEffectDefinition definition);
     [[nodiscard]] bool HasScreenEffect(std::string_view id) const;
     [[nodiscard]] std::vector<std::string> ScreenEffectIds() const;
+    // `easeInOut` shapes fade, crossfade and slide progress with smoothstep;
+    // UI presentation transitions use it, authored story transitions stay
+    // linear like Artemis/KiriKiri "trans".
     [[nodiscard]] ScreenEffectHandle PlayScreenEffect(
         std::string_view id, float durationSeconds,
-        const CustomEffectNamedParameters* parameters = nullptr);
+        const CustomEffectNamedParameters* parameters = nullptr,
+        bool easeInOut = false);
     // Dissolves the last presented frame into the frames that follow through
     // a grayscale rule image, the KiriKiri/Artemis whole-screen "trans".
     // `vague` is the soft edge width in rule levels (0-255). Works on every

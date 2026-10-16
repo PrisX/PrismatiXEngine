@@ -484,7 +484,8 @@ bool Renderer2D::BeginPresentationHold() {
 
 ScreenEffectHandle Renderer2D::PlayScreenEffect(const std::string_view id,
     const float durationSeconds,
-    const CustomEffectNamedParameters* parameters) {
+    const CustomEffectNamedParameters* parameters,
+    const bool easeInOut) {
     const auto found = m_screenEffectDefinitions.find(std::string(id));
     if (found == m_screenEffectDefinitions.end() ||
         !std::isfinite(durationSeconds) || durationSeconds < 0.0f)
@@ -520,6 +521,7 @@ ScreenEffectHandle Renderer2D::PlayScreenEffect(const std::string_view id,
     playback.handle = handle;
     playback.effect = found->second.id;
     playback.durationSeconds = durationSeconds;
+    playback.easeInOut = easeInOut;
     playback.status = ScreenEffectStatus::Playing;
     playback.randomSeed = static_cast<float>(
         (handle * 2654435761ull) & 0x00ffffffu);
@@ -751,10 +753,15 @@ void Renderer2D::PresentScreenFrame() {
         SDL_RenderTexture(m_renderer, m_frameTarget, nullptr, &viewport);
         return;
     }
-    const float progress = std::clamp(
+    float progress = std::clamp(
         m_activeScreenEffect->elapsedSeconds /
             std::max(0.0001f, m_activeScreenEffect->durationSeconds),
         0.0f, 1.0f);
+    const std::string& operation = definition->second.operation;
+    if (m_activeScreenEffect->easeInOut &&
+        (operation == "fade" || operation == "crossfade" ||
+         operation == "slide-left" || operation == "slide-right"))
+        progress = progress * progress * (3.0f - 2.0f * progress);
     RenderScreenEffect(definition->second, progress);
 }
 

@@ -59,7 +59,8 @@ RuntimeSession::RuntimeSession(Services services)
     m_routes.SetTransitionDriver({
         .play = [&renderer = services.renderer](const ui::RouteTransition& transition) {
             return renderer.PlayScreenEffect(transition.preset,
-                                             transition.durationSeconds);
+                                             transition.durationSeconds,
+                                             nullptr, true);
         },
         .playing = [&renderer = services.renderer](const ui::RouteTransitionHandle handle) {
             return renderer.ScreenEffectPlaying(handle);

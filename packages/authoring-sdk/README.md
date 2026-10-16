@@ -207,7 +207,15 @@ routes and duplicate pairs fail validation. Available built-in presets are
 `none`, `fade`, `crossfade`, `slide-left`, and `slide-right`. `fade` passes
 through the clear colour, while `crossfade` overlays the incoming frame on
 the outgoing frame. Omitted settings preserve previous Player defaults
-(including the 0.5-second transition into the second splash). Custom shader
+(including the 0.5-second transition into the second splash). Without any
+settings every menu screen crossfades in 0.3 s, the title appears with a 0.5 s
+crossfade, and Start fades through black (0.8 s out, 0.8 s in).
+
+These presentation effects ease in and out. Story transitions (`[bg ...
+duration=...]`, rule images) stay linear, as in Artemis and KiriKiri. Effect
+time starts on the first frame that shows the effect, not the frame that
+built the incoming screen, and a frame longer than 1/30 s advances it by only
+1/30 s, so a slow frame pauses a fade instead of skipping part of it. Custom shader
 transitions and a fully declarative route graph remain separate authoring gaps.
 
 ## JSX UI authoring
