@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
+import {mkdir, mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
-import {inspectSaveWithRuntime} from "../src/save-inspection.js";
+import {inspectSaveWithRuntime, resolvePackageManifest} from "../src/save-inspection.js";
 
 async function fixture(t: test.TestContext, source: string) {
   const root = await mkdtemp(join(tmpdir(), "prismatix-inspect-transport-"));
@@ -25,6 +25,7 @@ test("inspection preserves native floating numeric lexemes and uint64 precision"
 test("inspection passes file, package and secret as distinct arguments without a shell", async t => {
   const f = await fixture(t, "process.stdout.write(JSON.stringify({args: process.argv.slice(2)}));");
   const packagePath = join(f.root, "manifest with spaces.json");
+  await writeFile(packagePath, "{}");
   const result = await inspectSaveWithRuntime({...f, packagePath, secret: "literal ; $() & secret", json: true});
   assert.deepEqual(JSON.parse(result.output).args,
     ["--inspect-save", f.path, "--package", packagePath, "--secret", "literal ; $() & secret", "--json"]);
@@ -49,4 +50,19 @@ test("inspection bounds noisy native stdout and diagnostic stderr", async t => {
   await writeFile(f.runtime.player, "process.stderr.write('x'.repeat(128*1024)); process.stderr.write('END-DIAGNOSTIC'); process.exitCode=2;");
   await assert.rejects(inspectSaveWithRuntime(f), (error: unknown) =>
     error instanceof Error && error.message.endsWith("END-DIAGNOSTIC") && error.message.length < 66 * 1024);
+});
+
+test("--package accepts a distribution folder, its Package folder or the manifest file", async t => {
+  const f = await fixture(t, "process.stdout.write(JSON.stringify({args: process.argv.slice(2)}));");
+  const distribution = join(f.root, "My Game");
+  const manifest = join(distribution, "Package", "manifest.json");
+  await mkdir(join(distribution, "Package"), {recursive: true});
+  await writeFile(manifest, "{}");
+  for (const packagePath of [distribution, join(distribution, "Package"), manifest]) {
+    assert.equal(await resolvePackageManifest(packagePath), manifest);
+    const result = await inspectSaveWithRuntime({...f, packagePath});
+    assert.deepEqual(JSON.parse(result.output).args, ["--inspect-save", f.path, "--package", manifest]);
+  }
+  await assert.rejects(resolvePackageManifest(f.root), /no Package\/manifest\.json or manifest\.json/u);
+  await assert.rejects(resolvePackageManifest(join(f.root, "missing")), /does not exist/u);
 });

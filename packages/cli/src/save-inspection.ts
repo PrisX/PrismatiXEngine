@@ -1,6 +1,6 @@
 import {spawn} from "node:child_process";
 import {stat} from "node:fs/promises";
-import {extname, resolve} from "node:path";
+import {extname, join, resolve} from "node:path";
 import {discoverRuntimeTool, type RuntimeDiscoveryOptions} from "./runtime-discovery.js";
 
 export interface SaveInspectionOptions {
@@ -20,6 +20,23 @@ const maximumSaveBytes = 64 * 1024 * 1024;
 const maximumReplyBytes = 64 * 1024 * 1024;
 const maximumDiagnosticBytes = 64 * 1024;
 
+/**
+ * The native Player reads a package manifest file. Accept what an author has
+ * at hand: a distribution folder (<dir>/Package/manifest.json), its Package
+ * folder (<dir>/manifest.json), or the manifest path itself.
+ */
+export async function resolvePackageManifest(path: string): Promise<string> {
+  const target = resolve(path);
+  const info = await stat(target).catch(() => undefined);
+  if (info === undefined) throw new Error(`--package ${path} does not exist`);
+  if (info.isFile()) return target;
+  for (const candidate of [join(target, "Package", "manifest.json"), join(target, "manifest.json")]) {
+    if ((await stat(candidate).catch(() => undefined))?.isFile()) return candidate;
+  }
+  throw new Error(`--package ${path} has no Package/manifest.json or manifest.json; ` +
+    "pass a distribution folder, its Package folder, or the manifest file");
+}
+
 /** Native Player owns save authentication, schema and runtime-state validation. */
 export async function inspectSaveWithRuntime(options: SaveInspectionOptions): Promise<SaveInspectionResult> {
   const path = resolve(options.path);
@@ -28,7 +45,7 @@ export async function inspectSaveWithRuntime(options: SaveInspectionOptions): Pr
     throw new Error("Save inspection requires a nonempty file of at most 64 MiB");
   const player = await discoverRuntimeTool("player", options.runtime ?? {});
   const args = ["--inspect-save", path];
-  if (options.packagePath !== undefined) args.push("--package", resolve(options.packagePath));
+  if (options.packagePath !== undefined) args.push("--package", await resolvePackageManifest(options.packagePath));
   if (options.secret !== undefined) args.push("--secret", options.secret);
   if (options.json) args.push("--json");
   const output = await new Promise<string>((accept, reject) => {
