@@ -2528,8 +2528,12 @@ bool PlayerApp::SaveSlot(int slot, std::vector<std::uint8_t> thumbnail) {
     HarvestBackgroundSave(true);
     auto captured = MakeSnapshot(/*includeBacklog=*/true);
     if (!captured) return false;
-    progress::SaveSnapshot snap = std::move(*captured);
-    snap.thumbnailPng = std::move(thumbnail);
+    captured->thumbnailPng = std::move(thumbnail);
+    return WriteSaveSlot(slot, std::move(*captured));
+}
+
+bool PlayerApp::WriteSaveSlot(const int slot, progress::SaveSnapshot snap) {
+    HarvestBackgroundSave(true);
     if (!m_saves.Save(slot, snap)) {
         diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPLAYER6001",.category="Player.Save",
                            .message="Could not save slot "+std::to_string(slot)};diag::Emit(d);return false;
@@ -3340,6 +3344,7 @@ void PlayerApp::RenderStageWithScripts() {
     m_session->Stage().Render();
     if (m_scriptHost)
         m_scriptHost->RenderRetained(script::RenderPhase::AfterStage);
+    QaStageRendered();
 }
 
 void PlayerApp::RenderUIWithScripts(const float opacity) {

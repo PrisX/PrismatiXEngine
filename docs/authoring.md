@@ -14,6 +14,7 @@ Everything about writing a PrismatiX game: the project, Story scripts, character
 - [Host Action authoring contract](#host-action-authoring-contract)
 - [Packaged Player user data](#packaged-player-user-data)
 - [Custom render effects](#custom-render-effects)
+- [Testing with journeys](#testing-with-journeys)
 
 ## Build your first PrismatiX game
 
@@ -2866,3 +2867,50 @@ never copied into the Player distribution.
 The WASM Preview currently has no custom GPU-effect backend and fails the GPU
 tier explicitly instead of silently rendering a different image. Use basic-tier
 built-in effects where a software/WASM fallback is required.
+
+## Testing with journeys
+
+`prismatix test` plays a packaged game with scripts and fails when one
+throws, so a build can be checked screen by screen without clicking through
+it. Pack with the QA Player, which answers the test interface (the shipped
+Player has none of it):
+
+```bash
+prismatix pack . --output dist/qa --player <runtime>/PrismatiXPlayerQA.exe
+prismatix test --package dist/qa
+```
+
+Journeys are `tests/journeys/*.ts` (or paths given on the command line).
+Each gets a fresh Player with its own user data:
+
+```ts
+import type {PrismatixTestClient} from "@prismatix/cli/test";
+
+// The default limit is 180 s; a long tour sets its own (--timeout overrides).
+export const timeoutMs = 600_000;
+
+export default async function tour(px: PrismatixTestClient) {
+  await px.waitFor({appState: "title", idle: true});
+  await px.jump("chapter2:after_school");
+  // Click through lines until one matches, in one request.
+  await px.advanceUntil({textContains: "放學後"});
+  await px.screenshot("after-school.png");
+  await px.advanceUntil({choices: true});
+  await px.choose(0);
+  await px.save(1);  // the thumbnail is the next Stage frame, without the HUD
+}
+```
+
+- `px.advanceUntil(condition, {timeoutMs, maxLines})` takes the same
+  conditions as `px.waitFor`. The Player clicks a few lines (and timed waits)
+  per frame and checks the condition after each, so it never clicks past the
+  line it looks for. It fails at a choice the condition does not ask for,
+  when the story ends, and after `maxLines` (5000) lines; it returns the
+  state with `advancedLines`.
+- `px.save(slot)` keeps the state at the request and writes it once the next
+  Stage frame is drawn, as the Save screen does, so the slot shows a real
+  thumbnail. Inside `px.batch([...])`, which runs in one frame, `save` writes
+  at once and without a thumbnail.
+- Screenshots with relative paths go to `.prismatix/test-results/<journey>`.
+  On failure the report shows the tail of the Player log and keeps the user
+  data.

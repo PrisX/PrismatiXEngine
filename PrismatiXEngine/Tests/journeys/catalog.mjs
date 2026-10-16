@@ -124,6 +124,11 @@ export default async function catalog(px) {
   await px.waitFor({frames: 3});
   check(!(await slotItem(second)).occupied && (await slotItem(third)).occupied,
     "save.move into an empty slot did not move the save");
+  // px.save outside a batch takes the next Stage frame as its thumbnail.
+  await px.save(Number(second));
+  await px.action("saveLoad.page", "1");
+  check((await slotItem(second)).image !== "", "px.save stored no thumbnail");
+  await px.action("save.delete", second);
   await px.action("save.delete", first);
   await px.action("save.delete", third);
   check(!(await slotItem(first)).occupied && !(await slotItem(third)).occupied,

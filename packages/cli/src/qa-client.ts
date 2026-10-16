@@ -96,6 +96,11 @@ export interface WaitCondition {
 
 export interface WaitOptions {readonly timeoutMs?: number}
 
+export interface AdvanceOptions extends WaitOptions {
+  /** Fail after clicking this many lines (default 5000). */
+  readonly maxLines?: number;
+}
+
 export interface FrameCapture {
   readonly width: number; readonly height: number; readonly sampledColors: number;
   readonly hash: string; readonly valid: boolean;
@@ -133,12 +138,23 @@ export interface PrismatixTestClient {
   /** A click on the text: finishes the line, or goes to the next one. */
   advance(): Promise<{readonly completedLine: boolean}>;
   choose(index: number): Promise<{readonly text: string}>;
+  /**
+   * Clicks through the story until the condition holds, in one round trip:
+   * the Player advances a few lines (and timed waits) per frame and checks
+   * the condition after each, so a matching line is never clicked past. It
+   * fails at a choice the condition does not expect, and after maxLines.
+   * The default timeout is 120 s.
+   */
+  advanceUntil(condition: WaitCondition, options?: AdvanceOptions):
+    Promise<PlayerState & {readonly advancedLines: number}>;
   waitFor(condition: WaitCondition & WaitOptions, options?: WaitOptions): Promise<PlayerState>;
   /** Polls state() until the predicate holds (use waitFor for one-frame states). */
   waitUntil(predicate: (state: PlayerState) => boolean, options?: WaitOptions & {readonly message?: string}):
     Promise<PlayerState>;
   /** Captures the next composed frame; a relative path lands in the journey's output folder. */
   screenshot(path?: string, options?: {readonly native?: boolean}): Promise<FrameCapture>;
+  /** Saves the current state; the save's thumbnail is the next Stage frame
+   * without the UI, as the Save screen takes it. */
   save(slot: number): Promise<void>;
   load(slot: number): Promise<void>;
   /** Reads a setting, or changes it when value is given (masterVolume, textSpeedMs,
@@ -279,6 +295,13 @@ export class PlayerTestClient implements PrismatixTestClient {
   async choose(index: number): Promise<{readonly text: string}> {
     return await this.request("choose", {index}) as {text: string};
   }
+  async advanceUntil(condition: WaitCondition, options: AdvanceOptions = {}):
+    Promise<PlayerState & {readonly advancedLines: number}> {
+    const timeoutMs = options.timeoutMs ?? 120_000;
+    return await this.request("advanceUntil", {condition, timeoutMs,
+      ...(options.maxLines === undefined ? {} : {maxLines: options.maxLines})},
+    timeoutMs + 10_000) as PlayerState & {advancedLines: number};
+  }
   async waitFor(condition: WaitCondition & WaitOptions, options: WaitOptions = {}): Promise<PlayerState> {
     const {timeoutMs: inline, ...rest} = condition;
     const timeoutMs = options.timeoutMs ?? inline ?? defaultWaitMs;
@@ -304,7 +327,7 @@ export class PlayerTestClient implements PrismatixTestClient {
       ...(target === undefined ? {} : {path: target}),
       ...(options.native === undefined ? {} : {native: options.native})}) as FrameCapture;
   }
-  async save(slot: number): Promise<void> { await this.request("save", {slot}); }
+  async save(slot: number): Promise<void> { await this.request("save", {slot}, 20_000); }
   async load(slot: number): Promise<void> { await this.request("load", {slot}); }
   async setting(name: string, value?: unknown): Promise<unknown> {
     return await this.request("setting", value === undefined ? {name} : {name, value});

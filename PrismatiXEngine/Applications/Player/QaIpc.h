@@ -51,12 +51,19 @@
 //   jump target                 start or restart the story at a label:
 //                               "scene", "scene:label" or a raw IR label
 //   advance                     what a click on the text does
+//   advanceUntil condition timeoutMs maxLines
+//                               click through lines (and timed waits), a few
+//                               per frame, until the condition holds; fails
+//                               at a choice or after maxLines (default 5000)
 //   choose index                pick a presented choice
 //   waitFor condition timeoutMs wait until every field of condition holds
 //                               (see QaConditionHolds in QaIpc.cpp)
 //   screenshot [path]           capture the next composed frame; writes a PNG
 //                               when path is set, returns size/colors/hash
-//   save slot / load slot       save or load a slot synchronously
+//   save slot                   save the state at the request, with the next
+//                               Stage frame (no UI) as thumbnail; in a batch,
+//                               at once and without a thumbnail
+//   load slot                   load a slot synchronously
 //   setting name [value]        read or change a setting (see QaSetting)
 //   route operation [name]      open|show|push|replace|pop|showModal|closeModal
 //   resource path               whether the mounted packages contain a file
@@ -111,6 +118,9 @@ struct QaSession {
     std::deque<QaIpcServer::Request> queue;
     std::optional<Pending> pending;
     int stableFrames = 0;
+    // Runs once, after the next Stage frame is drawn and before the UI: a
+    // `save` request takes its thumbnail there, as the Save screen does.
+    std::function<void()> stageRendered;
 };
 
 // Errors a request handler throws; the code goes into the response.

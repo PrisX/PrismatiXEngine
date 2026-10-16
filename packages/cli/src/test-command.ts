@@ -34,15 +34,17 @@ export const testHelp = [
   "The Player must be PrismatiXPlayerQA: pack with --player <build>/PrismatiXPlayerQA.exe. By default",
   "the package is dist/<project id>. Every journey starts a fresh Player with its own user data",
   "(kept on failure or with --keep-data). Screenshots with relative paths go to",
-  "<output>/<journey> (default .prismatix/test-results). A journey fails when it throws, exceeds",
-  "--timeout (default 180000 ms) or the Player exits uncleanly; the report then shows the tail of the",
-  "Player log. The exit code is 1 when any journey failed.",
+  "<output>/<journey> (default .prismatix/test-results). A journey fails when it throws, exceeds its",
+  "time limit or the Player exits uncleanly; the report then shows the tail of the Player log. The",
+  "limit is --timeout when given, else the journey's own `export const timeoutMs = 600_000`, else",
+  "180000 ms. The exit code is 1 when any journey failed.",
   "Protocol: newline-delimited JSON {id, op, ...} -> {id, ok, result|error} on 127.0.0.1; operations",
-  "state, controls, click, action, key, input, bindings, uiData, variable, jump, advance, choose,",
-  "waitFor, screenshot, save, load, setting, route, resource, log, batch, quit.",
+  "state, controls, click, action, key, input, bindings, uiData, variable, jump, advance,",
+  "advanceUntil, choose, waitFor, screenshot, save, load, setting, route, resource, log, batch, quit.",
 ];
 
 const journeyExtensions = [".ts", ".mts", ".js", ".mjs"];
+const defaultJourneyTimeoutMs = 180_000;
 
 interface JourneyResult {
   readonly name: string;
@@ -121,7 +123,13 @@ async function resolvePlayer(options: TestCommandOptions, projectRoot: string): 
     "--player <build>/PrismatiXPlayerQA" + suffix + " or pass --player");
 }
 
-async function loadJourney(file: string, scratch: string): Promise<Journey> {
+interface LoadedJourney {
+  readonly run: Journey;
+  /** The journey's own `export const timeoutMs`. */
+  readonly timeoutMs?: number;
+}
+
+export async function loadJourney(file: string, scratch: string): Promise<LoadedJourney> {
   let module: Record<string, unknown>;
   try {
     module = await import(pathToFileURL(file).href) as Record<string, unknown>;
@@ -141,7 +149,11 @@ async function loadJourney(file: string, scratch: string): Promise<Journey> {
   const journey = module.default ?? module.journey;
   if (typeof journey !== "function")
     throw new Error(`${file} must export a default async function (px, context)`);
-  return journey as Journey;
+  const timeoutMs = module.timeoutMs;
+  if (timeoutMs !== undefined && (typeof timeoutMs !== "number" || !Number.isInteger(timeoutMs) ||
+      timeoutMs <= 0))
+    throw new Error(`${file}: timeoutMs must be a positive whole number of milliseconds`);
+  return {run: journey as Journey, ...(timeoutMs === undefined ? {} : {timeoutMs})};
 }
 
 async function waitForPort(portFile: string, child: ChildProcess, exited: () => boolean,
@@ -177,7 +189,7 @@ function errorText(error: unknown): string {
 }
 
 async function runJourney(file: string, player: string, options: TestCommandOptions,
-  projectRoot: string, outputRoot: string, timeoutMs: number): Promise<JourneyResult> {
+  projectRoot: string, outputRoot: string, timeoutOverride: number | undefined): Promise<JourneyResult> {
   const name = basename(file, extname(file));
   const started = Date.now();
   const outputDirectory = join(outputRoot, name);
@@ -196,6 +208,7 @@ async function runJourney(file: string, player: string, options: TestCommandOpti
   const notes: string[] = [];
   try {
     const journey = await loadJourney(file, scratch);
+    const timeoutMs = timeoutOverride ?? journey.timeoutMs ?? defaultJourneyTimeoutMs;
     child = spawn(player, [], {cwd: workingDirectory, stdio: "ignore", windowsHide: false,
       env: {...process.env, PRISMATIX_PLAYER_DATA_ROOT: dataRoot,
         PRISMATIX_QA_IPC: "127.0.0.1:0", PRISMATIX_QA_IPC_PORT_FILE: portFile}});
@@ -210,7 +223,7 @@ async function runJourney(file: string, player: string, options: TestCommandOpti
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
-        Promise.resolve(journey(client, context)),
+        Promise.resolve(journey.run(client, context)),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error(`Journey timed out after ${timeoutMs} ms`)), timeoutMs);
         }),
@@ -245,8 +258,9 @@ export async function testCommand(options: TestCommandOptions): Promise<number> 
   try {
     const projectRoot = resolve(options.values.get("project") ?? ".");
     const timeoutText = options.values.get("timeout");
-    const timeoutMs = timeoutText === undefined ? 180_000 : Number(timeoutText);
-    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new Error("--timeout must be a positive number of milliseconds");
+    const timeoutMs = timeoutText === undefined ? undefined : Number(timeoutText);
+    if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs <= 0))
+      throw new Error("--timeout must be a positive number of milliseconds");
     const journeys = await findJourneys(projectRoot, options.positional);
     const player = await resolvePlayer(options, projectRoot);
     const outputRoot = resolve(options.values.get("output") ?? join(projectRoot, ".prismatix", "test-results"));

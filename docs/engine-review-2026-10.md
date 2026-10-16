@@ -52,14 +52,15 @@ that is still open, roughly in priority order.
   deliberate: with several route endings in one chapter, a forgotten `[end]`
   would otherwise run one ending into the next. The marker keeps the order in
   the index, so reordering scenes needs no jump edits.
+- QA journeys: `px.advanceUntil(condition)` clicks through lines on the
+  Player side in one request; a journey can `export const timeoutMs`
+  (`--timeout` still overrides); `px.save` keeps the request's state and
+  writes it after the next Stage frame with that frame as thumbnail (inside a
+  batch it stays synchronous). The tour here took 177.6 s of its 180 s, mostly
+  in `stable` waits rather than text clicks.
 
 ## Open, larger items
 
-7. **QA journeys.** A tour of every screen exceeds the 180 s journey timeout
-   when it clicks through text; add `px.advanceUntil(condition)` on the Player
-   side (one round trip) and a per-journey timeout. `px.save` stores no
-   thumbnail: the IPC handler runs outside the frame, so it would have to queue
-   the save for the frame loop the way the Save screen captures its image.
 8. **A generic script importer.** The game's `tools/import-hackmd.mjs` turns a
    writers' Markdown draft (scene headings, speaker tags, cut passages,
    letters) plus a staging table into `.pxstory`. Writers commonly draft this

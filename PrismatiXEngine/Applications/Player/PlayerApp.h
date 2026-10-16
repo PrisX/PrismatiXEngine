@@ -111,6 +111,8 @@ private:
     void GameStartTransitionFrame(float dt, std::uint64_t now);
     bool LoadSlot(int slot);
     bool SaveSlot(int slot, std::vector<std::uint8_t> thumbnail);
+    // Writes a snapshot taken earlier (SaveSlot takes it now).
+    bool WriteSaveSlot(int slot, progress::SaveSnapshot snapshot);
     [[nodiscard]] std::optional<progress::SaveSnapshot> MakeSnapshot(
         bool includeBacklog);
     bool LoadLocale(std::string locale, bool refreshPresentation);
@@ -204,6 +206,9 @@ private:
     friend struct QaOps;
     void StartQaIpc();
     void PumpQaIpc();
+    // After the Stage is drawn each frame: QA requests waiting for a frame
+    // without the UI (a save's thumbnail).
+    void QaStageRendered();
 
     Runtime m_runtime;
     Boot m_boot;

@@ -779,6 +779,58 @@ struct QaOps {
             if (!app.m_scriptServices.advanceDialogue()) Fail("PXQA1013", "the story did not advance");
             return Json{{"completedLine", false}};
         }
+        if (op == "advanceUntil") {
+            requireWaitable();
+            if (app.m_appState != PlayerApp::AppState::Game && !app.m_gameStartTransitionActive)
+                Fail("PXQA1005", "the story is not running (appState " + AppState(app) + ")");
+            if (!request.contains("condition") || !request["condition"].is_object())
+                Fail("PXQA1001", "'condition' must be an object");
+            const Json condition = request["condition"];
+            const int timeoutMs = request.value("timeoutMs", 120'000);
+            const int maxLines = request.value("maxLines", 5'000);
+            auto frames = std::make_shared<int>(0);
+            auto lines = std::make_shared<int>(0);
+            *pending = QaSession::Pending{
+                .deadline = now + static_cast<std::uint64_t>(std::max(0, timeoutMs)),
+                .poll = [&app, condition, frames, lines, maxLines]() -> std::optional<Json> {
+                    const auto done = [&]() -> std::optional<Json> {
+                        Json state = State(app, true);
+                        state["advancedLines"] = *lines;
+                        return state;
+                    };
+                    if (ConditionHolds(app, condition, *frames)) return done();
+                    // A new game is still fading in.
+                    if (app.m_gameStartTransitionActive) return std::nullopt;
+                    if (app.m_appState != PlayerApp::AppState::Game)
+                        Fail("PXQA1013", "the story left the game before the condition held");
+                    // A menu or a transition: wait for the story to be clickable.
+                    if (!app.m_session->Routes().CurrentModalRoute().empty()) return std::nullopt;
+                    auto& vm = app.m_session->VM();
+                    if (vm.State() == vn::VMState::Finished || vm.State() == vn::VMState::Idle)
+                        Fail("PXQA1013", std::format("the story ended after {} line(s) and the "
+                                                     "condition does not hold", *lines));
+                    if (vm.State() == vn::VMState::WaitingChoice)
+                        Fail("PXQA1013", std::format("a choice is waiting after {} line(s) and the "
+                                                     "condition does not hold; choose first", *lines));
+                    // A few lines per frame, checking the condition after
+                    // each so a matching line is never clicked past.
+                    for (int step = 0; step < 8; ++step) {
+                        const auto state = vm.State();
+                        if (state != vn::VMState::WaitingClick && state != vn::VMState::WaitingTimer) break;
+                        if (++*lines > maxLines)
+                            Fail("PXQA1013", std::format("the condition did not hold within {} lines",
+                                                         maxLines));
+                        if (state == vn::VMState::WaitingClick && !app.m_session->Dialogue().Finished())
+                            app.m_session->Dialogue().ShowAll();
+                        if (!app.m_scriptServices.advanceDialogue()) break;
+                        int noFrames = 0;
+                        if (ConditionHolds(app, condition, noFrames)) return done();
+                    }
+                    return std::nullopt;
+                },
+                .timeoutMessage = "advanceUntil condition not met: " + condition.dump()};
+            return std::nullopt;
+        }
         if (op == "choose") {
             RequireGame(app);
             const int index = Integer(request, "index");
@@ -798,8 +850,32 @@ struct QaOps {
         if (op == "save") {
             RequireGame(app);
             const int slot = Integer(request, "slot");
-            if (!app.SaveSlot(slot, {})) Fail("PXQA1014", std::format("slot {} was not saved", slot));
-            return Json::object();
+            // A batch is one frame: save its state at once, without a
+            // thumbnail (the frame is not drawn yet).
+            if (!pending) {
+                if (!app.SaveSlot(slot, {})) Fail("PXQA1014", std::format("slot {} was not saved", slot));
+                return Json::object();
+            }
+            if (app.m_qa->stageRendered) Fail("PXQA1014", "another save is waiting for its frame");
+            auto snapshot = app.MakeSnapshot(/*includeBacklog=*/true);
+            if (!snapshot) Fail("PXQA1014", std::format("slot {} has no state to save", slot));
+            auto written = std::make_shared<std::optional<bool>>();
+            app.m_qa->stageRendered = [&app, slot, written,
+                                       state = std::make_shared<progress::SaveSnapshot>(
+                                           std::move(*snapshot))]() mutable {
+                state->thumbnailPng = graphics::CaptureThumbnailPng(
+                    app.m_runtime.Renderer().Handle(), 256, 144);
+                *written = app.WriteSaveSlot(slot, std::move(*state));
+            };
+            *pending = QaSession::Pending{
+                .deadline = now + 10'000,
+                .poll = [written, slot]() -> std::optional<Json> {
+                    if (!*written) return std::nullopt;
+                    if (!**written) Fail("PXQA1014", std::format("slot {} was not saved", slot));
+                    return Json{{"thumbnail", true}};
+                },
+                .timeoutMessage = "no Stage frame was drawn to save with"};
+            return std::nullopt;
         }
         if (op == "load") {
             const int slot = Integer(request, "slot");
@@ -1018,11 +1094,16 @@ void PlayerApp::PumpQaIpc() {
     if (m_qa && m_qa->server && m_session) QaOps::Pump(*this);
 }
 
+void PlayerApp::QaStageRendered() {
+    if (m_qa && m_qa->stageRendered) std::exchange(m_qa->stageRendered, {})();
+}
+
 #else
 
 QaIpcServer::~QaIpcServer() = default;
 void PlayerApp::StartQaIpc() {}
 void PlayerApp::PumpQaIpc() {}
+void PlayerApp::QaStageRendered() {}
 
 #endif
 
