@@ -9,10 +9,6 @@ const x = (fraction: number) => Math.round(fraction * width);
 const y = (fraction: number) => Math.round(fraction * height);
 const px = (value: number) => Math.round(value * Math.min(width / 1280, height / 720));
 
-// One palette for the whole screen: ink glass, warm text, a champagne accent.
-const ink = "#0B0F1E";
-const accent = "#E9CF94FF";
-
 const menu = [
   {name: "Start", label: "開始遊戲", action: actions.game.start},
   {name: "Continue", label: "繼續遊戲", action: actions.game.continue},
@@ -25,28 +21,22 @@ export default (
   <Scene name={`${title} Title`} width={width} height={height}>
     <Group name="TitleRoot" fill accessibilityRole="window" accessibilityLabel={title}>
       <Image name="Backdrop" path="Assets/window.png" fill scaleMode="Fill" />
-      {/* A scrim that darkens only the left, where the menu sits. */}
-      <ColorRect name="Scrim" fill color={`${ink}E6`}
-        style={{gradient: [`${ink}E6`, `${ink}00`, "horizontal"]}} />
-      <Text name="Eyebrow" text="A VISUAL NOVEL" position={[x(0.085), y(0.25)]}
-        size={[x(0.5), px(22)]} fontSize={px(14)} letterSpacing={px(6)}
-        appearance={{textColor: accent}} />
-      <Text name="Title" text={title} position={[x(0.082), y(0.25) + px(24)]}
-        size={[x(0.8), px(90)]} fontSize={px(64)}
-        appearance={{textColor: "#F7F3EBFF"}} accessibilityRole="heading" />
-      <ColorRect name="TitleRule" position={[x(0.086), y(0.25) + px(120)]}
-        size={[px(60), Math.max(2, px(3))]} color={accent} style={{radius: px(2)}} />
+      {/* Darkens the left third, where the title and menu sit. */}
+      <ColorRect name="Scrim" fill color="#000000B3"
+        style={{gradient: ["#000000B3", "#00000000", "horizontal"]}} />
+      <Text name="Title" text={title} position={[x(0.075), y(0.33)]}
+        size={[x(0.8), px(70)]} fontSize={px(48)}
+        appearance={{textColor: "#FFFFFFF2"}} accessibilityRole="heading" />
       {menu.map((entry, index) =>
         <Button name={entry.name} text={entry.label} action={entry.action}
-          position={[x(0.085), y(0.25) + px(152 + index * 54)]}
-          size={[px(272), px(42)]} fontSize={px(19)}
-          style={{background: "#FFFFFF10", hoverBackground: "#E9CF942E",
-            color: "#EEF1F7FF", hoverTextColor: "#F6E6BEFF", radius: px(21),
-            border: [1, "#FFFFFF33"], hoverBorderColor: accent}}
+          position={[x(0.075) - px(8), y(0.33) + px(100 + index * 44)]}
+          size={[px(220), px(36)]} fontSize={px(18)} horizontalAlignment="Left"
+          style={{background: "#00000000", hoverBackground: "#FFFFFF14", radius: px(3),
+            color: "#FFFFFFA6", hoverTextColor: "#FFFFFFFF"}}
           accessibilityFocusOrder={index + 1} />)}
       <Text name="Credit" text="Made with PrismatiX"
-        position={[x(0.085), height - px(52)]} size={[px(400), px(22)]}
-        fontSize={px(13)} appearance={{textColor: "#A3ABB9FF"}} />
+        position={[x(0.075), height - px(44)]} size={[px(400), px(20)]}
+        fontSize={px(12)} appearance={{textColor: "#FFFFFF66"}} />
     </Group>
   </Scene>
 );

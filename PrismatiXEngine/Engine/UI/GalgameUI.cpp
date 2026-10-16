@@ -1158,22 +1158,15 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
                     !status)
                     return status;
                 button = dynamic_cast<Button*>(m_choices->Children().back().get());
-                // Stock choices: glass bars that warm to gold under the pointer.
+                // Stock choices: translucent black bars that lighten under the pointer.
                 if (button) {
                     BoxDecoration box;
-                    box.fill = {22, 30, 54, 225};
-                    box.fillEnd = Color{12, 17, 33, 235};
-                    box.hoverFill = Color{78, 66, 40, 240};
-                    box.radius = 14.0f;
-                    box.borderWidth = 1.0f;
-                    box.border = {255, 255, 255, 46};
-                    box.hoverBorder = Color{233, 207, 148, 255};
-                    box.hoverText = Color{246, 230, 190, 255};
-                    box.shadow = {0, 0, 0, 110};
-                    box.shadowBlur = 16.0f;
-                    box.shadowOffset = {0.0f, 4.0f};
+                    box.fill = {0, 0, 0, 150};
+                    box.hoverFill = Color{255, 255, 255, 38};
+                    box.radius = 4.0f;
+                    box.hoverText = Color{255, 255, 255, 255};
                     button->SetBoxDecoration(box);
-                    button->SetCustomMinimumSize({0.0f, 52.0f});
+                    button->SetCustomMinimumSize({0.0f, 48.0f});
                 }
             } else {
                 button->SetText(p.choices[i]);

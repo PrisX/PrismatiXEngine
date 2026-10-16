@@ -318,7 +318,7 @@ await writeFile(join(process.cwd(), "phase1-artifact-launched.json"),
       {runtimeType: "Label", properties: [property("fontSize", "number"), property("wrap", "boolean"),
         property("letterSpacing", "number")]},
       {runtimeType: "RichTextLabel", properties: [property("fontSize", "number"), property("wrap", "boolean")]},
-      {runtimeType: "Button", properties: [property("focusMode", "string"),
+      {runtimeType: "Button", properties: [property("focusMode", "string"), property("horizontalAlignment", "string"),
         property("fontSize", "number"), property("mouseFilter", "string")]},
       // What the starter's TSX title writes (packages/cli/templates/minimal).
       {runtimeType: "TextureRect", properties: [property("path", "string"),

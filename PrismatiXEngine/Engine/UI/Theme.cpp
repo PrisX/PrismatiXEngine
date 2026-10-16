@@ -7,30 +7,30 @@ namespace {
 StyleValue Literal(Variant value) { return StyleValue::Literal(std::move(value)); }
 
 StylePropertyMap BaseProperties() {
-    // Ink surfaces, a hairline light border and warm off-white text; the
-    // same palette as the stock screens in BuiltinUiPackage.
-    return {{"background.color", Literal(Color{21, 25, 33, 235})},
-            {"border.color", Literal(Color{255, 255, 255, 28})},
+    // Minimal monochrome, like the stock screens in BuiltinUiPackage: faint
+    // white washes on translucent black, white text, small radii.
+    return {{"background.color", Literal(Color{255, 255, 255, 18})},
+            {"border.color", Literal(Color{255, 255, 255, 26})},
             {"border.width", Literal(1.0)},
-            {"radius.all", Literal(10.0)},
+            {"radius.all", Literal(4.0)},
             {"padding", Literal(Vec2{16.0f, 10.0f})},
             {"spacing", Literal(8.0)},
-            {"typography.color", Literal(Color{238, 240, 244, 255})},
+            {"typography.color", Literal(Color{255, 255, 255, 235})},
             {"typography.font", Literal(std::string("Content/Fonts/NotoSansTC-Bold.ttf"))},
             {"typography.size", Literal(std::int64_t{24})}};
 }
 
 StyleBlock ButtonDefaults() {
     StyleBlock block;
-    block.properties["background.color"] = Literal(Color{26, 32, 50, 235});
-    block.properties["radius.all"] = Literal(12.0);
-    block.properties["border.color"] = Literal(Color{255, 255, 255, 40});
+    block.properties["background.color"] = Literal(Color{255, 255, 255, 12});
+    block.properties["radius.all"] = Literal(4.0);
+    block.properties["border.color"] = Literal(Color{255, 255, 255, 20});
     block.stateOverrides[StateMask(StyleState::Hover)]["background.color"] =
-        Literal(Color{44, 54, 86, 245});
+        Literal(Color{255, 255, 255, 32});
     block.stateOverrides[StateMask(StyleState::Hover)]["border.color"] =
-        Literal(Color{233, 207, 148, 200});
+        Literal(Color{255, 255, 255, 70});
     block.stateOverrides[StateMask(StyleState::Pressed)]["background.color"] =
-        Literal(Color{20, 24, 32, 255});
+        Literal(Color{255, 255, 255, 20});
     return block;
 }
 
@@ -50,14 +50,14 @@ void ApplyResolved(ControlStyle& style, const ResolvedStyle& resolved) {
 Theme::Theme() {
     m_styleData.globalDefaults.properties = BaseProperties();
     m_styleData.globalDefaults.stateOverrides[StateMask(StyleState::Hover)]["background.color"] =
-        Literal(Color{38, 44, 58, 245});
+        Literal(Color{255, 255, 255, 28});
     m_styleData.globalDefaults.stateOverrides[StateMask(StyleState::Pressed)]["background.color"] =
-        Literal(Color{18, 21, 28, 255});
+        Literal(Color{255, 255, 255, 14});
     m_styleData.globalDefaults.stateOverrides[StateMask(StyleState::Disabled)]["background.color"] =
-        Literal(Color{27, 31, 40, 150});
+        Literal(Color{255, 255, 255, 8});
     auto& focused = m_styleData.globalDefaults.stateOverrides[StateMask(StyleState::Focused)];
-    focused["background.color"] = Literal(Color{38, 44, 58, 245});
-    focused["border.color"] = Literal(Color{233, 207, 148, 255});
+    focused["background.color"] = Literal(Color{255, 255, 255, 28});
+    focused["border.color"] = Literal(Color{255, 255, 255, 210});
 
     for (const char* type : {"Button", "IconButton", "CheckBox", "OptionButton", "RadioButton"})
         m_styleData.controlTypeDefaults.emplace(type, ButtonDefaults());
@@ -67,9 +67,9 @@ Theme::Theme() {
     dialogue.displayName = "Dialogue";
     dialogue.category = "Built-in";
     dialogue.compatibleTypes = {"*"};
-    dialogue.properties["background.color"] = Literal(Color{13, 17, 25, 224});
-    dialogue.properties["border.color"] = Literal(Color{255, 255, 255, 26});
-    dialogue.properties["radius.all"] = Literal(14.0);
+    dialogue.properties["background.color"] = Literal(Color{0, 0, 0, 170});
+    dialogue.properties["border.color"] = Literal(Color{255, 255, 255, 0});
+    dialogue.properties["radius.all"] = Literal(0.0);
     dialogue.properties["padding"] = Literal(Vec2{28.0f, 22.0f});
     dialogue.properties["typography.size"] = Literal(std::int64_t{30});
     (void)m_styleData.UpsertStyle(std::move(dialogue));
