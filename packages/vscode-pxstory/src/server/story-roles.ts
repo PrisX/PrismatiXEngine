@@ -211,7 +211,7 @@ export const inlineTags: readonly {readonly label: string; readonly insert: stri
   {label: "/ruby", insert: "/ruby]", detail: "end ruby"},
 ];
 
-/** One-line summaries of the built-in Story commands (see docs/authoring.md). */
+/** One-line summaries of the built-in Story commands (see docs/story-reference.md). */
 export const commandSummaries: Readonly<Record<string, string>> = {
   id: "Pins the save identity of the next observable operation.",
   chapter: "Starts a chapter and shows its title.",

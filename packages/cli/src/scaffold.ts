@@ -96,7 +96,7 @@ export async function addScene(root: string, id: string, options: {
   const indexPath = typeof manifest.storyIndex === "string" ? manifest.storyIndex : "Story/story.pxindex";
   if (!(await exists(join(root, indexPath))))
     throw new Error(`${indexPath} does not exist; a project with a single Story/main.pxstory ` +
-      "has no scene list yet. Create the index first (see docs/authoring.md).");
+      "has no scene list yet. Create the index first (see docs/story-reference.md).");
   const index = await readObject(join(root, indexPath));
   const scenes = Array.isArray(index.scenes) ? index.scenes as Json[] : [];
   const chapters = Array.isArray(index.chapters) ? index.chapters as Json[] : [];

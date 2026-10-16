@@ -67,7 +67,7 @@ supported targets.
 
 Shared macros, `[if]`/`[elseif]`, conditional and block choices, inline
 `[w]`/`[speed]`, `[face]`, `[credits]` and the rest are in the
-[authoring guide](docs/authoring.md). The VS Code extension in
+[Story reference](docs/story-reference.md). The VS Code extension in
 `packages/vscode-pxstory` gives live errors, completion and go-to-definition.
 
 ## Screens at a glance
@@ -89,10 +89,15 @@ and Ogg as Opus in builds, which cut Sakura no Uta's media from 7.6 to 2.1 GiB.
 
 ## Guides
 
-- [Authoring guide](docs/authoring.md): project layout, Story, characters and
-  portraits, TSX UI, input, motion, custom effects, Player settings.
-- [Shipping guide](docs/shipping.md): packaging, patches and overlays, save
-  compatibility and migrations, importing other engines, Android.
+- [Getting started](docs/getting-started.md): install, create a project, edit
+  it while it plays, build a game to share.
+- [Story reference](docs/story-reference.md): Story scripts, text, characters,
+  sound, variables, scenes, importing drafts, layered portraits and motion.
+- [UI reference](docs/ui-reference.md): TSX screens, Player actions and data,
+  settings, save management, input, custom effects.
+- [Shipping reference](docs/shipping.md): distributions and releases, saves
+  across versions, patches and overlays, user data, play tests, importers,
+  Android.
 - [Web export](docs/web-export.md): build the shipping WASM Player, export a
   game, preview it locally and deploy offline-capable browser versions.
 

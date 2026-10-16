@@ -16,11 +16,11 @@ The public entrypoint provides:
 
 Named keyboard actions, contexts, and default bindings can be authored in
 `Content/game.pxgame` through the typed `GameInputAction` contract; see the
-[input action guide](../../docs/authoring.md#authoring-input-actions).
+[input action guide](../../docs/ui-reference.md#input-actions-and-key-bindings).
 
 Embedding applications can declare typed Action signatures in
 `settings["authoring.actionContract"]` and check their native handlers before
-mounting UI; see the [host Action guide](../../docs/authoring.md#host-action-authoring-contract).
+mounting UI; see the [host Action guide](../../docs/ui-reference.md#host-actions).
 
 ## Dynamic resource families
 
@@ -236,7 +236,7 @@ several top-level children, automatically receive a transparent full-scene
 structural root. Existing scenes with an explicit structural root keep their
 canonical node identities.
 
-For a confirmation overlay, [`<Modal>`](../../docs/authoring.md#modal-dialogs-in-tsx-ui) authors
+For a confirmation overlay, [`<Modal>`](../../docs/ui-reference.md#modal-dialogs) authors
 the backdrop and panel while native input traps focus and backdrop clicks.
 
 Use `jsx: "react-jsx"` and
@@ -404,7 +404,7 @@ or write any non-identifier name directly:
 
 `@name text` speaks one line and returns to narration. `@alias[smile left
 voice=v001] text` changes the expression or position and plays a voice for
-that line only. See the [cookbook](../../docs/authoring.md#short-forms-for-long-scripts)
+that line only. See the [cookbook](../../docs/story-reference.md#short-forms-and-asset-names)
 for these forms and the `storyAssets` short-name roots used by
 `compileProject` and `createStoryAssetIndex`.
 
@@ -417,7 +417,7 @@ in a shipped game without reviewing save/seen identity migration.
 ## Project-aware character resources
 
 Layered expression sprites have a typed, validated `.pxportrait` authoring
-contract. See [layered portrait authoring](../../docs/authoring.md#layered-portrait-authoring)
+contract. See [layered portrait authoring](../../docs/story-reference.md#layered-portraits)
 for the helper, coordinate semantics, and dependency rules.
 
 For reusable image-layer animations, `defineMotion` and `serializeMotion`
@@ -434,8 +434,7 @@ out the current page; the configured start route is also prefetched during
 boot. Story commands, a general route/transition preload
 handshake, masks, blur, and audio markers are not implemented.
 The image-layer renderer and atlas selection have framebuffer integration tests.
-See [the motion guide](../../docs/authoring.md#authoring-layered-motion) and
-[remaining contract](../../docs/authoring.md#layered-motion-authoring-proposal).
+See [the motion guide](../../docs/story-reference.md#camera-and-layered-motion).
 
 ```ts
 import {serializeMotion} from "@prismatix/authoring-sdk";

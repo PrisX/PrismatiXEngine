@@ -1,14 +1,267 @@
-# Shipping guide
+# Shipping reference
 
-Packaging and maintaining a released game: patches and overlays, save compatibility, importing an existing game, and the Android build.
+Building, releasing and maintaining a game: distributions, keeping players'
+saves working, updates and patches, user data, automated play tests,
+importing an existing game, and the Android build.
 
+- [Building a distribution](#building-a-distribution)
+- [Keeping players' saves](#keeping-players-saves)
+- [Comparing and patching distributions](#comparing-and-patching-distributions)
 - [Signed PDX content overlays](#signed-pdx-content-overlays)
 - [Save migration anchors](#save-migration-anchors)
 - [Augmenting a published artifact](#augmenting-a-published-artifact)
+- [Packaged Player user data](#packaged-player-user-data)
+- [Testing with journeys](#testing-with-journeys)
+- [Tool versions and engine checkouts](#tool-versions-and-engine-checkouts)
 - [Importing stories from other formats](#importing-stories-from-other-formats)
 - [Resolving assets while importing Story](#resolving-assets-while-importing-story)
 - [Android (experimental)](#android-experimental)
+- [Verifying a runtime bundle release](#verifying-a-runtime-bundle-release)
 - [Web export](web-export.md)
+
+## Building a distribution
+
+```bash
+prismatix dev my-game
+prismatix validate my-game
+prismatix build my-game
+prismatix build my-game --output "release/First Light"
+```
+
+`build` creates a desktop distribution with Player, game content and redistributable dependencies in `my-game/dist/<project-id>/`. Players need neither Node.js nor the SDK. `--output` changes only the location. `--artifact-only` writes just the compiled game, for a later `pack`:
+
+```bash
+prismatix build my-game --artifact-only --output my-game/.prismatix/artifact
+```
+
+For a release candidate, `release` validates, builds, packs and verifies every
+archive in one step, then reminds you to commit `.prismatix-release/lineage.json`
+so later releases keep loading players' saves. Put the settings every build of
+the project should use in `prismatix.json` instead of repeating flags:
+
+```json
+"distribution": {"executableName": "first-light", "icon": "Assets/icon.ico",
+  "output": "release/First Light", "compression": "fast", "archiveShards": 4}
+```
+
+```bash
+prismatix release my-game
+```
+
+Command-line options still win over these defaults. `"linkMedia": true`
+hard-links the project's media into the build artifact instead of copying it
+when both are on the same volume, so a multi-GiB game is not stored twice
+(the artifact then shares those files with the project).
+
+`"transcode"` makes distributions smaller: `build` and `pack` (not `dev`)
+store PNG as WebP and Ogg Vorbis/WAV as Opus or Vorbis under the same paths,
+which the Player recognises by content, so Story, UI and saves are unchanged.
+Alpha is kept exactly; a file that would grow or fails to decode ships as
+authored. Encodings are cached in `.prismatix/transcode-cache`, so only new or
+edited media is encoded again, and `--no-transcode` packs the originals:
+
+```json
+"transcode": {"images": {"format": "webp", "quality": 90},
+  "audio": {"format": "opus", "bitrate": 64},
+  "exclude": ["Assets/Music/**"]}
+```
+
+`quality` is 1-100 or `"lossless"`, `effort` (0-6, default 4) trades encode
+time for size, Opus `bitrate` is in kbit/s (default 96), and Vorbis takes
+`quality` from -1 to 10 instead.
+
+For media selected by a dynamic runtime path rather than a static Story/UI
+reference, add `"resourceIncludes": ["Assets/MyFamily", "Assets/Audio/confirm.ogg"]`
+to `prismatix.json`. Directories are expanded during validate/build; the files
+are packaged as owned dependencies, while this author-only field is omitted
+from the runtime project document. Missing or empty roots fail validation.
+
+### Executable name and icon
+
+`prismatix pack` names the game's executable after `distribution`, which is
+read only when packaging and never shipped as content:
+
+```json
+"distribution": {"executableName": "hikari", "icon": "Assets/Branding/hikari.ico"}
+```
+
+The platform extension is kept (`hikari.exe` on Windows). On Windows the
+`.ico` becomes the executable's only icon, which Explorer, the taskbar and the
+game window use. Changing either value rebuilds the package.
+
+### Packing an artifact you already built
+
+To distribute an artifact that has already been built, pass it to `pack`,
+`build`, or `run` with `--artifact`. This skips author-source compilation and
+the intermediate artifact copy; the native Packager still checks every input's
+size and SHA-256 before accepting it. The artifact must be an intact CLI-owned
+build directory with its `.prismatix-output.json` marker. Changes to Story or
+UI source are **not** included until you build or otherwise update the artifact.
+
+```bash
+prismatix pack my-game --artifact my-game/.prismatix/artifact
+```
+
+If a post-build tool must add or replace artifact files, use
+[`augment`](#augmenting-a-published-artifact) before `pack --artifact`;
+ordinary media should instead be declared with `resourceIncludes`.
+
+### Checks before packing
+
+Before starting native packaging, the CLI checks free space on the output
+volume against the artifact's indexed input sizes. With `--compression none`,
+it stops early if the inputs already exceed the available space. Compressed
+packages only get an advisory warning because the final archive size cannot
+be known in advance. The check includes a small allowance for the Player and
+archive metadata, but is an estimate, not a guarantee of a successful pack.
+Use `--output` to select a volume with more space; `--ignore-disk-space` skips
+this preflight if you have independently verified the package will fit.
+
+Use `prismatix pack <project> --artifact <artifact> --check` to run that
+native request and Story/UI/resource-contract preflight without writing a
+distribution. Without `--artifact`, the CLI compiles a temporary artifact
+first. The command reports a distinct `validated` result, never `packed`.
+Media fingerprints intentionally deferred by normal Packager are also
+deferred by `--check`; a successful preflight is not a verified PDX or a
+guarantee that all media bytes will remain unchanged during packaging.
+Add `--verify-media` to `pack --check` when you want SHA-256 verification of
+every current artifact input without producing PDX. The `validated` event
+reports `deferredMediaCount` (zero in this mode). Even full-input preflight
+does not replace `verify-package` for a completed distribution.
+
+### Large games
+
+For large games, `pack`, `run`, and distribution `build` accept
+`--archive-shards N` (1–64). The default `1` keeps `Content.pdx`; larger
+values assign each resource to a stable URI-hash shard and emit
+`Content-00.pdx`, `Content-01.pdx`, etc. The manifest lists only nonempty
+shards, and Player mounts all listed files. Each compressed shard has its own
+`Package/entry-cache-XX.json`. Keeping the same shard count preserves a
+resource's shard when other resources are added; changing the count
+repartitions the package and its cache. In an unencrypted package, unchanged
+shards can be reused without rewriting their PDX. Encrypted packages also
+reuse shards when the entire content identity is unchanged, but changing any
+content rotates the current package-derived archive key and rebuilds all
+encrypted shards. This is
+split packaging, not automatic patch delivery: placing an extra `patch.pdx`
+beside the game does not mount or apply it.
+
+### Output folders and progress
+
+Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
+
+Output replacement verifies the previous build's inventory. If you have played a distribution and it now contains saves/logs, or edited its files, use a new output directory; do not delete player data to bypass the guard. Test migration with a copy of the old saves before distributing an update.
+When replacing an owned output at the same content/save version, Packager carries its former save fingerprint and any legacy key readers through CLI staging. A fresh, unrelated output directory has no previous release to inherit from; distribute it through a signed exact-base overlay or use an explicit versioned save migration when old saves must be accepted.
+
+Long builds report loading, per-scene Story parse/compile counts across locales,
+copy counts and bytes, fingerprinting, and publication on stderr. Packaging also forwards throttled native phase/count
+updates as they happen. With `--json`, CLI progress is NDJSON on stderr and
+native Packager events are streamed on stdout; neither waits for the whole
+archive to finish before showing progress.
+
+## Keeping players' saves
+
+Every save records the fingerprint of the package that wrote it. When a new
+package keeps the same `contentVersion` and `saveVersion` but its content
+changed, the Player loads an older save only if the new package lists that
+save's fingerprint as compatible. Otherwise it rejects the save with
+`PXSAVE6111`. After each successful `pack`, `build`, or `run`, the CLI records
+the fingerprint of the package it wrote, and the fingerprints that package
+accepts, in `.prismatix-release/lineage.json` in the project. The next pack
+passes that record to Packager, whatever `--output` it uses. **Commit this
+file.** With it, packing to a new folder, packing on a clean CI machine, or
+deleting an old `dist` folder no longer breaks existing saves. The file changes
+only when the package fingerprint does.
+
+When a pack finds no lineage file, no previous distribution in `--output`, and
+no `--previous-package`, it warns with `PXCLI1222` that saves from an
+already-shipped release with the same versions will be rejected. The warning
+does not appear when a declared save migration leads into the current version.
+For a first release, commit the lineage file that the pack writes.
+`PXCLI1223` warns that the version changed since the recorded release but no
+`saveMigrations` entry starts from the recorded version. A lineage file that
+names another game ID stops the pack. See [save migrations](#save-migration-anchors).
+
+To publish a standalone new version in a different directory while retaining
+compatible saves from an earlier distribution, name that intact distribution:
+
+```bash
+prismatix pack my-game --artifact my-game/.prismatix/artifact --previous-package release/v1 --output release/v2
+```
+
+`--previous-package` also works with distribution `build` and `run`. The CLI
+verifies the old package, checks its game ID and publisher key, and passes its
+save identity and reusable archive data to Packager. The old directory stays
+untouched; the new output must be absent or empty. Repacking into the same
+output directory already carries this history without the option. Packager
+combines the save identity it finds in the previous distribution with the
+project's lineage file. Compatible
+save identity does not make changed Story state compatible: advance the
+content/save version and provide a migration when needed.
+
+Story edits keep save identities through the `.pxids.json` sidecars; see
+[keeping saves working while you edit](story-reference.md#keeping-saves-working-while-you-edit).
+
+For an update, retain the previous packaged game and isolated test saves. Increment the intended content/save versions, provide the project's explicit save-migration chain, test dialogue moves and changed resource names/variable schemas, then launch the new packaged Player against copies of those saves. Never experiment on real player saves.
+
+## Comparing and patching distributions
+
+Each packaged distribution now includes `Package/content-index.json`, a
+per-resource URI, SHA-256, source-size, and owning-archive inventory. To
+compare two complete distributions, run:
+
+```sh
+prismatix plan-patch --base path/to/old-distribution --target path/to/new-distribution --json
+```
+
+This read-only plan reports added, modified, and removed resources, changed
+raw bytes, and target archives containing additions or modifications. It
+does not create a PDX, install an update, or establish trust in a package.
+Use `prismatix verify-package path/to/distribution` to read and SHA-256-check
+every resource in its PDX archives against the index, or add
+`--verify-contents` to `plan-patch` to check both distributions before
+comparing them. Native Packager also accepts `--verify-package` with an
+absolute distribution path. These checks detect missing, corrupt, and
+misindexed resources but are not cryptographic signatures: someone who can
+replace the archives and their metadata together can forge a passing local
+verification. The base and target must be packages for the same game and both
+must include the new index.
+
+For a small update between two complete, CLI-owned distributions, create a
+whole-file delta bundle and explicitly apply it:
+
+```sh
+prismatix create-patch --base path/to/v1 --target path/to/v2 --output path/to/update-v1-v2
+prismatix apply-patch --base path/to/v1 --patch path/to/update-v1-v2 --output path/to/updated-game
+```
+
+`create-patch` verifies both PDX contents and carries only changed files in
+`Payload/`, plus `Patch/manifest.json` with the exact base and target file
+inventories. `apply-patch` verifies the base and patch bundle, reconstructs a
+complete target in a staging directory, verifies its PDX contents, and
+publishes it after comparing every staged file against the target inventory.
+Removed files are omitted from the assembled target. It refuses a wrong base
+or modified/unowned output. For explicit replacement of the original game
+directory after exiting the game, use:
+
+```sh
+prismatix apply-patch --base path/to/v1 --patch path/to/update-v1-v2 --in-place
+```
+
+Unchanged files are hard-linked into the staging directory when supported,
+with copying as a fallback. A separate
+`--output` copies the complete reconstructed distribution, so it needs space
+for that full output. In-place replacement also needs room for changed files
+and any fallback copies. Do not bypass an ownership refusal by removing saves
+or other user files from the game directory.
+
+The bundle is **not** a standalone `patch.pdx`, is not automatically loaded
+at startup, and is not signed. It detects accidental corruption and wrong
+versions, not a malicious distributor who can replace the bundle and its
+metadata together.
+
+Player accepts a signed, exact-base content update chain from `Package/updates`;
+see [signed PDX content overlays](#signed-pdx-content-overlays).
 
 ## Signed PDX content overlays
 
@@ -42,52 +295,18 @@ before allocating patch disk space, use the same artifact with `--check`:
 prismatix create-overlay --base path/to/v1 --artifact path/to/updated-artifact --check --signing-key path/to/private-key.txt
 ```
 
-`--check` fully hashes the current artifact inputs, verifies the base PDX and
-publisher key, and writes no overlay or staging PDX. It accepts `--updates-dir`
-and `--optional-id` for a chained or optional patch. The reported raw bytes
-are not the final PDX size; the source can also change after the check, so
-the publishing command repeats verification and streaming checks.
-Base PDX shards are verified concurrently, up to four by default; set
-`PRISMATIX_PACKAGE_VERIFY_WORKERS` to an integer from 1 to 8 to tune this for
-the storage device. Encrypted bases stay single-worker because older
-encrypted-and-compressed entries can require a whole-entry buffer. Each entry
-still has its CRC and indexed SHA-256 checked.
-Parallel verification reduces elapsed time without making the check
-incremental or trusting unverified cached bytes.
-On Windows, direct artifact overlay planning also overlaps the full artifact
-hash with base verification while holding read-only handles on base PDX
-shards through publication. It holds the base static files and selected
-Player/runtime inputs read-only before their complete hash comparison, then
-checks that their file names have not changed before publishing. This avoids
-a second full runtime-file hash without accepting in-place edits. Other
-platforms keep the two stages sequential and rehash runtime inputs at the
-publication boundary.
+`--check` verifies the current artifact inputs, the base distribution and the
+publisher key, and writes nothing. It accepts `--updates-dir` and
+`--optional-id` for a chained or optional patch. The raw bytes it reports are
+not the final download size: changed resources of at least 64 KiB (except
+streaming video) are compressed in the overlay.
 
-This path fully checks the artifact inputs, verifies the complete base
-distribution, confirms the selected Player and runtime libraries match the
-base, pins the base manifest used while planning, and streams only changed
-resources into the patch. After the full input check, it re-resolves artifact
-paths only for resources whose bytes will enter the new PDX; unchanged entries
-are supplied by the verified base. It does not write a
-second multi-gigabyte distribution. The target manifest and content index
-are computed by the same Packager planner used for a complete package; a
-later v2 built from that exact artifact with `--previous-package v1`, the
-same Player, encryption setting, publisher key, and shard count has matching
-target documents. The artifact must be a CLI-published directory with intact
-ownership metadata. Build it with `prismatix build --artifact-only`, or
-publish changes with `prismatix augment`.
-
-The overlay writer streams changed file and PDX-stream resources without
-buffering an entire entry. Resources of at least 64 KiB use bounded zstd
-compression, except streaming video formats. It still checks the planned
-source size and SHA-256 while writing, then independently verifies the
-published PDX. The compression choice can affect the final patch size, so
-`--check` reports raw changed bytes rather than a promised download size.
-On an 8 GB, 31,756-resource corpus, replacing one 256 MiB WAV produced a
-67 MB signed overlay (about 75% smaller than the uncompressed writer) with a
-sampled Packager peak working set near 600 MB; the Player loaded the signed
-patch without route errors. Treat this as a single warm-cache measurement,
-not a size or time guarantee.
+The artifact must be a CLI-published directory with intact ownership
+metadata: build it with `prismatix build --artifact-only`, or publish changes
+with `prismatix augment`. Only changed resources enter the overlay; no second
+complete distribution is written. A later v2 built from the same artifact with
+`--previous-package v1`, the same Player, encryption setting, publisher key and
+shard count has matching target documents.
 
 To publish `patch2.pdx` without a complete v2, put the signed `patch.pdx`
 in a directory of prior updates and use its verified target as the next
@@ -234,19 +453,11 @@ Player restart. There is no in-game toggle UI yet. A signed update chain may
 contain at most 64 regular PDX candidates in a
 dedicated directory, and ambiguous branches fail closed. Publishing from a
 prior signed chain still rechecks all artifact inputs and verifies the complete
-installed base. It has not been measured on the 8 GB project and does not
-provide block-level incremental authoring or packaging.
+installed base.
 
-Verification does not rehash unchanged base PDX payloads or independently
-validate the target's entire authored dependency graph. A local process that
-can concurrently rewrite distribution files can still race verification and
-mounting; the base distribution and its Player must be protected by the
-normal installation boundary. Two full approximately 7.488 GiB Senren
-distributions have produced a signed 5.41 MiB overlay that Player mounted
-through 22 UI routes. A real v29 same-version encrypted autosave was loaded
-by a separate v31 standalone package. These checks do not cover a large
-changed compressed media entry, disk-use peak, or a real cross-version save
-migration.
+A local process that can rewrite distribution files while the game starts can
+still race verification and mounting; protect the base distribution and its
+Player with the normal installation boundary.
 
 ## Save migration anchors
 
@@ -392,6 +603,107 @@ not a block-level incremental build or a way to avoid hashing large media.
 project document is semantically correct. `pack --artifact` performs the
 native package validation, including file hashes, canonical routes and
 contracts. Test the resulting Player before shipping.
+
+## Packaged Player user data
+
+The packaged Player treats its installation directory as game content, not as
+a writable save directory. It keeps `Save/config.dat`, `Save/profile.dat`,
+`Save/save_<slot>.pxsav`, `Save/autosave.pxsav`, and `logs/PrismatiXPlayer.log`
+under a per-user directory chosen by SDL's `SDL_GetPrefPath`. The organization
+is `PrismatiXEngine`; the application directory is `Game ` followed by the
+SHA-256 of the package's stable `gameId`. It does not change when content is
+repacked or the installation is moved.
+
+To choose another parent directory, set `PRISMATIX_PLAYER_DATA_ROOT` to an
+**absolute** path before starting Player. Player still creates a separate
+`Game <SHA-256(gameId)>` child within that parent. This is useful for isolated
+tests or portable deployments; put it outside an artifact/distribution output
+if you want the ownership-safe CLI to update that output in place. An invalid
+or unwritable data location fails startup rather than silently falling back to
+the package or launcher working directory. Developer launches without an
+adjacent package keep their existing relative `Save/` and `logs/` behavior.
+
+On the first launch with this storage policy, Player copies recognized files
+from the older `<package>/Save/` directory to the new location. It recognizes
+settings, profile, numeric slots, autosave, and their `.legacy*.bak` key
+migration backups. Existing destination files win; nothing in the package is
+overwritten or deleted. A marker in the new user-data directory prevents a
+later launch from restoring stale old saves after a player deletes or changes
+them. A failed or unsafe import stops startup and retains the old files for
+recovery. Persistence file path strings are interpreted as UTF-8, including
+Windows paths with non-ASCII user names.
+
+The old portable `Save/` and `logs/` directories remain beside an installation
+that was already run with an older Player. Their bytes are preserved, so an
+in-place `prismatix pack` may still reject that *old* distribution as modified.
+After verifying the imported saves, move those legacy directories to a backup
+outside the distribution before repacking. New packages no longer create them
+by default. `PrismatiXPlayer --inspect-save <path> --package <Package/manifest.json>`
+continues to accept an explicit save path.
+
+## Testing with journeys
+
+`prismatix test` plays a packaged game with scripts and fails when one
+throws, so a build can be checked screen by screen without clicking through
+it. Pack with the QA Player, which answers the test interface (the shipped
+Player has none of it):
+
+```bash
+prismatix pack . --output dist/qa --player <runtime>/PrismatiXPlayerQA.exe
+prismatix test --package dist/qa
+```
+
+Journeys are `tests/journeys/*.ts` (or paths given on the command line).
+Each gets a fresh Player with its own user data:
+
+```ts
+import type {PrismatixTestClient} from "@prismatix/cli/test";
+
+// The default limit is 180 s; a long tour sets its own (--timeout overrides).
+export const timeoutMs = 600_000;
+
+export default async function tour(px: PrismatixTestClient) {
+  await px.waitFor({appState: "title", idle: true});
+  await px.jump("chapter2:after_school");
+  // Click through lines until one matches, in one request.
+  await px.advanceUntil({textContains: "放學後"});
+  await px.screenshot("after-school.png");
+  await px.advanceUntil({choices: true});
+  await px.choose(0);
+  await px.save(1);  // the thumbnail is the next Stage frame, without the HUD
+}
+```
+
+- `px.advanceUntil(condition, {timeoutMs, maxLines})` takes the same
+  conditions as `px.waitFor`. The Player clicks a few lines (and timed waits)
+  per frame and checks the condition after each, so it never clicks past the
+  line it looks for. It fails at a choice the condition does not ask for,
+  when the story ends, and after `maxLines` (5000) lines; it returns the
+  state with `advancedLines`.
+- `px.save(slot)` keeps the state at the request and writes it once the next
+  Stage frame is drawn, as the Save screen does, so the slot shows a real
+  thumbnail. Inside `px.batch([...])`, which runs in one frame, `save` writes
+  at once and without a thumbnail.
+- Screenshots with relative paths go to `.prismatix/test-results/<journey>`.
+  On failure the report shows the tail of the Player log and keeps the user
+  data.
+
+
+## Tool versions and engine checkouts
+
+The global command delegates project commands to the exact local CLI pinned in the game's package.json. Commit that manifest and its lock. A missing or mismatched local CLI is diagnosed instead of silently using the global version. After preparation, dev/build use local packages and bundled runtime offline. Upgrade tool versions deliberately in a branch, reinstall the pinned dependencies, and test old saves and the packaged Player before distributing an update.
+
+If you intentionally link a local Engine checkout with `file:` dependencies,
+run `npm run build` in that checkout after editing CLI or Authoring SDK source.
+Local source packages carry a content-based build stamp; an out-of-date `dist`
+now fails with `PXSDKBUILD1001` instead of silently running old compiler code.
+Registry packages contain no source tree and do not perform this local check.
+
+Engine contributors can pass a local build directory as `--runtime
+out/build/x64-release/PrismatiXEngine`; a CLI linked from an engine checkout
+finds that checkout's build by itself (`PRISMATIX_NO_CHECKOUT_RUNTIME=1` turns
+this off), and `create` run from a checkout links the new project to it with
+`file:` dependencies, so it works offline.
 
 ## Importing stories from other formats
 
@@ -788,3 +1100,16 @@ Runtime scripts read the same thing as `ctx.platform` (`{os, mobile}`).
 7. With self-voicing on, each dialogue line is spoken.
 
 Record what broke and how you fixed it here.
+
+## Verifying a runtime bundle release
+
+Native build instructions are in the [contributor section](../README.md#building-the-engine). Release engineers run:
+
+```bash
+node scripts/phase1-clean-install.mjs --mock --keep
+node scripts/phase1-clean-install.mjs --runtime /path/to/installed-runtime --keep
+```
+
+Here `--runtime` supplies binaries for the candidate npm package; it is never passed to the simulated author CLI. The harness serves candidate packages through a loopback registry, installs into a temporary global prefix, creates the project, watches edit/error/repair, closes the registry, reopens offline, builds and launches Player. Failed workspaces are retained; `--keep` also retains success evidence. Mock proves orchestration only. Native acknowledgements and launch do not prove visual interaction, audio or glyph correctness.
+
+Windows x64, Linux x64 and macOS x64/arm64 are intended desktop targets. Each exact platform/architecture needs its own candidate evidence. WASM Preview is separate from full Web game distribution; mobile, console and full Web shipping are outside this desktop release.

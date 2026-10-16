@@ -3,7 +3,7 @@
 Findings from building a second game with the SDK (`Projects/Unnamable-Regret`,
 chapter 1 of an original script with a custom UI), next to the Sakura no Uta
 port. Fixed items are in the commit history; this file keeps the larger work
-that is still open, roughly in priority order.
+that was still open; each moved to the list above when it was done.
 
 ## Fixed while building
 
@@ -65,10 +65,11 @@ that is still open, roughly in priority order.
   reproduces the Story except the importer's mood heuristics (expression
   guesses from narration), and the result passes the tour journey. Re-imports
   keep save identities of unchanged lines through the SDK's identity sync.
+- Documentation: `docs/authoring.md` is now an index; the guide is split into
+  `getting-started.md` (tutorial), `story-reference.md`, `ui-reference.md` and
+  the shipping/maintenance reference `shipping.md`. Build-cache, hashing and
+  provenance internals, the motion design proposal and M2 notes were dropped.
 
 ## Open, larger items
 
-9. **Documentation.** `docs/authoring.md` is ~2,800 lines mixing tutorial and
-   implementation detail (cache sizes, hashing, retained-artifact rules). Split
-   it into a getting-started tutorial, a Story reference, a UI reference and a
-   shipping/maintenance reference.
+None at the moment.
