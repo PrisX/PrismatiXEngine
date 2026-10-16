@@ -2,8 +2,8 @@
 
 Findings from building a second game with the SDK (`Projects/Unnamable-Regret`,
 chapter 1 of an original script with a custom UI), next to the Sakura no Uta
-port. Fixed items are in the commit history; this file keeps the larger work
-that was still open; each moved to the list above when it was done.
+port. Each item is in the commit history; the larger ones that were left open
+at first moved from "Open, larger items" to the list below as they were done.
 
 ## Fixed while building
 
