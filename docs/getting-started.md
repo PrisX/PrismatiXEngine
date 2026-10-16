@@ -24,7 +24,11 @@ prismatix create my-game
 prismatix dev my-game
 ```
 
-`create` prepares a short Traditional Chinese story with original character/background pictures, two choices and endings, a title, default dialogue HUD and save/load routes. It copies Noto Sans TC and its license, prepares editor settings, installs exact project CLI/SDK versions and writes `package-lock.json`. No npm init, second SDK install, hand-written UUIDs or initialization command is needed. Initial preparation needs registry access; failures preserve existing author data.
+With pnpm, `pnpm add -g @prismatix/cli` (or `pnpm dlx @prismatix/cli create my-game`)
+works the same way. `create` installs the project's tools with the package
+manager that ran it, or with the one `--package-manager npm|pnpm` names.
+
+`create` prepares a short Traditional Chinese story with original character/background pictures, two choices and endings, a title, default dialogue HUD and save/load routes. It copies Noto Sans TC and its license, prepares editor settings, installs exact project CLI/SDK versions and writes `package-lock.json` (npm) or `pnpm-lock.yaml` (pnpm, which also records its version in `packageManager`). No npm init, second SDK install, hand-written UUIDs or initialization command is needed. Initial preparation needs registry access; failures preserve existing author data.
 
 All options are non-interactive:
 

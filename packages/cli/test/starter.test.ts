@@ -6,7 +6,7 @@ import {tmpdir} from "node:os";
 import {join, resolve} from "node:path";
 import test from "node:test";
 import {fileURLToPath} from "node:url";
-import {createStarter} from "../src/starter.js";
+import {createStarter, detectPackageManager} from "../src/starter.js";
 const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 const prepared = async (directory: string): Promise<void> => {
@@ -101,3 +101,50 @@ test("a file appearing at destination during install is never removed", async ()
     assert.deepEqual(await readdir(root), ["game"]);
   } finally { await rm(root, {recursive: true, force: true}); }
 });
+
+test("create detects the package manager that launched it", () => {
+  assert.equal(detectPackageManager({npm_config_user_agent: "pnpm/10.6.5 npm/? node/v24.2.0 win32 x64"}), "pnpm");
+  assert.equal(detectPackageManager({npm_config_user_agent: "npm/11.3.0 node/v24.2.0 win32 x64 workspaces/false"}), "npm");
+  assert.equal(detectPackageManager({}), "npm");
+});
+
+test("checkout tools link with file: for npm and link: for pnpm", async () => {
+  const root = await mkdtemp(join(tmpdir(), "px-starter-links-"));
+  try {
+    const pins: Record<string, Record<string, string>> = {};
+    for (const manager of ["npm", "pnpm"] as const) {
+      await createStarter(join(root, manager), {packageManager: manager, toolSource: "checkout",
+        install: async (directory) => {
+          pins[manager] = JSON.parse(await readFile(join(directory, "package.json"), "utf8")).devDependencies;
+        }});
+    }
+    const checkout = (name: string) => resolve(packageRoot, "..", name).split("\\").join("/");
+    assert.deepEqual(pins.npm, {"@prismatix/cli": `file:${checkout("cli")}`,
+      "@prismatix/authoring-sdk": `file:${checkout("authoring-sdk")}`});
+    assert.deepEqual(pins.pnpm, {"@prismatix/cli": `link:${checkout("cli")}`,
+      "@prismatix/authoring-sdk": `link:${checkout("authoring-sdk")}`});
+  } finally { await rm(root, {recursive: true, force: true}); }
+});
+
+// A real pnpm install, offline because checkout tools are links. Runs where
+// pnpm is on PATH (CI installs it for the workspace).
+const pnpmAvailable = spawnSync("pnpm", ["--version"], {shell: true, encoding: "utf8"}).status === 0;
+test("create --package-manager pnpm writes pnpm-lock.yaml and a working node_modules",
+  {skip: pnpmAvailable ? false : "pnpm is not on PATH"}, async () => {
+    const root = await mkdtemp(join(tmpdir(), "px-starter-pnpm-"));
+    try {
+      const target = join(root, "pnpm game");
+      await createStarter(target, {packageManager: "pnpm", toolSource: "checkout"});
+      const files = await readdir(target);
+      assert.ok(files.includes("pnpm-lock.yaml"), files.join(", "));
+      assert.ok(!files.includes("package-lock.json"));
+      const manifest = JSON.parse(await readFile(join(target, "package.json"), "utf8"));
+      assert.match(manifest.packageManager, /^pnpm@\d+\.\d+\.\d+$/u);
+      // The links survive the move out of the staging directory.
+      const validated = spawnSync(process.execPath, [join(packageRoot, "dist/src/cli.js"), "validate", target],
+        {encoding: "utf8"});
+      assert.equal(validated.status, 0, validated.stdout + validated.stderr);
+      const sdk = await readFile(join(target, "node_modules", "@prismatix", "authoring-sdk", "package.json"), "utf8");
+      assert.equal(JSON.parse(sdk).name, "@prismatix/authoring-sdk");
+    } finally { await rm(root, {recursive: true, force: true, maxRetries: 5, retryDelay: 100}); }
+  });

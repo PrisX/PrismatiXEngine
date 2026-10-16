@@ -11,10 +11,10 @@ The extension is not on the Marketplace yet. Build a `.vsix` from this
 repository and install it:
 
 ```sh
-npm ci
-npm run build --workspace @prismatix/authoring-sdk
-npm run build --workspace vscode-pxstory
-npm run package --workspace vscode-pxstory   # needs registry access for @vscode/vsce
+pnpm install
+pnpm --filter @prismatix/authoring-sdk run build
+pnpm --filter vscode-pxstory run build
+pnpm --filter vscode-pxstory run package   # needs registry access for @vscode/vsce
 code --install-extension packages/vscode-pxstory/dist/vscode-pxstory.vsix
 ```
 
@@ -114,9 +114,9 @@ uses and how long loading and whole-project checks take.
 ## Development
 
 ```sh
-npm run build --workspace vscode-pxstory   # tsc (out/) and esbuild bundles (dist/)
-npm test --workspace vscode-pxstory        # grammar snapshot and language server tests
-UPDATE_SNAPSHOTS=1 npm test --workspace vscode-pxstory
+pnpm --filter vscode-pxstory run build   # tsc (out/) and esbuild bundles (dist/)
+pnpm --filter vscode-pxstory test         # grammar snapshot and language server tests
+UPDATE_SNAPSHOTS=1 pnpm --filter vscode-pxstory test
 ```
 
 The server can also run outside VS Code: `node dist/server.js --stdio`.

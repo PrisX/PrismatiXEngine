@@ -13,7 +13,7 @@ test("local package source stamp rejects stale dist but skips published packages
   writeFileSync(join(root, "src", "index.ts"), "export const value = 1;\n");
   writeFileSync(join(root, "package.json"), "{\"name\":\"fixture\"}\n");
   writeFileSync(join(root, "tsconfig.json"), "{}\n");
-  assert.throws(() => assertLocalBuildFresh(root, "fixture"), /PXSDKBUILD1001.*npm run build/u);
+  assert.throws(() => assertLocalBuildFresh(root, "fixture"), /PXSDKBUILD1001.*pnpm run build/u);
   writeLocalBuildStamp(root);
   assert.doesNotThrow(() => assertLocalBuildFresh(root, "fixture"));
   writeFileSync(join(root, "src", "index.ts"), "export const value = 2;\n");

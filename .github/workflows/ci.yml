@@ -24,11 +24,12 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: "24.14.0"
-          cache: npm
+      # pnpm at the version package.json pins, through Node's Corepack.
+      - run: corepack enable pnpm
       - name: Install pinned Authoring SDK dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Check schemas, generated contracts, TypeScript, and golden tests
-        run: npm run check
+        run: pnpm run check
 
   sdk-architecture:
     runs-on: ubuntu-latest
@@ -56,9 +57,10 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: "24.14.0"
-          cache: npm
+      # pnpm at the version package.json pins, through Node's Corepack.
+      - run: corepack enable pnpm
       - name: Build installable author tooling
-        run: npm ci --ignore-scripts && npm run build
+        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm run build
       - run: bash .github/scripts/install-linux-dependencies.sh
       - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
       - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
@@ -107,7 +109,7 @@ jobs:
         run: |
           cmake --install out/ci/sdk-clang --prefix out/ci/runtime-linux --component PrismatiXRuntime
           xvfb-run -a env PRISMATIX_PHASE1_RUNTIME="${{ github.workspace }}/out/ci/runtime-linux" \
-            npm run phase1:acceptance
+            pnpm run phase1:acceptance
       - name: Publish Linux GPU visual matrix
         if: always()
         uses: actions/upload-artifact@v4
@@ -126,9 +128,10 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: "24.14.0"
-          cache: npm
+      # pnpm at the version package.json pins, through Node's Corepack.
+      - run: corepack enable pnpm
       - name: Build installable Authoring SDK
-        run: npm ci --ignore-scripts && npm run build
+        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm run build
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
         with:
           arch: x64
@@ -247,7 +250,7 @@ jobs:
         shell: pwsh
         run: |
           $env:PRISMATIX_PHASE1_RUNTIME = Join-Path $env:GITHUB_WORKSPACE 'out/ci/sdk-package'
-          npm run phase1:acceptance -- --project-name "繁中 專案 測試"
+          pnpm run phase1:acceptance --project-name "繁中 專案 測試"
           if ($LASTEXITCODE -ne 0) { throw 'Clean Windows runtime gate failed' }
           node scripts/preview-ui-regression.mjs out/ci/sdk-package/bin/PrismatiXPreviewHost.exe
           if ($LASTEXITCODE -ne 0) { throw 'Native Preview UI gate failed' }
@@ -278,9 +281,10 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: "24.14.0"
-          cache: npm
+      # pnpm at the version package.json pins, through Node's Corepack.
+      - run: corepack enable pnpm
       - name: Build installable author tooling
-        run: npm ci --ignore-scripts && npm run build
+        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm run build
       - run: brew install autoconf automake libtool nasm pkg-config
       - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
       - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
@@ -318,7 +322,7 @@ jobs:
       - name: Verify clean macOS runtime bundle and packaged Player
         run: |
           cmake --install out/ci/sdk-apple-clang --prefix out/ci/runtime-macos --component PrismatiXRuntime
-          PRISMATIX_PHASE1_RUNTIME="${{ github.workspace }}/out/ci/runtime-macos" npm run phase1:acceptance
+          PRISMATIX_PHASE1_RUNTIME="${{ github.workspace }}/out/ci/runtime-macos" pnpm run phase1:acceptance
       - name: Publish macOS GPU visual matrix
         if: always()
         uses: actions/upload-artifact@v4

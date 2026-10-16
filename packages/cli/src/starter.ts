@@ -19,8 +19,20 @@ export interface StarterOptions {
    * checkout when there is one.
    */
   readonly toolSource?: "registry" | "checkout";
+  /**
+   * Installs the pinned tools with npm (package-lock.json) or pnpm
+   * (pnpm-lock.yaml). Default: whichever package manager ran this CLI.
+   */
+  readonly packageManager?: PackageManager;
   /** Dependency-injection seam for isolated tests, not a CLI skip-install option. */
   readonly install?: (directory: string) => Promise<void>;
+}
+
+export type PackageManager = "npm" | "pnpm";
+
+/** The package manager that launched this process (`pnpm dlx`, `pnpm exec`, ...), else npm. */
+export function detectPackageManager(environment: NodeJS.ProcessEnv = process.env): PackageManager {
+  return (environment.npm_config_user_agent ?? "").startsWith("pnpm/") ? "pnpm" : "npm";
 }
 
 const templateRoot = fileURLToPath(new URL("../../templates/minimal", import.meta.url));
@@ -36,26 +48,57 @@ async function emptyDestination(target: string): Promise<boolean> {
   return true;
 }
 
-async function installDependencies(directory: string, options: StarterOptions): Promise<void> {
-  // Use npm's JS entrypoint so Windows does not require shell command composition.
+const isFile = (path: string): Promise<boolean> => lstat(path).then((info) => info.isFile(), () => false);
+
+/**
+ * Finds npm's JS entry beside Node.js, so Windows needs no shell command
+ * composition. Returns the argv prefix that runs it.
+ */
+async function npmCommand(): Promise<string[]> {
   const nodeRoot = dirname(process.execPath);
   const candidates = [process.env.npm_execpath,
     join(nodeRoot, "node_modules", "npm", "bin", "npm-cli.js"),
     join(nodeRoot, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
     join(nodeRoot, "..", "node_modules", "npm", "bin", "npm-cli.js")];
-  let npmPath: string | undefined;
   for (const candidate of candidates) {
-    if (candidate === undefined || extname(candidate) !== ".js") continue;
-    try { if ((await lstat(candidate)).isFile()) { npmPath = candidate; break; } } catch { /* Next supported npm layout. */ }
+    if (candidate === undefined || extname(candidate) !== ".js" || basename(candidate).startsWith("pnpm")) continue;
+    if (await isFile(candidate)) return [process.execPath, candidate];
   }
-  if (npmPath === undefined) throw new Error("npm was not found beside Node.js. Install a supported Node.js distribution including npm, then retry create.");
-  process.stderr.write("Preparing the project's pinned PrismatiX tools with npm…\n");
-  const args = [npmPath, "install", "--ignore-scripts", "--no-audit", "--no-fund"];
-  if (options.npmRegistry !== undefined) args.push("--registry", options.npmRegistry);
-  if (options.npmCache !== undefined) args.push("--cache", options.npmCache);
-  await new Promise<void>((accept, reject) => {
-    const child = spawn(process.execPath, args, {cwd: directory, shell: false, windowsHide: true,
-      stdio: ["ignore", "inherit", "inherit"]});
+  throw new Error("npm was not found beside Node.js. Install a supported Node.js distribution including npm, then retry create.");
+}
+
+/**
+ * Finds pnpm without a shell: the pnpm that launched this process, else the
+ * first pnpm on PATH, as a standalone executable, an npm-installed package
+ * or a Corepack shim.
+ */
+async function pnpmCommand(): Promise<string[]> {
+  const launcher = process.env.npm_execpath;
+  if (launcher !== undefined && /^pnpm(\.c?js)?$/u.test(basename(launcher)) && await isFile(launcher))
+    return extname(launcher) === "" ? [launcher] : [process.execPath, launcher];
+  const windows = process.platform === "win32";
+  for (const directory of (process.env.PATH ?? process.env.Path ?? "").split(windows ? ";" : ":")) {
+    if (!directory) continue;
+    if (windows && await isFile(join(directory, "pnpm.exe"))) return [join(directory, "pnpm.exe")];
+    if (!windows && await isFile(join(directory, "pnpm"))) return [join(directory, "pnpm")];
+    const shim = windows ? await isFile(join(directory, "pnpm.cmd")) : false;
+    if (!windows || !shim) continue;
+    for (const script of [join(directory, "node_modules", "pnpm", "bin", "pnpm.cjs"),
+      join(directory, "node_modules", "corepack", "dist", "pnpm.js")])
+      if (await isFile(script)) return [process.execPath, script];
+  }
+  throw new Error("pnpm was not found on PATH. Install pnpm (https://pnpm.io/installation) or enable it with `corepack enable pnpm`, then retry create, or pass --package-manager npm.");
+}
+
+/** Runs a package manager in `directory`; a failure leaves the destination unchanged. */
+async function runPackageManager(command: string[], args: string[], directory: string,
+  failure: string): Promise<string> {
+  return new Promise<string>((accept, reject) => {
+    const [executable, ...prefix] = command;
+    const child = spawn(executable!, [...prefix, ...args], {cwd: directory, shell: false, windowsHide: true,
+      stdio: ["ignore", args[0] === "--version" ? "pipe" : "inherit", "inherit"]});
+    let output = "";
+    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
     let cancelled = false;
     const cancel = () => { cancelled = true; child.kill(); };
     const timer = setTimeout(cancel, 180_000);
@@ -67,34 +110,69 @@ async function installDependencies(directory: string, options: StarterOptions): 
     child.once("error", (error) => { cleanup(); reject(error); });
     child.once("close", (code, signal) => {
       cleanup();
-      if (code === 0 && !cancelled) accept();
-      else reject(new Error(`npm dependency preparation failed (${code ?? signal}). Check registry/proxy access and retry create; the destination was not changed.`));
+      if (code === 0 && !cancelled) accept(output.trim());
+      else reject(new Error(`${failure} (${code ?? signal}).`));
     });
   });
 }
 
+const preparationFailure = (manager: PackageManager): string =>
+  `${manager} dependency preparation failed. Check registry/proxy access and retry create; the destination was not changed`;
+
+async function installDependencies(directory: string, options: StarterOptions,
+  manager: PackageManager, command: string[]): Promise<void> {
+  process.stderr.write(`Preparing the project's pinned PrismatiX tools with ${manager}…\n`);
+  const args = manager === "npm"
+    ? ["install", "--ignore-scripts", "--no-audit", "--no-fund"]
+    // A project created inside a pnpm workspace is still its own project.
+    : ["install", "--ignore-scripts", "--ignore-workspace", "--config.confirmModulesPurge=false"];
+  if (options.npmRegistry !== undefined) args.push("--registry", options.npmRegistry);
+  if (options.npmCache !== undefined) args.push(...manager === "npm"
+    ? ["--cache", options.npmCache]
+    : ["--store-dir", join(options.npmCache, "pnpm-store"), "--cache-dir", join(options.npmCache, "pnpm-cache")]);
+  await runPackageManager(command, args, directory, preparationFailure(manager));
+}
+
+/**
+ * pnpm links node_modules with absolute junctions on Windows, which the move
+ * from the staging directory breaks; relinking from the store needs no network.
+ */
+async function relinkDependencies(directory: string, options: StarterOptions, command: string[]): Promise<void> {
+  const args = ["install", "--offline", "--frozen-lockfile", "--ignore-scripts", "--ignore-workspace",
+    "--config.confirmModulesPurge=false"];
+  if (options.npmCache !== undefined)
+    args.push("--store-dir", join(options.npmCache, "pnpm-store"), "--cache-dir", join(options.npmCache, "pnpm-cache"));
+  await runPackageManager(command, args, directory,
+    "pnpm could not relink the created project's node_modules from its store; run pnpm install in the project");
+}
+
 /**
  * Pins the project's tools to this CLI's own version. A CLI running from an
- * engine source checkout links the checkout's packages with `file:` instead,
- * so `create` works offline and the project follows the engine you build.
+ * engine source checkout links the checkout's packages instead (`file:` for
+ * npm, `link:` for pnpm, whose `file:` would copy them), so `create` works
+ * offline and the project follows the engine you build. A pnpm project also
+ * records the pnpm version that created it.
  */
-async function pinTools(packagePath: string, id: string, source?: "registry" | "checkout"): Promise<void> {
+async function pinTools(packagePath: string, id: string, source: "registry" | "checkout" | undefined,
+  manager: PackageManager, managerVersion: string | undefined): Promise<void> {
   const cliRoot = fileURLToPath(new URL("../../", import.meta.url));
   const sdkRoot = join(cliRoot, "..", "authoring-sdk");
   const own = JSON.parse(await readFile(join(cliRoot, "package.json"), "utf8")) as {version: string};
   const isCheckout = source === "checkout" || (source === undefined &&
     await lstat(join(cliRoot, "src")).then(() => true, () => false) &&
     await lstat(join(sdkRoot, "package.json")).then(() => true, () => false));
-  const link = (path: string) => `file:${resolve(path).split("\\").join("/")}`;
+  const link = (path: string) => `${manager === "pnpm" ? "link" : "file"}:${resolve(path).split("\\").join("/")}`;
   const project = JSON.parse(await readFile(packagePath, "utf8")) as Record<string, unknown>;
   project.name = id.toLowerCase().replace(/[^a-z0-9._-]+/gu, "-");
   project.devDependencies = isCheckout
     ? {"@prismatix/cli": link(cliRoot), "@prismatix/authoring-sdk": link(sdkRoot)}
     : {"@prismatix/cli": own.version, "@prismatix/authoring-sdk": own.version};
+  if (manager === "pnpm" && managerVersion !== undefined && /^\d+\.\d+\.\d+$/u.test(managerVersion))
+    project.packageManager = `pnpm@${managerVersion}`;
   await writeFile(packagePath, `${JSON.stringify(project, null, 2)}\n`, "utf8");
 }
 
-/** Prepare everything in a sibling directory and publish only after npm succeeds. */
+/** Prepare everything in a sibling directory and publish only after the install succeeds. */
 export async function createStarter(targetArgument: string, options: StarterOptions = {}): Promise<{root: string; project: string}> {
   const target = resolve(targetArgument);
   await emptyDestination(target);
@@ -143,7 +221,12 @@ export async function createStarter(targetArgument: string, options: StarterOpti
       }
     };
     await copy(templateRoot, staging);
-    await pinTools(join(staging, "package.json"), id, options.toolSource);
+    const manager = options.packageManager ?? detectPackageManager();
+    const command = options.install === undefined
+      ? manager === "pnpm" ? await pnpmCommand() : await npmCommand() : [];
+    const managerVersion = manager === "pnpm" && options.install === undefined
+      ? await runPackageManager(command, ["--version"], staging, "pnpm --version failed") : undefined;
+    await pinTools(join(staging, "package.json"), id, options.toolSource, manager, managerVersion);
     const storyPath = join(staging, "Story", "main.pxstory");
     const story = await readFile(storyPath, "utf8");
     const identities = externalizeStoryIds(story, {path: "Story/main.pxstory"});
@@ -152,9 +235,15 @@ export async function createStarter(targetArgument: string, options: StarterOpti
         .map((item) => `${item.code}: ${item.message}`).join("; ")}`);
     await writeFile(storyPath, identities.source, "utf8");
     await writeFile(`${storyPath}.pxids.json`, serializeStoryIdentityMap(identities.map), "utf8");
-    await (options.install ?? ((directory) => installDependencies(directory, options)))(staging);
+    await (options.install ?? ((directory) => installDependencies(directory, options, manager, command)))(staging);
     if (await emptyDestination(target)) { await rmdir(target); removedEmptyTarget = true; }
     await rename(staging, target);
+    // The project is complete once moved; a failed relink only needs `pnpm install`.
+    if (manager === "pnpm" && options.install === undefined)
+      await relinkDependencies(target, options, command).catch((error: unknown) => {
+        process.stderr.write(`Warning: ${error instanceof Error ? error.message : String(error)}
+`);
+      });
     return {root: target, project: join(target, "prismatix.json")};
   } catch (error) {
     if (removedEmptyTarget) await mkdir(target).catch(() => {});

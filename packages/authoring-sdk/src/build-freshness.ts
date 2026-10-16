@@ -56,7 +56,7 @@ export function assertLocalBuildFresh(packageRoot: string, packageName: string):
     if (stamp.format === stampFormat) fingerprint = stamp.fingerprint;
   } catch { /* An absent or damaged stamp is stale, not a reason to run old code. */ }
   if (fingerprint !== localSourceFingerprint(root))
-    throw new Error(`PXSDKBUILD1001 ${packageName} local source differs from dist; run npm run build in ${root}`);
+    throw new Error(`PXSDKBUILD1001 ${packageName} local source differs from dist; run pnpm run build in ${root}`);
 }
 
 // The compiled helper is also the post-tsc stamp writer for both workspace

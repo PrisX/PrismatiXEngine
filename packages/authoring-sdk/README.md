@@ -494,4 +494,4 @@ const stableSprite = assetToken("33333333-3333-4333-8333-333333333333");
 
 This deliberately keeps the authoring surface friendly without removing the existing stable-identity layer used by character resources, runtime asset resolution, packaging, and rename-safe references.
 
-Run `npm run check` at the repository root to verify schemas, generated contract freshness, the TypeScript build, package exports, and contract tests.
+Run `pnpm run check` at the repository root to verify schemas, generated contract freshness, the TypeScript build, package exports, and contract tests.

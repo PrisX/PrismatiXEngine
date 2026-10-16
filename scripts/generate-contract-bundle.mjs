@@ -96,7 +96,7 @@ if (checkOnly) {
     normalizeLineEndings(currentLock) !== lockText ||
     normalizeLineEndings(currentGenerated) !== generatedText
   ) {
-    throw new Error("Generated contract bundle is stale; run npm run contracts:generate");
+    throw new Error("Generated contract bundle is stale; run pnpm run contracts:generate");
   }
 } else {
   await mkdir(path.dirname(generatedPath), {recursive: true});

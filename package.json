@@ -2,32 +2,32 @@
   "name": "prismatix-engine-workspace",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "packages/*",
-    "runtime-sdk"
-  ],
+  "packageManager": "pnpm@10.6.5",
   "scripts": {
     "contracts:generate": "node scripts/generate-contract-bundle.mjs",
     "contracts:check": "node scripts/generate-contract-bundle.mjs --check",
-    "runtime:build": "npm run build --prefix runtime-sdk",
-    "runtime:test": "npm run test --prefix runtime-sdk",
-    "cli:build": "npm run build --workspace @prismatix/cli",
-    "cli:test": "npm run test --workspace @prismatix/cli",
-    "vscode:build": "npm run build --workspace vscode-pxstory",
-    "vscode:test": "npm run test --workspace vscode-pxstory",
+    "runtime:build": "pnpm --dir runtime-sdk run build",
+    "runtime:test": "pnpm --dir runtime-sdk run test",
+    "cli:build": "pnpm --filter @prismatix/cli run build",
+    "cli:test": "pnpm --filter @prismatix/cli run test",
+    "vscode:build": "pnpm --filter vscode-pxstory run build",
+    "vscode:test": "pnpm --filter vscode-pxstory run test",
     "docs:build": "tsc -p docs/tsconfig.json",
-    "docs:test": "npm run docs:build && node out/docs-examples/authoring-build.js && node out/docs-examples/jsx-ui-authoring.js && node out/docs-examples/portrait-authoring.js && node out/docs-examples/motion-authoring.js && node out/docs-examples/input-actions.js && node out/docs-examples/runtime-extension.js",
-    "build": "npm run contracts:check && npm run build --workspace @prismatix/authoring-sdk && npm run vscode:build && npm run runtime:build && npm run cli:build && npm run docs:build",
+    "docs:test": "pnpm run docs:build && node out/docs-examples/authoring-build.js && node out/docs-examples/jsx-ui-authoring.js && node out/docs-examples/portrait-authoring.js && node out/docs-examples/motion-authoring.js && node out/docs-examples/input-actions.js && node out/docs-examples/runtime-extension.js",
+    "build": "pnpm run contracts:check && pnpm --filter @prismatix/authoring-sdk run build && pnpm run vscode:build && pnpm run runtime:build && pnpm run cli:build && pnpm run docs:build",
     "phase1:acceptance:mock": "node scripts/phase1-clean-install.mjs --mock",
     "phase1:acceptance": "node scripts/phase1-clean-install.mjs",
     "test:preview-ui": "node scripts/preview-ui-regression.mjs",
-    "test:phase1:mock": "npm run build && npm run phase1:acceptance:mock",
-    "test:phase1": "npm run build && npm run phase1:acceptance",
-    "test": "npm run build && npm run test --workspace @prismatix/authoring-sdk && npm run vscode:test && npm run runtime:test && npm run cli:test && npm run test:package && npm run phase1:acceptance:mock && npm run docs:test",
+    "test:phase1:mock": "pnpm run build && pnpm run phase1:acceptance:mock",
+    "test:phase1": "pnpm run build && pnpm run phase1:acceptance",
+    "test": "pnpm run build && pnpm --filter @prismatix/authoring-sdk run test && pnpm run vscode:test && pnpm run runtime:test && pnpm run cli:test && pnpm run test:package && pnpm run phase1:acceptance:mock && pnpm run docs:test",
     "test:package": "node -e \"Promise.all([import('@prismatix/authoring-sdk'), import('@prismatix/authoring-sdk/jsx-runtime')]).then(([sdk, jsx]) => { if (typeof sdk.compileStory !== 'function' || typeof sdk.loadStorySourceFiles !== 'function' || typeof sdk.validateDocument !== 'function' || typeof sdk.compileJsxUi !== 'function' || typeof jsx.jsx !== 'function') process.exit(1); })\"",
-    "check": "npm run test"
+    "check": "pnpm run test"
   },
   "devDependencies": {
+    "@prismatix/authoring-sdk": "workspace:*",
+    "@prismatix/cli": "workspace:*",
+    "@prismatix/runtime": "workspace:*",
     "@types/node": "26.2.0",
     "typescript": "7.0.2"
   }

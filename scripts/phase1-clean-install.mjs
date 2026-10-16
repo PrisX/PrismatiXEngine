@@ -125,8 +125,10 @@ function lastObject(text, predicate) {
 }
 
 function npmInvocation() {
+  // Under `pnpm run`, npm_execpath is pnpm; this harness tests the npm flow.
   const candidate = process.env.npm_execpath;
-  if (candidate !== undefined && candidate.length > 0 && extname(candidate).toLowerCase() !== ".ps1") {
+  if (candidate !== undefined && candidate.length > 0 && extname(candidate).toLowerCase() !== ".ps1" &&
+      !basename(candidate).toLowerCase().startsWith("pnpm")) {
     return {command: process.execPath, prefix: [candidate]};
   }
   const nodeRoot = dirname(process.execPath);
@@ -493,8 +495,10 @@ async function main() {
       cwd: installRoot, env: toolEnvironment, timeoutMs: options.timeoutMs ?? 120_000,
     });
     requireSuccess(await cliRun([
+      // This acceptance covers the npm-installed CLI and its npm lockfile,
+      // even when the checkout itself runs under pnpm.
       "create", projectRoot, "--name", "Clean Room Story", "--id", "phase1-clean-room",
-      "--locale", "zh-TW",
+      "--locale", "zh-TW", "--package-manager", "npm",
     ]), "prismatix create");
     const project = join(projectRoot, "prismatix.json");
     const story = join(projectRoot, "Story", "main.pxstory");

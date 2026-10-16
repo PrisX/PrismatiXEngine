@@ -23,7 +23,7 @@ executable line has a stable ID.
 ## From a new project to a release
 
 ```bash
-npm install -g @prismatix/cli
+npm install -g @prismatix/cli                 # or: pnpm add -g @prismatix/cli
 prismatix create my-game --template adv       # editable HUD, save/load, settings and backlog
 prismatix dev my-game                         # live Preview; --at chapter2:120 starts at a line or label
 prismatix add character hero --from art/hero --project my-game
@@ -105,14 +105,16 @@ and Ogg as Opus in builds, which cut Sakura no Uta's media from 7.6 to 2.1 GiB.
 
 Only needed to change the engine itself. You need a C++20 compiler (MSVC, Clang
 or GCC), CMake 3.21+, Ninja, Node.js 24, and vcpkg (Windows) or Homebrew (macOS)
-for SDL3, FFmpeg and the other libraries in `vcpkg.json`.
+for SDL3, FFmpeg and the other libraries in `vcpkg.json`. The JavaScript
+workspace uses pnpm at the version `package.json` pins; `corepack enable pnpm`
+provides it.
 
 ```bash
-npm ci
+pnpm install
 cmake --preset x64-release             # macos-debug on macOS, android-arm64 for Android
 cmake --build --preset x64-release
 ctest --test-dir out/build/x64-release -C Release
-npm test
+pnpm test
 ```
 
 On Windows, build from a Visual Studio developer shell with `VCPKG_ROOT` set.

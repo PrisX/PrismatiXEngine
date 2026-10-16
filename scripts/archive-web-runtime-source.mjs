@@ -11,7 +11,7 @@ function run(executable,args,options={}){
   });
 }
 await mkdir(destination,{recursive:true});
-const paths=['CMakeLists.txt','CMakePresets.json','cmake','PrismatiXEngine','packages/authoring-sdk','packages/cli','scripts','docs/web-export.md','README.md','LICENSE','THIRD_PARTY_NOTICES.md','package.json','package-lock.json','vcpkg','vcpkg.json','vcpkg-configuration.json'];
+const paths=['CMakeLists.txt','CMakePresets.json','cmake','PrismatiXEngine','packages/authoring-sdk','packages/cli','scripts','docs/web-export.md','README.md','LICENSE','THIRD_PARTY_NOTICES.md','package.json','pnpm-lock.yaml','pnpm-workspace.yaml','vcpkg','vcpkg.json','vcpkg-configuration.json'];
 const names=await run('git',['ls-files','-z','--cached','--others','--exclude-standard','--',...paths]);
 const files=names.split('\0').filter(Boolean);
 if(files.some(path=>path.startsWith('/')||path.split('/').includes('..')))throw new Error('Unsafe source archive path');

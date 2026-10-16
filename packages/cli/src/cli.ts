@@ -21,7 +21,7 @@ import {fingerprintFile, publishDirectory, publishedInputs, retainPublishedDirec
 import {glyphWarnings} from "./glyph-coverage.js";
 import {augmentArtifact} from "./artifact-augment.js";
 import {assessPackageDiskSpace, availableBytesForOutput, formatDiskBytes} from "./disk-space.js";
-import {createStarter} from "./starter.js";
+import {createStarter, type PackageManager} from "./starter.js";
 import {importCommand, importFormats} from "./importers/command.js";
 import {inspectSaveWithRuntime} from "./save-inspection.js";
 import {planPackagePatch} from "./package-diff.js";
@@ -96,7 +96,7 @@ const maxDocumentBytes = 16 * 1024 * 1024;
 const machineOutput = process.argv.includes("--json");
 
 const commandOptions: Readonly<Record<string, {values: string; flags: string}>> = {
-  create: {values: "name id locale width height template runtime", flags: ""},
+  create: {values: "name id locale width height template runtime package-manager", flags: ""},
   dev: {values: "runtime preview-host debounce ui-registry at", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space no-transcode"},
@@ -497,6 +497,12 @@ function integerOption(options: Options, name: string, fallback: number,
   return value;
 }
 
+function packageManagerOption(options: Options): PackageManager {
+  const value = options.values.get("package-manager");
+  if (value !== "npm" && value !== "pnpm") throw new RangeError("--package-manager must be npm or pnpm");
+  return value;
+}
+
 async function createCommand(options: Options): Promise<number> {
   const target = resolve(options.positional[0] ?? "my-prismatix-game");
   try {
@@ -506,6 +512,7 @@ async function createCommand(options: Options): Promise<number> {
       ...(options.values.has("locale") ? {locale: options.values.get("locale")!} : {}),
       width: integerOption(options, "width", 1280, 1, 16384),
       height: integerOption(options, "height", 720, 1, 16384),
+      ...(options.values.has("package-manager") ? {packageManager: packageManagerOption(options)} : {}),
     });
     // The "adv" template starts from editable copies of the stock screens
     // a typical ADV game restyles first.
@@ -3059,7 +3066,8 @@ async function inspectSaveCommand(options: Options): Promise<number> {
 const commandHelp: Readonly<Record<string, readonly string[]>> = {
   create: ["Create a new project with a starter story, title screen and pinned tools.",
     "prismatix create my-game [--name \"My Game\"] [--id my-game] [--locale zh-TW] [--width 1920 --height 1080]",
-    "prismatix create my-game --template adv   (also editable HUD, Save, Load, Settings and Backlog TSX)"],
+    "prismatix create my-game --template adv   (also editable HUD, Save, Load, Settings and Backlog TSX)",
+    "prismatix create my-game --package-manager pnpm   (pnpm-lock.yaml; the default is the manager that ran the CLI, else npm)"],
   dev: ["Watch the project and replay it in Preview after every successful edit.",
     "prismatix dev [project] [--runtime <engine-build-or-install>]",
     "prismatix dev [project] --at chapter2:120 | --at chapter2:after_school | --at Story/zh-TW/chapter2.pxstory:120"],
@@ -3538,15 +3546,18 @@ async function projectTool(command: string, options: Options, args: string[]): P
   const pinned = object(manifest?.devDependencies)?.["@prismatix/cli"] ?? object(manifest?.dependencies)?.["@prismatix/cli"];
   if (pinned === undefined) return launcherStopRequested ? 130 : undefined; // Existing pre-lock projects retain their public API.
   const exactVersion = typeof pinned === "string" && /^\d+\.\d+\.\d+$/u.test(pinned);
-  const localPackage = typeof pinned === "string" && pinned.startsWith("file:");
+  const localPackage = typeof pinned === "string" && /^(?:file|link):/u.test(pinned);
   if (!exactVersion && !localPackage)
-    throw new Error("Project @prismatix/cli must use an exact version or a local file: dependency, not a range");
+    throw new Error("Project @prismatix/cli must use an exact version or a local file:/link: dependency, not a range");
   const localRoot = join(location.root, "node_modules", "@prismatix", "cli");
   const entry = join(localRoot, "dist", "src", "cli.js");
-  if (!await regularFile(entry)) throw new Error("The project's pinned CLI is missing. Restore dependencies with npm ci in the project directory.");
+  // pnpm projects restore from pnpm-lock.yaml, npm projects from package-lock.json.
+  const restore = await regularFile(join(location.root, "pnpm-lock.yaml"))
+    ? "pnpm install --frozen-lockfile" : "npm ci";
+  if (!await regularFile(entry)) throw new Error(`The project's pinned CLI is missing. Restore dependencies with ${restore} in the project directory.`);
   const installed = object(await readJson(join(localRoot, "package.json")));
   if (exactVersion && installed?.version !== pinned)
-    throw new Error(`Project requires CLI ${pinned}; installed version is ${String(installed?.version)}. Restore the lock with npm ci.`);
+    throw new Error(`Project requires CLI ${pinned}; installed version is ${String(installed?.version)}. Restore the lock with ${restore}.`);
   const isLocalTool = await realpath(entry) === await realpath(fileURLToPath(import.meta.url));
   if (launcherStopRequested) return 130;
   if (isLocalTool) return undefined;

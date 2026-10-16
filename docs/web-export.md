@@ -18,9 +18,9 @@ in the PowerShell session before building:
 
 ```powershell
 . C:/path/to/emsdk/emsdk_env.ps1
-npm install
-npm run build --workspace @prismatix/authoring-sdk
-npm run cli:build
+pnpm install
+pnpm --filter @prismatix/authoring-sdk run build
+pnpm run cli:build
 cargo install naga-cli --version 27.0.0 --locked --root out/tools/naga
 ./scripts/build-wasm-player.ps1
 ```

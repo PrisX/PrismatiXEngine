@@ -940,7 +940,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
     add_dependencies(PrismatiXPlayerCatalogNativeAcceptanceTests
                      PrismatiXPlayerQA)
     # The journey itself is Tests/journeys/catalog.mjs, run by `prismatix
-    # test` (packages/cli, built by `npm run build`) over the QA IPC.
+    # test` (packages/cli, built by `pnpm run build`) over the QA IPC.
     find_program(PRISMATIX_NODE_EXECUTABLE node)
     if(PRISMATIX_NODE_EXECUTABLE)
         add_test(NAME PrismatiX.SDK.PackageVerifierColdStart

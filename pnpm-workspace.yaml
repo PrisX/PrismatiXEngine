@@ -1,0 +1,12 @@
+packages:
+  - packages/*
+  - runtime-sdk
+
+# The packages pin each other by exact version (what npm users install), and
+# those versions resolve to the workspace copies here.
+linkWorkspacePackages: true
+
+# esbuild works from its platform package; its install script only
+# re-checks that binary (CI installed with --ignore-scripts under npm too).
+ignoredBuiltDependencies:
+  - esbuild
