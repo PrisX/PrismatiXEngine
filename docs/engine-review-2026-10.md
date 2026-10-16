@@ -38,11 +38,12 @@ that is still open, roughly in priority order.
 - `settings.preview` / `settings.previewWaiting`: a sample line typing at the
   chosen text speed and holding for the auto wait while settings are open;
   the stock settings screen shows it.
+- `PXCLI1060` also checks UI text (labels, button captions, placeholders,
+  with each node's own font and `player.uiFont`) and locale `strings`. It
+  found `↺` in this game's backlog hint, which no Noto Serif face draws.
 
 ## Open, larger items
 
-4. **Glyph coverage beyond Story.** `PXCLI1060` checks Story text; TSX `text`,
-   locale `strings` and button captions should be checked the same way.
 5. **Kinsoku for styled and ruby lines.** Lines with inline style runs use the
    UAX #14 run layout (correct); lines with ruby keep SDL_ttf wrapping so ruby
    offsets stay valid. Moving ruby onto the run layout removes the exception.

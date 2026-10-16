@@ -820,10 +820,14 @@ punctuation and small kana never start a line and opening brackets never end
 one. The message window decides the breaks on the whole line, so characters
 do not jump to the next line while the typewriter reveals them.
 
-`validate` and `build` warn (`PXCLI1060`) about Story characters that no font
-of the locale's `fontChain` can draw, listing each with the line that first
-uses it; add a covering font to the chain (for example a Japanese font for 凪
-in a Traditional Chinese project).
+`validate` and `build` warn (`PXCLI1060`) about characters that no font of a
+locale's `fontChain` can draw, listing each with its first use: Story text
+(dialogue, speakers, choices, chapter titles), UI text (TSX `text`, button
+captions and `TextField` placeholders, checked in every locale, since UI text
+shows whatever the language) and the locale's own `strings`. A node's own
+`font` and `player.uiFont` are tried first; `SpriteText` draws image glyphs
+and is skipped. Add a covering font to the chain (for example a Japanese font
+for 凪 in a Traditional Chinese project).
 
 #### Message-window face
 

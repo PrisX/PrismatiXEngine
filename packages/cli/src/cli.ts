@@ -18,7 +18,7 @@ import {
 import {fingerprintFile, publishDirectory, publishedInputs, retainPublishedDirectoryIfMatching,
   retirePublishedDirectory,
   verifiedPublishedInputs, type PublishedInput} from "./output-safety.js";
-import {storyGlyphWarnings} from "./glyph-coverage.js";
+import {glyphWarnings} from "./glyph-coverage.js";
 import {augmentArtifact} from "./artifact-augment.js";
 import {assessPackageDiskSpace, availableBytesForOutput, formatDiskBytes} from "./disk-space.js";
 import {createStarter} from "./starter.js";
@@ -1292,8 +1292,9 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
   })) warnings.push({severity: "warning", code: "PXCLI1043",
     message: "Native input key names were not checked; select a Runtime with PrismatiXInputKeyRegistry.json"});
   if (result.valid && result.artifact !== undefined)
-    warnings.push(...await storyGlyphWarnings(result.artifact, loaded.locales,
-      async (path) => readFile(projectFile(loaded.root, path))));
+    warnings.push(...await glyphWarnings(result.artifact, loaded.locales,
+      async (path) => readFile(projectFile(loaded.root, path)),
+      {documents: loaded.documents, nodeSpans: loaded.uiNodeSpans}));
   return warnings.length === 0 ? result
     : {...result, diagnostics: [...result.diagnostics, ...warnings]};
 }

@@ -1,5 +1,5 @@
-// Warns about Story characters that no font of the locale's fontChain can
-// draw. The Player would show them as empty boxes (tofu), which nothing else
+// Warns about Story, UI and locale-string characters that no font of the
+// locale's fontChain can draw. The Player would show them as empty boxes (tofu), which nothing else
 // catches before players see it: a Japanese name such as 凪 in a Traditional
 // Chinese font is a typical case.
 import {readFile} from "node:fs/promises";
@@ -97,58 +97,126 @@ function ignorable(code: number): boolean {
     (code >= 0x200b && code <= 0x200f) || code === 0xfeff;
 }
 
+
+/** Where a project's UI text comes from, for the UI part of the check. */
+export interface GlyphUiInput {
+  /** Compiled UI scenes and components by package path. */
+  readonly documents: Readonly<Record<string, unknown>>;
+  /** The authored TSX position of a node, by document and node index. */
+  readonly nodeSpans?: ReadonlyMap<string, ReadonlyMap<number, {readonly path: string;
+    readonly start: {readonly line: number}}>>;
+}
+
+interface TextUse {
+  readonly text: string;
+  readonly where: string;
+  /** A font tried before the locale's fontChain (a node's own font). */
+  readonly font?: string;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : undefined;
+}
+
+// Text a UI node draws with a font: Label and Button text, a TextField's
+// placeholder, RichTextLabel markup. SpriteText draws image glyphs.
+function uiTexts(ui: GlyphUiInput): TextUse[] {
+  const uses: TextUse[] = [];
+  for (const [path, document] of Object.entries(ui.documents).sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0)) {
+    const scene = record(document);
+    if ((scene?.format !== "PrismatiXUIScene" && scene?.format !== "PrismatiXUIComponent") ||
+        !Array.isArray(scene.nodes)) continue;
+    for (const [index, value] of scene.nodes.entries()) {
+      const node = record(value);
+      if (node === undefined || node.runtimeType === "SpriteText") continue;
+      const properties = record(node.runtimeProperties) ?? {};
+      const span = ui.nodeSpans?.get(path)?.get(index);
+      const where = span !== undefined ? `${span.path}:${span.start.line}`
+        : `${path} ${typeof node.name === "string" ? node.name : `nodes[${index}]`}`;
+      const font = typeof properties.fontPath === "string" ? properties.fontPath : undefined;
+      for (const text of [node.text, properties.text, properties.placeholder])
+        if (typeof text === "string" && text !== "")
+          uses.push({text, where, ...(font === undefined ? {} : {font})});
+    }
+  }
+  return uses;
+}
+
 /**
- * Story text (dialogue, narration, speakers, choices, chapter titles) per
- * locale, checked against that locale's fontChain. One warning per locale
- * lists each missing character with its first use.
+ * Text no font of a locale's fontChain can draw: Story text (dialogue,
+ * narration, speakers, choices, chapter titles), UI text (labels, button
+ * captions, placeholders; drawn in every locale) and the locale's own
+ * `strings`. A node's own `font`, then `player.uiFont`, is tried before the
+ * chain. One warning per locale lists each missing character with its first
+ * use.
  */
-export async function storyGlyphWarnings(artifact: BuildArtifact,
+export async function glyphWarnings(artifact: BuildArtifact,
   locales: Readonly<Record<string, unknown>>,
-  readProjectFile: (path: string) => Promise<Uint8Array>): Promise<AuthoringDiagnostic[]> {
+  readProjectFile: (path: string) => Promise<Uint8Array>,
+  ui: GlyphUiInput = {documents: {}}): Promise<AuthoringDiagnostic[]> {
   const warnings: AuthoringDiagnostic[] = [];
   const fonts = new Map<string, Coverage | undefined>();
+  const coverageOf = async (path: string): Promise<Coverage | undefined> => {
+    if (!fonts.has(path)) {
+      try { fonts.set(path, fontCoverage(await readProjectFile(path))); }
+      catch { fonts.set(path, undefined); }
+    }
+    return fonts.get(path);
+  };
+  const settings = record(record(artifact.project)?.settings) ?? {};
+  const uiFont = typeof settings["player.uiFont"] === "string" ? settings["player.uiFont"] : undefined;
+  const uiUses = uiTexts(ui).map((use) =>
+    uiFont === undefined || use.font !== undefined ? use : {...use, font: uiFont});
   for (const [locale, entry] of Object.entries(artifact.localeArtifacts)) {
-    let document = locales[locale] as {fontChain?: unknown} | undefined;
+    let document = record(locales[locale]);
     if (document === undefined) {
       // A single-locale project lists no supportedLocales; read its file.
       try {
         const text = new TextDecoder().decode(await readProjectFile(`Content/Localization/${locale}.json`));
-        document = JSON.parse(text.replace(/^﻿/u, "")) as {fontChain?: unknown};
+        document = record(JSON.parse(text.replace(/^﻿/u, "")));
       } catch { continue; }
     }
     const chain = Array.isArray(document?.fontChain)
-      ? document!.fontChain.filter((path): path is string => typeof path === "string") : [];
+      ? document.fontChain.filter((path): path is string => typeof path === "string") : [];
     if (chain.length === 0) continue;
     const coverages: Coverage[] = [];
     for (const path of chain) {
-      if (!fonts.has(path)) {
-        try { fonts.set(path, fontCoverage(await readProjectFile(path))); }
-        catch { fonts.set(path, undefined); }
-      }
-      const coverage = fonts.get(path);
+      const coverage = await coverageOf(path);
       if (coverage !== undefined) coverages.push(coverage);
     }
     if (coverages.length === 0) continue;
     const where = new Map(entry.sourceMap.mappings.map((mapping) =>
       [mapping.operationId, `${mapping.sourceUri}:${mapping.startLine}`]));
-    const missing = new Map<string, string>();
+    const uses: TextUse[] = [];
     for (const operation of entry.runtimeIr.operations) {
       const args = operation.arguments as Record<string, unknown>;
       for (const key of ["text", "speaker", "title"]) {
         const value = args[key];
-        if (typeof value !== "string") continue;
-        for (const character of value) {
-          const code = character.codePointAt(0)!;
-          if (ignorable(code) || missing.has(character)) continue;
-          if (!coverages.some((coverage) => covers(coverage, code)))
-            missing.set(character, where.get(operation.operationId) ?? operation.operationId);
-        }
+        if (typeof value === "string")
+          uses.push({text: value, where: where.get(operation.operationId) ?? operation.operationId});
+      }
+    }
+    uses.push(...uiUses);
+    for (const [key, value] of Object.entries(record(document?.strings) ?? {}))
+      if (typeof value === "string") uses.push({text: value, where: `strings.${key}`});
+    const missing = new Map<string, string>();
+    for (const use of uses) {
+      const own = use.font === undefined ? undefined : await coverageOf(use.font);
+      for (const character of use.text) {
+        const code = character.codePointAt(0)!;
+        if (ignorable(code) || missing.has(character)) continue;
+        if (own !== undefined && covers(own, code)) continue;
+        if (!coverages.some((coverage) => covers(coverage, code)))
+          missing.set(character, use.where);
       }
     }
     if (missing.size > 0)
       warnings.push({severity: "warning", code: "PXCLI1060",
-        message: `${missing.size} Story character(s) have no glyph in any ${locale} fontChain font and would ` +
-          "show as empty boxes; add a font that covers them to the locale's fontChain",
+        message: `${missing.size} character(s) of Story, UI or locale strings have no glyph in any ` +
+          `${locale} fontChain font and would show as empty boxes; add a font that covers them to ` +
+          "the locale's fontChain",
         details: [...missing].slice(0, 40).map(([character, first]) =>
           `${character} U+${character.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")} first at ${first}`)
           .join("\n")} as AuthoringDiagnostic);
