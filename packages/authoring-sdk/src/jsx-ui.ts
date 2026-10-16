@@ -202,6 +202,9 @@ export interface UiVisibilityTransition {
   readonly seconds: number;
   /** Pixels the control slides from (show) or to (hide). */
   readonly offset?: readonly [x: number, y: number];
+  /** Slide curve: `quad` (default), `linear`, `cubic`, or `back`, which
+   * overshoots and settles on show and pulls back before leaving on hide. */
+  readonly ease?: "quad" | "linear" | "cubic" | "back";
 }
 
 export interface ItemsViewProps extends UiNodeProps {
@@ -625,6 +628,7 @@ function node(
       [`${phase}TransitionSeconds`]: value.seconds,
       ...(value.offset === undefined ? {}
         : {[`${phase}OffsetX`]: value.offset[0], [`${phase}OffsetY`]: value.offset[1]}),
+      ...(value.ease === undefined ? {} : {[`${phase}TransitionEase`]: value.ease}),
     };
   return definitionElement(nodeType, {
     category: "node", kind,

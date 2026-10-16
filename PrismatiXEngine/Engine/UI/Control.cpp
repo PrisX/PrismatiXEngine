@@ -298,18 +298,38 @@ void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
     float visible = 1.0f;
     float slide = 0.0f;
     float slideX = 0.0f;
+    // Eased progress 0..1 for a show; Back may overshoot past 1.
+    const auto easeOut = [](const TransitionEase ease, const float t) {
+        const float u = 1.0f - t;
+        switch (ease) {
+            case TransitionEase::Linear: return t;
+            case TransitionEase::Cubic: return 1.0f - u * u * u;
+            case TransitionEase::Back: {
+                constexpr float c1 = 1.70158f, c3 = c1 + 1.0f;
+                return 1.0f + c3 * (t - 1.0f) * (t - 1.0f) * (t - 1.0f) + c1 * (t - 1.0f) * (t - 1.0f);
+            }
+            case TransitionEase::Quad: break;
+        }
+        return 1.0f - u * u;
+    };
+    const auto effective = [&](const TransitionEase ease) {
+        return m_linearTransition && ease == TransitionEase::Quad ? TransitionEase::Linear : ease;
+    };
     if (m_hiding) {
         const float gone = std::clamp(m_hideElapsed / m_hideTransitionSeconds, 0.0f, 1.0f);
         visible = m_linearTransition ? 1.0f - gone : 1.0f - gone * gone;
-        slide = m_hideOffsetY * (m_linearTransition ? gone : gone * gone);
-        slideX = m_hideOffsetX * (m_linearTransition ? gone : gone * gone);
+        // A hide runs the curve backwards (ease-in).
+        const float travelled = 1.0f - easeOut(effective(m_hideEase), 1.0f - gone);
+        slide = m_hideOffsetY * travelled;
+        slideX = m_hideOffsetX * travelled;
     } else {
         const float progress = m_showTransitionSeconds > 0.0f
             ? std::clamp(m_showElapsed / m_showTransitionSeconds, 0.0f, 1.0f) : 1.0f;
         const float remaining = 1.0f - progress;
         visible = m_linearTransition ? progress : 1.0f - remaining * remaining;
-        slide = m_showOffsetY * (m_linearTransition ? remaining : remaining * remaining);
-        slideX = m_showOffsetX * (m_linearTransition ? remaining : remaining * remaining);
+        const float left = 1.0f - easeOut(effective(m_showEase), progress);
+        slide = m_showOffsetY * left;
+        slideX = m_showOffsetX * left;
     }
     Color tint=m_modulate;tint.a=static_cast<std::uint8_t>(static_cast<float>(tint.a)*m_opacity*visible);
     renderer.PushTransform({m_layoutRect.x+m_pivot.x*m_layoutRect.w+m_translation.x+slideX,m_layoutRect.y+m_pivot.y*m_layoutRect.h+m_translation.y+slide},m_scale,m_rotation,tint);

@@ -42,6 +42,9 @@ struct BoxDecoration {
 };
 
 enum class Visibility { Visible, Hidden, Collapsed };
+// Curve of a show/hide slide. Back overshoots its rest on show and pulls back
+// before leaving on hide, like a spring.
+enum class TransitionEase { Quad, Linear, Cubic, Back };
 enum class MouseFilter { Stop, Pass, Ignore };
 enum class FocusMode { None, Click, All };
 enum class SizeFlag : unsigned { ShrinkBegin = 0, Fill = 1, Expand = 2, ShrinkCenter = 4, ShrinkEnd = 8 };
@@ -221,6 +224,10 @@ public:
     // Linear progress instead of the default squared ease-out.
     void SetLinearTransition(bool value) { m_linearTransition = value; }
     [[nodiscard]] bool LinearTransition() const { return m_linearTransition; }
+    void SetShowEase(TransitionEase value) { m_showEase = value; }
+    [[nodiscard]] TransitionEase ShowEase() const { return m_showEase; }
+    void SetHideEase(TransitionEase value) { m_hideEase = value; }
+    [[nodiscard]] TransitionEase HideEase() const { return m_hideEase; }
     void SetModulate(Color value) { m_modulate = value; }
     [[nodiscard]] Color Modulate() const { return m_modulate; }
     void SetClipContent(bool value) { m_clipContent = value; }
@@ -343,6 +350,8 @@ private:
     float m_showOffsetX = 0.0f;
     float m_hideOffsetX = 0.0f;
     bool m_linearTransition = false;
+    TransitionEase m_showEase = TransitionEase::Quad;
+    TransitionEase m_hideEase = TransitionEase::Quad;
     Color m_modulate{255,255,255,255};
     bool m_clipContent = false;
     std::optional<BoxDecoration> m_box;

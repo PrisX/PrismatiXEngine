@@ -134,7 +134,15 @@ actions; `activateSoundPath=` overrides one button.
 Any control can fade out when hidden instead of vanishing:
 `showTransition={{seconds: 0.2, offset: [0, -50]}}`,
 `hideTransition={{seconds: 0.2, offset: [0, 50]}}` and `linearTransition`
-slide and fade it.
+slide and fade it. `ease` picks the slide curve: `quad` (default), `linear`,
+`cubic`, or `back`, which overshoots and settles on show and pulls back before
+leaving on hide. A toolbar that springs up from the bottom edge:
+
+```tsx
+<Group name="HudDock" fill bind={{visible: "hud.dockShown"}}
+  showTransition={{seconds: 0.45, offset: [0, 96], ease: "back"}}
+  hideTransition={{seconds: 0.22, offset: [0, 96], ease: "cubic"}} />
+```
 
 ## Data the Player publishes
 

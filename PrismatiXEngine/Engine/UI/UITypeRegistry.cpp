@@ -362,6 +362,36 @@ Status RegisterBuiltinUITypes() {
     }, [](Object& o, bool v) { As<Control>(o)->SetLinearTransition(v); return Status::Ok(); });
     linearTransition.editor.description = "Use linear instead of squared progress for show and hide transitions.";
     control.properties.push_back(std::move(linearTransition));
+    for (const bool show : {true, false}) {
+        const auto name = [](TransitionEase e) {
+            switch (e) {
+                case TransitionEase::Linear: return std::string("linear");
+                case TransitionEase::Cubic: return std::string("cubic");
+                case TransitionEase::Back: return std::string("back");
+                default: return std::string("quad");
+            }
+        };
+        auto ease = StringProperty(show ? "showTransitionEase" : "hideTransitionEase", "Display",
+            [show, name](const Object& o) {
+                const auto* c = As<Control>(o);
+                return name(show ? c->ShowEase() : c->HideEase());
+            },
+            [show](Object& o, std::string v) {
+                TransitionEase e;
+                if (v == "quad") e = TransitionEase::Quad;
+                else if (v == "linear") e = TransitionEase::Linear;
+                else if (v == "cubic") e = TransitionEase::Cubic;
+                else if (v == "back") e = TransitionEase::Back;
+                else return TypeError("transition ease expects quad, linear, cubic or back");
+                if (show) As<Control>(o)->SetShowEase(e); else As<Control>(o)->SetHideEase(e);
+                return Status::Ok();
+            });
+        ease.editor.enumChoices = {"quad", "linear", "cubic", "back"};
+        ease.editor.description = show
+            ? "Curve of the show slide; back overshoots and settles."
+            : "Curve of the hide slide; back pulls back before leaving.";
+        control.properties.push_back(std::move(ease));
+    }
     auto visibilityProperty=StringProperty("visibility", "Behavior", [](const Object& o) {
         switch (As<Control>(o)->GetVisibility()) { case Visibility::Visible: return std::string("Visible"); case Visibility::Hidden: return std::string("Hidden"); default: return std::string("Collapsed"); }
     }, [](Object& o, std::string v) {
