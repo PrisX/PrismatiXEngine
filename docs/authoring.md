@@ -646,8 +646,9 @@ The Player hides any other bracketed text in dialogue; `prismatix validate`
 warns about it (`PXSTORY1180`) and about style tags inside a ruby base, which
 are shown as written (`PXSTORY1184`); put them around `[ruby]` instead. An
 invalid size or colour is `PXSTORY1181` and a font path outside the project is
-`PXSTORY1183`. Styled lines wrap at Unicode line-break opportunities and are
-laid out left to right; right-to-left scripts keep to unstyled text.
+`PXSTORY1183`. Styled and ruby lines wrap at Unicode line-break opportunities
+with the same 禁則 as plain text, and are laid out left to right;
+right-to-left scripts keep to unstyled text.
 
 #### Story macros
 

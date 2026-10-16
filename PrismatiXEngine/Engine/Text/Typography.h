@@ -58,6 +58,11 @@ struct BidiLayoutInfo {
 [[nodiscard]] std::vector<std::size_t> LineBreakBoundaries(
     std::string_view text, std::string_view language = {});
 [[nodiscard]] std::string ApplyCjkKinsoku(std::string_view text,std::size_t maxColumns);
+// LineBreakBoundaries without the breaks 禁則 forbids: before closing
+// punctuation, small kana or a prolonged sound mark, and after an opening
+// bracket. Breaks after a newline are always kept.
+[[nodiscard]] std::vector<std::size_t> KinsokuBreakBoundaries(
+    std::string_view text, std::string_view language = "ja");
 // Byte offsets where a line break must be inserted so every line of `text`
 // fits `width` as reported by `measure`: UAX #14 opportunities, with 禁則 (no
 // closing punctuation or small kana at a line start, no opening bracket at a

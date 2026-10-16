@@ -42,6 +42,18 @@ std::vector<text::TextFontRun> FontRuns(const std::vector<text::TextRun>& runs,
     return resolved;
 }
 
+// Inline runs over `length` bytes of text, or one run in the control's own
+// style when the text has none (a ruby line). The last run is extended over
+// text the runs were not parsed for.
+std::vector<text::TextRun> RunsOver(const std::vector<text::TextRun>& runs,
+                                    const std::size_t length) {
+    if (runs.empty()) return {text::TextRun{0, length, {}}};
+    auto result = runs;
+    auto& last = result.back();
+    if (last.byteStart + last.byteLength < length) last.byteLength = length - last.byteStart;
+    return result;
+}
+
 std::size_t RunAt(const std::vector<text::TextRun>& runs, const std::size_t byte) {
     const auto found = std::upper_bound(runs.begin(), runs.end(), byte,
         [](const std::size_t value, const text::TextRun& run) { return value < run.byteStart; });
@@ -135,9 +147,10 @@ int Label::FontSizeToFit(std::string_view content, int requested,
     const std::string& plain = parsed.plain;
     const int wrap = std::max(1, static_cast<int>(std::floor(width)));
     const auto fits = [&](const int size) {
-        const auto layout = parsed.runs.empty()
+        const auto layout = parsed.runs.empty() && parsed.ruby.empty()
             ? MeasureTextLayout(plain, size, wrap)
-            : MeasureTextRuns(plain, FontRuns(parsed.runs, m_fontPath, size), wrap);
+            : MeasureTextRuns(plain, FontRuns(RunsOver(parsed.runs, plain.size()), m_fontPath, size),
+                              wrap);
         return !layout || layout->Size().y <= height - 8.0f;
     };
     if (fits(requested)) return requested;
@@ -193,7 +206,7 @@ void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     if (m_letterSpacing == 0.0f || m_wrap || m_text.find('\n') != std::string::npos) {
         // Reflowed text carries its own line breaks; SDL_ttf must not wrap it
         // again with its slightly different measurements.
-        const bool reflow = m_wrap && AllowsReflow();
+        const bool reflow = m_wrap;
         const std::string shown = reflow
             ? ReflowedText(renderer, font, size, LayoutRect().w - 2.0f * static_cast<float>(m_outlineSize))
             : m_text;
@@ -1213,62 +1226,24 @@ AccessibilitySemantics RichTextLabel::DescribeAccessibility() const {
             (LayoutRect().w - semantics.text->layout.Size().x) * 0.5f;
     return semantics;
 }
-Vec2 RichTextLabel::MeasureOverride(const Vec2 available){if(!m_vertical&&!m_runs.empty()){const int wrap=Wrap()&&available.x>0.0f?std::max(1,static_cast<int>(std::floor(available.x))):0;if(const auto layout=MeasureTextRuns(Text(),FontRuns(m_runs,FontPath(),FontSize()),wrap))return layout->Size();}if(!m_vertical)return Label::MeasureOverride(available);const int height=available.y>0.0f?std::max(1,static_cast<int>(std::floor(available.y))):0;if(const auto layout=MeasureTextLayout(Text(),FontSize(),height,text::TextOrientation::Vertical,m_verticalRows))return layout->Size();return Label::MeasureOverride(available);}
+Vec2 RichTextLabel::MeasureOverride(const Vec2 available){if(UsesRunLayout()){const int wrap=Wrap()&&available.x>0.0f?std::max(1,static_cast<int>(std::floor(available.x))):0;if(const auto layout=MeasureTextRuns(Text(),FontRuns(RunsOver(m_runs,Text().size()),FontPath(),FontSize()),wrap))return layout->Size();}if(!m_vertical)return Label::MeasureOverride(available);const int height=available.y>0.0f?std::max(1,static_cast<int>(std::floor(available.y))):0;if(const auto layout=MeasureTextLayout(Text(),FontSize(),height,text::TextOrientation::Vertical,m_verticalRows))return layout->Size();return Label::MeasureOverride(available);}
+void RichTextLabel::SetLayoutReferenceMarkup(const std::string_view markup) {
+    auto parsed = text::ParseRubyMarkup(markup);
+    m_referenceRuns = std::move(parsed.runs);
+    SetLayoutReference(std::move(parsed.plain));
+}
+
 void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
                              const Theme& theme) {
     const auto& style = theme.Resolve(*this);
     const int baseSize = FontSize() > 0 ? FontSize() : style.fontSize;
     const std::string& font = FontPath().empty() ? style.font : FontPath();
-    if (!m_vertical && !m_runs.empty()) {
+    if (UsesRunLayout()) {
         DrawStyled(renderer, theme, baseSize);
         return;
     }
     if (!m_vertical) {
         Label::DrawSelf(renderer, theme);
-        if (m_ruby.empty()) return;
-        const int wrap = Wrap()
-                             ? std::max(1, static_cast<int>(
-                                               std::floor(LayoutRect().w)))
-                             : 0;
-        const auto layout = renderer.LayoutText(Text(), font, baseSize,
-                                                wrap);
-        Vec2 origin{LayoutRect().x, LayoutRect().y};
-        if (HorizontalAlignment() == HorizontalTextAlignment::Center)
-            origin.x += (LayoutRect().w - layout.Size().x) * 0.5f;
-        else if (HorizontalAlignment() == HorizontalTextAlignment::Right)
-            origin.x += LayoutRect().w - layout.Size().x;
-        if (VerticalAlignment() == VerticalTextAlignment::Center)
-            origin.y += (LayoutRect().h - layout.Size().y) * 0.5f;
-        else if (VerticalAlignment() == VerticalTextAlignment::Bottom)
-            origin.y += LayoutRect().h - layout.Size().y;
-
-        const float rubyExtent = static_cast<float>(std::max(8, baseSize / 2));
-        renderer.PushClip({LayoutRect().x, LayoutRect().y - rubyExtent,
-                           LayoutRect().w, LayoutRect().h + rubyExtent});
-        for (const auto& ruby : m_ruby) {
-            // A typewriter reveal shows a prefix of the text; a reading is
-            // drawn only once its whole base is visible.
-            if (ruby.prefix.size() + ruby.base.size() > Text().size()) continue;
-            const Rect base = layout.BoundsForRange(ruby.prefix.size(),
-                                                    ruby.base.size());
-            if (base.w <= 0.0f) continue;
-            const int rubySize = std::max(8, baseSize / 2);
-            const Vec2 reading = renderer.MeasureText(
-                ruby.reading, font, rubySize);
-            const float center = base.w > 0.0f
-                                     ? base.x + base.w * 0.5f
-                                     : 0.0f;
-            const float rubyX=origin.x+center-reading.x*0.5f;
-            const float rubyY=origin.y+base.y-rubySize;
-            if(OutlineSize()>0)
-                renderer.DrawTextOutline(ruby.reading,
-                    rubyX-static_cast<float>(OutlineSize()),
-                    rubyY-static_cast<float>(OutlineSize()),font,
-                    rubySize,style.text,OutlineColor(),OutlineSize());
-            else renderer.DrawText(ruby.reading,rubyX,rubyY,font,
-                                   rubySize,style.text);
-        }
-        renderer.PopClip();
         return;
     }
     const auto layout = renderer.LayoutText(
@@ -1295,18 +1270,27 @@ void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
     renderer.PopClip();
 }
 
-// Inline styles: each run is drawn in its own font, size and colour on a
-// shared baseline, then ruby readings above their bases at half the base's
-// run size.
+// Inline styles and ruby: each run is drawn in its own font, size and colour
+// on a shared baseline, then ruby readings above their bases at half the
+// base's run size. While a typewriter shows a prefix of the line, the whole
+// line is laid out and only the visible part drawn, so nothing moves to
+// another line as it appears.
 void RichTextLabel::DrawStyled(graphics::Renderer2D& renderer, const Theme& theme,
                                const int baseSize) {
     const auto& style = theme.Resolve(*this);
     const std::string& baseFont = FontPath().empty() ? style.font : FontPath();
     const Color baseColor = HasColor() ? GetColor() : (Enabled() ? style.text : style.textDisabled);
-    const auto runs = FontRuns(m_runs, baseFont, baseSize);
+    const std::string& visible = Text();
+    const std::string& reference = LayoutReference();
+    const bool prefix = reference.size() > visible.size() &&
+                        reference.compare(0, visible.size(), visible) == 0;
+    const std::string& laid = prefix ? reference : visible;
+    const auto styleRuns = RunsOver(prefix && !m_referenceRuns.empty() ? m_referenceRuns : m_runs,
+                                    laid.size());
+    const auto runs = FontRuns(styleRuns, baseFont, baseSize);
     const Rect area = LayoutRect();
     const int wrap = Wrap() ? std::max(1, static_cast<int>(std::floor(area.w))) : 0;
-    const auto layout = renderer.LayoutTextRuns(Text(), runs, wrap);
+    const auto layout = renderer.LayoutTextRuns(laid, runs, wrap);
     Vec2 origin{area.x, area.y};
     if (VerticalAlignment() == VerticalTextAlignment::Center)
         origin.y += (area.h - layout.Size().y) * 0.5f;
@@ -1333,21 +1317,26 @@ void RichTextLabel::DrawStyled(graphics::Renderer2D& renderer, const Theme& them
                        area.w + edge * 2.0f, area.h + rubyExtent + edge * 2.0f});
     const auto& clusters = layout.Clusters();
     for (std::size_t first = 0; first < clusters.size();) {
-        const std::size_t run = RunAt(m_runs, clusters[first].byteStart);
+        if (clusters[first].byteStart >= visible.size()) {
+            ++first;
+            continue;
+        }
+        const std::size_t run = RunAt(styleRuns, clusters[first].byteStart);
         std::size_t last = first;
         while (last + 1 < clusters.size() && clusters[last + 1].line == clusters[first].line &&
-               RunAt(m_runs, clusters[last + 1].byteStart) == run)
+               clusters[last + 1].byteStart < visible.size() &&
+               RunAt(styleRuns, clusters[last + 1].byteStart) == run)
             ++last;
         const auto& head = clusters[first];
         const std::size_t end = clusters[last].byteStart + clusters[last].byteLength;
-        std::string piece = Text().substr(head.byteStart, end - head.byteStart);
+        std::string piece = laid.substr(head.byteStart, end - head.byteStart);
         std::erase(piece, '\n');
         if (!piece.empty() && run < runs.size()) {
             const float width = clusters[last].bounds.x + clusters[last].bounds.w - head.bounds.x;
             renderer.DrawTextInRect(piece,
                 {origin.x + shiftOf(head.line) + head.bounds.x, origin.y + head.bounds.y,
                  width + static_cast<float>(runs[run].size), head.bounds.h},
-                runs[run].fontPath, runs[run].size, m_runs[run].style.color.value_or(baseColor),
+                runs[run].fontPath, runs[run].size, styleRuns[run].style.color.value_or(baseColor),
                 graphics::HorizontalAlignment::Left, graphics::VerticalAlignment::Top, false,
                 255, OutlineSize(), OutlineColor());
         }
@@ -1356,10 +1345,10 @@ void RichTextLabel::DrawStyled(graphics::Renderer2D& renderer, const Theme& them
     for (const auto& ruby : m_ruby) {
         // A typewriter reveal shows a prefix of the text; a reading is drawn
         // only once its whole base is visible.
-        if (ruby.prefix.size() + ruby.base.size() > Text().size()) continue;
+        if (ruby.prefix.size() + ruby.base.size() > visible.size()) continue;
         const Rect base = layout.BoundsForRange(ruby.prefix.size(), ruby.base.size());
         if (base.w <= 0.0f) continue;
-        const std::size_t run = RunAt(m_runs, ruby.prefix.size());
+        const std::size_t run = RunAt(styleRuns, ruby.prefix.size());
         if (run >= runs.size()) continue;
         const int rubySize = std::max(8, runs[run].size / 2);
         const Vec2 reading = renderer.MeasureText(ruby.reading, runs[run].fontPath, rubySize);
@@ -1370,7 +1359,7 @@ void RichTextLabel::DrawStyled(graphics::Renderer2D& renderer, const Theme& them
             {origin.x + shiftOf(line) + base.x + base.w * 0.5f - reading.x * 0.5f,
              origin.y + base.y - static_cast<float>(rubySize), reading.x + 2.0f,
              static_cast<float>(rubySize) * 1.5f},
-            runs[run].fontPath, rubySize, m_runs[run].style.color.value_or(baseColor),
+            runs[run].fontPath, rubySize, styleRuns[run].style.color.value_or(baseColor),
             graphics::HorizontalAlignment::Left, graphics::VerticalAlignment::Top, false,
             255, OutlineSize(), OutlineColor());
     }

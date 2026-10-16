@@ -75,13 +75,12 @@ public:
     void SetLayoutReference(std::string value) { m_layoutReference = std::move(value); }
 
 protected:
+    [[nodiscard]] const std::string& LayoutReference() const { return m_layoutReference; }
     Vec2 MeasureOverride(Vec2 available) override;
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
     // Wrapped text with line breaks at UAX #14 opportunities and 禁則.
     [[nodiscard]] std::string ReflowedText(graphics::Renderer2D& renderer, const std::string& font,
                                            int size, float width) const;
-    // Subclasses that position extra glyphs by byte offset (ruby) opt out.
-    [[nodiscard]] virtual bool AllowsReflow() const { return true; }
 
 private:
     std::string m_layoutReference;
@@ -531,17 +530,23 @@ public:
     void SetVerticalRows(std::size_t value){m_verticalRows=value;InvalidateLayout();}
     [[nodiscard]] std::size_t VerticalRows() const{return m_verticalRows;}
     [[nodiscard]] AccessibilitySemantics DescribeAccessibility() const override;
+    // The whole line's markup while a typewriter shows a prefix of it, so
+    // styled and ruby lines wrap the same way at every step of the reveal.
+    void SetLayoutReferenceMarkup(std::string_view markup);
 protected:
-    [[nodiscard]] bool AllowsReflow() const override { return m_ruby.empty(); }
     Vec2 MeasureOverride(Vec2 available) override;
     void DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) override;
 private:
+    // Styled and ruby text uses the run layout (UAX #14 with 禁則), which
+    // places readings over their bases; plain text uses Label's reflow.
+    [[nodiscard]] bool UsesRunLayout() const { return !m_vertical && (!m_runs.empty() || !m_ruby.empty()); }
     void DrawStyled(graphics::Renderer2D& renderer, const Theme& theme, int baseSize);
     std::string m_markup;
     struct RubyDraw{std::string prefix,base,reading;};
     std::vector<RubyDraw> m_ruby;
     // Inline [font]/[size]/[color]/[b]/[i] runs over Text(); empty when unstyled.
     std::vector<text::TextRun> m_runs;
+    std::vector<text::TextRun> m_referenceRuns;
     bool m_vertical=false;
     std::size_t m_verticalRows=0;
 };

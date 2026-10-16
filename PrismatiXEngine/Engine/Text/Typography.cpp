@@ -259,11 +259,8 @@ std::string ApplyCjkKinsoku(std::string_view text,std::size_t maxColumns){
     }
     return output;
 }
-std::vector<std::size_t> WrapBreaks(const std::string_view text, const float width,
-                                    const std::function<float(std::string_view)>& measure,
-                                    const std::string_view language) {
-    std::vector<std::size_t> result;
-    if (text.empty() || width <= 0.0f || !measure) return result;
+std::vector<std::size_t> KinsokuBreakBoundaries(const std::string_view text,
+                                                const std::string_view language) {
     // 禁則: closing punctuation, small kana and prolonged sound marks never
     // start a line; opening brackets never end one.
     constexpr std::string_view noStart =
@@ -290,6 +287,15 @@ std::vector<std::size_t> WrapBreaks(const std::string_view text, const float wid
             continue;
         candidates.push_back(boundary);
     }
+    return candidates;
+}
+
+std::vector<std::size_t> WrapBreaks(const std::string_view text, const float width,
+                                    const std::function<float(std::string_view)>& measure,
+                                    const std::string_view language) {
+    std::vector<std::size_t> result;
+    if (text.empty() || width <= 0.0f || !measure) return result;
+    const auto candidates = KinsokuBreakBoundaries(text, language);
     std::size_t lineStart = 0;
     std::size_t lastFit = std::string_view::npos;
     const auto fits = [&](const std::size_t end) {

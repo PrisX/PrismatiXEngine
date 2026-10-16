@@ -1024,7 +1024,10 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     }
     if (m_dialogue) {
         SetPresentationText(m_dialogue, p.text);
-        m_dialogue->SetLayoutReference(text::ParseRubyMarkup(p.fullText).plain);
+        if (auto* rich = dynamic_cast<RichTextLabel*>(m_dialogue))
+            rich->SetLayoutReferenceMarkup(p.fullText);
+        else
+            m_dialogue->SetLayoutReference(text::ParseRubyMarkup(p.fullText).plain);
         const int requested = static_cast<int>(std::lround(
             m_dialogueBaseFontSize * std::clamp(p.textScale, .75f, 2.0f)));
         const Rect bounds = m_dialogue->LayoutRect();

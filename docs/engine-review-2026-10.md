@@ -41,12 +41,13 @@ that is still open, roughly in priority order.
 - `PXCLI1060` also checks UI text (labels, button captions, placeholders,
   with each node's own font and `player.uiFont`) and locale `strings`. It
   found `↺` in this game's backlog hint, which no Noto Serif face draws.
+- Ruby lines use the run layout like styled lines (`Label::AllowsReflow` is
+  gone), and the run layout applies the same 禁則 filter as plain-text
+  wrapping (it used bare UAX #14 before). While the typewriter reveals a
+  styled or ruby line, the whole line is laid out, so nothing jumps lines.
 
 ## Open, larger items
 
-5. **Kinsoku for styled and ruby lines.** Lines with inline style runs use the
-   UAX #14 run layout (correct); lines with ruby keep SDL_ttf wrapping so ruby
-   offsets stay valid. Moving ruby onto the run layout removes the exception.
 6. **Scene fall-through.** Every scene ends with an explicit
    `[jump scene=next]`. Option: `prismatix add scene` writes the jump, or a
    chapter's scene order is followed when a scene reaches its end.

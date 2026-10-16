@@ -250,7 +250,9 @@ TextLayout TextLayoutService::LayoutRuns(const std::string_view value,
         return TextLayout(std::string(value), m_locale, {}, {});
     }
 
-    const auto breaks = LineBreakBoundaries(value, m_locale);
+    // The same opportunities as Label wrapping, so styled and ruby lines
+    // follow 禁則 too.
+    const auto breaks = KinsokuBreakBoundaries(value, m_locale);
     const auto breakBefore = [&](const std::size_t byte) {
         return std::binary_search(breaks.begin(), breaks.end(), byte);
     };

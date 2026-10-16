@@ -688,6 +688,48 @@ int main() {
             std::cerr << "FAIL: wrapped ruby base does not retain its shaped line geometry\n";
             result = 1;
         }
+        // Styled and ruby lines use the run layout, which keeps 禁則: the
+        // full stop that would start the second line pulls a character
+        // down with it instead.
+        const std::string kinsokuText = "前前前前。後";
+        const std::size_t stop = std::string("前前前前").size();
+        const auto runLayout = renderer.LayoutTextRuns(
+            kinsokuText, {{0, kinsokuText.size(), font, 24}}, 100);
+        int stopLine = -1, beforeStopLine = -2;
+        for (const auto& cluster : runLayout.Clusters()) {
+            if (cluster.byteStart == stop) stopLine = cluster.line;
+            if (cluster.byteStart + cluster.byteLength == stop) beforeStopLine = cluster.line;
+        }
+        if (stopLine <= 0 || stopLine != beforeStopLine) {
+            std::cerr << "FAIL: the run layout started a line with a full stop (line "
+                      << stopLine << ", previous " << beforeStopLine << ")\n";
+            result = 1;
+        }
+        {
+            // A wrapped ruby line draws its reading above the base.
+            px::ui::RichTextLabel ruby("前[ruby=かんじ]漢字[/ruby]後");
+            ruby.SetFontPath(font);
+            ruby.SetFontSize(32);
+            ruby.SetColor({20, 20, 20, 255});
+            ruby.Arrange({40, 60, 300, 120});
+            ClearFrame(device.Renderer());
+            renderer.DrawRect({0, 0, 640, 360}, {255, 255, 255, 255});
+            ruby.Draw(renderer, px::ui::Theme{});
+            const auto withReading = CaptureFrame(device.Renderer(), "ruby-run-layout").hash;
+            px::ui::RichTextLabel plain("前漢字後");
+            plain.SetFontPath(font);
+            plain.SetFontSize(32);
+            plain.SetColor({20, 20, 20, 255});
+            plain.Arrange({40, 60, 300, 120});
+            ClearFrame(device.Renderer());
+            renderer.DrawRect({0, 0, 640, 360}, {255, 255, 255, 255});
+            plain.Draw(renderer, px::ui::Theme{});
+            const auto withoutReading = CaptureFrame(device.Renderer(), "ruby-plain").hash;
+            if (withReading == 0 || withReading == withoutReading) {
+                std::cerr << "FAIL: a ruby line on the run layout drew no reading\n";
+                result = 1;
+            }
+        }
         const auto drawFixture = [&] {
             renderer.DrawRect({0, 0, 640, 360}, {230, 230, 210, 255});
             renderer.DrawRect({190, 85, 260, 200}, {230, 45, 55, 255});
