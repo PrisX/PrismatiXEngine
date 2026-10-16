@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {compileProject, ENGINE_VERSION, StoryProjectCompilationCache} from "../src/index.js";
+import {compileProject, ENGINE_VERSION, satisfiesEngineVersion, StoryProjectCompilationCache} from "../src/index.js";
 
 const rootId = "11111111-1111-4111-8111-111111111111";
 const uiId = "22222222-2222-4222-8222-222222222222";
@@ -352,6 +352,11 @@ test("compileProject validates extension UI Actions and packages typed resource 
     {...extension, requiredEngineVersion: ">=9.0.0"});
   assert.equal(unsupportedEngine.diagnostics.find((item) => item.code === "PXBUILD1013")?.span?.path,
     extensionPath);
+  // Extensions are checked against the SDK's own engine version, not a fixed one.
+  const exactEngine = compile({media: "Assets/Audio/theme.ogg"},
+    {...extension, requiredEngineVersion: `=${ENGINE_VERSION}`});
+  assert.ok(!exactEngine.diagnostics.some((item) => item.code === "PXBUILD1013"),
+    JSON.stringify(exactEngine.diagnostics));
   const extensionless = compile({media: {type: "resource", value: "Assets/Audio/theme"}});
   assert.equal(extensionless.valid, true, JSON.stringify(extensionless.diagnostics));
   assert.ok(extensionless.artifact?.dependencies.some((dependency) =>
@@ -1520,4 +1525,15 @@ test("compileProject declares every hover.<name> a UI binds as Player UI data", 
   const authored = compile({"player.uiData": {"hover.StartButton": true, "mine": 1}});
   assert.deepEqual(authored.artifact?.project.settings?.["player.uiData"],
     {"hover.StartButton": true, "mine": 1});
+});
+
+test("extension engine ranges compare against the running engine version", () => {
+  assert.equal(satisfiesEngineVersion(`^${ENGINE_VERSION}`), true);
+  assert.equal(satisfiesEngineVersion(`>${ENGINE_VERSION}`), false);
+  assert.equal(satisfiesEngineVersion(">=0.3.0 <0.4.0", "0.3.2"), true);
+  assert.equal(satisfiesEngineVersion("^0.2.0", "0.3.0"), false);
+  assert.equal(satisfiesEngineVersion("~1.4.0 || ^2.0.0", "2.7.1"), true);
+  assert.equal(satisfiesEngineVersion("^0.3.0", "0.3.0-beta.1"), true);
+  assert.equal(satisfiesEngineVersion("soon"), undefined);
+  assert.equal(satisfiesEngineVersion("*", "not-a-version"), undefined);
 });

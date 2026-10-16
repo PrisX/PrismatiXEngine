@@ -483,14 +483,24 @@ function versionComparator(actual: Version, token: string): boolean | undefined 
         : [0, 0, required[2] + 1];
   return compared >= 0 && compareVersion(actual, upper) < 0;
 }
-function satisfiesVersionRange(range: string): boolean | undefined {
+/**
+ * Whether `version` (the running engine's by default) satisfies an
+ * extension's `requiredEngineVersion` range: space-separated comparators
+ * (`>=`, `<=`, `>`, `<`, `=`, `^`, `~`, `*`) joined by `||`. Returns
+ * undefined for a range or version that is not SemVer.
+ */
+export function satisfiesEngineVersion(range: string, version: string = ENGINE_VERSION): boolean | undefined {
+  const actual = parseVersion(version);
+  return actual === undefined ? undefined : satisfiesVersionRange(range, actual);
+}
+function satisfiesVersionRange(range: string, actual: Version): boolean | undefined {
   const clauses = range.split("||").map((value) => value.trim());
   if (clauses.some((value) => value.length === 0)) return undefined;
   let valid = true;
   for (const clause of clauses) {
     let matches = true;
     for (const token of clause.split(/\s+/)) {
-      const compared = versionComparator([0, 2, 0], token);
+      const compared = versionComparator(actual, token);
       if (compared === undefined) valid = false;
       else matches = matches && compared;
     }
@@ -608,7 +618,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     const extension = documentAt<ExtensionManifest>("extension", path, documents, diagnostics);
     if (extension !== undefined) {
       extensionDocuments.set(path, extension);
-      const compatible = satisfiesVersionRange(extension.requiredEngineVersion);
+      const compatible = satisfiesEngineVersion(extension.requiredEngineVersion);
       if (parseVersion(extension.version) === undefined)
         diagnostics.push(locatedIssue("PXBUILD1011", "Extension version is not SemVer",
           path, "/version", extension.version, extension.version));
