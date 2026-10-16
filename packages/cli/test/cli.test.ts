@@ -499,6 +499,62 @@ test("dev --once streams PreviewHost protocol output and exits after a clean shu
   assert.equal((await stat(join(event.output, "Runtime", "main.pxir"))).isFile(), true);
 });
 
+test("dev --json streams diagnostics and rebuild/Preview lifecycle as NDJSON records", async () => {
+  const value = await fixture();
+  const preview = join(value.root, "mock-preview.mjs");
+  await write(preview, `
+    import {createInterface} from "node:readline";
+    const input = createInterface({input: process.stdin});
+    input.on("line", (line) => {
+      const request = JSON.parse(line);
+      const type = {hello: "ready", applyRuntimeIr: "runtimeIrApplied", play: "playAccepted",
+        shutdown: "shutdownAccepted"}[request.type];
+      process.stdout.write(JSON.stringify({...request, type, runtimeIrSchemaRevision: 1, uiSchemaRevision: 1,
+        applyMode: "fullRuntimeRestart", appliedRevision: request.revision}) + "\\n");
+      if (request.type === "shutdown") { input.close(); process.exit(0); }
+    });
+  `);
+  const records = (stderr: string) => stderr.split(/\r?\n/u).filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const lifecycle = (items: Record<string, unknown>[]) => items
+    .filter((item) => String(item.event).startsWith("dev."))
+    .map((item) => `${String(item.event)}:${String(item.phase ?? "")}`);
+
+  const ok = run(["dev", value.root, "--preview-host", preview, "--once"]);
+  assert.equal(ok.status, 0, ok.stderr);
+  const okRecords = records(ok.stderr);
+  // Every stderr line is one JSON record with an event, a severity and a code.
+  for (const item of okRecords) {
+    assert.equal(typeof item.event, "string", JSON.stringify(item));
+    assert.equal(typeof item.severity, "string", JSON.stringify(item));
+  }
+  assert.deepEqual(lifecycle(okRecords), ["dev.rebuild:start", "dev.rebuild:done",
+    "dev.preview:start", "dev.watching:", "dev.preview:exit"]);
+  const done = okRecords.find((item) => item.event === "dev.rebuild" && item.phase === "done")!;
+  assert.deepEqual([done.code, done.revision, done.valid], ["PXCLI1612", 1, true]);
+  assert.equal(typeof done.durationMs, "number");
+  const exit = okRecords.find((item) => item.event === "dev.preview" && item.phase === "exit")!;
+  assert.deepEqual([exit.code, exit.revision, exit.requested, exit.exitCode], ["PXCLI1614", 1, true, 0]);
+  assert.ok(okRecords.some((item) => item.event === "progress" && item.code === "PXCLI1103"));
+
+  await write(join(value.root, "Story/main.pxstory"), "[nosuchcommand]\n[end]\n");
+  const failed = run(["dev", value.root, "--preview-host", preview, "--once"]);
+  assert.equal(failed.status, 1);
+  const failedRecords = records(failed.stderr);
+  const story = failedRecords.find((item) => item.code === "PXSTORY1199")!;
+  assert.equal(story.event, "diagnostic");
+  assert.equal(story.severity, "error");
+  assert.equal((story.span as {path: string}).path, "Story/main.pxstory");
+  assert.deepEqual(lifecycle(failedRecords), ["dev.rebuild:start", "dev.rebuild:done"]);
+  assert.equal(failedRecords.find((item) => item.event === "dev.rebuild" && item.phase === "done")!.valid, false);
+
+  // Without --json the human output stays plain text.
+  const human = runHuman(["dev", value.root, "--preview-host", preview, "--once"]);
+  assert.equal(human.status, 1);
+  assert.match(human.stderr, /error PXSTORY1199/u);
+  assert.doesNotMatch(human.stderr, /dev\.rebuild|"event"/u);
+});
+
 test("dev reuses verified media and Story inputs without hiding changes", {timeout: 50_000}, async (t) => {
   const value = await fixture();
   const indexPath = join(value.root, "Story/story.pxindex");

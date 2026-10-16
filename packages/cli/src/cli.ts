@@ -414,9 +414,14 @@ function withJsxNodeSpans(diagnostics: readonly AuthoringDiagnostic[],
   });
 }
 
+// `dev --json` tags every stderr record with an `event`, so an editor can
+// read one NDJSON stream of diagnostics and lifecycle records.
+let taggedRecords = false;
+
 function printDiagnostics(values: readonly AuthoringDiagnostic[]): void {
   for (const value of values) {
-    if (machineOutput) process.stderr.write(`${JSON.stringify(value)}\n`);
+    if (machineOutput) process.stderr.write(`${JSON.stringify(taggedRecords
+      ? {event: "diagnostic", ...value} : value)}\n`);
     else {
       const at = value.span ? `${value.span.path}:${value.span.start.line}:${value.span.start.column}` : value.path;
       process.stderr.write(`${value.severity} ${value.code}${at ? ` (${at})` : ""}: ${value.message}\n`);
@@ -426,7 +431,8 @@ function printDiagnostics(values: readonly AuthoringDiagnostic[]): void {
 }
 
 function progress(value: Readonly<Record<string, unknown>>): void {
-  process.stderr.write(machineOutput ? `${JSON.stringify(value)}\n` : `${String(value.message)}\n`);
+  process.stderr.write(machineOutput ? `${JSON.stringify(taggedRecords
+    ? {event: "progress", ...value} : value)}\n` : `${String(value.message)}\n`);
 }
 
 function buildProgress(phase: string, current: number, total: number | undefined,
@@ -2482,6 +2488,9 @@ async function runCommand(options: Options): Promise<number> {
 
 type PreviewMessage = Record<string, unknown>;
 
+type PreviewExitHandler = (exit: {readonly pid: number | undefined; readonly code: number | null;
+  readonly signal: NodeJS.Signals | null; readonly requested: boolean}) => void;
+
 class PreviewClient {
   readonly sessionId = `cli-dev-${randomUUID()}`;
   private readonly waiters = new Map<string, {
@@ -2493,9 +2502,11 @@ class PreviewClient {
   }>();
   private outputBuffer = "";
   private exited = false;
+  private closing = false;
   private readonly closed: Promise<void>;
 
-  private constructor(private readonly child: ChildProcessWithoutNullStreams) {
+  private constructor(private readonly child: ChildProcessWithoutNullStreams,
+    onExit?: PreviewExitHandler) {
     this.closed = new Promise((accept) => child.once("close", () => accept()));
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -2545,8 +2556,11 @@ class PreviewClient {
       this.exited = true;
       const error = new Error(`PreviewHost exited (${code ?? signal ?? "unknown"})`);
       this.fail(error);
+      onExit?.({pid: child.pid, code, signal, requested: this.closing});
     });
   }
+
+  get pid(): number | undefined { return this.child.pid; }
 
   private fail(error: Error): void {
     for (const [id, waiter] of this.waiters) {
@@ -2554,14 +2568,15 @@ class PreviewClient {
     }
   }
 
-  static async start(executable: string, cwd: string): Promise<PreviewClient> {
+  static async start(executable: string, cwd: string,
+    onExit?: PreviewExitHandler): Promise<PreviewClient> {
     const script = [".js", ".mjs", ".cjs"].includes(extname(executable).toLowerCase());
     const child = spawn(script ? process.execPath : executable, script ? [executable] : [],
       {cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true});
     await new Promise<void>((accept, reject) => {
       child.once("spawn", accept); child.once("error", reject);
     });
-    const client = new PreviewClient(child);
+    const client = new PreviewClient(child, onExit);
     try {
       const ready = await client.request("hello", "", 0, {});
       if (ready.type !== "ready" || ready.runtimeIrSchemaRevision !== 1 || ready.uiSchemaRevision !== 1)
@@ -2599,6 +2614,7 @@ class PreviewClient {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     if (this.alive) {
       try { await this.request("shutdown", "", 0, {}, 2_000); } catch { /* Force termination below. */ }
       let grace: NodeJS.Timeout | undefined;
@@ -2659,6 +2675,14 @@ async function devCommand(options: Options): Promise<number> {
   let stopped = false;
   const stop = (): void => { stopped = true; };
   process.once("SIGINT", stop); process.once("SIGTERM", stop);
+  // With --json, stderr is one NDJSON stream: diagnostics carry
+  // event "diagnostic", and rebuilds and Preview hosts report their
+  // lifecycle (dev.rebuild start/done, dev.preview start/exit). The human
+  // output stays as it was.
+  taggedRecords = machineOutput;
+  const lifecycle = (record: Readonly<Record<string, unknown>>): void => {
+    if (machineOutput) progress({severity: "information", ...record});
+  };
   try {
     const previewHost = await discoverRuntimeTool("previewHost", runtimeOptions(options));
     const debounce = integerOption(options, "debounce", 150, 50, 10_000);
@@ -2705,12 +2729,29 @@ async function devCommand(options: Options): Promise<number> {
       const observed = changes;
       let candidate: PreviewClient | undefined;
       let updated: BuildResult | undefined;
+      const rebuild = !(changes === attempted && built !== undefined);
+      const buildStarted = Date.now();
+      if (rebuild) {
+        revision += 1;
+        lifecycle({event: "dev.rebuild", phase: "start", code: "PXCLI1611", revision,
+          message: `Rebuilding revision ${revision}`});
+      }
       try {
-        updated = changes === attempted && built !== undefined
-          ? built : await buildProject(projectArgument, join(revisionRoot, String(++revision)),
-            revision, options.values.get("ui-registry"), options.values.get("runtime"),
-            undefined, storyCompilationCache, built);
-        candidate = await PreviewClient.start(previewHost.path, updated.root);
+        updated = !rebuild ? built! : await buildProject(projectArgument, join(revisionRoot, String(revision)),
+          revision, options.values.get("ui-registry"), options.values.get("runtime"),
+          undefined, storyCompilationCache, built);
+        if (rebuild) lifecycle({event: "dev.rebuild", phase: "done", code: "PXCLI1612", revision,
+          valid: true, durationMs: Date.now() - buildStarted, output: updated.output,
+          message: `Revision ${revision} built`});
+        const previewRevision = revision;
+        candidate = await PreviewClient.start(previewHost.path, updated.root, (exit) =>
+          lifecycle({event: "dev.preview", phase: "exit", code: "PXCLI1614",
+            severity: exit.requested || exit.code === 0 ? "information" : "warning",
+            revision: previewRevision, pid: exit.pid, exitCode: exit.code, signal: exit.signal,
+            requested: exit.requested,
+            message: `Preview for revision ${previewRevision} exited (${exit.code ?? exit.signal ?? "unknown"})`}));
+        lifecycle({event: "dev.preview", phase: "start", code: "PXCLI1613", revision,
+          pid: candidate.pid, message: `Preview started for revision ${revision}`});
         await applyPreviewBuild(candidate, updated, false);
         const at = options.values.get("at");
         const played = await candidate.request("play", updated.artifact.runtimeIr.documentId,
@@ -2737,7 +2778,7 @@ async function devCommand(options: Options): Promise<number> {
             printDiagnostics([{severity: "warning", code: "PXCLI1609",
               message: `Preview could not start at ${at}; a choice may lead there, so it starts at the scene's beginning instead`,
               path: target.sourceUri, hint: JSON.stringify(sought)}]);
-          else progress({severity: "information", code: "PXCLI1610",
+          else progress({event: "dev.at", severity: "information", code: "PXCLI1610",
             message: `Preview starts at ${target.sourceUri}:${target.line}`});
         }
         const previous = client;
@@ -2755,7 +2796,7 @@ async function devCommand(options: Options): Promise<number> {
               path: previousBuild?.output ?? location.root, hint: String(error)}]);
           }
         }
-        progress({severity: "information", code: "PXCLI1602",
+        progress({event: "dev.watching", severity: "information", code: "PXCLI1602",
           message: "Watching project; successful edits restart the scene after candidate playback is acknowledged",
           revision, output: built.output, previewHost: previewHost.path, discoveredFrom: previewHost.source});
         if (once) return 0;
@@ -2775,6 +2816,10 @@ async function devCommand(options: Options): Promise<number> {
         printDiagnostics(error instanceof JsxAuthoringFailure ? error.diagnostics :
           [diagnostic("PXCLI1606", "Development build or preview failed; previous preview retained",
             projectArgument, String(error))]);
+        if (rebuild && updated === undefined)
+          lifecycle({event: "dev.rebuild", phase: "done", code: "PXCLI1612", severity: "error",
+            revision, valid: false, durationMs: Date.now() - buildStarted,
+            message: `Revision ${revision} failed; the previous preview is kept`});
         if (once) return 1;
         // An exited host is retried on a source change, avoiding a crash loop.
         if (client !== undefined && !client.alive) { client = undefined; built = undefined; }
@@ -3140,7 +3185,9 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "prismatix create my-game --package-manager pnpm   (pnpm-lock.yaml; the default is the manager that ran the CLI, else npm)"],
   dev: ["Watch the project and replay it in Preview after every successful edit.",
     "prismatix dev [project] [--runtime <engine-build-or-install>]",
-    "prismatix dev [project] --at chapter2:120 | --at chapter2:after_school | --at Story/zh-TW/chapter2.pxstory:120"],
+    "prismatix dev [project] --at chapter2:120 | --at chapter2:after_school | --at Story/zh-TW/chapter2.pxstory:120",
+    "prismatix dev [project] --json   (stderr: NDJSON records with event diagnostic, progress, dev.rebuild start/done,",
+    "    dev.preview start/exit and dev.watching; stdout: the PreviewHost protocol)"],
   validate: ["Check Story, UI, catalog and resources without writing anything.",
     "prismatix validate [project] [--runtime <dir>]"],
   build: ["Build a playable distribution (or only the compiled artifact).",
