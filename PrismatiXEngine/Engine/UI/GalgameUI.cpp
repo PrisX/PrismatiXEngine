@@ -221,6 +221,9 @@ GalgameUI::GalgameUI() {
     for (const char* property : {"fullscreen", "windowed", "skipReadOnly", "skipAll"})
         (void)m_viewModel.Define(std::string("settings.") + property,
                                  Variant(false), true);
+    // The settings screen's sample line (see PlayerApp::UpdateSettingsPreview).
+    (void)m_viewModel.Define("settings.preview", Variant(std::string{}), true);
+    (void)m_viewModel.Define("settings.previewWaiting", Variant(false), true);
     (void)m_viewModel.Define("settings.duckOn", Variant(true), true);
     (void)m_viewModel.Define("settings.duckOff", Variant(false), true);
     (void)m_viewModel.Define("settings.voiceCarryOn", Variant(false), true);

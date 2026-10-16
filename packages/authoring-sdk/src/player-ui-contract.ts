@@ -136,7 +136,7 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
       .map((field) => `saveLoad.slot${slot}.${field}`)).flat(),
     ...["fullscreen", "windowed", "skipReadOnly", "skipAll", "masterValue", "bgmValue",
       "seValue", "voiceValue", "textSpeedValue", "duckOn", "duckOff",
-      "voiceCarryOn", "voiceCarryOff"].map((field) => `settings.${field}`),
+      "voiceCarryOn", "voiceCarryOff", "preview", "previewWaiting"].map((field) => `settings.${field}`),
     ...["visible", "save", "load", "overwrite"].map((field) => `saveLoad.confirm.${field}`),
     "saveLoad.error.visible",
     ...["visible", "copy", "move", "slot"].map((field) => `saveLoad.pending.${field}`),

@@ -356,6 +356,19 @@ sdk::UiDocument Settings() {
         screen.Node(sound, sdk::UiNodeKind::Control, "Slider", sliders[index].first,
                     Layout(196, y, 420, 36), "slider", sliders[index].second);
     }
+    // A sample line typing at the chosen speed (settings.preview).
+    auto& sampleBox = screen.Box(sound, "PreviewBox", Layout(32, 430, 596, 56), kPill);
+    sampleBox.appearance.cornerRadius = 12.0f;
+    const std::string sample = sampleBox.id;
+    auto& preview = screen.Label(sample, "Label", "Preview", Layout(16, 0, 540, 56), "", 17,
+                                 kText, "status");
+    preview.runtimeProperties.emplace("verticalAlignment", std::string("Center"));
+    preview.bindings.emplace("text", sdk::UiPropertyBinding{"settings.preview", {}});
+    auto& previewGlyph = screen.Label(sample, "Label", "PreviewGlyph", Layout(568, 18, 20, 20),
+                                      "▼", 12, kAccent, "status");
+    previewGlyph.visible = false;
+    previewGlyph.bindings.emplace("visible",
+                                  sdk::UiPropertyBinding{"settings.previewWaiting", {}});
     const std::string display = screen.Card(root, "DisplayCard", Layout(736, 128, 488, 508)).id;
     auto& displayTitle = screen.Label(display, "Label", "DisplayHeading", Layout(32, 24, 400, 22),
                                       "顯示與輔助", 15, kAccent);

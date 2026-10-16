@@ -3835,6 +3835,44 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
 
 }
 
+void PlayerApp::UpdateSettingsPreview(const std::uint64_t now) {
+    if (m_ui.CurrentScreen() != ui::GalgameUI::Screen::Settings) {
+        m_previewStart = 0;
+        return;
+    }
+    const std::string sample = ProductText(m_langTable, "player.settings.preview",
+        "文字以這個速度出現，自動模式會在句尾停留這麼久。");
+    std::vector<std::size_t> ends;  // byte end of each code point
+    for (std::size_t index = 0; index < sample.size(); ++index)
+        if (index + 1 == sample.size() ||
+            (static_cast<unsigned char>(sample[index + 1]) & 0xC0) != 0x80)
+            ends.push_back(index + 1);
+    const int speed = std::max(0, m_settings.textSpeedMs);
+    // A hold this short would only flicker; Auto never waits less per line.
+    const int wait = std::max(300, m_settings.autoWaitMs);
+    // A changed speed or wait restarts the line, so the player sees it at once.
+    if (m_previewStart == 0 || speed != m_previewSpeedMs || wait != m_previewWaitMs) {
+        m_previewStart = now;
+        m_previewSpeedMs = speed;
+        m_previewWaitMs = wait;
+    }
+    const std::uint64_t typing = static_cast<std::uint64_t>(speed) * ends.size();
+    if (now - m_previewStart >= typing + static_cast<std::uint64_t>(wait)) m_previewStart = now;
+    const std::uint64_t elapsed = now - m_previewStart;
+    const std::size_t shown = speed == 0 ? ends.size()
+        : std::min<std::size_t>(ends.size(), static_cast<std::size_t>(elapsed / speed));
+    std::string text = sample.substr(0, shown == 0 ? 0 : ends[shown - 1]);
+    const bool waiting = shown == ends.size();
+    if (text != m_previewShown) {
+        m_previewShown = std::move(text);
+        (void)m_ui.UpdateUiData("settings.preview", Variant(m_previewShown));
+    }
+    if (waiting != m_previewWaiting) {
+        m_previewWaiting = waiting;
+        (void)m_ui.UpdateUiData("settings.previewWaiting", Variant(waiting));
+    }
+}
+
 void PlayerApp::MainLoop() {
     while (!m_quitRequested) {
 #if defined(__EMSCRIPTEN__)
@@ -3851,6 +3889,7 @@ void PlayerApp::MainLoop() {
         const float dt = m_runtime.GetClock().DeltaSeconds();
         const std::uint64_t now = m_runtime.GetClock().NowMs();
         UpdateCursorVisibility(now);
+        UpdateSettingsPreview(now);
         const std::string_view inputRoute = m_session->Routes().CurrentRoute();
         const bool gameInputContext = m_appState == AppState::Game &&
             !m_gameStartTransitionActive && m_viewingCG.empty() &&

@@ -91,6 +91,59 @@ export default async function catalog(px) {
     "the release F2 policy changed persistent or session state");
   await px.log("Player release F2 policy ignored demo reset shortcut");
 
+  // Save management on the open save screen, on free slots only (later runs
+  // load slots 1 and 2): save.copy and save.move wait for the next slot the
+  // player picks, a move onto a save swaps the two, save.delete empties a
+  // slot. Each refreshes saveLoad.slots; a filled slot is revealed over the
+  // next two frames.
+  await px.action("save.open");
+  await px.waitUntil((current) => !current.busy.pendingSaveScreen && current.ui.screen === "save");
+  const slotItem = async (argument) => (await px.uiData("saveLoad.slots"))
+    .find((item) => item.argument === String(argument));
+  const [first, second, third] = (await px.uiData("saveLoad.slots"))
+    .filter((item) => !item.occupied && Number(item.argument) > 2).map((item) => item.argument);
+  check(third !== undefined && (await slotItem(1))?.occupied && (await slotItem(2))?.occupied,
+    "the save screen does not list slots 1 and 2 as saved and three free slots");
+  await px.action("save.copy", 1);
+  check(await px.uiData("saveLoad.pending.copy") === true && (await slotItem(1)).pending === true,
+    "save.copy did not wait for its target slot");
+  await px.action("save.slot", first);
+  await px.action("save.copy", 2);
+  await px.action("save.copy", second);
+  await px.waitFor({frames: 3});
+  check((await slotItem(first)).occupied && (await slotItem(second)).occupied &&
+    await px.uiData("saveLoad.pending.visible") === false,
+    "save.copy did not copy into the slot picked next");
+  await px.action("save.move", first);
+  await px.action("load.slot", second);
+  await px.waitFor({frames: 3});
+  check((await slotItem(first)).occupied && (await slotItem(second)).occupied,
+    "save.move onto a save did not swap the two");
+  await px.action("save.move", second);
+  await px.action("save.slot", third);
+  await px.waitFor({frames: 3});
+  check(!(await slotItem(second)).occupied && (await slotItem(third)).occupied,
+    "save.move into an empty slot did not move the save");
+  await px.action("save.delete", first);
+  await px.action("save.delete", third);
+  check(!(await slotItem(first)).occupied && !(await slotItem(third)).occupied,
+    "save.delete left a slot occupied");
+  await px.log("Player E2E save management copy, move and delete complete");
+  await px.route("closeModal");
+
+  // The settings screen types a sample line at the chosen text speed.
+  await px.action("settings.open");
+  await px.waitFor({modal: "settings"});
+  const lengths = new Set();
+  for (let sample = 0; sample < 12; ++sample) {
+    lengths.add(String(await px.uiData("settings.preview")).length);
+    await px.waitFor({frames: 3});
+  }
+  check(lengths.size > 1, `settings.preview did not type (${[...lengths]})`);
+  await px.log("Player E2E settings preview typed");
+  await px.route("closeModal");
+  await px.waitFor({modal: ""});
+
   // The remapped Gallery shortcut from the saved settings opens the Gallery.
   const gallery = await px.bindings("screen.open.gallery");
   check(JSON.stringify(gallery.keys) === JSON.stringify(["F8"]),

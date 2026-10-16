@@ -1466,6 +1466,19 @@ validation error.
 sets one, and `options.<name>` (text) and `options.<name>.is<value>` (boolean)
 are bindable UI data.
 
+While the settings screen is open, `settings.preview` types a sample line at
+the current text speed, holds it for the auto-advance wait (at least 0.3 s)
+with `settings.previewWaiting` true, and starts again; moving either slider
+restarts it. Bind a label to it to let players try their settings:
+
+```tsx
+<Text name="Preview" bind={{text: "settings.preview"}} position={[120, 820]} size={[900, 48]} />
+<Text name="PreviewGlyph" text="▼" visibleWhen="settings.previewWaiting" position={[1030, 832]} size={[24, 24]} />
+```
+
+The locale string `player.settings.preview` replaces the sample line. The
+stock settings screen shows it under the sliders.
+
 `player.confirmations` lists the Player operations that ask before they run.
 Each names the `kind` its dialog shows (the operation's own name when left out)
 and, optionally, the option that stores "do not ask again":

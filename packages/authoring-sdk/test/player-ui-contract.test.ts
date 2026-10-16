@@ -146,12 +146,14 @@ test("textKey binds locale strings, and an unknown key is reported", () => {
   ]);
 });
 
-test("save management data and the SlotComment field are part of the save contract", () => {
+test("save management, settings preview and the SlotComment field are published data", () => {
   const save = document([
     jsx(Text, {name: "Picking", text: "", position: [0, 0], size: [100, 20],
       bind: {visible: "saveLoad.pending.visible", text: "saveLoad.pending.slot"}}),
     jsx(Text, {name: "Editing", text: "", position: [0, 30], size: [100, 20],
       bind: {visible: "saveLoad.comment.visible", text: "saveLoad.slot3.comment"}}),
+    jsx(Text, {name: "Sample", text: "", position: [0, 300], size: [100, 20],
+      bind: {visible: "settings.previewWaiting", text: "settings.preview"}}),
     jsx(ItemsGrid, {name: "Slots", position: [0, 60], size: [400, 200],
       items: {path: "saveLoad.slots", key: "key"}, columns: 2, itemExtent: [200, 50],
       children: jsx(Group, {name: "Cell", size: [200, 50], children: [

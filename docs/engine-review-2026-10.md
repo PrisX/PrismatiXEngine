@@ -35,12 +35,12 @@ that is still open, roughly in priority order.
   with a `SlotComment` field, and `deleteSave`/`copySave`/`moveSave`
   confirmations. Copies and moves are file operations, so saves stay
   byte-identical.
+- `settings.preview` / `settings.previewWaiting`: a sample line typing at the
+  chosen text speed and holding for the auto wait while settings are open;
+  the stock settings screen shows it.
 
 ## Open, larger items
 
-3. **Live preview in settings.** Artemis shows sample text typing at the chosen
-   speed and auto-advancing. Publish a `settings.preview` typewriter string the
-   Config screen can bind.
 4. **Glyph coverage beyond Story.** `PXCLI1060` checks Story text; TSX `text`,
    locale `strings` and button captions should be checked the same way.
 5. **Kinsoku for styled and ruby lines.** Lines with inline style runs use the

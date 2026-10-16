@@ -302,6 +302,15 @@ private:
     struct DockArea { float x = 0, y = 0, width = 0, height = 0; bool valid = false; } m_dockArea;
     bool m_dockShown = true;
     void PublishDock();
+    // `settings.preview`: while the settings screen is open, a sample line
+    // types at the chosen text speed, holds for the auto-advance wait and
+    // starts again (`settings.previewWaiting` during the hold).
+    void UpdateSettingsPreview(std::uint64_t now);
+    std::uint64_t m_previewStart = 0;
+    int m_previewSpeedMs = -1;
+    int m_previewWaitMs = -1;
+    std::string m_previewShown;
+    bool m_previewWaiting = false;
     void WarpCursorTo(float logicalX, float logicalY);
 
     // Confirmation dialogs (`player.confirmations`): each Player operation the
