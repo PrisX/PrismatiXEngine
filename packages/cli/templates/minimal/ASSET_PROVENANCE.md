@@ -1,37 +1,42 @@
 # Starter asset provenance
 
-The starter's pictures are free third-party artwork. They are resized or
-re-encoded copies; nothing else was changed. You may keep them in your game or
-replace them.
+The starter's pictures were generated for PrismatiX with Anima Base 1.0
+(CircleStone Labs, https://huggingface.co/circlestone-labs/Anima) in ComfyUI.
+The Anima license restricts the model weights to non-commercial use but places
+no restriction on generated images, which may be used commercially. The
+pictures are distributed with the PrismatiX repository; keep them in your game
+or replace them.
 
-## Backgrounds
-
-`Assets/room-dusk.jpg`, `Assets/room-night.jpg` and `Assets/coast-sunset.jpg`
-are by Uncle Mugen (mugenjohncel / Alte), from "Uncle Mugen's 2017-20"
-(`room_dusk_light_on.jpg`, `room_night_light_off.jpg`,
-`seaside_road_sunset.jpg`). Source: https://alte.itch.io/uncle-mugens-20 and
-https://lemmasoft.renai.us/forums/viewtopic.php?f=52&t=17302
-
-The pack's terms of usage, verbatim:
-
-> Feel free to use for whatever purpose it may serve best.
-> OK for both Commercial and Free projects.
-> Modifications are OK and highly encouraged.
-
-Credit is not required, but the author appreciates "Backgrounds by Uncle
-Mugen" in your credits and a note that your project uses them. The page states
-that no generative AI was used.
+Common settings: Qwen3 0.6B text encoder, Qwen-Image VAE, er_sde sampler with
+the simple scheduler, 30 steps, CFG 4, negative prompt "worst quality, low
+quality, score_1, score_2, score_3, artist name, signature, watermark, blurry,
+jpeg artifacts, chromatic aberration".
 
 ## Character
 
-`Assets/hachi-smile.png`, `Assets/hachi-happy.png` and `Assets/hachi-talk.png`
-are "Anime Girl: Hachi" by HachiStudio (`front.png`, `eyes.png`, `mouth.png`),
-cropped and scaled to 680 pixels high. Source:
-https://opengameart.org/content/anime-girl%EF%BC%9Ahachi
+`Assets/hikari-smile.png` is a 1024x1536 generation (seed 33) with the
+anima-highres-aesthetic-boost LoRA at 0.7. The prompt mixes the artist tags
+@tiv, @kobuichi and @karory, so no single artist's style is copied, and
+describes a full-body standing high school girl (light brown medium hair, hair
+ribbon, beige cardigan, navy pleated skirt) on a white background.
 
-The work is offered under CC0, CC-BY 3.0 and CC-BY 4.0; the starter uses it
-under CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/), so no
-attribution is required.
+`Assets/hikari-happy.png`, `Assets/hikari-talk.png` and
+`Assets/hikari-surprised.png` repaint only the face of that image (an elliptical
+mask, denoise 0.8, seed 1) with expression tags; every pixel outside the face is
+identical, so expressions swap without the body shifting. All four share one
+BiRefNet_toonout matte, were cleared of the white fringe and scaled to 700
+pixels high.
+
+## Backgrounds
+
+All three use the artist tag @y y (ysk ygc), were generated at 1536x864 and
+scaled to 1920x1080.
+
+- `Assets/room-dusk.jpg`: a girl's bedroom at sunset, seed 5151.
+- `Assets/room-night.jpg`: the dusk room tinted dark blue, then repainted at
+  denoise 0.55 with a night prompt, so the layout matches.
+- `Assets/hill-dusk.jpg`: a hilltop over a town at dusk, seed 303, for the
+  title screen.
 
 ## Font
 

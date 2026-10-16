@@ -230,7 +230,7 @@ test("create scaffolds a canonical playable starter without author-supplied UUID
     ["assets", "characters", "defaultLocale", "id", "name", "resolution", "storyAssets", "uiEntryPoints"]);
   assert.equal((manifest.characters as Array<{id?: string}>)[0]!.id, undefined);
   assert.equal((manifest.assets as Array<{source: string}>).some((asset) =>
-    asset.source === "Assets/hachi-smile.png"), false);
+    asset.source === "Assets/hikari-smile.png"), false);
   const authorCharacter = JSON.parse(await readFile(join(root,
     "Characters/guide.pxcharacter"), "utf8")) as {
     id?: string; expressions: Array<{id?: string; assetId?: string; assetPath?: string}>;
@@ -238,7 +238,7 @@ test("create scaffolds a canonical playable starter without author-supplied UUID
   assert.equal(authorCharacter.id, undefined);
   assert.equal(authorCharacter.expressions[0]!.id, undefined);
   assert.equal(authorCharacter.expressions[0]!.assetId, undefined);
-  assert.equal(authorCharacter.expressions[0]!.assetPath, "Assets/hachi-smile.png");
+  assert.equal(authorCharacter.expressions[0]!.assetPath, "Assets/hikari-smile.png");
   const artifact = join(root, "artifact");
   const built = run(["build", project, "--artifact-only", "--output", artifact]);
   assert.equal(built.status, 0, built.stderr);
@@ -250,10 +250,10 @@ test("create scaffolds a canonical playable starter without author-supplied UUID
   assert.match(canonicalCharacter.expressions[0]!.assetId,
     /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u);
   assert.equal(canonicalCharacter.expressions[0]!.assetPath, undefined);
-  assert.equal((await stat(join(artifact, "Assets/hachi-smile.png"))).isFile(), true);
+  assert.equal((await stat(join(artifact, "Assets/hikari-smile.png"))).isFile(), true);
   assert.equal((await stat(join(root, "Content/Localization/zh-TW.json"))).isFile(), true);
-  assert.deepEqual((await readdir(join(root, "Assets"))).sort(), ["coast-sunset.jpg", "hachi-happy.png",
-    "hachi-smile.png", "hachi-talk.png", "room-dusk.jpg", "room-night.jpg"]);
+  assert.deepEqual((await readdir(join(root, "Assets"))).sort(), ["hikari-happy.png", "hikari-smile.png",
+    "hikari-surprised.png", "hikari-talk.png", "hill-dusk.jpg", "room-dusk.jpg", "room-night.jpg"]);
   const story = await readFile(join(root, "Story/main.pxstory"), "utf8");
   assert.match(story, /^; @prismatix-ids\r?\n/u);
   assert.doesNotMatch(story, /\[id\s/u);
@@ -2045,7 +2045,7 @@ test("distribution.transcode stores smaller media under the same paths and cache
       "--output", artifact, "--packager", packager, ...extra]);
     const logged = async () => (await readFile(calls, "utf8")).trim().split("\n")
       .map((line) => JSON.parse(line) as {images: unknown; audio: unknown; jobs: string[]});
-    const original = await readFile(join(root, "Assets", "hachi-smile.png"));
+    const original = await readFile(join(root, "Assets", "hikari-smile.png"));
 
     const first = build();
     assert.equal(first.status, 0, first.stderr);
@@ -2053,9 +2053,9 @@ test("distribution.transcode stores smaller media under the same paths and cache
     assert.deepEqual(call!.images, {lossless: false, quality: 80, effort: 4});
     assert.deepEqual(call!.audio, {codec: "opus", bitrate: 48000});
     assert.deepEqual(call!.jobs.map((path) => path.slice(root.length + 1)).sort(), [
-      "Assets/extra/broken.png", "Assets/extra/grow.png", "Assets/hachi-happy.png",
-      "Assets/hachi-smile.png", "Assets/hachi-talk.png", "Assets/theme.ogg"]);
-    const stored = await readFile(join(artifact, "Assets", "hachi-smile.png"));
+      "Assets/extra/broken.png", "Assets/extra/grow.png", "Assets/hikari-happy.png",
+      "Assets/hikari-smile.png", "Assets/hikari-surprised.png", "Assets/hikari-talk.png", "Assets/theme.ogg"]);
+    const stored = await readFile(join(artifact, "Assets", "hikari-smile.png"));
     assert.deepEqual(stored, Buffer.concat([Buffer.from("WEBP"), original.subarray(0, 8)]),
       "the logical path keeps its name and holds the smaller encoding");
     assert.equal((await readFile(join(artifact, "Assets", "theme.ogg"))).subarray(0, 4).toString(), "WEBP");
@@ -2065,10 +2065,11 @@ test("distribution.transcode stores smaller media under the same paths and cache
     const summary = first.stderr.split("\n").map((line) => {
       try { return JSON.parse(line) as Record<string, unknown>; } catch { return {}; }
     }).find((event) => event.code === "PXCLI1230");
-    assert.deepEqual(summary?.images, {files: 5, inputBytes: original.length +
-      (await stat(join(root, "Assets", "hachi-happy.png"))).size +
-      (await stat(join(root, "Assets", "hachi-talk.png"))).size + 5 + 4096,
-    outputBytes: 12 + 12 + 12 + 5 + 4096});
+    assert.deepEqual(summary?.images, {files: 6, inputBytes: original.length +
+      (await stat(join(root, "Assets", "hikari-happy.png"))).size +
+      (await stat(join(root, "Assets", "hikari-surprised.png"))).size +
+      (await stat(join(root, "Assets", "hikari-talk.png"))).size + 5 + 4096,
+    outputBytes: 12 * 4 + 5 + 4096});
 
     // Unchanged media comes from the cache, and the artifact is kept as is;
     // only the failed file is tried again.
@@ -2082,18 +2083,18 @@ test("distribution.transcode stores smaller media under the same paths and cache
     const cacheEntries = async () => (await readdir(join(root, ".prismatix", "transcode-cache"),
       {recursive: true})).filter((name) => name.endsWith(".json")).length;
     const entriesBefore = await cacheEntries();
-    await writeFile(join(root, "Assets", "hachi-smile.png"), Buffer.concat([original, Buffer.from("x")]));
+    await writeFile(join(root, "Assets", "hikari-smile.png"), Buffer.concat([original, Buffer.from("x")]));
     const third = build();
     assert.equal(third.status, 0, third.stderr);
     assert.deepEqual((await logged())[2]!.jobs.map((path) => path.slice(root.length + 1)).sort(),
-      ["Assets/extra/broken.png", "Assets/hachi-smile.png"]);
+      ["Assets/extra/broken.png", "Assets/hikari-smile.png"]);
     assert.equal(await cacheEntries(), entriesBefore);
 
     const plain = build("--no-transcode");
     assert.equal(plain.status, 0, plain.stderr);
     assert.equal((await logged()).length, 3, "--no-transcode never calls the encoder");
-    assert.deepEqual(await readFile(join(artifact, "Assets", "hachi-smile.png")),
-      await readFile(join(root, "Assets", "hachi-smile.png")));
+    assert.deepEqual(await readFile(join(artifact, "Assets", "hikari-smile.png")),
+      await readFile(join(root, "Assets", "hikari-smile.png")));
 
     await writeFile(projectPath, JSON.stringify({...manifest,
       distribution: {transcode: {images: {format: "avif"}}}}));

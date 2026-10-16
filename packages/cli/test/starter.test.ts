@@ -27,7 +27,7 @@ test("starter prepares a compilable branch story and preserves binary font/image
     const manifest = JSON.parse(await readFile(result.project, "utf8"));
     assert.equal(manifest.name, 'My "story"');
     assert.equal(manifest.defaultLocale, "zh-TW");
-    for (const file of ["Content/Fonts/NotoSansTC-Bold.ttf", "Assets/room-dusk.jpg", "Assets/hachi-smile.png"]) {
+    for (const file of ["Content/Fonts/NotoSansTC-Bold.ttf", "Assets/room-dusk.jpg", "Assets/hikari-smile.png"]) {
       const actual = await readFile(join(target, file));
       const expected = await readFile(join(packageRoot, "templates/minimal", file));
       assert.deepEqual(actual, expected);

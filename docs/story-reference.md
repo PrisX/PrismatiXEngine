@@ -229,7 +229,7 @@ that character speaks. Give it in the `.pxcharacter` as `facePath` (lowered
 to a cataloged `faceAssetId`, like `assetPath`):
 
 ```json
-{"name": "微笑", "aliases": ["smile"], "assetPath": "Assets/hachi-smile.png",
+{"name": "微笑", "aliases": ["smile"], "assetPath": "Assets/hikari-smile.png",
  "facePath": "Assets/Faces/guide-smile.png"}
 ```
 
@@ -407,7 +407,7 @@ Macros every scene repeats belong in shared macro files, listed in
 
 ## Characters, backgrounds and sound
 
-The starter registers `guide`, its `smile`, `happy` and `talk` expressions and three backgrounds. Reuse these without hand-writing another UUID:
+The starter registers `guide`, its `smile`, `happy`, `talk` and `surprised` expressions and three backgrounds. Reuse these without hand-writing another UUID:
 
 ```pxstory
 [bg room-dusk]

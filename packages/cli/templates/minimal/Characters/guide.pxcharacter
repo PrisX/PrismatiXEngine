@@ -3,8 +3,9 @@
   "revision":1,
   "displayName":"小光","aliases":["guide"],
   "expressions":[
-    {"name":"微笑","aliases":["smile","default"],"assetPath":"Assets/hachi-smile.png","thumbnailAssetId":null},
-    {"name":"開心","aliases":["happy"],"assetPath":"Assets/hachi-happy.png","thumbnailAssetId":null},
-    {"name":"說話","aliases":["talk"],"assetPath":"Assets/hachi-talk.png","thumbnailAssetId":null}
+    {"name":"微笑","aliases":["smile","default"],"assetPath":"Assets/hikari-smile.png","thumbnailAssetId":null},
+    {"name":"開心","aliases":["happy"],"assetPath":"Assets/hikari-happy.png","thumbnailAssetId":null},
+    {"name":"說話","aliases":["talk"],"assetPath":"Assets/hikari-talk.png","thumbnailAssetId":null},
+    {"name":"驚訝","aliases":["surprised"],"assetPath":"Assets/hikari-surprised.png","thumbnailAssetId":null}
   ]
 }
