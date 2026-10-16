@@ -113,7 +113,10 @@ export async function addScene(root: string, id: string, options: {
   }
   for (const source of Object.values(sources)) {
     await mkdir(join(root, source, ".."), {recursive: true});
-    await writeFile(join(root, source), `*top\n; ${options.title ?? id}\n[end]\n`, "utf8");
+    // scene=next continues with the following scene of the story index (the
+    // game ends after the last one), so adding or reordering scenes needs no
+    // jump edits; replace it with [end] or a jump of your own where needed.
+    await writeFile(join(root, source), `*top\n; ${options.title ?? id}\n[jump scene=next]\n`, "utf8");
     created.push(source);
   }
   const chapterId = options.chapter ?? (typeof chapters.at(-1)?.id === "string"

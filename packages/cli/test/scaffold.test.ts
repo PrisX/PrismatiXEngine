@@ -57,7 +57,8 @@ test("add scene writes one source per locale and lists it in a chapter", async (
     assert.deepEqual(index.chapters, [{id: "chapter-1", title: "Chapter 1", scenes: ["prologue", "chapter2"]}]);
     assert.deepEqual((index.scenes as unknown[]).at(-1), {id: "chapter2", title: "放學後",
       sources: {"zh-TW": "Story/zh-TW/chapter2.pxstory", "ja-JP": "Story/ja-JP/chapter2.pxstory"}});
-    assert.match(await readFile(join(root, "Story/ja-JP/chapter2.pxstory"), "utf8"), /^\*top\n/u);
+    assert.equal(await readFile(join(root, "Story/ja-JP/chapter2.pxstory"), "utf8"),
+      "*top\n; 放學後\n[jump scene=next]\n");
     await addScene(root, "epilogue", {chapter: "chapter-2"});
     assert.deepEqual((await json(root, "Story/story.pxindex")).chapters, [
       {id: "chapter-1", title: "Chapter 1", scenes: ["prologue", "chapter2"]},

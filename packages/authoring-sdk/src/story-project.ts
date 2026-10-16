@@ -469,12 +469,36 @@ function syntheticEnd(sceneId: string, sourceSpan: SourceSpan): StoryNode {
   };
 }
 
+/**
+ * The scene after each scene in reading order: chapters in index order, each
+ * chapter's scenes in order, then scenes no chapter lists in index order.
+ * `scene=next` resolves through it; the last scene has none.
+ */
+export function storySceneOrder(index: Pick<StoryIndexDocument, "chapters" | "scenes">):
+  ReadonlyMap<string, string | undefined> {
+  const order: string[] = [];
+  const known = new Set(index.scenes.map((scene) => scene.id));
+  const seen = new Set<string>();
+  const add = (id: string) => {
+    if (!known.has(id) || seen.has(id)) return;
+    seen.add(id);
+    order.push(id);
+  };
+  for (const chapter of index.chapters) for (const id of chapter.scenes) add(id);
+  for (const scene of index.scenes) add(scene.id);
+  return new Map(order.map((id, position) => [id, order[position + 1]]));
+}
+
+/** The reserved scene target that means "the scene after this one". */
+const nextScene = "next";
+
 function rewriteScene(
   scene: ParsedScene,
   document: StoryDocument,
   scenesById: ReadonlyMap<string, ParsedScene>,
   duplicateLabels: ReadonlySet<string>,
   extraDiagnostics: readonly AuthoringDiagnostic[],
+  followingScene: string | undefined,
 ): RewrittenScene {
   const diagnostics: AuthoringDiagnostic[] = [...document.diagnostics, ...extraDiagnostics];
   const externalTargets = new Set<string>();
@@ -500,7 +524,23 @@ function rewriteScene(
     }
 
     const flow = flowArguments(node);
-    const targetSceneId = argumentText(flow.scene) ?? scene.descriptor.id;
+    let targetSceneId = argumentText(flow.scene) ?? scene.descriptor.id;
+    // scene=next follows the story index, unless a scene is really named so.
+    if (flow.scene !== undefined && targetSceneId === nextScene && !scenesById.has(nextScene)) {
+      if (followingScene !== undefined) {
+        targetSceneId = followingScene;
+      } else if (node.name === "jump" && flow.target === undefined) {
+        // After the last scene, jumping on ends the story.
+        nodes.push({...node, raw: "[end]", name: "end", arguments: []});
+        continue;
+      } else {
+        diagnostics.push(issue("PXSTORY1309",
+          `No Story scene follows ${scene.descriptor.id}; scene=next can only end the story with [jump]`,
+          flow.scene.span ?? node.span, scene.descriptor.id));
+        nodes.push(node);
+        continue;
+      }
+    }
     const targetScene = scenesById.get(targetSceneId);
     if (targetScene === undefined) {
       diagnostics.push(issue("PXSTORY1304", `Unknown Story scene: ${targetSceneId}`,
@@ -667,12 +707,14 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
     labels: JSON.stringify([...scenesById].map(([id, scene]) =>
       [id, [...scene.labels].sort()])),
   };
+  const sceneOrder = storySceneOrder(context.storyIndex);
   const sceneSnapshot = (scene: ParsedScene): SceneCompileSnapshot => ({
     sourcePath: scene.path,
     source: scene.source,
     identityMap: scene.identityMap,
     descriptor: JSON.stringify([scene.descriptor.id,
-      scene.descriptor.identityNamespace, scene.descriptor.requiredLabels]),
+      scene.descriptor.identityNamespace, scene.descriptor.requiredLabels,
+      sceneOrder.get(scene.descriptor.id) ?? null]),
     ...sharedSnapshot!,
   });
 
@@ -736,7 +778,7 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
         const document = scene.document;
         if (document === undefined) throw new Error(`Story scene was not parsed: ${descriptor.id}`);
         const rewritten = rewriteScene(scene, document, scenesById,
-          duplicateLabels, sceneDiagnostics);
+          duplicateLabels, sceneDiagnostics, sceneOrder.get(descriptor.id));
         compiled = compileStory(rewritten.document, {
           documentId: descriptor.identityNamespace ?? `${documentId}:${descriptor.id}`,
           locale: context.locale,

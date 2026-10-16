@@ -45,12 +45,16 @@ that is still open, roughly in priority order.
   gone), and the run layout applies the same 禁則 filter as plain-text
   wrapping (it used bare UAX #14 before). While the typewriter reveals a
   styled or ruby line, the whole line is laid out, so nothing jumps lines.
+- Scene fall-through: `scene=next` resolves to the following scene in the
+  index's chapter order (after the last scene `[jump scene=next]` ends the
+  story), and `add scene` ends new scenes with it. Chosen over implicit
+  fall-through at a scene's end because the compiler's scene boundary is
+  deliberate: with several route endings in one chapter, a forgotten `[end]`
+  would otherwise run one ending into the next. The marker keeps the order in
+  the index, so reordering scenes needs no jump edits.
 
 ## Open, larger items
 
-6. **Scene fall-through.** Every scene ends with an explicit
-   `[jump scene=next]`. Option: `prismatix add scene` writes the jump, or a
-   chapter's scene order is followed when a scene reaches its end.
 7. **QA journeys.** A tour of every screen exceeds the 180 s journey timeout
    when it clicks through text; add `px.advanceUntil(condition)` on the Player
    side (one round trip) and a per-journey timeout. `px.save` stores no

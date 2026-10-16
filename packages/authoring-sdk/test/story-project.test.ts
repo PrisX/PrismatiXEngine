@@ -420,3 +420,52 @@ test("Story index diagnostics point to the exact authored JSON declaration", () 
   assert.equal(noLocaleSource.slice(noLocale.span.start.offset,
     noLocale.span.end.offset), "{}");
 });
+
+test("scene=next follows the story index order and ends the story after the last scene", () => {
+  const index: StoryIndexDocument = {...storyIndex, entryScene: "intro",
+    chapters: [{id: "c1", title: "One", scenes: ["intro", "middle"]},
+      {id: "c2", title: "Two", scenes: ["finale"]}],
+    scenes: [
+      {id: "finale", sources: {"zh-TW": "finale.pxstory"}},
+      {id: "middle", sources: {"zh-TW": "middle.pxstory"}},
+      {id: "intro", sources: {"zh-TW": "intro.pxstory"}},
+    ]};
+  const sourceFiles = {
+    "intro.pxstory": "Intro.\n[jump scene=next]\n",
+    "middle.pxstory": "Middle.\n[choice]\n- Go on -> scene=next\n[endchoice]\n",
+    "finale.pxstory": "Finale.\n[jump scene=next]\n",
+  };
+  const compiled = compileStoryProject({storyIndex: index, locale: "zh-TW", sourceFiles});
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  const operations = compiled.runtimeIr!.operations;
+  const entryOf = (text: string) => {
+    const at = operations.findIndex((operation) => operation.text === text);
+    return operations.slice(0, at).reverse().find((operation) => operation.kind === "label")
+      ?.arguments.target;
+  };
+  const after = (text: string) => operations[operations.findIndex((operation) =>
+    operation.text === text) + 1];
+  // intro -> middle (chapter order, not index order), middle's choice -> finale.
+  assert.equal(after("Intro.")?.kind, "jump");
+  assert.equal(after("Intro.")?.arguments.target, entryOf("Middle."));
+  assert.equal(operations.find((operation) => operation.kind === "choiceOption")?.arguments.target,
+    entryOf("Finale."));
+  assert.equal(after("Finale.")?.kind, "endStory");
+
+  // A choice cannot "end the story" through scene=next.
+  const stuck = compileStoryProject({storyIndex: index, locale: "zh-TW",
+    sourceFiles: {...sourceFiles, "finale.pxstory": "Finale.\n[choice]\n- Again -> scene=next\n[endchoice]\n"}});
+  assert.ok(stuck.diagnostics.some((item) => item.code === "PXSTORY1309"));
+  // A scene really named "next" keeps its name.
+  const named = compileStoryProject({storyIndex: {...index,
+    chapters: [{id: "c1", title: "One", scenes: ["intro", "middle", "finale", "next"]}],
+    scenes: [...index.scenes, {id: "next", sources: {"zh-TW": "next.pxstory"}}]},
+  locale: "zh-TW", sourceFiles: {...sourceFiles, "next.pxstory": "Named next.\n[end]\n"}});
+  assert.equal(named.valid, true, JSON.stringify(named.diagnostics));
+  const namedOperations = named.runtimeIr!.operations;
+  const introJump = namedOperations[namedOperations.findIndex((operation) =>
+    operation.text === "Intro.") + 1];
+  const nextEntry = namedOperations.slice(0, namedOperations.findIndex((operation) =>
+    operation.text === "Named next.")).reverse().find((operation) => operation.kind === "label");
+  assert.equal(introJump?.arguments.target, nextEntry?.arguments.target);
+});

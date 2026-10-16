@@ -144,6 +144,17 @@ prismatix release --help
 expression and, without `--from`, registers a character with no sprite, such
 as a first-person protagonist who still needs a name.
 
+`add scene` lists the scene in a chapter of the story index and ends it with
+`[jump scene=next]`. `scene=next` (in `[jump]`, `[call]` and choice options)
+is the scene after this one in reading order: the chapters in order, each
+chapter's scenes in order, then scenes no chapter lists. After the last
+scene, `[jump scene=next]` ends the story; a choice or `[call]` there is
+`PXSTORY1309`. Reordering scenes in the index therefore reorders the story
+without editing jumps. A scene that runs off its end without a jump or
+`[end]` still stops there: the compiler never continues into the next scene
+on its own, so one of several route endings in a chapter cannot run into the
+next by accident. A scene really named `next` is reached by that name.
+
 `prismatix create my-game --template adv` starts with the HUD, Save, Load,
 Settings and Backlog already ejected this way. `eject ui <route>` (or `all`) copies a stock Player screen (`title`, `hud`,
 `backlog`, `save`, `load`, `gallery`, `settings`, `video`) into
@@ -1238,7 +1249,8 @@ stores the default.
   choices instead of waiting. Saves keep the options that were offered.
 - A `[choice]` block lists one option per line as `- text -> label`. After
   the label, `scene=id` jumps to another scene (`-> scene=day2` alone jumps
-  to its start) and `if <expression>` runs to the end of the line. Quote the
+  to its start, `-> scene=next` to the following scene) and `if <expression>`
+  runs to the end of the line. Quote the
   text when it contains `->` (`- "A -> B" -> label`). Blank lines and `;`
   comments are allowed; `[choice.wait]` is not needed. Each option compiles
   to exactly the operation of the equivalent `[choice text=... goto=...]`
