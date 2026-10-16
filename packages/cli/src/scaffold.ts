@@ -68,10 +68,12 @@ export async function addCharacter(root: string, alias: string, options: {
   const preferred = defaultStems.map((stem) => images.find((file) => stemOf(file) === stem))
     .find((file) => file !== undefined) ?? images[0];
   const expressionNames = new Set<string>();
+  let defaultExpression: string | undefined;
   const expressions = images.map((file) => {
     const stem = basename(file, extname(file));
     const name = expressionNames.has(stem) ? `${stem}-${extname(file).slice(1)}` : stem;
     expressionNames.add(name);
+    if (file === preferred) defaultExpression = name;
     // Story addresses an expression by its name (`[show kei smile]`) or alias.
     return {name, aliases: file === preferred && name.toLowerCase() !== "default" ? ["default"] : [],
       assetPath: projectRelative(root, join(folder!, file)), thumbnailAssetId: null};
@@ -81,7 +83,10 @@ export async function addCharacter(root: string, alias: string, options: {
   if (await exists(characterPath)) throw new Error(`${source} already exists`);
   await mkdir(join(root, "Characters"), {recursive: true});
   await writeJson(characterPath, {format: "PrismatiXCharacter", schemaRevision: 1, revision: 1,
-    displayName, aliases: [alias], expressions});
+    displayName, aliases: [alias],
+    // The build resolves an expression name here to that expression's id.
+    ...(defaultExpression === undefined ? {} : {defaultExpressionId: defaultExpression}),
+    expressions});
   manifest.characters = [...characters, {alias, displayName, source}];
   await writeJson(manifestPath, manifest);
   return {created: [source], updated: ["prismatix.json"]};

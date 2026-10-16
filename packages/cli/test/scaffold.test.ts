@@ -4,6 +4,8 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
 
+import {normalizeProject} from "@prismatix/authoring-sdk";
+
 import {addCharacter, addScene} from "../src/scaffold.js";
 
 async function project(files: Record<string, unknown>): Promise<string> {
@@ -29,6 +31,7 @@ test("add character registers a folder of expression images", async () => {
     const result = await addCharacter(root, "kei", {from: "Assets/Portraits/kei", name: "圭"});
     assert.deepEqual(result, {created: ["Characters/kei.pxcharacter"], updated: ["prismatix.json"]});
     const character = await json(root, "Characters/kei.pxcharacter");
+    assert.equal(character.defaultExpressionId, "angry");
     assert.deepEqual(character.expressions, [
       {name: "angry", aliases: ["default"], assetPath: "Assets/Portraits/kei/angry.webp", thumbnailAssetId: null},
       {name: "smile", aliases: [], assetPath: "Assets/Portraits/kei/smile.png", thumbnailAssetId: null},
@@ -39,6 +42,30 @@ test("add character registers a folder of expression images", async () => {
     await assert.rejects(addCharacter(root, "guide2", {from: "Assets/Portraits/kei", name: "小光"}),
       /already registers guide/u);
     await assert.rejects(addCharacter(root, "bad alias", {from: "Assets/Portraits/kei"}), /identifier/u);
+  } finally { await rm(root, {recursive: true, force: true}); }
+});
+
+test("add character makes normal.png the character's default expression, not the first file", async () => {
+  const root = await project({
+    "prismatix.json": {name: "Game", id: "game"},
+    "Assets/Portraits/aoi/angry.png": "png", "Assets/Portraits/aoi/normal.png": "png",
+    "Assets/Portraits/aoi/smile.png": "png",
+  });
+  try {
+    await addCharacter(root, "aoi", {from: "Assets/Portraits/aoi"});
+    const character = await json(root, "Characters/aoi.pxcharacter");
+    assert.equal(character.defaultExpressionId, "normal");
+    assert.deepEqual((character.expressions as {name: string; aliases: string[]}[])
+      .map(({name, aliases}) => [name, aliases]), [["angry", []], ["normal", ["default"]], ["smile", []]]);
+    // The build resolves the name to the expression's id.
+    const normalized = normalizeProject({project: {id: "game", name: "Game",
+      characters: (await json(root, "prismatix.json")).characters},
+      documents: {"Characters/aoi.pxcharacter": character}});
+    assert.equal(normalized.valid, true, JSON.stringify(normalized.diagnostics));
+    const compiled = normalized.value!.documents["Characters/aoi.pxcharacter"] as {
+      defaultExpressionId: string; expressions: {id: string; name: string}[]};
+    assert.equal(compiled.defaultExpressionId,
+      compiled.expressions.find((expression) => expression.name === "normal")!.id);
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 
