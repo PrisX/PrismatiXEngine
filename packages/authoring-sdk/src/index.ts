@@ -26,6 +26,7 @@ export * from "./save-migration-authoring.js";
 export * from "./semantic.js";
 export * from "./story.js";
 export * from "./story-assets.js";
+export * from "./story-command-schema.js";
 export * from "./story-identity.js";
 export * from "./story-external-identity.js";
 export * from "./story-import.js";

@@ -220,7 +220,7 @@ test("Story rejects misspelled built-in parameters before packaging", () => {
   assert.ok(storyCommandCompletions().find((item) => item.id === "bgm")?.parameters
     .some((item) => item.name === "intro"));
   assert.deepEqual(storyCommandCompletions().find((item) => item.id === "voice")?.parameters,
-    [{name: "asset", required: true}]);
+    [{name: "asset", required: true}, {name: "volume", required: false}]);
   for (const name of ["constructor", "toString", "__proto__"]) {
     const unknown = compileStory(parseStory(`[${name} value=1]\n`),
       {documentId: `unknown-${name}`});

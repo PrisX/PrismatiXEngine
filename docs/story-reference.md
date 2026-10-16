@@ -17,6 +17,7 @@ changing declarations; diagnostics name the line and the code (`PXSTORY…`).
 - [Layered portraits](#layered-portraits)
 - [Camera and layered motion](#camera-and-layered-motion)
 - [Scripts, saves and rollback](#scripts-saves-and-rollback)
+- [Command schema for editors](#command-schema-for-editors)
 
 ## Scripts, labels and choices
 
@@ -1213,3 +1214,36 @@ rocks a layer. Running tweens, their pass and direction are Stage state:
 saves, loads and rollback resume them where they were.
 
 Runtime extensions run in QuickJS, without Node filesystem/process/network modules or unrestricted time/random/eval APIs. Installing a Node package does not make it a runtime dependency. TSX authoring is evaluated during the build in Node and is a separate trust boundary: only build projects and dependencies you trust. Runtime sandbox limits do not make arbitrary build-time project code safe.
+
+## Command schema for editors
+
+Tools that edit Story scripts (the VS Code extension, PrismatiX Studio, your
+own) can read every command's arguments from the Authoring SDK instead of
+copying them:
+
+```ts
+import {storyCommandSchema} from "@prismatix/authoring-sdk";
+
+const show = storyCommandSchema().find((command) => command.name === "show")!;
+// {name: "show", family: "stage", positionals: "shift", anyOrder: ["expression", "position"],
+//  parameters: [{name: "character", kind: {type: "character"}, positional: 0, required: true}, ...]}
+```
+
+Each command has a `family` (`text`, `stage`, `audio`, `flow`, `effect`,
+`system`), a `block` kind for `[choice]`, `[macro]` and `[credits]` (and
+`closes` on their end tags), and its parameters. A parameter has a value
+`kind` (an asset category, a resource with extensions, a character,
+expression, stage position, label, scene, duration with `minMs`/`maxMs`,
+number or integer with its range, boolean, enum, colour, condition, variable,
+text, `x,y` pair, easing name, image layer, UI route or identifier), its
+`default`, `aliases` such as `goto` for `target`, and `requires`/`conflicts`
+with other arguments. `positional` says where the short form writes it
+without a name: with `positionals: "fixed"` it is the index among unnamed
+words (`[image.hide cg 300ms]`); with `"shift"` unnamed words fill the
+positional parameters in order, skipping the ones written by name
+(`[act image=cg float]`). Ranges are the ones `compileStory` checks (values
+outside them are build errors); the few it passes through, such as `[bg
+vague]`, carry the range the Player uses. Pass a project's extension commands to
+include them: `storyCommandSchema(commands)`. The result is plain JSON.
+`storyCommandCompletions` (command and argument names for completion) is
+derived from the same schema.
