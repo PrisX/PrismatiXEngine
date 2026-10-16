@@ -58,14 +58,16 @@ that is still open, roughly in priority order.
   writes it after the next Stage frame with that frame as thumbnail (inside a
   batch it stays synchronous). The tour here took 177.6 s of its 180 s, mostly
   in `stable` waits rather than text clicks.
+- `prismatix import screenplay`: the HackMD importer's approach made
+  configurable (heading and speaker patterns, alias table, narrators, cut
+  markers, letter blocks, a staging table with `at`/`after` cues). Run on
+  this game's draft with tables converted from `tools/import-hackmd.mjs`, it
+  reproduces the Story except the importer's mood heuristics (expression
+  guesses from narration), and the result passes the tour journey. Re-imports
+  keep save identities of unchanged lines through the SDK's identity sync.
 
 ## Open, larger items
 
-8. **A generic script importer.** The game's `tools/import-hackmd.mjs` turns a
-   writers' Markdown draft (scene headings, speaker tags, cut passages,
-   letters) plus a staging table into `.pxstory`. Writers commonly draft this
-   way; a configurable `prismatix import screenplay` would serve every
-   project.
 9. **Documentation.** `docs/authoring.md` is ~2,800 lines mixing tutorial and
    implementation detail (cache sizes, hashing, retained-artifact rules). Split
    it into a getting-started tutorial, a Story reference, a UI reference and a

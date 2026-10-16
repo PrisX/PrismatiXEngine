@@ -3119,7 +3119,16 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "Writes Story/<locale>/*.pxstory with .pxids.json sidecars, the story index, Characters/, layered",
     "portraits, the game catalog, prismatix.json characters/storyAssets and a conversion report.",
     "Re-running keeps earlier save IDs when only command spellings changed; --long-forms spells every",
-    "argument by name, as the first importers did."],
+    "argument by name, as the first importers did.",
+    "",
+    "prismatix import screenplay <draft.md | https://...> [project] [--config <file>]",
+    "",
+    "A writers' Markdown draft becomes Story scenes: a heading per scene, a speaker tag (default",
+    "[text speaker=\"Name\"]) before what someone says, ~~cut passages~~ dropped, a line holding only \"",
+    "around a letter (an NVL page). Names map to character aliases, and staging (backgrounds, music, who",
+    "stands where) is inserted before the line whose text it names; both come from",
+    "<project>/screenplay-import.json. Each scene ends with [jump scene=next]. Re-import after the",
+    "writers edit the draft: a save on an unchanged line keeps resuming."],
 };
 
 function commandUsage(command: string): void {

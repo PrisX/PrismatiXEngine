@@ -156,6 +156,64 @@ without editing jumps. A scene that runs off its end without a jump or
 on its own, so one of several route endings in a chapter cannot run into the
 next by accident. A scene really named `next` is reached by that name.
 
+### Importing a writers' draft
+
+Writers often draft in Markdown (HackMD, Google Docs exports): a heading per
+scene, the speaker's name before what they say, struck-out passages that were
+cut. `prismatix import screenplay` turns such a draft into scenes, and stays
+re-runnable after the writers edit it:
+
+```bash
+prismatix import screenplay docs/source/chapter1.md
+prismatix import screenplay https://hackmd.io/<note>/download
+```
+
+Settings and staging live in `screenplay-import.json` beside `prismatix.json`
+(or `--config <file>`):
+
+```json
+{
+  "chapter": {"id": "chapter1", "title": "第一章"},
+  "speakers": {"黑澤 凪": "nagi", "千明 栞": "shiori"},
+  "narrators": ["系統"],
+  "entryLabel": "top",
+  "scenes": [
+    {"id": "ch1_01_funeral", "title": "教堂葬禮", "chapterTitle": "第一章　教堂葬禮",
+     "start": ["[bg church duration=2s]", "[bgm requiem fade=2s]"],
+     "cues": [
+       {"at": "「不能哭啊」", "commands": ["[show father normal center]"]},
+       {"after": "我們要不要交換書來看?", "commands": ["[choice]", "- 好啊 -> swap_yes", "[endchoice]"]}
+     ],
+     "end": ["[w 1s]"]}
+  ]
+}
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `sceneHeading` | `^#{1,3}\s+(.+?)\s*$` | a line that starts a scene; group 1 is its heading (the scene title unless `title` is set) |
+| `speakerTag` | `^\[text speaker="([^"]*)"\]\s*$` | a line naming who speaks the following lines |
+| `speakerLine` | none | a line holding a name and what they say, such as `^(\S{1,8})：(.+)$` |
+| `speakers` | `{}` | names → character aliases; other names stay literal (`@"路人"`), without a trailing `（…）` note |
+| `narrators` | `[]` | names whose lines are narration |
+| `cut` | `["~~", "~~"]` | text between the two markers is dropped, across lines; `null` keeps it |
+| `letter` | `"` | a line holding only this opens and closes a letter, shown as an NVL page; a blank line in it turns the page; `null` turns this off |
+| `scenes` | ids `scene01`, … | staging per scene in draft order (the count must match); `id`, `title`, `chapterTitle` (`[chapter]`), `start`, `cues`, `end` |
+| `idPrefix` | `scene` | ids when `scenes` names none |
+| `entryLabel` | none | a label at the top of every scene, for journeys and jumps |
+| `locale` | the project's default | where scenes are written: `Story/<locale>/<id>.pxstory` |
+
+A cue's `at` inserts its Story lines before the first line containing that
+text, `after` right after it; cues are taken in draft order, and one the
+draft no longer contains is reported. Prose is escaped so it is always text
+(`[`, `{` and a leading `@`, `;` or `*` become their fullwidth forms), and a
+line opened by `*` (or wrapped in `_..._`) is shown in italics. Each scene
+ends with `[jump scene=next]`. The chapter's scenes replace their earlier
+import in the story index; other chapters stay. On a re-import, operations on
+unchanged lines keep their save identities even when lines were added or
+rewritten around them, so saves still resume; a scene whose edits cannot be
+matched is reported and gets fresh identities.
+
 `prismatix create my-game --template adv` starts with the HUD, Save, Load,
 Settings and Backlog already ejected this way. `eject ui <route>` (or `all`) copies a stock Player screen (`title`, `hud`,
 `backlog`, `save`, `load`, `gallery`, `settings`, `video`) into

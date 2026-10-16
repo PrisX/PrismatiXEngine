@@ -4,6 +4,7 @@ import {importArtemis} from "./artemis/index.js";
 import {ArtemisConfigError} from "./artemis/config.js";
 import {ArtemisSyntaxError} from "./artemis/ast.js";
 import {ImportFailure} from "./publish.js";
+import {importScreenplay} from "./screenplay.js";
 
 /**
  * `prismatix import <format> <source> [project]`. Each format adapter decodes
@@ -36,6 +37,18 @@ const importers: Readonly<Record<string, Importer>> = {
         ...(summary.regeneratedIdentities.length > 0 ? [`Re-identified (saves inside may not resume): ${
           summary.regeneratedIdentities.slice(0, 10).join(", ")}${summary.regeneratedIdentities.length > 10 ? ", ..." : ""}`] : []),
         `${summary.unsupported} unsupported Artemis features stay as comments; see ${summary.report}.`,
+      ]};
+    },
+  },
+  screenplay: {
+    async run(source, project, options, log) {
+      const summary = await importScreenplay({draft: source, project,
+        ...(options.values.has("config") ? {config: options.values.get("config")!} : {}), log});
+      return {summary, lines: [
+        `Imported ${summary.scenes} scenes (${summary.lines} Story lines).`,
+        `Story: ${summary.storyFilesWritten} of ${summary.storyFiles} files changed.`,
+        ...(summary.unmatchedCues.length > 0
+          ? [`${summary.unmatchedCues.length} staging cue(s) matched no line; see above.`] : []),
       ]};
     },
   },
