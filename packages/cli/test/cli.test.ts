@@ -1253,6 +1253,101 @@ test("TSX UI authoring lowers to canonical JSON and never enters the Runtime art
     await readFile(canonicalPath, "utf8"));
 });
 
+test("ui compile prints the canonical document, element spans, identity seeds and diagnostics", async () => {
+  const value = await fixture();
+  try {
+    const project = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown> &
+      {uiEntryPoints: Record<string, string>};
+    project.uiEntryPoints.title = "Content/UI/Title.tsx";
+    project.uiComponents = [{id: "12121212-1212-4212-8212-121212121212",
+      name: "Panel", source: "Content/UI/Panel.jsx"}];
+    await write(value.project, JSON.stringify(project));
+    const button =`import {Button} from "@prismatix/authoring-sdk";
+
+export function MenuButton({label, action}: {label: string; action: string}) {
+  return <Button name={label} action={action}>{label}</Button>;
+}
+`;
+    await write(join(value.root, "Content/UI/components/MenuButton.tsx"), button);
+    const source = `import {Scene, Text, VBox} from "@prismatix/authoring-sdk";
+import {MenuButton} from "./components/MenuButton.tsx";
+
+export default (
+  <Scene name="Editor Title" width={1280} height={720}>
+    <VBox name="Root" fill>
+      <Text name="Heading" fontSize={32}>
+        PrismatiX
+      </Text>
+      <MenuButton key="start" label="Start" action="game.start" />
+    </VBox>
+  </Scene>
+);
+`;
+    const titlePath = join(value.root, "Content/UI/Title.tsx");
+    await write(titlePath, source);
+    await write(join(value.root, "Content/UI/Panel.jsx"), `import {Component, Text, VBox} from "@prismatix/authoring-sdk";
+export default (
+  <Component id="12121212-1212-4212-8212-121212121212" name="Panel" width={400} height={240}>
+    <VBox name="PanelRoot"><Text name="Caption">Panel</Text></VBox>
+  </Component>
+);
+`);
+    type Span = {path: string; start: {line: number; column: number; offset: number};
+      end: {line: number; column: number; offset: number}};
+    type Report = {valid: boolean; path: string; kind: string; document?: {format: string; nodes: Array<{id: string; name: string}>};
+      nodes: Array<{index: number; id: string; name: string; span?: Span; identity?: {seed: string; basis: string}}>;
+      diagnostics: Array<{code: string; severity: string; span?: Span}>; dependencies: string[]};
+
+    // The project is found from the file; no --project needed.
+    const compiled = run(["ui", "compile", titlePath]);
+    assert.equal(compiled.status, 0, compiled.stderr);
+    const report = JSON.parse(compiled.stdout) as Report;
+    assert.equal(report.valid, true);
+    assert.deepEqual([report.path, report.kind, report.document!.format],
+      ["Content/UI/Title.tsx", "scene", "PrismatiXUIScene"]);
+    assert.deepEqual(report.nodes.map((node) => node.name), ["Root", "Heading", "Start"]);
+    assert.deepEqual(report.nodes.map((node) => node.id), report.document!.nodes.map((node) => node.id));
+    const heading = report.nodes[1]!;
+    assert.equal(heading.span!.path, "Content/UI/Title.tsx");
+    assert.deepEqual([heading.span!.start.line, heading.span!.start.column, heading.span!.end.line,
+      heading.span!.end.column], [7, 7, 9, 14]);
+    assert.equal(source.slice(heading.span!.start.offset, heading.span!.end.offset),
+      `<Text name="Heading" fontSize={32}>\n        PrismatiX\n      </Text>`);
+    assert.deepEqual(heading.identity, {seed: "root/4:Root#0/7:Heading#0", basis: "name"});
+    // A node rendered by an imported component points at that component's JSX.
+    const start = report.nodes[2]!;
+    assert.equal(start.span!.path, "Content/UI/components/MenuButton.tsx");
+    assert.equal(button.slice(start.span!.start.offset, start.span!.end.offset),
+      "<Button name={label} action={action}>{label}</Button>");
+    assert.equal(start.identity!.basis, "key");
+    assert.deepEqual(report.dependencies, ["Content/UI/Title.tsx", "Content/UI/components/MenuButton.tsx"]);
+    assert.deepEqual(report.diagnostics, []);
+    // The same document the build writes.
+    const built = run(["build", value.project, "--artifact-only", "--output", join(value.root, "ui-artifact")]);
+    assert.equal(built.status, 0, built.stderr);
+    assert.deepEqual(JSON.parse(await readFile(join(value.root, "ui-artifact/Content/UI/Title.pxui"), "utf8")),
+      report.document);
+
+    // A registered component compiles as a component.
+    const panel = run(["ui", "compile", "Content/UI/Panel.jsx", "--project", value.root]);
+    assert.equal(panel.status, 0, panel.stderr);
+    assert.equal((JSON.parse(panel.stdout) as Report).document!.format, "PrismatiXUIComponent");
+
+    // Errors come back as diagnostics with spans, valid false and exit 1.
+    await write(titlePath, source.replace("fontSize={32}", "fontSize=\"big\""));
+    const failed = run(["ui", "compile", titlePath]);
+    assert.equal(failed.status, 1);
+    const failure = JSON.parse(failed.stdout) as Report;
+    assert.equal(failure.valid, false);
+    assert.equal(failure.document, undefined);
+    assert.ok(failure.diagnostics.some((item) => item.severity === "error" &&
+      item.span?.path === "Content/UI/Title.tsx" && item.span.start.line === 7), failed.stdout);
+    assert.equal(run(["ui", "compile", join(value.root, "Story/main.pxstory")]).status, 1);
+  } finally {
+    await rm(value.root, {recursive: true, force: true});
+  }
+});
+
 test("validate locates a missing TSX image at its authored JSX value", async () => {
   const value = await fixture();
   try {

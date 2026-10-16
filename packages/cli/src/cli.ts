@@ -72,6 +72,7 @@ import {
   type ProjectDistribution,
   type ProjectDocument,
   type SourceSpan,
+  type UiNodeIdentity,
   type UiTypeRegistryMetadata,
 } from "@prismatix/authoring-sdk";
 
@@ -111,6 +112,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync accept-removals"},
   "inspect-save": {values: "package secret runtime player", flags: ""},
+  ui: {values: "project kind", flags: ""},
   "plan-patch": {values: "base target runtime packager", flags: "verify-contents"},
   "verify-package": {values: "runtime packager", flags: ""},
   "create-patch": {values: "base target output runtime packager", flags: ""},
@@ -148,6 +150,11 @@ function parseOptions(command: string, args: readonly string[]): Options {
   if (command === "eject" && !flags.has("help")) {
     if (positional.length !== 2 || positional[0] !== "ui")
       throw new Error("Use prismatix eject ui <route|all>");
+    return {values, flags, positional};
+  }
+  if (command === "ui" && !flags.has("help")) {
+    if (positional.length !== 2 || positional[0] !== "compile")
+      throw new Error("Use prismatix ui compile <file.tsx> [--project <dir>]; quote paths containing spaces");
     return {values, flags, positional};
   }
   if (command === "add" && !flags.has("help")) {
@@ -790,7 +797,8 @@ async function emitJsxProgram(root: string, sourcePath: string, value: JsxProgra
 async function loadJsxUiDocument(root: string, virtualPath: string,
   kind: "scene" | "component", dependencies?: Set<string>,
   rememberText?: (path: string, text: string) => void,
-  sourceTexts?: ReadonlyMap<string, string>): Promise<{
+  sourceTexts?: ReadonlyMap<string, string>,
+  onNodeIdentity?: (index: number, identity: UiNodeIdentity) => void): Promise<{
     readonly value: unknown;
     readonly nodeSpans: ReadonlyMap<number, SourceSpan>;
     readonly warnings: readonly AuthoringDiagnostic[];
@@ -825,7 +833,8 @@ async function loadJsxUiDocument(root: string, virtualPath: string,
     const nodeSources = new Map<number, JsxNodeSource>();
     const compiled = compileJsxUi(authored as Parameters<typeof compileJsxUi>[0],
       {path: virtualPath, kind,
-        onNodeSource: (index, location) => nodeSources.set(index, location)});
+        onNodeSource: (index, location) => nodeSources.set(index, location),
+        ...(onNodeIdentity === undefined ? {} : {onNodeIdentity})});
     const nodeSpans = new Map<number, SourceSpan>();
     for (const [index, location] of nodeSources) {
       const span = sourceTexts === undefined ? undefined :
@@ -3158,6 +3167,120 @@ async function idsCommand(options: Options): Promise<number> {
   }
 }
 
+/** The project a `ui` command works in: --project, else the nearest folder up from the file with a manifest. */
+async function uiProject(options: Options): Promise<{readonly root: string; readonly projectPath: string}> {
+  const explicit = options.values.get("project");
+  if (explicit !== undefined) return resolveProjectPath(explicit);
+  const file = options.positional[1];
+  if (file === undefined) throw new Error("ui compile requires a .tsx file");
+  for (let directory = dirname(resolve(file)); ; directory = dirname(directory)) {
+    for (const name of ["prismatix.json", "project.pxproject"])
+      if (await regularFile(join(directory, name))) return {root: directory, projectPath: join(directory, name)};
+    if (dirname(directory) === directory) break;
+  }
+  throw new Error(`No prismatix.json or project.pxproject above ${file}; pass --project <dir>`);
+}
+
+/** Full extents of the JSX elements that produced each canonical node. */
+function jsxElementSpans(root: string, texts: ReadonlyMap<string, string>,
+  starts: ReadonlyMap<number, SourceSpan>): Map<number, SourceSpan> {
+  const elements = new Map<string, {text: string; byStart: Map<number, ts.Node>}>();
+  const result = new Map<number, SourceSpan>();
+  for (const [index, start] of starts) {
+    const absolute = projectFile(root, start.path);
+    let parsed = elements.get(absolute);
+    if (parsed === undefined) {
+      const text = texts.get(absolute);
+      if (text === undefined) continue;
+      const ast = ts.createSourceFile(absolute, text, ts.ScriptTarget.ES2023, true,
+        /\.tsx$/iu.test(absolute) ? ts.ScriptKind.TSX : ts.ScriptKind.JSX);
+      const byStart = new Map<number, ts.Node>();
+      const visit = (value: ts.Node): void => {
+        if (ts.isJsxElement(value) || ts.isJsxSelfClosingElement(value)) byStart.set(value.getStart(ast), value);
+        ts.forEachChild(value, visit);
+      };
+      visit(ast);
+      parsed = {text, byStart};
+      elements.set(absolute, parsed);
+    }
+    let offset = 0;
+    for (let line = 1; line < start.start.line; line += 1) {
+      const newline = parsed.text.indexOf("\n", offset);
+      if (newline < 0) { offset = -1; break; }
+      offset = newline + 1;
+    }
+    if (offset < 0) continue;
+    const element = parsed.byStart.get(offset + start.start.column - 1);
+    result.set(index, element === undefined ? start
+      : sourceSpan(parsed.text, start.path, {start: element.getStart(), end: element.getEnd()}));
+  }
+  return result;
+}
+
+async function uiCommand(options: Options): Promise<number> {
+  const [action, file] = options.positional;
+  try {
+    if (action !== "compile" || file === undefined)
+      throw new Error("Usage: prismatix ui compile <file.tsx> --json [--project <dir>]");
+    const {root, projectPath} = await uiProject(options);
+    // A relative path is project-relative with --project, unless it names a file from here.
+    const absoluteFile = isAbsolute(file) || !options.values.has("project") || await regularFile(resolve(file))
+      ? resolve(file) : join(root, file);
+    const virtualPath = projectSourcePath(root, absoluteFile);
+    if (virtualPath === undefined || virtualPath.startsWith("..") || !isJsxUiPath(virtualPath))
+      throw new Error(`${file} is not a .tsx or .jsx file inside ${root}`);
+    const requestedKind = options.values.get("kind");
+    if (requestedKind !== undefined && requestedKind !== "scene" && requestedKind !== "component")
+      throw new Error("--kind must be scene or component");
+    const manifest = object(await readJson(projectPath).catch(() => undefined)) ?? {};
+    // uiComponents lists {id, name, source} entries (or bare paths).
+    const components = (Array.isArray(manifest.uiComponents) ? manifest.uiComponents as unknown[] : [])
+      .map((entry) => typeof entry === "string" ? entry : object(entry)?.source);
+    const kind: "scene" | "component" = requestedKind === "scene" || requestedKind === "component"
+      ? requestedKind : components.includes(virtualPath) ? "component" : "scene";
+    const texts = new Map<string, string>();
+    const dependencies = new Set<string>();
+    const identities = new Map<number, UiNodeIdentity>();
+    const remember = (path: string, text: string): void => { texts.set(resolve(path), text); };
+    let diagnostics: AuthoringDiagnostic[];
+    let document: unknown;
+    let starts: ReadonlyMap<number, SourceSpan> = new Map();
+    try {
+      const compiled = await loadJsxUiDocument(root, virtualPath, kind, dependencies, remember, texts,
+        (index, identity) => identities.set(index, identity));
+      document = compiled.value;
+      starts = compiled.nodeSpans;
+      diagnostics = withJsxNodeSpans(compiled.warnings, new Map([[virtualPath, compiled.nodeSpans]]),
+        root, texts);
+    } catch (error) {
+      if (!(error instanceof JsxAuthoringFailure)) throw error;
+      diagnostics = [...error.diagnostics];
+    }
+    const spans = jsxElementSpans(root, texts, starts);
+    const nodes = Array.isArray(object(document)?.nodes) ? object(document)!.nodes as unknown[] : [];
+    const valid = document !== undefined;
+    const report = {valid, path: virtualPath, kind,
+      ...(valid ? {document} : {}),
+      nodes: nodes.map((value, index) => {
+        const node = object(value) ?? {};
+        const identity = identities.get(index);
+        return {index, id: node.id, name: node.name,
+          ...(spans.has(index) ? {span: spans.get(index)} : {}),
+          ...(identity === undefined ? {} : {identity: {seed: identity.seed, basis: identity.basis}})};
+      }),
+      diagnostics,
+      dependencies: [...dependencies].map((path) => projectSourcePath(root, path) ?? path)
+        .filter((path) => !path.startsWith("..") && !path.startsWith("node_modules/")).sort(),
+    };
+    if (!machineOutput) printDiagnostics(diagnostics);
+    process.stdout.write(`${JSON.stringify(report, null, machineOutput ? undefined : 2)}\n`);
+    return valid ? 0 : 1;
+  } catch (error) {
+    printDiagnostics([diagnostic("PXCLI1700", "UI compile failed", file, String(error))]);
+    return 1;
+  }
+}
+
 async function inspectSaveCommand(options: Options): Promise<number> {
   const path = resolve(options.positional[0] ?? "");
   try {
@@ -3219,6 +3342,10 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
   augment: ["Add declared files to a built artifact without editing ownership by hand.",
     "prismatix augment [project] --artifact <dir> --manifest <augmentation.json>"],
   ids: ["Write or check the stable save identities of Story lines.", "prismatix ids [project] [--check|--write]"],
+  ui: ["Compile one TSX screen or component the way build does, for editors.",
+    "prismatix ui compile <file.tsx> --json [--project <dir>] [--kind scene|component]",
+    "Prints {valid, path, kind, document, nodes: [{index, id, name, span, identity}], diagnostics, dependencies}:",
+    "the canonical UI document, each node's JSX element span (start and end), how its id was derived, and diagnostics."],
   "inspect-save": ["Decode a player save for support.",
     "prismatix inspect-save <save> [--package <distribution folder | its Package folder | Package/manifest.json>]",
     "prismatix inspect-save <save> --secret <legacy persistence secret>"],
@@ -3270,7 +3397,7 @@ function commandUsage(command: string): void {
 }
 
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|add|eject|dev|validate|build|pack|run|release|import|augment|ids|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen|test> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("Usage: prismatix <create|add|eject|dev|validate|build|pack|run|release|import|augment|ids|ui|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen|test> [project-or-save-or-distribution] [options]\n");
   process.stderr.write("  prismatix  In a terminal, without a command: a menu of the common commands\n");
   process.stderr.write("  prismatix <command> --help  Purpose, examples and options of one command\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
@@ -3658,8 +3785,8 @@ async function projectTool(command: string, options: Options, args: string[]): P
     "overlay-keygen", "test"]
     .includes(command)) return undefined;
   // `import <format> <source> [project]` delegates to the target project's CLI.
-  const location = await resolveProjectPath(
-    command === "import" ? options.positional[2] : options.positional[0]);
+  const location = command === "ui" ? await uiProject(options)
+    : await resolveProjectPath(command === "import" ? options.positional[2] : options.positional[0]);
   const manifestPath = join(location.root, "package.json");
   if (!await regularFile(manifestPath)) return launcherStopRequested ? 130 : undefined;
   const manifest = object(await readJson(manifestPath));
@@ -3747,6 +3874,7 @@ async function dispatch(command: string, args: readonly string[]): Promise<numbe
   if (command === "ids") return idsCommand(options);
   if (command === "import") return importCommand(options);
   if (command === "inspect-save") return inspectSaveCommand(options);
+  if (command === "ui") return uiCommand(options);
   if (command === "plan-patch") return planPatchCommand(options);
   if (command === "verify-package") return verifyPackageCommand(options);
   if (command === "create-patch") return createPatchCommand(options);
