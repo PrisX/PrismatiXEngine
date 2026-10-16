@@ -433,3 +433,31 @@ test("wheel binding button lowers direction capture and threshold properties", (
     wheelThreshold: 1.5, deleteClearsBinding: true,
   });
 });
+
+test("compileJsxUi reports how each node id was derived", async () => {
+  const {compileJsxUi: compile, Group: G, Text: T, Scene: S} = await import("../src/index.js");
+  const {jsx: element} = await import("../src/jsx-runtime.js");
+  const fixedId = "44444444-4444-4444-8444-444444444444";
+  const identities = new Map<number, {id: string; seed: string; basis: string}>();
+  const compiled = compile(element(S, {name: "Seeds", width: 320, height: 180, children:
+    element(G, {name: "Root", fill: true, children: [
+      element(T, {name: "Title", text: "a", position: [0, 0], size: [10, 10]}),
+      element(T, {name: "Title", text: "b", position: [0, 0], size: [10, 10]}),
+      element(T, {stableId: "pinned", name: "Renamed", text: "c", position: [0, 0], size: [10, 10]}),
+      element(T, {name: "Keyed", text: "d", position: [0, 0], size: [10, 10]}, "row-1"),
+      element(T, {id: fixedId, name: "Fixed", text: "e", position: [0, 0], size: [10, 10]}),
+    ]})}), {path: "Content/UI/Seeds.tsx", onNodeIdentity: (index, identity) => identities.set(index, identity)});
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  const nodes = compiled.value!.nodes;
+  assert.equal(identities.size, nodes.length);
+  for (const [index, identity] of identities) assert.equal(identity.id, nodes[index]!.id);
+  assert.deepEqual([...identities.values()].map(({seed, basis}) => [seed, basis]), [
+    ["root/4:Root#0", "name"],
+    ["root/4:Root#0/5:Title#0", "name"],
+    ["root/4:Root#0/5:Title#1", "name"],
+    ["root/4:Root#0/6:pinned#0", "stableId"],
+    ["root/4:Root#0/5:row-1#0", "key"],
+    [`root/4:Root#0/36:${fixedId}#0`, "uuid"],
+  ]);
+  assert.equal(nodes[5]!.id, fixedId);
+});

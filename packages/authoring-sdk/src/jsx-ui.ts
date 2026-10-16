@@ -1198,7 +1198,8 @@ function nodeBindings(props: UiNodeProps): UiBindings {
 
 function lowerDocument(element: UiElement, path?: string,
   onNodeSource?: (index: number, source: UiJsxSource) => void,
-  lints: AuthoringDiagnostic[] = []): PrismatiXUiDocument {
+  lints: AuthoringDiagnostic[] = [],
+  onNodeIdentity?: (index: number, identity: UiNodeIdentity) => void): PrismatiXUiDocument {
   const rootDefinition = definition(element);
   if (rootDefinition.category !== "document") {
     throw new TypeError("PrismatiX JSX must export a Scene or Component root");
@@ -1241,6 +1242,13 @@ function lowerDocument(element: UiElement, path?: string,
       parentWidth, parentHeight);
     const jsxSource = item[uiJsxSourceMarker];
     if (jsxSource !== undefined) onNodeSource?.(nodes.length, jsxSource);
+    if (onNodeIdentity !== undefined) {
+      const key = item.key ?? source.props.key;
+      onNodeIdentity(nodes.length, {id, seed: `${parentSeed}/${seed}`,
+        basis: source.props.id !== undefined && uuidPattern.test(source.props.id) ? "uuid"
+          : source.props.id !== undefined || source.props.stableId !== undefined ? "stableId"
+            : key !== undefined ? "key" : source.props.name !== undefined ? "name" : "type"});
+    }
     // A prop TypeScript accepted but no lowering consumed would silently do
     // nothing (a font on a label kind that ignores it, a misspelled key).
     for (const key of Object.keys(source.props))
@@ -1317,6 +1325,22 @@ export interface CompileJsxUiOptions {
   readonly kind?: "scene" | "component";
   /** Reports authored JSX call sites for canonical node indices. */
   readonly onNodeSource?: (index: number, source: UiJsxSource) => void;
+  /** Reports how each canonical node's id was derived, by node index. */
+  readonly onNodeIdentity?: (index: number, identity: UiNodeIdentity) => void;
+}
+
+/**
+ * Where a node's id comes from. An authored UUID is kept (`basis: "uuid"`);
+ * otherwise the id is a stable UUID of the document id and `seed`, the path of
+ * sibling seeds from the root. Each seed is the node's `id`/`stableId`, JSX
+ * `key`, `name`, or runtime type/kind (`basis`), length-prefixed and
+ * numbered among siblings with the same base (`5:Title#0`). Renaming a node
+ * whose basis is `name` changes its id; give it a `stableId` to keep it.
+ */
+export interface UiNodeIdentity {
+  readonly id: string;
+  readonly seed: string;
+  readonly basis: "uuid" | "stableId" | "key" | "name" | "type";
 }
 
 /** Lowers a React-free JSX authoring tree into the existing canonical UI contract. */
@@ -1327,7 +1351,7 @@ export function compileJsxUi(
   let value: PrismatiXUiDocument;
   const lints: AuthoringDiagnostic[] = [];
   try {
-    value = lowerDocument(element, options.path, options.onNodeSource, lints);
+    value = lowerDocument(element, options.path, options.onNodeSource, lints, options.onNodeIdentity);
   } catch (error) {
     return {valid: false, diagnostics: [diagnostic(
       "PXSDKJSX1001", "JSX UI could not be lowered", options.path, String(error),
