@@ -55,6 +55,43 @@ function componentFor(node: UiNodeJson): string {
   return "Control";
 }
 
+/**
+ * Moves the runtimeProperties every component has a typed prop for out of
+ * `runtime` and returns those props, so an ejected screen validates without
+ * PXSDKJSX1100 ("has a typed prop") warnings. Offsets of show/hide
+ * transitions scale like the Runtime scales the built-in screens.
+ */
+function typedNodeProps(runtime: Json): string[] {
+  const out: string[] = [];
+  const take = <T>(key: string, type: "string" | "boolean" | "number"): T | undefined => {
+    if (typeof runtime[key] !== type) return undefined;
+    const value = runtime[key] as T;
+    delete runtime[key];
+    return value;
+  };
+  for (const key of ["focusMode", "mouseFilter", "hoverSoundPath", "activateSoundPath"]) {
+    const value = take<string>(key, "string");
+    if (value !== undefined) out.push(`${key}=${literal(value)}`);
+  }
+  for (const key of ["modalCapture", "clipContent", "linearTransition"]) {
+    const value = take<boolean>(key, "boolean");
+    if (value !== undefined) out.push(value ? key : `${key}={false}`);
+  }
+  for (const phase of ["show", "hide"] as const) {
+    if (typeof runtime[`${phase}TransitionSeconds`] !== "number") continue;
+    const seconds = take<number>(`${phase}TransitionSeconds`, "number")!;
+    const offsetX = take<number>(`${phase}OffsetX`, "number");
+    const offsetY = take<number>(`${phase}OffsetY`, "number");
+    const ease = take<string>(`${phase}TransitionEase`, "string");
+    const y = offsetY === undefined ? 0 : phase === "show" ? `sf(${offsetY})` : offsetY;
+    const fields = [`seconds: ${seconds}`,
+      ...(offsetX === undefined && offsetY === undefined ? [] : [`offset: [${offsetX ?? 0}, ${y}]`]),
+      ...(ease === undefined ? [] : [`ease: ${literal(ease)}`])];
+    out.push(`${phase}Transition={{${fields.join(", ")}}}`);
+  }
+  return out;
+}
+
 /** Returns the TSX source of a built-in screen for a project resolution. */
 export function builtinScreenTsx(route: string, document: Json, width: number, height: number): string {
   const nodes = (document.nodes as UiNodeJson[]).slice();
@@ -101,6 +138,7 @@ export function builtinScreenTsx(route: string, document: Json, width: number, h
     if (node.accessibilityFocusOrder !== undefined)
       out.push(`accessibilityFocusOrder={${node.accessibilityFocusOrder}}`);
     const runtime: Json = {...node.runtimeProperties};
+    out.push(...typedNodeProps(runtime));
     const scaled: string[] = [];
     // Mirrors the Runtime's own scaling of the built-in screens.
     for (const key of ["fontSize", "separation", "letterSpacing", "showOffsetY"])
@@ -117,10 +155,6 @@ export function builtinScreenTsx(route: string, document: Json, width: number, h
         delete runtime[key];
         scaled.push(`${key}: {type: "vec2", x: sx(${value.x}), y: sy(${value.y})}`);
       }
-    }
-    if (component === "Button" && typeof runtime.focusMode === "string") {
-      out.push(`focusMode=${literal(runtime.focusMode)}`);
-      delete runtime.focusMode;
     }
     if (component === "RichTextLabel" && typeof runtime.wrap === "boolean") {
       if (runtime.wrap) out.push("wrap"); else out.push("wrap={false}");
