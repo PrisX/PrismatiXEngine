@@ -730,6 +730,80 @@ int main() {
                 result = 1;
             }
         }
+        {
+            // Control characters are line breaks or nothing, never a
+            // missing-glyph box: "Aquatf\n" draws exactly as "Aquatf".
+            const auto drawLabel = [&](const std::string& text, const std::string& name,
+                                       const float spacing = 0.0f) {
+                px::ui::Label label(text);
+                label.SetFontPath(font);
+                label.SetFontSize(40);
+                label.SetColor({20, 20, 20, 255});
+                label.SetLetterSpacing(spacing);
+                label.SetHorizontalAlignment(px::ui::HorizontalTextAlignment::Center);
+                label.Arrange({20, 20, 600, 320});
+                ClearFrame(device.Renderer());
+                renderer.DrawRect({0, 0, 640, 360}, {255, 255, 255, 255});
+                label.Draw(renderer, px::ui::Theme{});
+                return CaptureFrame(device.Renderer(), name).hash;
+            };
+            const auto plain = drawLabel("Aquatf", "control-plain");
+            const auto trailing = drawLabel("Aquatf\n", "control-trailing-newline");
+            const auto trailingCrLf = drawLabel("Aquatf\r\n", "control-trailing-crlf");
+            const auto controls = drawLabel("Aqu\x01" "atf\x7f", "control-c0-del");
+            const auto c1 = drawLabel("Aqu\xc2\x85" "atf", "control-c1");
+            const auto spaced = drawLabel("Aquatf", "control-spaced", 4.0f);
+            const auto spacedControl = drawLabel("Aquatf\x1b", "control-spaced-escape", 4.0f);
+            if (plain == 0 || trailing != plain || trailingCrLf != plain || controls != plain ||
+                c1 != plain || spacedControl != spaced) {
+                std::cerr << "FAIL: a control character in UI text drew a glyph\n";
+                result = 1;
+            }
+            const auto twoLines = drawLabel("Aqua\ntf", "control-two-lines");
+            const auto twoLinesCrLf = drawLabel("Aqua\r\ntf", "control-two-lines-crlf");
+            const auto twoLinesCr = drawLabel("Aqua\rtf", "control-two-lines-cr");
+            if (twoLines == plain || twoLinesCrLf != twoLines || twoLinesCr != twoLines) {
+                std::cerr << "FAIL: \\n, \\r\\n and \\r are not the same line break in UI text\n";
+                result = 1;
+            }
+            if (drawLabel("Aqua\ttf", "control-tab") != drawLabel("Aqua tf", "control-space")) {
+                std::cerr << "FAIL: a tab in UI text did not draw as a space\n";
+                result = 1;
+            }
+            // Layout keeps the caller's byte offsets: the line after "\r\n"
+            // starts at the byte after it, and controls take no width.
+            const std::string crlfText = "AB\r\nCD";
+            const auto crlfLayout = renderer.LayoutText(crlfText, font, 24);
+            const auto lfLayout = renderer.LayoutText("AB\nCD", font, 24);
+            int secondLine = -1;
+            for (const auto& cluster : crlfLayout.Clusters()) {
+                if (cluster.byteStart + cluster.byteLength > crlfText.size()) secondLine = -2;
+                if (cluster.byteStart == 4 && secondLine != -2) secondLine = cluster.line;
+            }
+            if (secondLine != 1 || crlfLayout.Size().y != lfLayout.Size().y ||
+                renderer.LayoutText("Aquatf\x01", font, 24).Size().x !=
+                    renderer.LayoutText("Aquatf", font, 24).Size().x) {
+                std::cerr << "FAIL: text layout measured a control character or misplaced a CRLF break\n";
+                result = 1;
+            }
+            const auto controlRuns = renderer.LayoutTextRuns(
+                crlfText, {{0, crlfText.size(), font, 24}}, 0);
+            int runSecondLine = -1;
+            for (const auto& cluster : controlRuns.Clusters())
+                if (cluster.byteStart == 4) runSecondLine = cluster.line;
+            if (runSecondLine != 1) {
+                std::cerr << "FAIL: styled text did not break its line at \\r\\n\n";
+                result = 1;
+            }
+            const auto mapped = px::text::MapDrawableText("a\r\nb\tc\x01" "d\re");
+            if (mapped.text != "a\nb c" "d\ne" || mapped.sourceStart[1] != 1 ||
+                mapped.sourceEnd[1] != 3 || mapped.sourceStart[5] != 7 ||
+                px::text::HasControlCharacters("plain\n") ||
+                !px::text::HasControlCharacters("tab\t")) {
+                std::cerr << "FAIL: MapDrawableText did not normalise control characters\n";
+                result = 1;
+            }
+        }
         const auto drawFixture = [&] {
             renderer.DrawRect({0, 0, 640, 360}, {230, 230, 210, 255});
             renderer.DrawRect({190, 85, 260, 200}, {230, 45, 55, 255});

@@ -203,7 +203,7 @@ void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     const int size = m_fontSize > 0 ? m_fontSize : style.fontSize;
     const std::string& font = m_fontPath.empty() ? style.font : m_fontPath;
     const Color color = m_hasColor ? m_color : (Enabled() ? style.text : style.textDisabled);
-    if (m_letterSpacing == 0.0f || m_wrap || m_text.find('\n') != std::string::npos) {
+    if (m_letterSpacing == 0.0f || m_wrap || m_text.find_first_of("\r\n") != std::string::npos) {
         // Reflowed text carries its own line breaks; SDL_ttf must not wrap it
         // again with its slightly different measurements.
         const bool reflow = m_wrap;
@@ -223,10 +223,12 @@ void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
         const auto lead = static_cast<unsigned char>(m_text[index]);
         const std::size_t length = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
         std::string character = m_text.substr(index, length);
+        index += length;
+        // A control character takes no cell and no gap.
+        if (text::MakeDrawable(character).empty()) continue;
         const float advance = renderer.MeasureText(character, font, size).x;
         width += advance + (characters.empty() ? 0.0f : m_letterSpacing);
         characters.emplace_back(std::move(character), advance);
-        index += length;
     }
     const Rect area = LayoutRect();
     float x = area.x;

@@ -3,6 +3,7 @@
 
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Support/Logger.h"
+#include "Engine/Text/Typography.h"
 
 #include "Engine/Platform/Web/WebEffects.h"
 
@@ -1371,6 +1372,12 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
     if (auto it = m_textCache.find(key); it != m_textCache.end()) {
         return &it->second;
     }
+    // "\r\n" and "\r" break lines like "\n"; tabs draw as spaces and other
+    // control characters are left out instead of drawing missing-glyph boxes.
+    // A trailing line break starts no visible line.
+    std::string drawable = text::MakeDrawable(text);
+    while (!drawable.empty() && drawable.back() == '\n') drawable.pop_back();
+    if (drawable.empty()) return nullptr;
 
     // Backlogs and long sessions can otherwise grow the cache without bound.
     if (m_textCache.size() >= kTextCacheLimit) {
@@ -1380,11 +1387,11 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
     diag::FrameProfiler::Instance().Note("text-raster");
 
     TTF_Font* font = m_assets.Font(fontPath, size * ss, outline * ss);
-    if (!font || text.empty()) {
-        if (!font) WarnTextOnce("font unavailable", fontPath);
+    if (!font) {
+        WarnTextOnce("font unavailable", fontPath);
         return nullptr;
     }
-    m_textLayout.ConfigureFont(font, text);
+    m_textLayout.ConfigureFont(font, drawable);
     if (orientation == text::TextOrientation::Vertical)
         (void)TTF_SetFontDirection(font, TTF_DIRECTION_TTB);
 
@@ -1392,7 +1399,10 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
     const auto wrapAlignment=alignment==HorizontalAlignment::Center?TTF_HORIZONTAL_ALIGN_CENTER:alignment==HorizontalAlignment::Right?TTF_HORIZONTAL_ALIGN_RIGHT:TTF_HORIZONTAL_ALIGN_LEFT;
     TTF_SetFontWrapAlignment(font,wrapAlignment);
     // wrap < 0: the text is already broken into lines; break only at newlines.
-    SDL_Surface* surface=wrap!=0?TTF_RenderText_Blended_Wrapped(font,text.c_str(),text.size(),col,wrap>0?wrap*ss:0):TTF_RenderText_Blended(font,text.c_str(),text.size(),col);
+    // Unwrapped text with a newline also breaks there: TTF_RenderText_Blended
+    // would draw the newline as a glyph.
+    const bool lines = wrap != 0 || drawable.find('\n') != std::string::npos;
+    SDL_Surface* surface=lines?TTF_RenderText_Blended_Wrapped(font,drawable.c_str(),drawable.size(),col,wrap>0?wrap*ss:0):TTF_RenderText_Blended(font,drawable.c_str(),drawable.size(),col);
     TTF_SetFontWrapAlignment(font,TTF_HORIZONTAL_ALIGN_LEFT);
     if(!surface){WarnTextOnce("rasterizing failed",SDL_GetError());return nullptr;}
     CachedText entry;

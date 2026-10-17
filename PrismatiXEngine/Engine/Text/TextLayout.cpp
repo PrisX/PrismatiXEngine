@@ -219,7 +219,8 @@ TextLayout TextLayoutService::LayoutRuns(const std::string_view value,
         metrics.push_back(metric);
         const std::string_view text = value.substr(run.byteStart, run.byteLength);
         for (std::size_t piece = 0; piece <= text.size();) {
-            const auto end = std::min(text.find('\n', piece), text.size());
+            // "\r\n" and a lone "\r" break the line like "\n".
+            const auto end = std::min(text.find_first_of("\r\n", piece), text.size());
             if (end > piece) {
                 // SDL_ttf cluster rects are ink boxes; a cluster's advance is
                 // the growth of the measured prefix that ends with it.
@@ -231,18 +232,26 @@ TextLayout TextLayoutService::LayoutRuns(const std::string_view value,
                 std::ranges::sort(spans);
                 TTF_Font* font = m_assets.Font(run.fontPath, std::max(1, run.size), 0);
                 if (font) ConfigureFont(font, part);
+                const bool controls = HasControlCharacters(part);
                 int previous = 0;
                 for (const auto& [start, length] : spans) {
                     int width = 0, height = 0;
-                    if (font) (void)TTF_GetStringSize(font, part.data(), start + length, &width, &height);
+                    if (font && controls) {
+                        const std::string prefix = MakeDrawable(part.substr(0, start + length));
+                        (void)TTF_GetStringSize(font, prefix.data(), prefix.size(), &width, &height);
+                    } else if (font) {
+                        (void)TTF_GetStringSize(font, part.data(), start + length, &width, &height);
+                    }
                     items.push_back({run.byteStart + piece + start, length,
                                      static_cast<float>(std::max(0, width - previous)), index, false});
                     previous = std::max(previous, width);
                 }
             }
             if (end == text.size()) break;
-            items.push_back({run.byteStart + end, 1, 0.0f, index, true});
-            piece = end + 1;
+            const std::size_t breakLength =
+                text[end] == '\r' && end + 1 < text.size() && text[end + 1] == '\n' ? 2 : 1;
+            items.push_back({run.byteStart + end, breakLength, 0.0f, index, true});
+            piece = end + breakLength;
         }
     }
     if (items.empty()) {
@@ -322,7 +331,34 @@ TextLayout TextLayoutService::Shape(const std::string& input,
                                     const std::string& fontPath, const int size,
                                     const int wrapWidth,
                                     const TextOrientation orientation,
-                                    std::size_t verticalRows) const {
+                                    const std::size_t verticalRows) const {
+    if (!HasControlCharacters(input))
+        return ShapeDrawable(input, fontPath, size, wrapWidth, orientation, verticalRows);
+    // Control characters never reach the font: shape the drawable text and
+    // map its clusters back onto the caller's byte offsets.
+    const DrawableText drawable = MapDrawableText(input);
+    const TextLayout shaped = ShapeDrawable(drawable.text, fontPath, size, wrapWidth,
+                                            orientation, verticalRows);
+    std::vector<TextClusterLayout> clusters;
+    clusters.reserve(shaped.Clusters().size());
+    for (auto cluster : shaped.Clusters()) {
+        if (cluster.byteLength == 0 ||
+            cluster.byteStart + cluster.byteLength > drawable.text.size())
+            continue;
+        const std::size_t start = drawable.sourceStart[cluster.byteStart];
+        const std::size_t end = drawable.sourceEnd[cluster.byteStart + cluster.byteLength - 1];
+        cluster.byteStart = start;
+        cluster.byteLength = end - start;
+        clusters.push_back(cluster);
+    }
+    return {input, m_locale, shaped.Size(), std::move(clusters), shaped.Orientation()};
+}
+
+TextLayout TextLayoutService::ShapeDrawable(const std::string& input,
+                                            const std::string& fontPath, const int size,
+                                            const int wrapWidth,
+                                            const TextOrientation orientation,
+                                            std::size_t verticalRows) const {
     TTF_Font* font = m_assets.Font(fontPath, std::max(1, size), 0);
     if (!font || input.empty()) return {input, m_locale, {}, {}};
     const BidiResolution bidi = ResolveBidi(input, LocaleIsRightToLeft());

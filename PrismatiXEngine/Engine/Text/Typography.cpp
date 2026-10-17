@@ -330,5 +330,60 @@ std::vector<std::size_t> WrapBreaks(const std::string_view text, const float wid
     return result;
 }
 
+namespace {
+// Byte length of a control character (other than '\n') starting at `at`:
+// C0 controls and DEL are one byte, C1 controls U+0080-U+009F are C2 80-9F.
+std::size_t ControlLength(const std::string_view text, const std::size_t at) {
+    const auto byte = static_cast<unsigned char>(text[at]);
+    if ((byte < 0x20 && byte != '\n') || byte == 0x7f) return 1;
+    if (byte == 0xc2 && at + 1 < text.size()) {
+        const auto next = static_cast<unsigned char>(text[at + 1]);
+        if (next >= 0x80 && next <= 0x9f) return 2;
+    }
+    return 0;
+}
+}  // namespace
+
+bool HasControlCharacters(const std::string_view text) {
+    for (std::size_t index = 0; index < text.size(); ++index)
+        if (ControlLength(text, index) > 0) return true;
+    return false;
+}
+
+DrawableText MapDrawableText(const std::string_view text) {
+    DrawableText result;
+    result.text.reserve(text.size());
+    result.sourceStart.reserve(text.size());
+    result.sourceEnd.reserve(text.size());
+    const auto emit = [&](const char byte, const std::size_t start, const std::size_t end) {
+        result.text.push_back(byte);
+        result.sourceStart.push_back(start);
+        result.sourceEnd.push_back(end);
+    };
+    for (std::size_t index = 0; index < text.size();) {
+        const std::size_t control = ControlLength(text, index);
+        if (control == 0) {
+            emit(text[index], index, index + 1);
+            ++index;
+        } else if (text[index] == '\r') {
+            const std::size_t end = index + 1 < text.size() && text[index + 1] == '\n'
+                ? index + 2 : index + 1;
+            emit('\n', index, end);
+            index = end;
+        } else if (text[index] == '\t') {
+            emit(' ', index, index + 1);
+            ++index;
+        } else {
+            index += control;
+        }
+    }
+    return result;
+}
+
+std::string MakeDrawable(const std::string_view text) {
+    if (!HasControlCharacters(text)) return std::string(text);
+    return MapDrawableText(text).text;
+}
+
 std::vector<VerticalGlyph> LayoutVertical(std::string_view text,std::size_t rowsPerColumn){rowsPerColumn=std::max<std::size_t>(1,rowsPerColumn);std::vector<VerticalGlyph> result;int column=0,row=0;for(const auto& glyph:Glyphs(text)){if(glyph=="\n"||row>=static_cast<int>(rowsPerColumn)){++column;row=0;if(glyph=="\n")continue;}const bool rotate=glyph.size()==1&&glyph[0]>=0x21&&glyph[0]<=0x7e;result.push_back({glyph,column,row++,rotate});}return result;}
 }  // namespace px::text

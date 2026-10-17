@@ -94,6 +94,11 @@ private:
         const std::string& input, const std::string& fontPath, int size,
         int wrapWidth, TextOrientation orientation,
         std::size_t verticalRows) const;
+    // Shape for text already free of control characters.
+    [[nodiscard]] TextLayout ShapeDrawable(
+        const std::string& input, const std::string& fontPath, int size,
+        int wrapWidth, TextOrientation orientation,
+        std::size_t verticalRows) const;
 
     graphics::AssetCache& m_assets;
     TTF_TextEngine* m_engine = nullptr;

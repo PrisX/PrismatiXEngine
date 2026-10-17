@@ -71,6 +71,19 @@ struct BidiLayoutInfo {
     std::string_view text, float width,
     const std::function<float(std::string_view)>& measure,
     std::string_view language = "ja");
+// Text as fonts receive it. "\r\n" and a lone "\r" become "\n", a tab
+// becomes a space, and every other C0/C1 control character and DEL is
+// dropped, so no control character ever reaches a font as a missing-glyph
+// box. `sourceStart[i]`/`sourceEnd[i]` give the byte range of the source
+// character that produced byte i of `text`, for mapping layout offsets back.
+struct DrawableText {
+    std::string text;
+    std::vector<std::size_t> sourceStart;
+    std::vector<std::size_t> sourceEnd;
+};
+[[nodiscard]] bool HasControlCharacters(std::string_view text);
+[[nodiscard]] DrawableText MapDrawableText(std::string_view text);
+[[nodiscard]] std::string MakeDrawable(std::string_view text);
 struct VerticalGlyph { std::string glyph; int column=0; int row=0; bool rotate=false; };
 [[nodiscard]] std::vector<VerticalGlyph> LayoutVertical(std::string_view text,std::size_t rowsPerColumn);
 }  // namespace px::text
