@@ -38,6 +38,7 @@ import {distributionCoversLineage, distributionLineage, readReleaseLineage,
   recordReleaseLineage, releaseLineageFile, saveCompatibilityWarning} from "./release-lineage.js";
 import {addCharacter, addScene} from "./scaffold.js";
 import {resolvePreviewTarget} from "./preview-target.js";
+import {isProjectEdit} from "./dev-watch.js";
 import {builtinRoutes, ejectBuiltinUi} from "./eject.js";
 import {AndroidExportError, androidSettings, checkAndroidInputs, checkKeystoreEnvironment,
   claimAndroidOutput, collectAndroidOutputs, findAndroidSdk, findGradle, resolveAndroidPlayer,
@@ -2719,9 +2720,7 @@ async function devCommand(options: Options): Promise<number> {
     // dependency graph. Failed imports/assets and atomic saves remain observable.
     let changes = 1;
     watcher = watch(location.root, {recursive: true}, (_event, filename) => {
-      const parts = String(filename ?? "").split(/[\\/]/u);
-      if ([".prismatix", ".git", "node_modules", "dist"].includes(parts[0] ?? "")) return;
-      changes += 1;
+      if (isProjectEdit(filename)) changes += 1;
     });
     watcher.on("error", (error) => {
       printDiagnostics([diagnostic("PXCLI1607", "Project watcher failed", location.root, String(error))]);
