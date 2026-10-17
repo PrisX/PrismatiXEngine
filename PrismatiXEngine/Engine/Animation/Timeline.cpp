@@ -292,6 +292,20 @@ std::optional<Variant> ParseValue(const Json& json) {
     return ParseValue(json, 0, nodes);
 }
 
+// JSON has one number type: a track keyed 1, 1.6, 1 is a number track, so
+// whole-number keys of a track that also has fractional ones become numbers.
+void UnifyNumericKeys(Track& track) {
+    const auto has = [&](const VariantType type) {
+        return std::ranges::any_of(track.keys, [&](const Keyframe& key) {
+            return key.value.Type() == type;
+        });
+    };
+    if (!has(VariantType::Number) || !has(VariantType::Integer)) return;
+    for (auto& key : track.keys)
+        if (const auto* integer = key.value.TryGet<std::int64_t>())
+            key.value = Variant(static_cast<double>(*integer));
+}
+
 std::optional<ResourceRefValue> ParseResourceRef(const Json& json) {
     if (json.is_string()) {
         const std::string value = json.get<std::string>();
@@ -951,6 +965,7 @@ Result<AnimationClip> ParseAnimationClip(const std::string_view text,
                 track.keys.push_back({key.at("time").get<float>(),
                                       std::move(*value), *curve});
             }
+            UnifyNumericKeys(track);
             clip.tracks.push_back(std::move(track));
         }
         for (const auto& item : root.at("markers")) {
@@ -1078,6 +1093,7 @@ Result<TimelineDocument> ParseTimeline(const std::string_view text,
                 track.keys.push_back({key["time"].get<float>(),
                                       std::move(*value), *curve});
             }
+            UnifyNumericKeys(track);
             document.clip.tracks.push_back(std::move(track));
         }
 

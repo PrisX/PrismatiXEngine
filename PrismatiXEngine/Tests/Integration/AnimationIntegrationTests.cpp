@@ -460,6 +460,20 @@ void TestCanonicalTimelineRuntime() {
               parsed.Value().clip.markers.front().id == "dialogue-in" &&
               parsed.Value().nestedClips.size() == 1,
           "canonical .pxtimeline must adapt identities, markers, and nested resources into the unified model");
+    // JSON writes 1 and 1.6 alike: a zoom keyed 1, 1.6, 1 is one number track.
+    auto zoom = timeline;
+    zoom["nestedClips"] = nlohmann::json::array();
+    zoom["tracks"] = nlohmann::json::array({
+        {{"id", "zoom"},
+         {"binding", {{"kind", "camera"}, {"target", "main"}, {"property", "zoom"}}},
+         {"keyframes", nlohmann::json::array({
+             {{"time", 0.0}, {"value", 1}, {"easing", "easeInOut"}},
+             {{"time", 1.0}, {"value", 1.6}, {"easing", "easeInOut"}},
+             {{"time", 2.0}, {"value", 1}, {"easing", "linear"}}})}}});
+    auto mixed = px::animation::ParseTimeline(zoom.dump(), "zoom.pxtimeline");
+    Check(mixed && static_cast<bool>(mixed.Value().clip.Validate("zoom.pxtimeline")) &&
+              mixed.Value().clip.tracks.front().keys.front().value.TryGet<double>() != nullptr,
+          "a timeline track keyed with whole and fractional numbers must be one number track");
     auto unknown = timeline;
     unknown["legacyTimeline"] = true;
     Check(!px::animation::ParseTimeline(unknown.dump(), "unknown.pxtimeline"),
