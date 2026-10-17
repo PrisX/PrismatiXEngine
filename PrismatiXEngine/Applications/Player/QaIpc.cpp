@@ -516,6 +516,13 @@ struct QaOps {
                 holds = holds && state["ui"][field] == expected;
             } else if (key == "vmState" || key == "label" || key == "scene" || key == "sceneLabel") {
                 holds = holds && state["story"].value(key, Json()) == expected;
+            } else if (key == "operation") {
+                // The current Runtime IR operation: one id, or any of a list.
+                const Json& current = state["story"]["operationId"];
+                if (expected.is_string()) holds = holds && current == expected;
+                else if (expected.is_array())
+                    holds = holds && std::find(expected.begin(), expected.end(), current) != expected.end();
+                else Fail("PXQA1001", "'operation' must be an operation id or a list of them");
             } else if (key == "speaker") {
                 holds = holds && state["dialogue"]["speaker"] == expected;
             } else if (key == "textContains") {

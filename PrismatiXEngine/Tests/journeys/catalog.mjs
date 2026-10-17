@@ -71,6 +71,11 @@ export default async function catalog(px) {
   await px.log("Player save picker checkpoint restored gameplay HUD");
 
   state = await px.waitFor(gameReady);
+  // The current Runtime IR operation is a wait condition (`run --at` lands
+  // on it), alone or as one of a list.
+  check(state.story.operationId !== "", "the story reports its current operation");
+  await px.waitFor({operation: state.story.operationId}, {timeoutMs: 5_000});
+  await px.waitFor({operation: ["not-an-operation", state.story.operationId]}, {timeoutMs: 5_000});
   if (state.locales.length > 1) {
     const locale = state.locales[1];
     await px.setting("language", locale);

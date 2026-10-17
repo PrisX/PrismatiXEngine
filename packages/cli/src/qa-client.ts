@@ -74,6 +74,8 @@ export interface WaitCondition {
   readonly label?: string;
   readonly scene?: string;
   readonly sceneLabel?: string;
+  /** The current Runtime IR operation id (story.operationId), or any of a list. */
+  readonly operation?: string | readonly string[];
   readonly speaker?: string;
   readonly textContains?: string;
   readonly dialogueActive?: boolean;
