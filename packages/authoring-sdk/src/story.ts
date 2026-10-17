@@ -42,7 +42,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   image: ["name", "asset", "x", "y", "zoom", "rotate", "anchor", "alpha", "z", "duration",
     "ease", "from-x", "from-y", "from-zoom", "from-alpha"],
   "image.hide": ["name", "duration"],
-  transition: ["duration", "rule", "vague", "wait"],
+  transition: ["duration", "rule", "vague", "wait", "effect"],
   show: ["character", "expression", "asset", "sprite", "position", "x", "y", "scale", "rotate", "transition"],
   move: ["character", "position", "x", "y", "scale", "rotate", "duration", "ease", "wait"],
   hide: ["character", "transition", "image", "duration"],
@@ -67,7 +67,7 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   nvl: [], adv: [], "nvl.clear": [],
   auto: ["mode", "speed", "wait", "lock"], "skip.stop": [], "skip.disable": [], "skip.enable": [],
   unlock: ["kind", "id"],
-  effect: ["value"], shake: ["duration", "amplitude", "target", "dir", "count"],
+  effect: ["value", "duration"], shake: ["duration", "amplitude", "target", "dir", "count"],
   flash: ["color", "alpha", "duration", "loop"], tone: ["mode"],
   camera: ["value", "x", "y", "zoom", "duration", "ease", "wait"],
   else: [], endif: [],
@@ -649,6 +649,23 @@ function stringValue(argument: StoryArgument | undefined): string | undefined {
   return String(argument.value);
 }
 
+/**
+ * A project effect uniform written in Story: `0.8`, `0.5,0.5` or a colour
+ * `#RRGGBB`/`#RRGGBBAA` (four channels from 0 to 1).
+ */
+export function storyEffectParameterValue(value: string): number[] | undefined {
+  const hex = /^#([0-9a-fA-F]{6})([0-9a-fA-F]{2})?$/u.exec(value);
+  if (hex) {
+    const digits = `${hex[1]}${hex[2] ?? "FF"}`;
+    return [0, 2, 4, 6].map((at) => Math.round((parseInt(digits.slice(at, at + 2), 16) / 255) * 10000) / 10000);
+  }
+  const parts = value.split(",");
+  if (parts.length < 1 || parts.length > 4 || !parts.every((part) => /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/u.test(part.trim())))
+    return undefined;
+  const numbers = parts.map((part) => Number(part.trim()));
+  return numbers.every((number) => Number.isFinite(number)) ? numbers : undefined;
+}
+
 /** Relative actions the native Stage plays on characters, images, and the background. */
 export const storyActorActions = [
   "hop", "jump", "startle", "yawn", "bow", "nod", "nods", "tremble",
@@ -1225,10 +1242,20 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     const args = argumentMap(node);
     const allowed = Object.hasOwn(builtinNamedArguments, node.name)
       ? builtinNamedArguments[node.name] : undefined;
+    // A project effect takes its uniforms by name: [effect dream amount=0.8],
+    // [transition 1s effect=ink-wipe softness=0.2]. The build checks the names
+    // against the effect's descriptor.
+    const effectParameters = new Map<string, StoryArgument>();
+    const takesEffectParameters = node.name === "effect" ||
+      (node.name === "transition" && args.has("effect"));
     if (allowed !== undefined) {
       let unknown = false;
       for (const [name, argument] of args) {
         if (name.startsWith("$") || allowed.includes(name)) continue;
+        if (takesEffectParameters && identifierPattern.test(name)) {
+          effectParameters.set(name, argument);
+          continue;
+        }
         diagnostics.push(error("PXSTORY1017",
           `Unknown ${node.name} argument: ${name}`, argument.span));
         unknown = true;
@@ -1237,6 +1264,23 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     }
     const positional = (index: number): string | undefined => stringValue(args.get(`$${index}`));
     const named = (name: string): string | undefined => stringValue(args.get(name));
+    // The project effect uniforms as the JSON `params` argument, or null
+    // after reporting a value that is not one to four numbers or a colour.
+    const effectParams = (): {params?: string} | null => {
+      if (effectParameters.size === 0) return {};
+      const values: Record<string, number[]> = {};
+      for (const [name, argument] of effectParameters) {
+        const parsed = storyEffectParameterValue(stringValue(argument) ?? "");
+        if (parsed === undefined) {
+          diagnostics.push(error("PXSTORY1280",
+            `effect parameter ${name} must be one to four numbers (0.5 or 0.5,0.5) or a colour (#RRGGBB)`,
+            argument.span));
+          return null;
+        }
+        values[name] = parsed;
+      }
+      return {params: JSON.stringify(values)};
+    };
     const target = named("target") ?? named("goto") ?? positional(0);
     switch (node.name) {
       case "id": {
@@ -1369,18 +1413,27 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         const authoredRule = named("rule");
         const vague = named("vague");
         const wait = named("wait");
+        // effect= reveals through a project transition shader instead.
+        const effect = named("effect");
+        const params = effectParams();
         if (!validAudioDuration(duration))
           diagnostics.push(error("PXSTORY1238", "transition duration must be a non-negative number of ms or s", node.span));
         else if (vague !== undefined && (!/^\d{1,3}$/u.test(vague) || Number(vague) > 255))
           diagnostics.push(error("PXSTORY1239", "transition vague must be 0-255", node.span));
         else if (wait !== undefined && wait !== "true" && wait !== "false")
           diagnostics.push(error("PXSTORY1239", "transition wait must be true or false", node.span));
-        else {
+        else if (effect !== undefined && !identifierPattern.test(effect))
+          diagnostics.push(error("PXSTORY1281", "transition effect must be a project effect id", node.span));
+        else if (effect !== undefined && (authoredRule !== undefined || vague !== undefined))
+          diagnostics.push(error("PXSTORY1282", "transition takes either rule= or effect=, not both", node.span));
+        else if (params !== null) {
           const rule = authoredRule === undefined ? undefined : resolveResource(node, authoredRule, "rule");
           if (authoredRule === undefined || rule !== undefined) emit(node, "transition", {
             duration, ...(rule === undefined ? {} : {rule}),
             ...(vague === undefined ? {} : {vague}),
             ...(wait === undefined ? {} : {wait}),
+            ...(effect === undefined ? {} : {effect}),
+            ...params,
           });
         }
         break;
@@ -1987,9 +2040,18 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       }
       case "effect": {
         const value = named("value") ?? positional(0);
+        // duration= is how long the effect takes to come in; `[effect none]`
+        // removes a project Stage effect.
+        const duration = named("duration") ?? positional(1);
+        const params = effectParams();
         if (value === undefined || value.length === 0)
           diagnostics.push(error("PXSTORY1126", "effect requires a preset", node.span));
-        else emit(node, "effect", {value});
+        else if (duration !== undefined && !validAudioDuration(duration))
+          diagnostics.push(error("PXSTORY1283", "effect duration must be a non-negative number of ms or s", node.span));
+        else if (value === "none" && (duration !== undefined || effectParameters.size > 0))
+          diagnostics.push(error("PXSTORY1283", "[effect none] takes no duration or parameters", node.span));
+        else if (params !== null)
+          emit(node, "effect", {value, ...(duration === undefined ? {} : {duration}), ...params});
         break;
       }
       case "tone": {

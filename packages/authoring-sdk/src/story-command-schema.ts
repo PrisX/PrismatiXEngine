@@ -354,6 +354,8 @@ const builtinSchema: readonly StoryCommandSchema[] = [
     p("rule", asset("rule")),
     p("vague", integer(0, 255), {default: "64"}),
     p("wait", boolean, {default: "true"}),
+    p("effect", identifier, {conflicts: ["rule", "vague"],
+      description: "A project transition effect (.pxeffect); its uniforms are further name=value arguments."}),
   ]),
   command("shake", "effect", "Shakes the stage or the message window.", [
     p("duration", duration(), {positional: 0, required: true}),
@@ -371,8 +373,10 @@ const builtinSchema: readonly StoryCommandSchema[] = [
   command("tone", "effect", "Tints the whole screen.", [
     p("mode", enumeration("gray", "sepia", "none"), {positional: 0, required: true}),
   ]),
-  command("effect", "effect", "Plays a screen effect preset.", [
+  command("effect", "effect", "Plays a screen effect preset or a project Stage effect; none removes the project effect.", [
     p("value", text, {positional: 0, required: true}),
+    p("duration", duration(), {positional: 1,
+      description: "How long the effect takes to come in. A project effect takes its uniforms as name=value arguments."}),
   ]),
   command("motion", "effect", "Plays a .pxmotion clip on the stage.", [
     p("asset", {type: "resource", extensions: [".pxmotion"]}, {positional: 0, required: true}),

@@ -300,19 +300,91 @@ function validateStoryEffects(
   customEffects: ReadonlySet<string>,
   graphicsTier: "basic" | "gpu-effects",
   sourceFiles: Readonly<Record<string, string>>,
+  effectDocuments: ReadonlyMap<string, CustomEffectDocument> = new Map(),
 ): AuthoringDiagnostic[] {
   const diagnostics: AuthoringDiagnostic[] = [];
   const mappings = new Map(sourceMap.mappings.map((value) =>
     [value.operationId, value]));
+  const located = (operation: RuntimeIrDocument["operations"][number]) => {
+    const mapping = mappings.get(operation.operationId);
+    const path = mapping?.sourceUri;
+    const source = path === undefined ? undefined : sourceFiles[path];
+    return {path, span: mapping === undefined || source === undefined ? {} : {span: mappedSpan(source, mapping)}};
+  };
+  // A project effect's uniforms given in Story: known names, the type's
+  // number of components, inside the declared range.
+  const checkParameters = (operation: RuntimeIrDocument["operations"][number], effect: string) => {
+    const raw = operation.arguments.params;
+    if (raw === undefined) return;
+    const {path, span} = located(operation);
+    const document = effectDocuments.get(effect);
+    const values = JSON.parse(raw) as Record<string, number[]>;
+    for (const [name, components] of Object.entries(values)) {
+      const uniform = document?.uniforms.find((item) => item.name === name);
+      const expected = uniform === undefined ? 0 : uniform.type === "number" ? 1 : uniform.type === "vec2" ? 2 : 4;
+      const minimum = uniform?.minimum ?? 0;
+      const maximum = uniform?.maximum ?? 1;
+      const problem = document === undefined ? `${effect} is not a project effect and takes no parameters`
+        : uniform === undefined ? `${effect} has no uniform named ${name} (it has ${document.uniforms.map((item) => item.name).join(", ") || "none"})`
+        : components.length !== expected ? `${effect}.${name} is a ${uniform.type} and takes ${expected} number${expected === 1 ? "" : "s"}`
+        : components.some((value) => value < minimum || value > maximum) ? `${effect}.${name} must be from ${minimum} to ${maximum}`
+        : undefined;
+      if (problem !== undefined) diagnostics.push({
+        ...issue("PXBUILD1027", `Story effect parameter is invalid: ${problem}`, path, name),
+        ...span,
+        documentId: runtimeIr.documentId,
+        sourceId: operation.sourceId,
+      });
+    }
+  };
   for (const operation of runtimeIr.operations) {
+    if (operation.kind === "transition" && operation.arguments.effect !== undefined) {
+      // [transition 1s effect=ink-wipe]: a project effect drawn between frames.
+      const effect = operation.arguments.effect;
+      const {path, span} = located(operation);
+      const document = effectDocuments.get(effect);
+      if (!customEffects.has(effect) || (document !== undefined && document.targetLayer !== "transition")) {
+        diagnostics.push({
+          ...issue("PXBUILD1026", document === undefined
+            ? `Story transition names an unknown project effect: ${effect}`
+            : `Story transition effect ${effect} is a ${document.targetLayer} effect; [transition effect=] needs a transition effect`, path, effect),
+          ...span,
+          documentId: runtimeIr.documentId,
+          sourceId: operation.sourceId,
+          hint: "Declare a .pxeffect with targetLayer transition in project.effects.",
+        });
+      } else if (graphicsTier !== "gpu-effects") {
+        diagnostics.push({
+          ...issue("PXBUILD1025", `Story transition effect ${effect} requires graphicsTier gpu-effects`, path, effect),
+          ...span,
+          documentId: runtimeIr.documentId,
+          sourceId: operation.sourceId,
+          hint: "Set project.graphicsTier to gpu-effects.",
+        });
+      } else checkParameters(operation, effect);
+      continue;
+    }
     if (operation.kind !== "effect" && operation.kind !== "camera") continue;
     // [camera x= y= zoom=] moves the view; only a camera preset names an effect.
     if (operation.kind === "camera" && operation.arguments.value === undefined) continue;
     const preset = operation.arguments.value ?? "";
-    const mapping = mappings.get(operation.operationId);
-    const path = mapping?.sourceUri;
-    const source = path === undefined ? undefined : sourceFiles[path];
-    const span = mapping === undefined || source === undefined ? {} : {span: mappedSpan(source, mapping)};
+    // [effect none] removes the project Stage effect.
+    if (operation.kind === "effect" && preset === "none") continue;
+    const {path, span} = located(operation);
+    const document = effectDocuments.get(preset);
+    if (document !== undefined && document.targetLayer !== "stage") {
+      diagnostics.push({
+        ...issue("PXBUILD1026", `Story [effect ${preset}] names a ${document.targetLayer} effect; [effect] plays Stage effects`, path, preset),
+        ...span,
+        documentId: runtimeIr.documentId,
+        sourceId: operation.sourceId,
+        hint: document.targetLayer === "transition"
+          ? `Use [transition 1s effect=${preset}] for a transition effect.`
+          : "Node effects are applied from extension scripts with ctx.stage.nodeEffect.",
+      });
+      continue;
+    }
+    if (operation.kind === "effect") checkParameters(operation, preset);
     if (!builtInScreenEffects.has(preset) && preset !== "tone" && !customEffects.has(preset)) {
       diagnostics.push({
         ...issue("PXBUILD1024", `Story references an unknown screen effect preset: ${preset}`, path, preset),
@@ -1000,6 +1072,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   diagnostics.push(...validateStoryEffects(
     compiled.runtimeIr, compiled.sourceMap, effectIds,
     project.graphicsTier ?? "basic", sourceFiles,
+    new Map([...effectDocuments.values()].map((effect) => [effect.id, effect])),
   ));
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
     return {diagnostics, valid: false};

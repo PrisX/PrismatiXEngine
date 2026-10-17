@@ -13,8 +13,31 @@
 #include <limits>
 #include <optional>
 
+#include <nlohmann/json.hpp>
+
 namespace px {
 namespace {
+
+// Story [effect id amount=0.8] / [transition effect=id softness=0.2]: the
+// build writes the uniforms as JSON {"name": [components]}.
+std::optional<graphics::CustomEffectNamedParameters> EffectParameters(
+    const vn::Command& command) {
+    graphics::CustomEffectNamedParameters parameters;
+    const std::string text = command.Get("params");
+    if (text.empty()) return parameters;
+    const auto json = nlohmann::json::parse(text, nullptr, false);
+    if (!json.is_object()) return std::nullopt;
+    for (const auto& [name, value] : json.items()) {
+        if (!value.is_array() || value.empty() || value.size() > 4) return std::nullopt;
+        std::vector<float> components;
+        for (const auto& component : value) {
+            if (!component.is_number()) return std::nullopt;
+            components.push_back(component.get<float>());
+        }
+        parameters.emplace(name, std::move(components));
+    }
+    return parameters;
+}
 
 Status RestoreFailure(std::string message, std::string details = {}) {
     diag::Diagnostic diagnostic{.severity = diag::Severity::Error,
@@ -373,10 +396,20 @@ bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
         if (milliseconds <= 0.0 || m_vm.FastForward() || m_vm.Seeking()) return true;
         const float seconds = static_cast<float>(milliseconds / 1000.0);
         const std::string rule = ResourcePath(command, "rule");
-        const auto handle = rule.empty()
+        const std::string effect = command.Get("effect");
+        const auto parameters = EffectParameters(command);
+        if (!effect.empty() && !parameters)
+            (void)RestoreFailure("Transition effect parameters are invalid", effect);
+        // effect=: a project transition shader between the two frames.
+        const auto handle = !effect.empty()
+            ? m_services.renderer.PlayScreenEffect(
+                  effect, seconds, parameters && !parameters->empty() ? &*parameters : nullptr)
+            : rule.empty()
             ? m_services.renderer.PlayScreenEffect("crossfade", seconds)
             : m_services.renderer.PlayRuleScreenTransition(
                   rule, seconds, static_cast<int>(CommandNumber(command, "vague", 64.0)));
+        if (!effect.empty() && handle == 0)
+            (void)RestoreFailure("Transition effect could not play", effect);
         // The duration is Story timing even when the renderer cannot play it;
         // a transition slowed by a long frame also holds the Story until done.
         if (CommandBool(command, "wait", true))
@@ -415,8 +448,20 @@ bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
                       static_cast<int>(CommandNumber(command, "loop", 1.0)));
         return true;
     }
+    if (command.type == "screen_effect" && command.Get("preset") == "none") {
+        // [effect none]: the project Stage effect goes away.
+        m_stage.ClearCustomEffect();
+        return true;
+    }
     if (command.type == "screen_effect") {
         const std::string preset = command.Get("preset");
+        if (m_services.renderer.HasCustomEffect(preset, "stage")) {
+            // A project Stage effect starts from nothing with the authored
+            // uniforms; its clip then brings the progress up to 1.
+            const auto parameters = EffectParameters(command);
+            if (!parameters || !m_stage.SetCustomEffect(preset, 0.0f, *parameters))
+                (void)RestoreFailure("Stage effect parameters are invalid", preset);
+        }
         const animation::AnimationClip* selected = nullptr;
         for (const auto& [_, clip] : m_timeline.RegisteredClips()) {
             if (clip.name == preset || clip.name == "Screen/" + preset) { selected = &clip; break; }

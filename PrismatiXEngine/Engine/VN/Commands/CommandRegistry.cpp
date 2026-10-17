@@ -202,9 +202,9 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("skip_control","UI",{Param("op",VariantType::String,true,{},CommandEditorWidget::Default,{"stop","disable","enable"})}));
     add(Descriptor("text_input","UI",{Param("variable",VariantType::String,true),Param("prompt",VariantType::String),Param("default",VariantType::String),Param("maxLength",VariantType::Integer)},CommandWaitPolicy::Input,RollbackPolicy::Boundary));
     add(Descriptor("hud_visibility","UI",{Param("visible",VariantType::Bool,true),Param("time",VariantType::Integer)}));
-    add(Descriptor("screen_transition","Stage",{Param("time",VariantType::Integer),Param("rule",VariantType::ResourceRef,false,{},CommandEditorWidget::Resource),Param("vague",VariantType::Integer),Param("wait",VariantType::Bool)},CommandWaitPolicy::Async));
+    add(Descriptor("screen_transition","Stage",{Param("time",VariantType::Integer),Param("rule",VariantType::ResourceRef,false,{},CommandEditorWidget::Resource),Param("vague",VariantType::Integer),Param("wait",VariantType::Bool),Param("effect",VariantType::String),Param("params",VariantType::String)},CommandWaitPolicy::Async));
     add(Descriptor("animation","Animation",{Param("clip",VariantType::ResourceRef,true,{},CommandEditorWidget::Preset),Param("await",VariantType::Bool),Param("speed",VariantType::Number)},CommandWaitPolicy::Async));
-    add(Descriptor("screen_effect","Animation",{Param("preset",VariantType::String,true,{},CommandEditorWidget::Preset),Param("duration",VariantType::Integer),Param("await",VariantType::Bool)},CommandWaitPolicy::Async));
+    add(Descriptor("screen_effect","Animation",{Param("preset",VariantType::String,true,{},CommandEditorWidget::Preset),Param("duration",VariantType::Integer),Param("await",VariantType::Bool),Param("params",VariantType::String)},CommandWaitPolicy::Async));
     add(Descriptor("cg","Stage",{Param("id",VariantType::String),Param("image",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource)}));
     add(Descriptor("unlock","Progression",{Param("kind",VariantType::String),Param("id",VariantType::String,true)},CommandWaitPolicy::Immediate,RollbackPolicy::Boundary));
     add(Descriptor("speed","Dialogue",{Param("value",VariantType::Integer,true)}));

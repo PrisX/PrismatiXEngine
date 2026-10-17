@@ -618,6 +618,23 @@ and a click or skip moves on:
 Rule images resolve from `storyAssets.rule`. `[act window hop size=5]` plays
 any character action preset on the message window.
 
+A [custom render effect](ui-reference.md#custom-render-effects) plays from
+Story too (it needs `graphicsTier: "gpu-effects"`). A `transition` effect
+reveals the change through its shader with `effect=` instead of `rule=`; a
+`stage` effect comes in over `duration` (500ms by default) and stays until
+`[effect none]`. Either takes its uniforms by name: one number, `x,y` for a
+`vec2`, or `#RRGGBB(AA)` for a `color`. The build checks each name, its
+number of values and its declared range (`PXBUILD1027`), and that the effect
+has the right `targetLayer` (`PXBUILD1026`):
+
+```pxstory
+[bg street transition=false]
+[transition 1.2s effect=ink-wipe softness=0.2]
+[effect dream-tone 1s amount=0.8 tint=#FFE0C0]
+@guide 夢の中みたい。
+[effect none]
+```
+
 ### Changing only the face of a layered character
 
 When a character's expressions are role-tagged `.pxportrait` descriptors

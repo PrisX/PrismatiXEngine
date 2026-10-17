@@ -881,6 +881,13 @@ size, deterministic seed, and declared parameter slots. Raw renderer objects,
 GPU pointers, filesystem, network, wall-clock, and unrestricted randomness are
 never exposed.
 
+### Story
+
+`[effect dream-tone 1s amount=0.8]`, `[effect none]` and
+`[transition 1s effect=ink-wipe softness=0.2]` play Stage and transition
+effects from a Story line; see
+[whole-screen transitions](story-reference.md#framing-image-layers-and-whole-screen-transitions).
+
 ### JavaScript
 
 ```ts

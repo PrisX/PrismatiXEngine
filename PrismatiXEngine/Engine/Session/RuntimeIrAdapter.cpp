@@ -473,6 +473,8 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             Add(command, "rule", Argument(operation, "rule"));
             Add(command, "vague", Argument(operation, "vague"));
             Add(command, "wait", Argument(operation, "wait"));
+            Add(command, "effect", Argument(operation, "effect"));
+            Add(command, "params", Argument(operation, "params"));
         } else if (operation.kind == "showCharacter" &&
                    operation.arguments.contains("faces")) {
             // Story [face]: one expression per body; the VM picks the one
@@ -693,7 +695,7 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
         } else if (operation.kind == "effect") {
             command.type = "screen_effect";
             Add(command, "preset", Argument(operation, "value"));
-            for (const char* name : {"color", "alpha", "loop", "mode"})
+            for (const char* name : {"color", "alpha", "loop", "mode", "params"})
                 Add(command, name, Argument(operation, name));
             Add(command, "duration", DurationMilliseconds(Argument(operation, "duration")));
         } else if (operation.kind == "shake") {

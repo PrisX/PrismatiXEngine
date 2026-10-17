@@ -1522,6 +1522,52 @@ test("compileProject rejects unknown and unsupported-tier Story effects before p
   assert.equal(gpu.valid, true, JSON.stringify(gpu.diagnostics));
 });
 
+test("Story plays project effects: [effect id duration uniforms], [effect none] and [transition effect=]", () => {
+  const stage = {format: "PrismatiXEffect", schemaRevision: 1, id: "dream", targetLayer: "stage",
+    shader: "Effects/dream.frag.hlsl", uniforms: [
+      {name: "amount", type: "number", slot: 0, default: 0.5, minimum: 0, maximum: 1},
+      {name: "tint", type: "color", slot: 1, default: [1, 1, 1, 1]}]};
+  const wipe = {format: "PrismatiXEffect", schemaRevision: 1, id: "ink-wipe", targetLayer: "transition",
+    shader: "Effects/ink-wipe.frag.hlsl", uniforms: [
+      {name: "softness", type: "number", slot: 0, default: 0.1, minimum: 0, maximum: 1}]};
+  const compile = (story: string) => {
+    const authoredProject = {...project, graphicsTier: "gpu-effects", effects: [
+      {id: "dream", source: "Effects/dream.pxeffect"}, {id: "ink-wipe", source: "Effects/ink-wipe.pxeffect"}]};
+    return compileProject({
+      project: authoredProject,
+      documents: {"Story/story.pxindex": storyIndex, "Content/game.pxgame": game, "Content/UI/Title.pxui": ui,
+        "Effects/dream.pxeffect": stage, "Effects/ink-wipe.pxeffect": wipe},
+      sourceFiles: {"Story/zh-TW/scene01.pxstory": story, [stage.shader]: "// stage\n", [wipe.shader]: "// wipe\n"},
+      locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1, locale: "zh-TW", strings: {}}},
+    });
+  };
+  const valid = compile("[effect dream 1s amount=0.8 tint=#FF8000]\n[effect none]\n" +
+    "[transition 2s effect=ink-wipe softness=0.25]\n[end]\n");
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  const operations = valid.artifact!.runtimeIr.operations;
+  const effect = operations.find((operation) => operation.kind === "effect" && operation.arguments.value === "dream")!;
+  assert.equal(effect.arguments.duration, "1s");
+  assert.deepEqual(JSON.parse(effect.arguments.params!), {amount: [0.8], tint: [1, 0.502, 0, 1]});
+  assert.ok(operations.some((operation) => operation.kind === "effect" && operation.arguments.value === "none"));
+  const transition = operations.find((operation) => operation.kind === "transition")!;
+  assert.equal(transition.arguments.effect, "ink-wipe");
+  assert.deepEqual(JSON.parse(transition.arguments.params!), {softness: [0.25]});
+
+  const codes = (story: string) => compile(story).diagnostics.map((diagnostic) => diagnostic.code);
+  // [effect] plays Stage effects; a transition effect belongs to [transition].
+  assert.ok(codes("[effect ink-wipe]\n[end]\n").includes("PXBUILD1026"));
+  assert.ok(codes("[transition 1s effect=dream]\n[end]\n").includes("PXBUILD1026"));
+  assert.ok(codes("[transition 1s effect=missing]\n[end]\n").includes("PXBUILD1026"));
+  // Uniform names, component counts and ranges come from the descriptor.
+  assert.ok(codes("[effect dream strength=1]\n[end]\n").includes("PXBUILD1027"));
+  assert.ok(codes("[effect dream amount=2]\n[end]\n").includes("PXBUILD1027"));
+  assert.ok(codes("[effect dream amount=0.1,0.2]\n[end]\n").includes("PXBUILD1027"));
+  assert.ok(codes("[effect dream amount=bright]\n[end]\n").includes("PXSTORY1280"));
+  assert.ok(codes("[transition 1s effect=ink-wipe rule=wipe]\n[end]\n").includes("PXSTORY1282"));
+  // Without effect=, [transition] keeps its closed argument list.
+  assert.ok(codes("[transition 1s softness=0.2]\n[end]\n").includes("PXSTORY1017"));
+});
+
 test("compileProject declares every hover.<name> a UI binds as Player UI data", () => {
   const hoverUi = {...ui, nodes: ui.nodes.map((node) =>
     ({...node, bindings: {visible: {path: "hover.StartButton"}}}))};
