@@ -108,3 +108,45 @@ test("path-first expressions fail clearly for unsafe or conflicting assets", () 
   assert.equal(conflict.valid, false);
   assert.ok(conflict.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1068"));
 });
+
+test("a character's stage size is the default of a show that names none", () => {
+  const author = {...compactCharacter(), stage: {scale: 0.5, y: 40}};
+  const story = "*start\n[show yuki smile]\n[show yuki smile left]\n" +
+    "[show yuki smile scale=0.8 y=0]\n@yuki[smile right] Hello.\n[move yuki x=10]\n[end]\n";
+  const result = compileProject({project: {id: "stage-size", name: "Stage Size",
+    characters: [{source: characterPath, displayName: "Yuki", alias: "yuki"}]},
+    documents: {[characterPath]: author},
+    sourceFiles: {"Story/main.pxstory": story},
+    resourceExists: (path: string) => path === imagePath});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const shows = result.artifact!.runtimeIr.operations
+    .filter((operation) => operation.kind === "showCharacter").map((operation) => operation.arguments);
+  assert.equal(shows.length, 4);
+  for (const index of [0, 1, 3]) {
+    assert.equal(shows[index]!.defaultScale, "0.5");
+    assert.equal(shows[index]!.defaultY, "40");
+    assert.equal(shows[index]!.scale, undefined);
+  }
+  // A line's own scale= and y= win; nothing default is sent beside them.
+  assert.deepEqual([shows[2]!.scale, shows[2]!.y, shows[2]!.defaultScale, shows[2]!.defaultY],
+    ["0.8", "0", undefined, undefined]);
+  // [move] keeps whatever is on stage, so it carries no default.
+  const move = result.artifact!.runtimeIr.operations.find((operation) =>
+    operation.kind === "timeline" && operation.arguments.mode === "move")!;
+  assert.equal(move.arguments.scale, undefined);
+  assert.equal(move.arguments.defaultScale, undefined);
+  const character = JSON.parse(result.artifact!.files[characterPath]!) as {stage?: unknown};
+  assert.deepEqual(character.stage, {scale: 0.5, y: 40});
+  assert.equal(validateDocument("character", character).valid, true);
+});
+
+test("a character's stage scale must be positive", () => {
+  const result = compileProject({project: {id: "stage-size-bad", name: "Bad Size",
+    characters: [{source: characterPath, displayName: "Yuki", alias: "yuki"}]},
+    documents: {[characterPath]: {...compactCharacter(), stage: {scale: 0}}},
+    sourceFiles: {"Story/main.pxstory": "*start\n[show yuki smile]\n[end]\n"},
+    resourceExists: (path: string) => path === imagePath});
+  assert.equal(result.valid, false);
+  assert.ok(result.diagnostics.some((diagnostic) => diagnostic.details?.includes("/stage/scale")),
+    JSON.stringify(result.diagnostics));
+});

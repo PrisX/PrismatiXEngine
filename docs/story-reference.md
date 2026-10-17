@@ -108,7 +108,9 @@ save identities and the Runtime IR do not depend on which spelling you use.
   position in either order. Showing a visible character again without a
   position keeps its slot, offset and scale, so expression changes no longer
   snap it back to the center. Giving a position starts a fresh placement:
-  omitted `x`, `y`, `scale` and `rotate` return to their defaults.
+  omitted `x`, `y`, `scale` and `rotate` return to their defaults (the
+  character's [stage size](#stage-size) for `scale` and `y`). `[move]` only
+  changes what it names; the rest stays as it is on stage.
 - `rotate=` turns a character about its centre in degrees (`[show aka z2
   left rotate=-90]` lays it down, as Artemis `fg rotate=` does); an expression
   change keeps the turn. `[move alias rotate=0 duration=1s]` animates it. The
@@ -222,6 +224,23 @@ for 凪 in a Traditional Chinese project).
 the HUD's `Speaker` label while they speak; other lines keep the label's own
 colour. Lines already read are drawn halfway to grey (`dimReadText`), which
 stays legible on light and dark message windows.
+
+### Stage size
+
+A sprite is drawn at its native pixels, standing on the bottom edge. A
+character whose art is larger or smaller than the screen sets its own size
+once in its `.pxcharacter`:
+
+```json
+"stage": {"scale": 0.5, "y": 40}
+```
+
+`scale` (above 0) and `y` (pixels, positive is down) are used by every
+`[show]` and `@alias[...]` that places the character afresh (not on stage
+yet, or given a position) without its own `scale=` / `y=`. A character
+already on stage keeps its scale and offset, so an expression change does not
+undo a `[move alias scale=1.2]`. A `scale=` written on a line is the actual
+scale, not a multiple of the character's.
 
 ### Message-window face
 

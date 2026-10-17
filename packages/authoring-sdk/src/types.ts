@@ -189,8 +189,21 @@ export interface CharacterDocument {
   /** Colour of the speaker name in the message window, `#RRGGBB(AA)`. */
   readonly nameColor?: string;
   readonly aliases: readonly string[];
+  /** On-stage size used when a Story line gives none (see `CharacterStage`). */
+  readonly stage?: CharacterStage;
   readonly defaultExpressionId?: string | null;
   readonly expressions: readonly CharacterExpression[];
+}
+
+/**
+ * A character's default placement. A fresh `[show]` without `scale=` / `y=`
+ * uses these instead of 1 and 0; a character already on stage keeps its own.
+ */
+export interface CharacterStage {
+  /** Sprite scale, > 0 (1 = native pixels). */
+  readonly scale?: number;
+  /** Vertical offset in pixels from standing on the bottom edge; positive is down. */
+  readonly y?: number;
 }
 
 export interface GameVariable {

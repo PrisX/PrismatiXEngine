@@ -1015,7 +1015,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
   // Shared by [show] and inline `@alias[expression position]` dialogue.
   const showArguments = (node: StoryNode, alias: string,
     authored: {readonly expression?: string; readonly position?: string;
-      readonly asset?: string}): Record<string, string> | undefined => {
+      readonly asset?: string; readonly scale?: string; readonly y?: string}): Record<string, string> | undefined => {
     const character = characters.get(alias);
     if ((context.characters?.length ?? 0) > 0 && character === undefined) {
       diagnostics.push(error("PXSTORY1113", `Unknown character alias: ${alias}`, node.span));
@@ -1040,11 +1040,16 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     if (!valid || (authored.asset !== undefined && sprite === undefined)) return undefined;
     if (authored.asset === undefined && expression !== undefined && context.resourceAssets !== undefined)
       resolveResource(node, `asset:${expression.assetId}`);
+    // The character's own size replaces 1 and 0 for a fresh placement; the
+    // Player ignores these for a character already on stage.
+    const stage = character?.stage;
     return {
       character: character?.id ?? alias,
       ...(expression === undefined ? {} : {expression: expression.id}),
       ...(sprite === undefined ? {} : {sprite}),
       ...(position === undefined ? {} : {position}),
+      ...(stage?.scale === undefined || authored.scale !== undefined ? {} : {defaultScale: String(stage.scale)}),
+      ...(stage?.y === undefined || authored.y !== undefined ? {} : {defaultY: String(stage.y)}),
     };
   };
 
@@ -1343,6 +1348,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
             ...(expressionAlias === undefined ? {} : {expression: expressionAlias}),
             ...(authoredPosition === undefined ? {} : {position: authoredPosition}),
             ...(authoredAsset === undefined ? {} : {asset: authoredAsset}),
+            ...(named("scale") === undefined ? {} : {scale: named("scale")!}),
+            ...(named("y") === undefined ? {} : {y: named("y")!}),
           });
           if (shown !== undefined) emit(node, "showCharacter", {
             ...shown,

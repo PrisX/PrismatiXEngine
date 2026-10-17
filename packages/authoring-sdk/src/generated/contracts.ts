@@ -395,6 +395,22 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "schemaRevision": {
         "const": 1
       },
+      "stage": {
+        "additionalProperties": false,
+        "properties": {
+          "scale": {
+            "exclusiveMinimum": 0,
+            "maximum": 100,
+            "type": "number"
+          },
+          "y": {
+            "maximum": 16384,
+            "minimum": -16384,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
       "voice": {
         "additionalProperties": false,
         "properties": {
@@ -4961,7 +4977,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
 
 export const contractHashes: Readonly<Record<string, string>> = {
   "animation.schema.json": "ef9ccdba9dbc8a08a00848e487cb2a6938c23f88b891ff0c85bf9d16783254a7",
-  "character.schema.json": "2da9dd7fe36f0c9fa18806625375714802371bacf9248a5f24498db3e4f0ef8b",
+  "character.schema.json": "2b93da553f2247c29d20e3365b313f29185a30d7ada1375be92004e6eb8f771b",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
   "effect.schema.json": "8707b1b1d75154000786f797b06561643a5f9881df968708a0994546e3f782bd",
   "extension.schema.json": "f644ab7d736add644057cc1a199db6dd042901802c8ba91c8e7cebfde5bfda5b",
