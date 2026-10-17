@@ -2120,6 +2120,7 @@ bool PlayerApp::CommitStartGame() {
     }
     m_session->Backlog().Clear();
     m_autoMode = m_skipMode = m_hudHidden = false;
+    m_storyEndHandled = false;
     m_textInput.reset();
     (void)m_ui.UpdateUiData("input.visible", Variant(false));
     SetStoryAuto(std::nullopt);
@@ -2262,6 +2263,8 @@ bool PlayerApp::LoadSlot(int slot) {
         return false;
     }
     m_hudFadeSnap = true;
+    // A save taken at the end answers afterStoryEnd again once it is loaded.
+    m_storyEndHandled = false;
     if (snap->gameId != m_boot.gameId) {
         diag::Emit(diag::Diagnostic{
             .severity = diag::Severity::Error,
@@ -3612,9 +3615,17 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     if (!locked && input.ActionPressed(InputAction::Rollback)) {
         RollbackOneLine();
     }
+    // A right click hides the message window unless player.navigation asks
+    // for nothing or for a menu instead.
+    const bool rightClickHides = m_navigation.RightClickHidesHud();
     if (!locked && m_storyHudVisible &&
-        (input.RightClick() || input.ActionPressed(InputAction::ToggleUi))) {
+        ((rightClickHides && input.RightClick()) || input.ActionPressed(InputAction::ToggleUi))) {
         m_hudHidden = !m_hudHidden;
+    }
+    if (!locked && !m_textInput && input.RightClick() &&
+        m_navigation.gameRightClick.kind == NavigationTarget::Kind::Route) {
+        OpenScreen(m_navigation.gameRightClick.route);
+        return;
     }
 
     const auto syncChoiceTexts = [this] {
@@ -3772,6 +3783,19 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         }
     }
     syncChoiceTexts();
+
+    // The Story reached its end: player.navigation.afterStoryEnd decides what
+    // follows (by default nothing, and the last line stays on screen).
+    if (m_session->VM().State() != vn::VMState::Finished) {
+        m_storyEndHandled = false;
+    } else if (!m_storyEndHandled) {
+        m_storyEndHandled = true;
+        if (FollowStoryEnd()) {
+            if (m_appState == AppState::Game) RenderStageWithScripts();
+            RenderUIWithScripts();
+            return;
+        }
+    }
 
     // New dialogue lines feed the NVL page and the rollback ring.
     const std::uint64_t backlogSequence = m_session->Backlog().LastSequence();
@@ -4031,11 +4055,16 @@ void PlayerApp::MainLoop() {
         const bool gameplayRoute =
             currentRoute == "hud" || currentRoute == "game";
 
+        bool openedByShortcut = false;
         if (!handledUiShortcut && m_appState == AppState::Game &&
             !modalOpen && gameplayRoute) {
+            // Keys and gamepad buttons open these screens; a mouse button's
+            // default action (a right click is also `menu`) does not:
+            // player.navigation.gameRightClick decides what a right click does.
             for (const auto& [action, route] : m_screenTriggers)
-                if (input.ActionPressed(action)) {
+                if (input.ActionPressedWithoutPointer(action)) {
                     OpenScreen(route);
+                    openedByShortcut = true;
                     break;
                 }
             // An input binding may have opened a modal during this frame. Do
@@ -4045,7 +4074,9 @@ void PlayerApp::MainLoop() {
 
         if (modalOpen &&
             m_ui.CurrentScreen() != ui::GalgameUI::Screen::Video) {
-            if (!handledUiShortcut &&
+            // The key that opened a menu this frame (Escape bound to `menu`
+            // with a route) does not also close it.
+            if (!handledUiShortcut && !openedByShortcut &&
                 (input.RightClick() || input.KeyPressed(SDL_SCANCODE_ESCAPE))) {
                 HandleUIAction({"overlay.close", {}});
             }

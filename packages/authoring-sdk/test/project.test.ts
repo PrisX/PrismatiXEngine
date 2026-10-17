@@ -119,6 +119,37 @@ test("project compilation checks authored input action routes", () => {
   assert.ok(missing.diagnostics.some((item) => item.code === "PXBUILD1061"));
 });
 
+test("player.navigation names a keyword or a screen the Player can show", () => {
+  const compile = (navigation: unknown) => compileProject({
+    project: {...project, uiEntryPoints: {...project.uiEntryPoints, credits: "Content/UI/Title.pxui"},
+      settings: {"player.navigation": navigation}},
+    documents: {"Story/story.pxindex": storyIndex, "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": ui},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1,
+      locale: "zh-TW", strings: {}}},
+  });
+  for (const navigation of [{}, {afterStoryEnd: "stay"}, {afterStoryEnd: "title"},
+    {afterStoryEnd: "quit"}, {afterStoryEnd: "credits"}, {gameRightClick: "hideHud"},
+    {gameRightClick: "none"}, {gameRightClick: "settings"}, {gameRightClick: "credits"}]) {
+    const result = compile(navigation);
+    assert.equal(result.valid, true, `${JSON.stringify(navigation)}: ${JSON.stringify(result.diagnostics)}`);
+    assert.deepEqual(result.artifact?.project.settings?.["player.navigation"], navigation);
+  }
+  for (const navigation of [{afterStoryEnd: "missing"}, {afterStoryEnd: "hud"},
+    {gameRightClick: "title"}, {gameRightClick: "video"}]) {
+    const result = compile(navigation);
+    assert.equal(result.valid, false, JSON.stringify(navigation));
+    assert.ok(result.diagnostics.some((item) => item.code === "PXBUILD1111"),
+      `${JSON.stringify(navigation)}: ${JSON.stringify(result.diagnostics)}`);
+  }
+  // The schema rejects other shapes before the route check runs.
+  for (const navigation of [{afterStoryEnd: ""}, {afterStoryEnd: 1}, {onEnd: "title"}, "title"]) {
+    const result = compile(navigation);
+    assert.equal(result.valid, false, JSON.stringify(navigation));
+  }
+});
+
 test("cross-document diagnostics locate the exact authored JSON values", () => {
   const authoredProject = {...project, name: "測試專案", settings: {
     "player.presentationTransitions": {routePreset: "crossfade", routeDuration: 0.3,

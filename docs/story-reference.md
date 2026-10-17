@@ -844,6 +844,11 @@ without editing jumps. A scene that runs off its end without a jump or
 on its own, so one of several route endings in a chapter cannot run into the
 next by accident. A scene really named `next` is reached by that name.
 
+When the Story stops, at `[end]` or past the end of its last scene, the
+Player keeps the last line on screen unless `player.navigation.afterStoryEnd`
+returns to the title, quits or shows another screen (credits, an
+after-ending screen); see [Game flow](ui-reference.md#game-flow).
+
 ## Importing a writers' draft
 
 Writers often draft in Markdown (HackMD, Google Docs exports): a heading per

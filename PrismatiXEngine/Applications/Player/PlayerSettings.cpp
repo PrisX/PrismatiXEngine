@@ -46,10 +46,10 @@ namespace px::player {
 
 // The `player.*` entries of the project's settings: UI data, title music,
 // sounds, fonts, volumes, voice profiles, options, confirmations, choice
-// layout, presentation transitions and splashes. Their shapes are checked by
-// Contracts/project.schema.json at build time; this is the Player's reading
-// of them. Returns false (after emitting a diagnostic) when the Player
-// cannot start with them.
+// layout, presentation transitions, navigation and splashes. Their shapes
+// are checked by Contracts/project.schema.json at build time; this is the
+// Player's reading of them. Returns false (after emitting a diagnostic) when
+// the Player cannot start with them.
 bool PlayerApp::ApplyPlayerSettings(const nlohmann::json& settingsObject) {
     const nlohmann::json* settings = &settingsObject;
     if (const auto data = settings->find("player.uiData"); data != settings->end()) {
@@ -481,6 +481,17 @@ bool PlayerApp::ApplyPlayerSettings(const nlohmann::json& settingsObject) {
                     PresentationTransition{*preset, *duration});
             }
         }
+    }
+    if (const auto navigation = settings->find("player.navigation");
+        navigation != settings->end()) {
+        const auto parsed = ParseNavigationSettings(*navigation, [this](const std::string_view route) {
+            static constexpr std::string_view stock[] = {
+                "title", "backlog", "save", "load", "gallery", "settings"};
+            return m_boot.routeScenes.contains(std::string(route)) ||
+                   std::ranges::find(stock, route) != std::end(stock);
+        });
+        if (!parsed.settings) return badSetting("player.navigation", parsed.error);
+        m_navigation = *parsed.settings;
     }
     if (const auto titleVoices = settings->find("player.titleVoiceVariants");
         titleVoices != settings->end() && titleVoices->is_array()) {

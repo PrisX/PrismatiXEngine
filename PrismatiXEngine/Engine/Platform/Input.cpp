@@ -658,7 +658,10 @@ bool Input::ActionPressedWithoutKeyboard(const InputAction action) const {
 
 bool Input::ActionPressedWithoutPointer(const InputAction action) const {
     if (action == InputAction::Count) return false;
-    const std::string_view name = ActionName(action);
+    return ActionPressedWithoutPointer(ActionName(action));
+}
+
+bool Input::ActionPressedWithoutPointer(const std::string_view name) const {
     if (!ActionActive(name)) return false;
     bool emitted = false;
     for (const InputEvent& event : m_events) {

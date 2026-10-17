@@ -13,6 +13,7 @@ The [examples](examples/jsx-ui-authoring.tsx) show a complete scene.
 - [Sound settings](#sound-settings)
 - [Language](#language)
 - [Startup screens](#startup-screens)
+- [Game flow](#game-flow)
 - [Input actions and key bindings](#input-actions-and-key-bindings)
 - [Sprite lettering](#sprite-lettering)
 - [Placed items](#placed-items)
@@ -435,6 +436,54 @@ resolver is available; the Player chooses one available candidate at runtime.
 `audio` remains available for a single splash sound. The project schema checks
 these known settings, including paths and timing, before a distribution build.
 
+## Game flow
+
+How the stock Player moves between screens, and what decides each step:
+
+1. **Launch**: each `player.splashes` entry in order (see
+   [Startup screens](#startup-screens)), while the title's images load.
+2. **Title**: the route `entry.ui` names (`title` unless the project says
+   otherwise). Its buttons decide what comes next.
+3. **Buttons**: `game.start` starts the Story at its entry scene (the story
+   index's `entryScene`); `replay.launch` starts it at a named scene;
+   `game.continue` loads the newest save, or opens `load` when there is none;
+   `<route>.open` and `screen.open` open a screen over the current one;
+   `overlay.close` returns to the screen underneath; `title.open` returns to
+   the title (asking first when `player.confirmations.returnToTitle` is set);
+   `app.quit` quits (asking first when `player.confirmations.exit` is set).
+4. **In the game**: the `hud` route shows the Story. Keys open screens
+   through `inputActions` in `Content/game.pxgame` (B opens the backlog and F6
+   the save screen by default; give the built-in `menu` action, Escape, a
+   `route` to open a menu with it). A key's or gamepad button's `route` opens
+   its screen; a right click does what `player.navigation.gameRightClick`
+   says. Escape or a right click closes an open menu.
+5. **The end**: when the Story reaches `[end]` or runs off its last line,
+   `player.navigation.afterStoryEnd` decides what follows. The Story can also
+   leave earlier with `[ui route=... operation=replace]`.
+
+`player.navigation` sets what no button decides. Every field left out keeps
+the Player's own behaviour:
+
+```json
+"settings": {
+  "player.navigation": {
+    "afterStoryEnd": "credits",
+    "gameRightClick": "menu"
+  }
+}
+```
+
+| Field | Values | Default |
+| --- | --- | --- |
+| `afterStoryEnd` | `stay`, `title` (as `title.open`, without asking), `quit`, or a route shown in place of the HUD | `stay`: the last line stays on screen |
+| `gameRightClick` | `hideHud`, `none`, or a route opened as a menu (not `title`) | `hideHud`: a right click hides or shows the message window |
+
+A route here must be one the Player can show: a `uiEntryPoints` route or a
+stock screen, never `hud`, `game` or `video`. `prismatix validate` reports
+anything else as `PXBUILD1111`. An after-ending screen (staff roll, thanks)
+leads back with a `title.open` button; a right-click menu closes with
+`overlay.close`, Escape or another right click.
+
 ## Input actions and key bindings
 
 Put named actions in the project's `Content/game.pxgame` document. This is
@@ -483,7 +532,9 @@ by an extension or host using the named-action input API. `keys` may be
 omitted: a new custom action starts unbound, while an engine built-in keeps
 its engine default. Set `keys: []` explicitly to remove a built-in's default
 keyboard keys without removing its gamepad or wheel binding. Saved user
-keyboard and wheel choices override authored defaults. Reset restores the
+keyboard and wheel choices override authored defaults. A `route` answers the
+action's keys and gamepad buttons, not a mouse button that also fires it (a
+right click fires `menu`; see [Game flow](#game-flow)). Reset restores the
 authored keyboard defaults. Gamepad bindings are left intact.
 The order in `keys` is preserved for UI captions and saved settings (for
 example, `F2 / S` stays in that order rather than scancode order).

@@ -915,6 +915,32 @@ void PlayerApp::ReturnToTitle() {
     (void)m_session->Routes().Replace("title");
 }
 
+bool PlayerApp::FollowStoryEnd() {
+    const NavigationTarget& target = m_navigation.afterStoryEnd;
+    switch (target.kind) {
+        case NavigationTarget::Kind::Title:
+            PX_LOG_INFO("Player story ended; returning to the title");
+            ReturnToTitle();
+            return true;
+        case NavigationTarget::Kind::Quit:
+            PX_LOG_INFO("Player story ended; quitting");
+            m_quitRequested = true;
+            return true;
+        case NavigationTarget::Kind::Route: {
+            PX_LOG_INFO("Player story ended; showing route={}", target.route);
+            m_autoMode = m_skipMode = false;
+            CloseAllModals();
+            if (const Status routed = m_session->Routes().Replace(target.route); !routed) {
+                for (const auto& diagnostic : routed.Diagnostics()) diag::Emit(diagnostic);
+                return false;
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
 // Registers every Player-owned action of ui::kPlayerActions with the UI, and
 // checks that each one has a handler here and nothing else does.
 bool PlayerApp::RegisterUiActions() {

@@ -81,6 +81,10 @@
         "kind":{"type":"string","pattern":"^[A-Za-z0-9_]{1,48}$"},
         "dontAskOption":{"type":"string","pattern":"^[A-Za-z0-9_]{1,48}$"}
       }}},
+      "player.navigation":{"type":"object","additionalProperties":false,"properties":{
+        "afterStoryEnd":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+        "gameRightClick":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}
+      }},
       "player.splashes":{"type":"array","maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["scene"],"properties":{
         "scene":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
         "audio":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},

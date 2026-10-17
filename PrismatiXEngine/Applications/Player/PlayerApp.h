@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Applications/Player/PlayerNavigation.h"
 #include "Applications/Player/QaIpc.h"
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfile.h"
@@ -168,6 +169,13 @@ private:
     void FinishSlotComment(bool accept);
     static constexpr std::size_t kMaxSlotComment = 64;  // code points
     void ReturnToTitle();
+    // `player.navigation`; defaults keep the Player's own behaviour.
+    NavigationSettings m_navigation;
+    // The Story's end was answered (afterStoryEnd); cleared while it runs.
+    bool m_storyEndHandled = false;
+    // Does what afterStoryEnd asks once the Story has finished; true when it
+    // left the game screen (the frame should end here).
+    bool FollowStoryEnd();
     // Story [input]: the HUD's TextInput field asks for text, the VM waits,
     // and input.accept stores it in the variable.
     struct TextInputRequest {

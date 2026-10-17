@@ -1282,6 +1282,10 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
         Tests/Unit/Runtime/ProfileRulesTests.cpp
         PrismatiX.Unit.Runtime.ProfileRules "unit;runtime;settings" PrismatiXRuntime)
     prismatix_add_simple_test(
+        PrismatiXPlayerNavigationTests
+        Tests/Unit/Runtime/PlayerNavigationTests.cpp
+        PrismatiX.Unit.Player.Navigation "unit;player;settings" PrismatiXRuntime)
+    prismatix_add_simple_test(
         PrismatiXJobSystemTests
         Tests/Unit/Core/JobSystemTests.cpp
         PrismatiX.Unit.Core.JobSystem "unit;core;jobs;threads" PrismatiXRuntime)

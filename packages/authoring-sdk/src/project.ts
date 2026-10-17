@@ -1325,6 +1325,28 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       }
     }
   }
+  // player.navigation: a keyword, or a route the Player can show (never the
+  // game screen itself, and never the title as a right-click menu).
+  const navigation = settings["player.navigation"];
+  if (navigation !== null && typeof navigation === "object" && !Array.isArray(navigation)) {
+    const screens = new Set(["title", "backlog", "save", "load", "gallery", "settings",
+      ...Object.keys(project.uiEntryPoints)]);
+    for (const name of ["hud", "game", "video"]) screens.delete(name);
+    const keywords: Record<string, readonly string[]> = {
+      afterStoryEnd: ["stay", "title", "quit"],
+      gameRightClick: ["hideHud", "none"],
+    };
+    for (const [field, words] of Object.entries(keywords)) {
+      const value = (navigation as Record<string, JsonValue>)[field];
+      if (typeof value !== "string" || words.includes(value)) continue;
+      if (!screens.has(value) || (field === "gameRightClick" && value === "title"))
+        diagnostics.push(locatedIssue("PXBUILD1111",
+          `player.navigation.${field} must be ${words.join(", ")} or a route the Player can show` +
+            (field === "gameRightClick" ? " other than the title" : ""),
+          projectPath, `/settings/player.navigation/${field}`, value,
+          `settings.player.navigation.${field}: ${value}`));
+    }
+  }
   const playerOptions = settings["player.options"];
   const optionNames = playerOptions !== null && typeof playerOptions === "object" &&
     !Array.isArray(playerOptions) ? Object.keys(playerOptions) : [];
