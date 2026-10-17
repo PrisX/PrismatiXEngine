@@ -128,6 +128,8 @@ export interface PrismatixTestClient {
   action(id: string, argument?: string | number | boolean): Promise<void>;
   /** A key press, by key name ("F8", "Escape", "Return"). */
   key(name: string, options?: {readonly held?: boolean}): Promise<void>;
+  /** A left click at a point in game pixels, hit-tested like a real one. */
+  tap(x: number, y: number): Promise<void>;
   /** A built-in input action. */
   input(action: InputActionName): Promise<void>;
   /** Keys bound to a named input action. */
@@ -279,6 +281,7 @@ export class PlayerTestClient implements PrismatixTestClient {
   async key(name: string, options: {readonly held?: boolean} = {}): Promise<void> {
     await this.request("key", {name, ...(options.held === undefined ? {} : {held: options.held})});
   }
+  async tap(x: number, y: number): Promise<void> { await this.request("tap", {x, y}); }
   async input(action: InputActionName): Promise<void> { await this.request("input", {action}); }
   async bindings(action: string): Promise<{readonly exists: boolean; readonly keys: readonly string[]}> {
     return await this.request("bindings", {action}) as {exists: boolean; keys: string[]};

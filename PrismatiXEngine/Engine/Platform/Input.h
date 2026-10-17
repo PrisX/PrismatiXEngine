@@ -122,6 +122,10 @@ public:
     // Deterministic automation seam used by Player E2E and input conformance.
     void InjectAction(InputAction action);
     void InjectKeyPress(int scancode, bool held = false);
+    // A primary press and release at a logical point within this frame, as
+    // a touch tap arrives: the UI hit-tests it, then the game sees what the
+    // UI did not consume.
+    void InjectTap(float x, float y);
 
     // String actions are intentionally open-ended. Built-in action names use
     // the same kebab-case spelling as the scripting surface ("accept",

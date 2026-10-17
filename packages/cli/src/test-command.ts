@@ -39,7 +39,7 @@ export const testHelp = [
   "limit is --timeout when given, else the journey's own `export const timeoutMs = 600_000`, else",
   "180000 ms. The exit code is 1 when any journey failed.",
   "Protocol: newline-delimited JSON {id, op, ...} -> {id, ok, result|error} on 127.0.0.1; operations",
-  "state, controls, click, action, key, input, bindings, uiData, variable, jump, advance,",
+  "state, controls, click, action, key, tap, input, bindings, uiData, variable, jump, advance,",
   "advanceUntil, choose, waitFor, screenshot, save, load, setting, route, resource, log, batch, quit.",
 ];
 

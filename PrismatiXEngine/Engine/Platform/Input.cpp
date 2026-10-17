@@ -715,6 +715,12 @@ void Input::InjectKeyPress(const int scancode,const bool held) {
     AppendActionEventsForKey(scancode);
 }
 
+void Input::InjectTap(const float x, const float y) {
+    constexpr std::uint64_t kInjectedPointer = 0x5141;  // "QA"
+    AppendPrimaryPress(x, y, kInjectedPointer);
+    AppendPrimaryRelease(x, y, kInjectedPointer);
+}
+
 void Input::InjectFrame(const float mouseX, const float mouseY,
                         const bool leftClick) {
     const bool wasLeftDown = m_leftDown;

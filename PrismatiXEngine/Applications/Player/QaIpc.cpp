@@ -739,6 +739,13 @@ struct QaOps {
             app.m_runtime.GetInput().InjectKeyPress(*code, request.value("held", false));
             return Json::object();
         }
+        if (op == "tap") {
+            if (!request.contains("x") || !request["x"].is_number() ||
+                !request.contains("y") || !request["y"].is_number())
+                Fail("PXQA1001", "'x' and 'y' must be numbers");
+            app.m_runtime.GetInput().InjectTap(request["x"].get<float>(), request["y"].get<float>());
+            return Json::object();
+        }
         if (op == "input") {
             const std::string name = Text(request, "action");
             const auto found = std::ranges::find(kInputActions, name);

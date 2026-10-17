@@ -44,6 +44,10 @@
 //   action action [argument]    a Player action through HandleUIAction, or
 //                               an authored UI/script Action otherwise
 //   key name [held]             a key press, by Input key name ("F8")
+//   tap x y                     a left click (press and release) at a point
+//                               in logical game pixels, hit-tested like a
+//                               real one: a button acts, the Stage or a
+//                               message window advances
 //   input action                a built-in input action ("accept", ...)
 //   bindings action             keys bound to a named input action
 //   uiData key [value]          read UI data, or write it when value is set
