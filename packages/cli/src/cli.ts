@@ -1021,6 +1021,13 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     else absentTextInputs.add(resolve(conventional));
   }
   await loadDocument(raw.storyIndex);
+  // Likewise the conventional game catalog (input actions, gallery, variables)
+  // that the docs and editors write when the manifest names none.
+  if (raw.gameCatalog === undefined) {
+    const conventional = projectFile(root, "Content/game.pxgame");
+    if (existsSync(conventional)) raw.gameCatalog = "Content/game.pxgame";
+    else absentTextInputs.add(resolve(conventional));
+  }
   await loadDocument(raw.gameCatalog);
   for (const value of Array.isArray(raw.extensions) ? raw.extensions : []) await loadDocument(value);
   const authoredEntryPoints = object(authoredRaw.uiEntryPoints) ?? {};

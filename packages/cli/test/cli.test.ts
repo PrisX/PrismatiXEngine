@@ -263,6 +263,33 @@ test("a project without storyIndex builds the scenes `add scene` lists in Story/
   } finally { await rm(parent, {recursive: true, force: true}); }
 });
 
+test("a project without gameCatalog builds the conventional Content/game.pxgame", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "prismatix-cli-default-catalog-"));
+  const root = join(parent, "catalog-game");
+  try {
+    await createStarter(root, {name: "Catalog", locale: "zh-TW", empty: true, install: async (directory) => {
+      await writeFile(join(directory, "package-lock.json"), JSON.stringify({lockfileVersion: 3}));
+      await mkdir(join(directory, "node_modules", "@prismatix"), {recursive: true});
+      await symlink(resolve("."), join(directory, "node_modules", "@prismatix", "cli"), "junction");
+    }});
+    const project = join(root, "prismatix.json");
+    assert.equal((JSON.parse(await readFile(project, "utf8")) as {gameCatalog?: string}).gameCatalog, undefined);
+    const catalog = (route: string) => JSON.stringify({
+      format: "PrismatiXGame", schemaRevision: 1, variables: [], gallery: [], unlockables: [],
+      inputActions: [{id: "menu", context: "game", route}],
+    });
+    // A route the catalog names is checked, so the file was read...
+    await write(join(root, "Content/game.pxgame"), catalog("no-such-screen"));
+    const rejected = run(["validate", project]);
+    assert.equal(rejected.status, 1, rejected.stdout + rejected.stderr);
+    assert.match(rejected.stdout + rejected.stderr, /PXBUILD1061/u);
+    // ...and a real one validates.
+    await write(join(root, "Content/game.pxgame"), catalog("title"));
+    const validated = run(["validate", project]);
+    assert.equal(validated.status, 0, validated.stdout + validated.stderr);
+  } finally { await rm(parent, {recursive: true, force: true}); }
+});
+
 test("create scaffolds a canonical playable starter without author-supplied UUIDs", async () => {
   const parent = await mkdtemp(join(tmpdir(), "prismatix-cli-create-"));
   const root = join(parent, "hello-game");
