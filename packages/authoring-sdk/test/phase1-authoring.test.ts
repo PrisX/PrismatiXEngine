@@ -247,3 +247,18 @@ test("stable source id assignment is idempotent and reports durable anchors", ()
     entry.kind === "dialogue")?.sourceId;
   assert.equal(editedDialogue, originalDialogue);
 });
+
+test("a project with a title route starts on it even when other routes sort first", () => {
+  // The adv template registers backlog, hud, load, save, settings and title;
+  // without an explicit entry.ui the game must still open on its title.
+  const routes = {backlog: "Content/UI/Backlog.pxui", hud: "Content/UI/HUD.pxui",
+    save: "Content/UI/Save.pxui", title: "Content/UI/Title.pxui"};
+  const normalized = normalizeProject({project: {id: "adv-game", uiEntryPoints: routes}});
+  assert.equal(normalized.valid, true, JSON.stringify(normalized.diagnostics));
+  assert.equal(normalized.value?.project.entry.ui, "title");
+  const withoutTitle = normalizeProject({project: {id: "menu-game",
+    uiEntryPoints: {menu: "Content/UI/Menu.pxui", hud: "Content/UI/HUD.pxui"}}});
+  assert.equal(withoutTitle.value?.project.entry.ui, "hud");
+  const explicit = normalizeProject({project: {id: "intro-game", uiEntryPoints: routes, entry: {ui: "hud"}}});
+  assert.equal(explicit.value?.project.entry.ui, "hud");
+});

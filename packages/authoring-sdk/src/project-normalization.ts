@@ -658,7 +658,9 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
     return {diagnostics: galleryDiagnostics, valid: false};
   const uiEntryPoints = object(raw.uiEntryPoints);
   const defaultUiPath = "Content/UI/Title.pxui";
-  const defaultUiRoute = uiEntryPoints === undefined
+  // Games start on their title screen. Only a project without a "title"
+  // route falls back to another one (the alphabetical first, for stability).
+  const defaultUiRoute = uiEntryPoints === undefined || Object.hasOwn(uiEntryPoints, "title")
     ? "title" : Object.keys(uiEntryPoints).sort()[0] ?? "title";
   const entry = object(raw.entry) ?? {};
   const explicitStoryIndex = object(input.documents?.[storyIndexPath]);
