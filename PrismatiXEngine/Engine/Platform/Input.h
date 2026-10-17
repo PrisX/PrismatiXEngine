@@ -126,6 +126,8 @@ public:
     // a touch tap arrives: the UI hit-tests it, then the game sees what the
     // UI did not consume.
     void InjectTap(float x, float y);
+    // A secondary (right) click at a logical point within this frame.
+    void InjectSecondaryClick(float x, float y);
 
     // String actions are intentionally open-ended. Built-in action names use
     // the same kebab-case spelling as the scripting surface ("accept",

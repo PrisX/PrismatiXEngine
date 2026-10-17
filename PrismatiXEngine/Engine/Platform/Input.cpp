@@ -721,6 +721,10 @@ void Input::InjectTap(const float x, const float y) {
     AppendPrimaryRelease(x, y, kInjectedPointer);
 }
 
+void Input::InjectSecondaryClick(const float x, const float y) {
+    AppendSecondaryClick(x, y);
+}
+
 void Input::InjectFrame(const float mouseX, const float mouseY,
                         const bool leftClick) {
     const bool wasLeftDown = m_leftDown;

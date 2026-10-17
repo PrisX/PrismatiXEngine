@@ -50,6 +50,8 @@ export interface PlayerState {
   /** The kind of the confirmation dialog on screen, or null. */
   readonly dialog: string | null;
   readonly locale: string;
+  /** While the Player boots: the startup screen on show (player.splashes). */
+  readonly splash?: {readonly index: number; readonly scene: string};
   readonly locales?: readonly string[];
   readonly audio?: {readonly music: string; readonly voice: string; readonly mainVolume: number};
   readonly backlog?: {readonly count: number; readonly lastVoice: string};
@@ -128,8 +130,11 @@ export interface PrismatixTestClient {
   action(id: string, argument?: string | number | boolean): Promise<void>;
   /** A key press, by key name ("F8", "Escape", "Return"). */
   key(name: string, options?: {readonly held?: boolean}): Promise<void>;
-  /** A left click at a point in game pixels, hit-tested like a real one. */
-  tap(x: number, y: number): Promise<void>;
+  /**
+   * A click at a point in game pixels, hit-tested like a real one: left by
+   * default, `{button: "secondary"}` for a right click.
+   */
+  tap(x: number, y: number, options?: {readonly button?: "primary" | "secondary"}): Promise<void>;
   /** A built-in input action. */
   input(action: InputActionName): Promise<void>;
   /** Keys bound to a named input action. */
@@ -281,7 +286,9 @@ export class PlayerTestClient implements PrismatixTestClient {
   async key(name: string, options: {readonly held?: boolean} = {}): Promise<void> {
     await this.request("key", {name, ...(options.held === undefined ? {} : {held: options.held})});
   }
-  async tap(x: number, y: number): Promise<void> { await this.request("tap", {x, y}); }
+  async tap(x: number, y: number, options: {readonly button?: "primary" | "secondary"} = {}): Promise<void> {
+    await this.request("tap", {x, y, ...(options.button === undefined ? {} : {button: options.button})});
+  }
   async input(action: InputActionName): Promise<void> { await this.request("input", {action}); }
   async bindings(action: string): Promise<{readonly exists: boolean; readonly keys: readonly string[]}> {
     return await this.request("bindings", {action}) as {exists: boolean; keys: string[]};

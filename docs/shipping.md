@@ -684,6 +684,9 @@ export default async function tour(px: PrismatixTestClient) {
   Stage frame is drawn, as the Save screen does, so the slot shows a real
   thumbnail. Inside `px.batch([...])`, which runs in one frame, `save` writes
   at once and without a thumbnail.
+- `px.tap(x, y)` clicks at a point in game pixels; `px.tap(x, y, {button:
+  "secondary"})` right-clicks. While the Player boots, `state.splash` names
+  the startup screen on show (`{index, scene}`).
 - Screenshots with relative paths go to `.prismatix/test-results/<journey>`.
   On failure the report shows the tail of the Player log and keeps the user
   data.

@@ -452,6 +452,14 @@ struct QaOps {
             {"dialog", app.m_dialog ? Json(app.m_dialog->kind) : Json(nullptr)},
             {"locale", app.m_settings.language},
         };
+        // The startup screen on show while the Player boots (player.splashes).
+        if (app.m_appState == PlayerApp::AppState::BootSplash && app.m_splash &&
+            !app.m_splash->Completed()) {
+            const std::size_t index = app.m_splash->CurrentIndex();
+            state["splash"] = {{"index", index},
+                               {"scene", index < app.m_boot.splashes.size()
+                                   ? app.m_boot.splashes[index].scene.lastKnownPath : std::string{}}};
+        }
         if (!full) return state;
         if (const auto runtimeState = app.m_ui.CaptureRuntimeState(); runtimeState.animation)
             state["ui"]["animationPosition"] = runtimeState.animation->position;
@@ -743,7 +751,14 @@ struct QaOps {
             if (!request.contains("x") || !request["x"].is_number() ||
                 !request.contains("y") || !request["y"].is_number())
                 Fail("PXQA1001", "'x' and 'y' must be numbers");
-            app.m_runtime.GetInput().InjectTap(request["x"].get<float>(), request["y"].get<float>());
+            // "secondary" is a right click (the game's right-click behaviour).
+            const std::string button = request.value("button", std::string("primary"));
+            if (button != "primary" && button != "secondary")
+                Fail("PXQA1001", "'button' must be primary or secondary");
+            if (button == "secondary")
+                app.m_runtime.GetInput().InjectSecondaryClick(request["x"].get<float>(), request["y"].get<float>());
+            else
+                app.m_runtime.GetInput().InjectTap(request["x"].get<float>(), request["y"].get<float>());
             return Json::object();
         }
         if (op == "input") {

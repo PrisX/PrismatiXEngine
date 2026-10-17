@@ -55,6 +55,21 @@ test("advanceUntil sends one request with the condition, timeout and line limit"
   }
 });
 
+test("tap sends a right click only when asked", async () => {
+  const player = await fakePlayer(() => ({}));
+  const client = await PlayerTestClient.connect(player.port, tmpdir());
+  try {
+    await client.tap(640, 360);
+    await client.tap(10, 20, {button: "secondary"});
+    const [left, right] = player.requests;
+    assert.deepEqual({...left, id: undefined}, {id: undefined, op: "tap", x: 640, y: 360});
+    assert.deepEqual({...right, id: undefined}, {id: undefined, op: "tap", x: 10, y: 20, button: "secondary"});
+  } finally {
+    client.close();
+    player.close();
+  }
+});
+
 test("a journey may set its own time limit", async () => {
   const scratch = await mkdtemp(join(tmpdir(), "prismatix-journey-"));
   try {
