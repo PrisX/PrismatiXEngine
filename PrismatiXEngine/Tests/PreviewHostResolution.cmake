@@ -1,0 +1,93 @@
+if(NOT DEFINED PREVIEW_HOST OR NOT EXISTS "${PREVIEW_HOST}")
+    message(FATAL_ERROR "PreviewHost executable is missing")
+endif()
+if(NOT DEFINED FIXTURE_ROOT OR NOT EXISTS "${FIXTURE_ROOT}/project.pxproject")
+    message(FATAL_ERROR "PreviewHost resolution fixture is missing")
+endif()
+if(NOT DEFINED WORK_DIR)
+    message(FATAL_ERROR "PreviewHost resolution work directory is missing")
+endif()
+
+# Preview renders the project's own canvas, like the Player: a 1920x1080
+# project must not be drawn on the runtime's default 1280x720 canvas, and a
+# later revision with another resolution must take effect.
+set(FIXTURE_RESOLUTION "\"resolution\": {\"width\": 1280, \"height\": 720}")
+file(READ "${FIXTURE_ROOT}/project.pxproject" FIXTURE_PROJECT)
+string(FIND "${FIXTURE_PROJECT}" "${FIXTURE_RESOLUTION}" FIXTURE_RESOLUTION_AT)
+if(FIXTURE_RESOLUTION_AT EQUAL -1)
+    message(FATAL_ERROR "PreviewHost fixture no longer declares its 1280x720 resolution")
+endif()
+function(prepare_project name resolution)
+    set(root "${WORK_DIR}/${name}")
+    file(REMOVE_RECURSE "${root}")
+    file(COPY "${FIXTURE_ROOT}/" DESTINATION "${root}")
+    string(REPLACE "${FIXTURE_RESOLUTION}" "${resolution}" project "${FIXTURE_PROJECT}")
+    file(WRITE "${root}/project.pxproject" "${project}")
+endfunction()
+prepare_project(wide "\"resolution\": {\"width\": 1920, \"height\": 1080}")
+prepare_project(classic "\"resolution\": {\"width\": 1024, \"height\": 768}")
+prepare_project(invalid "\"resolution\": {\"width\": 0, \"height\": 720}")
+
+file(TO_CMAKE_PATH "${WORK_DIR}" WORK_ROOT)
+set(ENVELOPE "\"protocol\":\"PrismatiXPreviewProtocol\",\"schemaRevision\":1,\"protocolVersion\":1,\"sessionId\":\"resolution-session\"")
+set(INPUT "{\"type\":\"hello\",${ENVELOPE},\"requestId\":\"hello-resolution\",\"documentId\":\"\",\"revision\":0}\n")
+string(APPEND INPUT "{\"type\":\"applyRuntimeIr\",${ENVELOPE},\"requestId\":\"apply-wide\",\"documentId\":\"script-debug-document\",\"revision\":1,\"projectRoot\":\"${WORK_ROOT}/wide\",\"committedRevision\":1,\"irPath\":\"debug.pxir\"}\n")
+string(APPEND INPUT "{\"type\":\"applyRuntimeIr\",${ENVELOPE},\"requestId\":\"apply-classic\",\"documentId\":\"preview-controls-document\",\"revision\":1,\"projectRoot\":\"${WORK_ROOT}/classic\",\"committedRevision\":1,\"irPath\":\"preview-controls.pxir\"}\n")
+string(APPEND INPUT "{\"type\":\"applyRuntimeIr\",${ENVELOPE},\"requestId\":\"apply-invalid\",\"documentId\":\"typed-action-document\",\"revision\":1,\"projectRoot\":\"${WORK_ROOT}/invalid\",\"committedRevision\":1,\"irPath\":\"typed-action.pxir\"}\n")
+string(APPEND INPUT "{\"type\":\"shutdown\",${ENVELOPE},\"requestId\":\"shutdown-resolution\",\"documentId\":\"\",\"revision\":0}\n")
+file(WRITE "${WORK_DIR}/input.ndjson" "${INPUT}")
+
+execute_process(
+    COMMAND "${PREVIEW_HOST}"
+    INPUT_FILE "${WORK_DIR}/input.ndjson"
+    OUTPUT_VARIABLE OUTPUT
+    ERROR_VARIABLE ERRORS
+    RESULT_VARIABLE RESULT
+    TIMEOUT 20
+)
+if(NOT RESULT EQUAL 0)
+    message(FATAL_ERROR "PreviewHost resolution fixture failed (${RESULT}): ${ERRORS}")
+endif()
+
+string(REPLACE "\r\n" "\n" OUTPUT "${OUTPUT}")
+string(REGEX REPLACE "\n+$" "" OUTPUT "${OUTPUT}")
+string(REPLACE "\n" ";" OUTPUT_LINES "${OUTPUT}")
+
+set(WIDE_ACK FALSE)
+set(CLASSIC_ACK FALSE)
+set(INVALID_ACK FALSE)
+set(SHUTDOWN_ACK FALSE)
+foreach(LINE IN LISTS OUTPUT_LINES)
+    string(JSON TYPE GET "${LINE}" type)
+    string(JSON REQUEST_ID GET "${LINE}" requestId)
+    if(TYPE STREQUAL "runtimeIrApplied")
+        string(JSON WIDTH GET "${LINE}" logicalWidth)
+        string(JSON HEIGHT GET "${LINE}" logicalHeight)
+        if(REQUEST_ID STREQUAL "apply-wide")
+            if(NOT WIDTH EQUAL 1920 OR NOT HEIGHT EQUAL 1080)
+                message(FATAL_ERROR "Preview did not use the 1920x1080 project canvas: ${LINE}")
+            endif()
+            set(WIDE_ACK TRUE)
+        elseif(REQUEST_ID STREQUAL "apply-classic")
+            if(NOT WIDTH EQUAL 1024 OR NOT HEIGHT EQUAL 768)
+                message(FATAL_ERROR "A re-applied project did not switch to its 1024x768 canvas: ${LINE}")
+            endif()
+            set(CLASSIC_ACK TRUE)
+        else()
+            message(FATAL_ERROR "Unexpected Runtime IR apply: ${LINE}")
+        endif()
+    elseif(TYPE STREQUAL "error" AND REQUEST_ID STREQUAL "apply-invalid")
+        string(JSON CODE GET "${LINE}" code)
+        if(NOT CODE STREQUAL "PXPREVIEW-RESOLUTION-001")
+            message(FATAL_ERROR "An invalid project resolution was not rejected: ${LINE}")
+        endif()
+        set(INVALID_ACK TRUE)
+    elseif(TYPE STREQUAL "shutdownAccepted")
+        set(SHUTDOWN_ACK TRUE)
+    endif()
+endforeach()
+
+if(NOT WIDE_ACK OR NOT CLASSIC_ACK OR NOT INVALID_ACK OR NOT SHUTDOWN_ACK)
+    message(FATAL_ERROR
+            "PreviewHost resolution contract incomplete wide=${WIDE_ACK} classic=${CLASSIC_ACK} invalid=${INVALID_ACK} shutdown=${SHUTDOWN_ACK}: ${OUTPUT}")
+endif()

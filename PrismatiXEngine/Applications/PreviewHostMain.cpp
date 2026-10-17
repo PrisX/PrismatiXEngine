@@ -19,7 +19,9 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "Engine/Diagnostics/Diagnostic.h"
@@ -1455,6 +1457,8 @@ private:
         response["gameCatalogInputBindingCount"] = m_gameCatalogInputBindingCount;
         response["gameCatalogGalleryItemCount"] = m_gameCatalogGalleryItemCount;
         response["renderMode"] = "nativeWindow";
+        response["logicalWidth"] = m_resolution.width;
+        response["logicalHeight"] = m_resolution.height;
         Write(response);
         (void)m_previewSession->Events();
     }
@@ -2085,10 +2089,93 @@ private:
         return result;
     }
 
+    struct PreviewResolution {
+        int width = 1280;
+        int height = 720;
+        bool operator==(const PreviewResolution&) const = default;
+    };
+
+    // The compiled project's logical resolution, which the Player uses as its
+    // canvas. Stage sprites and authored UI are laid out in these coordinates,
+    // so Preview must render the same canvas (letterboxed into its window).
+    std::optional<PreviewResolution> ReadProjectResolution(
+        const std::filesystem::path& projectRoot) {
+        const auto projectFile =
+            ReadProjectFile(px::PathToUtf8(projectRoot), "project.pxproject");
+        const Json project = projectFile
+                                 ? Json::parse(projectFile->second, nullptr, false)
+                                 : Json(Json::value_t::discarded);
+        PreviewResolution resolution;
+        if (!project.is_object()) return resolution;
+        const auto declared = project.find("resolution");
+        if (declared == project.end()) return resolution;
+        const auto dimension = [&declared](const char* name) {
+            const auto value = declared->find(name);
+            return value != declared->end() && value->is_number_integer()
+                       ? value->get<std::int64_t>()
+                       : std::int64_t{0};
+        };
+        const auto width = declared->is_object() ? dimension("width") : 0;
+        const auto height = declared->is_object() ? dimension("height") : 0;
+        if (width < 16 || height < 16 || width > 16384 || height > 16384) {
+            m_runtimeStartupErrorCode = "PXPREVIEW-RESOLUTION-001";
+            m_runtimeStartupErrorMessage =
+                "Compiled project resolution must be integer width and height between 16 and 16384";
+            return std::nullopt;
+        }
+        resolution.width = static_cast<int>(width);
+        resolution.height = static_cast<int>(height);
+        return resolution;
+    }
+
+    // The Preview window keeps the project's aspect ratio. A first window fits
+    // within 1280x720 so a 1080p or 4K project does not open a window larger
+    // than the editor next to it; a runtime rebuilt for a new revision fits
+    // within the window the author already had. The canvas itself always
+    // stays at project resolution and is letterboxed into the window.
+    static std::pair<int, int> PreviewWindowSize(
+        const PreviewResolution& resolution,
+        const std::optional<std::pair<int, int>>& previousWindow = std::nullopt) {
+        double scale = std::min({1.0, 1280.0 / resolution.width,
+                                 720.0 / resolution.height});
+        if (previousWindow && previousWindow->first > 0 && previousWindow->second > 0)
+            scale = std::min(static_cast<double>(previousWindow->first) / resolution.width,
+                             static_cast<double>(previousWindow->second) / resolution.height);
+        return {std::max(1, static_cast<int>(std::lround(resolution.width * scale))),
+                std::max(1, static_cast<int>(std::lround(resolution.height * scale)))};
+    }
+
+    std::optional<std::pair<int, int>> CurrentWindowSize() const {
+        if (!m_runtime) return std::nullopt;
+        int width = 0;
+        int height = 0;
+        m_runtime->GetWindow().GetSize(width, height);
+        if (width <= 0 || height <= 0) return std::nullopt;
+        return std::pair{width, height};
+    }
+
+    void ApplyResolution(const PreviewResolution& resolution) {
+        m_resolution = resolution;
+        m_hud.SetBuiltinCanvas(resolution.width, resolution.height);
+        if (!m_runtime) return;
+        const auto previousWindow = CurrentWindowSize();
+        m_runtime->Renderer().SetLogicalSize(resolution.width, resolution.height);
+        m_runtime->GetWindow().SetAspectRatio(static_cast<float>(resolution.width) /
+                                              static_cast<float>(resolution.height));
+        const auto [width, height] = PreviewWindowSize(resolution, previousWindow);
+        (void)m_runtime->GetWindow().Resize(width, height);
+    }
+
     bool EnsureRuntime(const std::filesystem::path& projectRoot) {
+        m_runtimeStartupErrorCode.clear();
+        m_runtimeStartupErrorMessage.clear();
+        const auto resolution = ReadProjectResolution(projectRoot);
+        if (!resolution) return false;
         if (m_runtime && m_projectRoot == projectRoot) {
             const auto extensions = ReadPreviewExtensions(*m_runtime);
             if (!extensions) return false;
+            // A re-applied revision may change the project resolution.
+            if (*resolution != m_resolution) ApplyResolution(*resolution);
             if (extensions->buildIdentity != m_extensionBuildIdentity) {
                 spdlog::info(
                     "Preview extension graph changed; rebuilding candidate Runtime session");
@@ -2114,6 +2201,7 @@ private:
         m_pendingPreviewSave.reset();
         m_previewActions.clear();
         m_session.reset();
+        const auto previousWindow = CurrentWindowSize();
         m_runtime.reset();
         m_appliedRevisions.clear();
         m_appliedUiRevisions.clear();
@@ -2139,11 +2227,18 @@ private:
         px::RuntimeConfig config;
         config.title = "PrismatiX Preview";
         config.mountDirs = { px::PathToUtf8(projectRoot) };
+        config.logicalWidth = resolution->width;
+        config.logicalHeight = resolution->height;
+        std::tie(config.width, config.height) =
+            PreviewWindowSize(*resolution, previousWindow);
         spdlog::info("Initializing native runtime projectRoot={}", px::PathToUtf8(projectRoot));
         if (!runtime->Init(config)) {
             m_runtimeStartupErrorMessage = "Native preview runtime could not initialize";
             return false;
         }
+        // Like the Player: built-in screens lay out on the project canvas.
+        m_resolution = *resolution;
+        m_hud.SetBuiltinCanvas(resolution->width, resolution->height);
         px::vn::GameCatalog catalog;
         bool characterResourcesDeclared = false;
         if (!LoadCharacterCatalog(*runtime, catalog, characterResourcesDeclared)) {
@@ -2275,8 +2370,8 @@ private:
                 {"autoWaitMs", px::Variant(1400)},
                 {"skipReadOnly", px::Variant(true)},
                 {"fullscreen", px::Variant(false)},
-                {"windowWidth", px::Variant(1280)},
-                {"windowHeight", px::Variant(720)},
+                {"windowWidth", px::Variant(config.width)},
+                {"windowHeight", px::Variant(config.height)},
                 {"language", px::Variant("preview")},
                 {"textScale", px::Variant(1.0)},
                 {"highContrast", px::Variant(false)},
@@ -2566,6 +2661,7 @@ private:
     px::ui::ObservableViewModel m_uiPreviewViewModel;
     px::ui::UIContext m_uiPreview;
     std::filesystem::path m_projectRoot;
+    PreviewResolution m_resolution;
     std::string m_extensionBuildIdentity;
     std::unordered_map<std::string, std::uint64_t> m_appliedRevisions;
     std::unordered_map<std::string, std::uint64_t> m_appliedUiRevisions;

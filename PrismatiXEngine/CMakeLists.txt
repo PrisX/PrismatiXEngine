@@ -1117,6 +1117,14 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PreviewHostRuntimeAssets.cmake)
     set_tests_properties(PrismatiX.SDK.PreviewHostRuntimeAssets
                          PROPERTIES LABELS "sdk;contract;preview;narrative;resource")
+    add_test(NAME PrismatiX.SDK.PreviewHostResolution
+        COMMAND ${CMAKE_COMMAND}
+            -DPREVIEW_HOST=$<TARGET_FILE:PrismatiXPreviewHost>
+            -DFIXTURE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/PreviewHostScript
+            -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/PreviewHostResolution
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PreviewHostResolution.cmake)
+    set_tests_properties(PrismatiX.SDK.PreviewHostResolution
+                         PROPERTIES LABELS "sdk;contract;preview")
 
     function(prismatix_add_simple_test target source test_name labels link_target)
         add_executable(${target} ${source})
