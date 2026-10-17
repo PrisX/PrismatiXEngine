@@ -511,6 +511,8 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             Add(command, "y", Argument(operation, "y"));
             Add(command, "scale", Argument(operation, "scale"));
             Add(command, "rotate", Argument(operation, "rotate"));
+            Add(command, "defaultScale", Argument(operation, "defaultScale"));
+            Add(command, "defaultY", Argument(operation, "defaultY"));
             const auto transition = Argument(operation, "transition");
             if (transition == "auto") Add(command, "transitionMode", transition);
             else Add(command, "transition", transition);

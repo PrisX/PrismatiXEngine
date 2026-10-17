@@ -828,10 +828,14 @@ void VM::ExecuteSimple(const Command& cmd) {
         }
         // A show without a position keeps a visible actor where it stands,
         // so an expression change does not snap it back to center. An
-        // explicit position is a fresh placement with default offsets.
+        // explicit position is a fresh placement with default offsets; the
+        // character's own size (defaultScale/defaultY) replaces 1 and 0.
         const bool placed = cmd.Has("slot") || cmd.Has("pos");
         const auto current = placed ? std::nullopt : m_stage.FindCharacterPlacement(name);
-        const Stage::CharacterPlacement keep = current.value_or(Stage::CharacterPlacement{});
+        Stage::CharacterPlacement fresh;
+        fresh.scale = ParseFloat(cmd.Get("defaultScale"), 1.0f);
+        fresh.offsetY = ParseFloat(cmd.Get("defaultY"), 0.0f);
+        const Stage::CharacterPlacement keep = current.value_or(fresh);
         const int slot = placed ? ParseInt(cmd.Get("slot", cmd.Get("pos", "2")), 2) : keep.slot;
         const float ox = ParseFloat(cmd.Get("x"), keep.offsetX);
         const float oy = ParseFloat(cmd.Get("y"), keep.offsetY);

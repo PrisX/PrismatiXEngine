@@ -618,6 +618,36 @@ int main() {
     assert(moved && moved->slot == 3 && moved->offsetX == 0.0f && moved->scale == 1.0f);
     clearStage.ClearCharacters(false);
 
+    // A character's own size (.pxcharacter stage) replaces 1 and 0 for a
+    // fresh placement only: an expression change keeps a [move] zoom.
+    {
+        px::sdk::RuntimeIrDocument sized;
+        sized.documentId = "default-size-runtime";
+        sized.operations = {
+            Operation("first", "showCharacter", {{"character", "tall"},
+                {"sprite", "Assets/tall.webp"}, {"transition", "false"},
+                {"defaultScale", "0.5"}, {"defaultY", "40"}}),
+            Operation("sized-end", "endStory"),
+        };
+        assert(clearVm.LoadCompiledProgram(px::CompileRuntimeIr(sized),
+                                           "memory://default-size-first"));
+        const auto first = clearStage.FindCharacterPlacement("tall");
+        assert(first && first->slot == 2 && first->scale == 0.5f && first->offsetY == 40.0f);
+        clearStage.SetCharacter("tall", "Assets/tall.webp", 2, false, 0.0f, 40.0f, 0.7f);
+        sized.operations.front().arguments["sprite"] = "Assets/tall-smile.webp";
+        assert(clearVm.LoadCompiledProgram(px::CompileRuntimeIr(sized),
+                                           "memory://default-size-keep"));
+        const auto zoomed = clearStage.FindCharacterPlacement("tall");
+        assert(zoomed && zoomed->scale == 0.7f && zoomed->offsetY == 40.0f);
+        sized.operations.front().arguments["position"] = "1";
+        sized.operations.front().arguments["scale"] = "0.9";
+        assert(clearVm.LoadCompiledProgram(px::CompileRuntimeIr(sized),
+                                           "memory://default-size-placed"));
+        const auto placed = clearStage.FindCharacterPlacement("tall");
+        assert(placed && placed->slot == 1 && placed->scale == 0.9f && placed->offsetY == 40.0f);
+        clearStage.ClearCharacters(false);
+    }
+
     // Relative actions return to rest, loop until stopped, and survive saves.
     {
         bool finished = false;
