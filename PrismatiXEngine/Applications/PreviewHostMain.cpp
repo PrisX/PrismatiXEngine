@@ -21,7 +21,6 @@
 #include <optional>
 #include <set>
 #include <sstream>
-#include <stop_token>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -47,20 +46,7 @@
 #include "Engine/UI/UIContext.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/VN/GameCatalog.h"
-
-// Last, so Win32 macros cannot rename identifiers in the engine headers.
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#include <tlhelp32.h>
-#else
-#include <unistd.h>
-#endif
+#include "Engine/Platform/ProcessWatch.h"
 
 namespace {
 
@@ -2740,65 +2726,22 @@ void ReadRequests(RequestQueue& queue) {
     queue.condition.notify_one();
 }
 
-// A probe that reports whether the process that launched PreviewHost is still
-// running, or an empty function when the parent cannot be watched.
-std::function<bool()> ParentProcessProbe() {
-#if defined(_WIN32)
-    const DWORD self = GetCurrentProcessId();
-    DWORD parent = 0;
-    if (HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        snapshot != INVALID_HANDLE_VALUE) {
-        PROCESSENTRY32W entry{};
-        entry.dwSize = sizeof(entry);
-        for (BOOL found = Process32FirstW(snapshot, &entry); found;
-             found = Process32NextW(snapshot, &entry)) {
-            if (entry.th32ProcessID == self) {
-                parent = entry.th32ParentProcessID;
-                break;
-            }
-        }
-        CloseHandle(snapshot);
-    }
-    if (parent == 0) return {};
-    HANDLE handle = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, parent);
-    if (!handle) return {};
-    // Windows reuses process ids: a "parent" created after this process is an
-    // unrelated process, meaning the real parent is already gone.
-    FILETIME parentCreated{}, selfCreated{}, unused1{}, unused2{}, unused3{};
-    if (GetProcessTimes(handle, &parentCreated, &unused1, &unused2, &unused3) &&
-        GetProcessTimes(GetCurrentProcess(), &selfCreated, &unused1, &unused2, &unused3) &&
-        CompareFileTime(&parentCreated, &selfCreated) > 0) {
-        CloseHandle(handle);
-        return [] { return false; };
-    }
-    const std::shared_ptr<void> owned(handle, CloseHandle);
-    return [owned] { return WaitForSingleObject(owned.get(), 0) == WAIT_TIMEOUT; };
-#else
-    const pid_t parent = getppid();
-    if (parent <= 1) return {};
-    return [parent] { return getppid() == parent; };
-#endif
-}
-
 // The protocol client owns PreviewHost through stdin. Killing the client
 // normally closes that pipe, but a copy of its write end can outlive the
 // client in another process (an inherited handle), which left Preview windows
 // open after `prismatix dev` died. Treat the parent's exit as end of input too.
-void WatchParentProcess(const std::stop_token& stop, RequestQueue& queue,
-                        const std::function<bool()>& parentAlive) {
-    if (!parentAlive) return;
-    while (!stop.stop_requested()) {
-        if (!parentAlive()) {
+std::unique_ptr<px::platform::ProcessExitWatch> WatchParentProcess(RequestQueue& queue) {
+    const auto parent = px::platform::ParentProcessId();
+    if (!parent) return nullptr;
+    return px::platform::ProcessExitWatch::Start(
+        px::platform::ProcessAliveProbe(*parent), [&queue] {
             {
                 std::lock_guard lock(queue.mutex);
                 queue.inputClosed = true;
                 queue.parentExited = true;
             }
             queue.condition.notify_one();
-            return;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
+        });
 }
 
 }  // namespace
@@ -2815,10 +2758,7 @@ int main() {
 
     RequestQueue queue;
     std::thread reader([&queue] { ReadRequests(queue); });
-    std::jthread parentWatch(
-        [&queue, parentAlive = ParentProcessProbe()](const std::stop_token& stop) {
-            WatchParentProcess(stop, queue, parentAlive);
-        });
+    auto parentWatch = WatchParentProcess(queue);
     PreviewHost host(queue, std::move(events));
     const int result = host.Run();
     spdlog::shutdown();
@@ -2832,8 +2772,7 @@ int main() {
         });
         readerFinished = queue.readerFinished;
     }
-    parentWatch.request_stop();
-    parentWatch.join();
+    parentWatch.reset();
     if (readerFinished) {
         reader.join();
         return result;

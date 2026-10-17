@@ -3892,8 +3892,28 @@ void PlayerApp::UpdateSettingsPreview(const std::uint64_t now) {
     }
 }
 
+void PlayerApp::WatchOwnerProcess() {
+    const char* owner = SDL_getenv("PRISMATIX_EXIT_WITH_PROCESS");
+    if (!owner || !*owner) return;
+    char* end = nullptr;
+    const unsigned long long pid = std::strtoull(owner, &end, 10);
+    if (!end || *end != '\0' || pid == 0) {
+        PX_LOG_WARN("PRISMATIX_EXIT_WITH_PROCESS is not a process id: {}", owner);
+        return;
+    }
+    m_ownerProcessWatch = platform::ProcessExitWatch::Start(
+        platform::ProcessAliveProbe(pid), [this] { m_ownerProcessExited = true; });
+    if (!m_ownerProcessWatch)
+        PX_LOG_WARN("Cannot watch owner process {}; the game will not close with it", pid);
+}
+
 void PlayerApp::MainLoop() {
     while (!m_quitRequested) {
+        if (m_ownerProcessExited) {
+            PX_LOG_INFO("The process that started this game exited; closing");
+            m_quitRequested = true;
+            break;
+        }
 #if defined(__EMSCRIPTEN__)
         // Yield between complete frames. Asyncify also lets remote PDX reads
         // await fetch without freezing input or the browser's loading screen.
@@ -4094,6 +4114,7 @@ void PlayerApp::Shutdown() {
 }
 
 int PlayerApp::Run(int argc, char* argv[]) {
+    WatchOwnerProcess();
     if (!Init(argc, argv)) {
         return 1;
     }

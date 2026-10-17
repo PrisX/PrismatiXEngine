@@ -15,7 +15,9 @@
 #include "Engine/Video/VideoPlayer.h"
 #include "Engine/Accessibility/SpeechService.h"
 #include "Engine/Accessibility/PlatformSemanticAdapter.h"
+#include "Engine/Platform/ProcessWatch.h"
 
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -82,6 +84,7 @@ private:
 
     bool Init(int argc, char* argv[]);
     void MainLoop();
+    void WatchOwnerProcess();
     void Shutdown();
     bool SaveProfileIfWritable();
     // Progress writes are coalesced: unlocks flush within a few seconds,
@@ -457,6 +460,10 @@ private:
     std::optional<int> m_pendingScriptLoad;
 
     bool m_quitRequested = false;
+    // PRISMATIX_EXIT_WITH_PROCESS=<pid>: `prismatix run` sets it so the game
+    // closes when the CLI (an editor's Play/Stop) goes away.
+    std::atomic<bool> m_ownerProcessExited{false};
+    std::unique_ptr<platform::ProcessExitWatch> m_ownerProcessWatch;
     std::unique_ptr<QaSession> m_qa;
     accessibility::SpeechService m_speech;
     std::shared_ptr<accessibility::SemanticAdapter> m_accessibilityAdapter;

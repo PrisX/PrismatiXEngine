@@ -1268,6 +1268,11 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
         PrismatiX.Unit.Platform.AppLifecycle
         "unit;platform;lifecycle;audio;android" PrismatiXRuntime)
     prismatix_add_simple_test(
+        PrismatiXProcessWatchTests
+        Tests/Unit/Platform/ProcessWatchTests.cpp
+        PrismatiX.Unit.Platform.ProcessWatch
+        "unit;platform;preview;player" PrismatiXRuntime)
+    prismatix_add_simple_test(
         PrismatiXTouchGestureTests
         Tests/Unit/Platform/TouchGestureTests.cpp
         PrismatiX.Unit.Platform.TouchGestures
