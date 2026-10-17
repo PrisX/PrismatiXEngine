@@ -30,6 +30,19 @@ SDL_Texture* UploadSurface(SDL_Renderer* renderer, SDL_Surface* surface) {
 #if defined(PRISMATIX_WEB_PLAYER)
     return CreateWebTextureFromSurface(renderer, surface);
 #else
+    // An opaque image (RGB PNG, JPEG, most WebP) would become an RGBX/BGRX
+    // texture whose alpha channel the built-in shaders ignore but a GPU
+    // effect or rule mask samples as 0, drawing the image invisible. Upload
+    // it with an explicit opaque alpha instead.
+    if (surface && !SDL_ISPIXELFORMAT_ALPHA(surface->format) &&
+        !SDL_ISPIXELFORMAT_INDEXED(surface->format) &&
+        !SDL_ISPIXELFORMAT_FOURCC(surface->format)) {
+        if (SDL_Surface* opaque = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32)) {
+            SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, opaque);
+            SDL_DestroySurface(opaque);
+            if (texture) return texture;
+        }
+    }
     return SDL_CreateTextureFromSurface(renderer, surface);
 #endif
 }

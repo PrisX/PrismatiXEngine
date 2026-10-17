@@ -106,7 +106,8 @@ void ClearFrame(SDL_Renderer* renderer) {
 }
 
 bool SaveFixtureSurface(const std::filesystem::path& path,
-                        const bool alternate, const bool rule = false) {
+                        const bool alternate, const bool rule = false,
+                        const bool opaque = false) {
     SDL_Surface* surface = SDL_CreateSurface(640, 360, SDL_PIXELFORMAT_RGBA32);
     if (!surface) return false;
     for (int y = 0; y < surface->h; ++y) {
@@ -132,7 +133,10 @@ bool SaveFixtureSurface(const std::filesystem::path& path,
             }
         }
     }
-    const bool saved = SDL_SaveBMP(surface, path.string().c_str());
+    // An opaque fixture has no alpha channel at all, like an RGB PNG or JPEG.
+    SDL_Surface* written = opaque ? SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGB24) : surface;
+    const bool saved = written && SDL_SaveBMP(written, path.string().c_str());
+    if (written && written != surface) SDL_DestroySurface(written);
     SDL_DestroySurface(surface);
     return saved;
 }
@@ -1013,9 +1017,11 @@ int main() {
         const auto background = fixtureRoot / "background.bmp";
         const auto alternate = fixtureRoot / "alternate.bmp";
         const auto rule = fixtureRoot / "rule.bmp";
+        const auto opaqueBackground = fixtureRoot / "opaque-background.bmp";
         if (fixtureError || !SaveFixtureSurface(background, false) ||
             !SaveFixtureSurface(alternate, true) ||
-            !SaveFixtureSurface(rule, false, true)) {
+            !SaveFixtureSurface(rule, false, true) ||
+            !SaveFixtureSurface(opaqueBackground, false, false, true)) {
             std::cerr << "FAIL: screen-effect visual fixtures could not be created\n";
             result = 1;
         } else {
@@ -1068,13 +1074,15 @@ int main() {
             // Halfway through a left-to-right rule, the left edge shows the
             // incoming image and the right edge still shows the outgoing one,
             // whichever of the GPU or CPU rule paths the device uses.
-            {
+            // The outgoing background may have no alpha channel (an RGB PNG,
+            // JPEG or WebP); the GPU rule mask must still see it as opaque.
+            for (const std::string outgoingPath : {"background.bmp", "opaque-background.bmp"}) {
                 if (!renderer.SupportsRuleMask()) {
                     std::cerr << "FAIL: gpu-effects renderer did not load the rule shader\n";
                     result = 1;
                 }
                 px::vn::Stage stage(renderer, assets);
-                stage.SetBackground("background.bmp", false);
+                stage.SetBackground(outgoingPath, false);
                 stage.SetBackgroundRule("alternate.bmp", "rule.bmp", 1000, 48);
                 for (int frame = 0; frame < 500 &&
                      !assets.HasResidentTexture("alternate.bmp"); ++frame) {
@@ -1086,7 +1094,7 @@ int main() {
                 stage.Update(0.0f);
                 ClearFrame(device.Renderer());
                 stage.Render();
-                SaveVisualArtifact(device.Renderer(), "screen-rule-dissolve-split");
+                SaveVisualArtifact(device.Renderer(), "screen-rule-dissolve-split-" + outgoingPath);
                 SDL_Surface* frame = SDL_RenderReadPixels(device.Renderer(), nullptr);
                 const Pixel incoming = ReadLogicalPixel(frame, 64, 180, 640, 360);
                 const Pixel outgoing = ReadLogicalPixel(frame, 576, 180, 640, 360);
@@ -1098,7 +1106,7 @@ int main() {
                 };
                 if (!near(incoming, {100, 99, 205, 255}) ||
                     !near(outgoing, {230, 246, 202, 255})) {
-                    std::cerr << "FAIL: rule dissolve split is wrong: incoming "
+                    std::cerr << "FAIL: rule dissolve split from " << outgoingPath << " is wrong: incoming "
                               << int(incoming.r) << ',' << int(incoming.g) << ','
                               << int(incoming.b) << " outgoing " << int(outgoing.r)
                               << ',' << int(outgoing.g) << ',' << int(outgoing.b)
