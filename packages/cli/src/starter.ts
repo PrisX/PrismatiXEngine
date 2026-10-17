@@ -11,6 +11,11 @@ export interface StarterOptions {
   readonly locale?: string;
   readonly width?: number;
   readonly height?: number;
+  /**
+   * Start without the sample story's art: no character, no backgrounds, a
+   * plain title backdrop and a one-line Story to write over.
+   */
+  readonly empty?: boolean;
   readonly npmRegistry?: string;
   readonly npmCache?: string;
   /**
@@ -190,6 +195,36 @@ async function pinTools(packagePath: string, id: string, source: "registry" | "c
   await writeFile(packagePath, `${JSON.stringify(project, null, 2)}\n`, "utf8");
 }
 
+const emptyStory: Record<string, string> = {
+  zh: "; 在這裡寫故事。直接打字就是旁白，@名字 讓角色說話。\n*start\n故事從這裡開始。\n[end]\n",
+  ja: "; ここに物語を書きます。そのまま書けば地の文、@名前 でキャラクターの台詞です。\n*start\n物語はここから始まる。\n[end]\n",
+  en: "; Write the story here. Plain lines are narration; @name makes a character speak.\n*start\nThe story begins here.\n[end]\n",
+};
+
+/** Removes the sample art and story from a copied template (`create --empty`). */
+async function emptyStarter(root: string, locale: string): Promise<void> {
+  for (const entry of await readdir(join(root, "Assets"))) await rm(join(root, "Assets", entry), {force: true});
+  await rm(join(root, "Characters"), {recursive: true, force: true});
+  await rm(join(root, "ASSET_PROVENANCE.md"), {force: true});
+  const manifestPath = join(root, "prismatix.json");
+  const manifest = (await readFile(manifestPath, "utf8")).split("\n")
+    .filter((line) => !/"kind":"(background|provenance)"|^\s*"characters":/u.test(line)).join("\n")
+    .replace(/,(\s*\n\s*[\]}])/gu, "$1");
+  JSON.parse(manifest);
+  await writeFile(manifestPath, manifest, "utf8");
+  const titlePath = join(root, "Content", "UI", "Title.tsx");
+  const title = (await readFile(titlePath, "utf8"))
+    .replace("import {Button, ColorRect, Group, Image, Scene, Text, actions}", "import {Button, ColorRect, Group, Scene, Text, actions}")
+    .replace(/<Image name="Backdrop"[^>]*\/>/u, "<ColorRect name=\"Backdrop\" fill color=\"#101014\" />");
+  await writeFile(titlePath, title, "utf8");
+  const language = locale.toLowerCase().split("-")[0]!;
+  await writeFile(join(root, "Story", "main.pxstory"), emptyStory[language] ?? emptyStory.en!, "utf8");
+  const readmePath = join(root, "README.md");
+  await writeFile(readmePath, (await readFile(readmePath, "utf8")).replace(
+    "This short Traditional Chinese story includes a guide, a background, two choices and two endings.",
+    "The project starts empty: a title screen and a one-line story to write over."), "utf8");
+}
+
 /** Prepare everything in a sibling directory and publish only after the install succeeds. */
 export async function createStarter(targetArgument: string, options: StarterOptions = {}): Promise<{root: string; project: string}> {
   const target = resolve(targetArgument);
@@ -239,6 +274,7 @@ export async function createStarter(targetArgument: string, options: StarterOpti
       }
     };
     await copy(templateRoot, staging);
+    if (options.empty === true) await emptyStarter(staging, locale);
     const manager = options.packageManager ?? detectPackageManager();
     const command = options.install === undefined
       ? manager === "pnpm" ? await pnpmCommand() : await npmCommand() : [];

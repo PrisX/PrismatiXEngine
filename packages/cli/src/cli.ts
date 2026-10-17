@@ -103,7 +103,7 @@ const maxDocumentBytes = 16 * 1024 * 1024;
 const machineOutput = process.argv.includes("--json");
 
 const commandOptions: Readonly<Record<string, {values: string; flags: string}>> = {
-  create: {values: "name id locale width height template runtime package-manager", flags: ""},
+  create: {values: "name id locale width height template runtime package-manager", flags: "empty"},
   dev: {values: "runtime preview-host debounce ui-registry at route", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space no-transcode"},
@@ -562,6 +562,7 @@ async function createCommand(options: Options): Promise<number> {
       ...(answers ? {locale: answers.locale} : options.values.has("locale") ? {locale: options.values.get("locale")!} : {}),
       width: answers?.width ?? integerOption(options, "width", 1280, 1, 16384),
       height: answers?.height ?? integerOption(options, "height", 720, 1, 16384),
+      ...(options.flags.has("empty") ? {empty: true} : {}),
       ...(answers ? {packageManager: answers.packageManager}
         : options.values.has("package-manager") ? {packageManager: packageManagerOption(options)} : {}),
       ...(progress ? {quiet: true, onInstall: (manager: PackageManager) =>
@@ -3501,6 +3502,7 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "prismatix create   (in a terminal: asks for the title, folder, template, resolution, language and package manager)",
     "prismatix create my-game [--name \"My Game\"] [--id my-game] [--locale zh-TW] [--width 1920 --height 1080]",
     "prismatix create my-game --template adv   (also editable HUD, Save, Load, Settings and Backlog TSX)",
+    "prismatix create my-game --empty   (no sample character, backgrounds or story; works with either template)",
     "prismatix create my-game --package-manager pnpm   (pnpm-lock.yaml; the default is the manager that ran the CLI, else npm)"],
   dev: ["Watch the project and replay it in Preview after every successful edit.",
     "prismatix dev [project] [--runtime <engine-build-or-install>]",

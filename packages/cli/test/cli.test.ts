@@ -210,6 +210,30 @@ test("validate rejects malformed UTF-8 Story bytes before compilation", async ()
   }
 });
 
+test("create --empty starts without the sample character, backgrounds or story", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "prismatix-cli-create-empty-"));
+  const root = join(parent, "blank-game");
+  try {
+    await createStarter(root, {name: "Blank", locale: "zh-TW", empty: true, install: async (directory) => {
+      await writeFile(join(directory, "package-lock.json"), JSON.stringify({lockfileVersion: 3}));
+      await mkdir(join(directory, "node_modules", "@prismatix"), {recursive: true});
+      await symlink(resolve("."), join(directory, "node_modules", "@prismatix", "cli"), "junction");
+    }});
+    const project = join(root, "prismatix.json");
+    const validated = run(["validate", project]);
+    assert.equal(validated.status, 0, validated.stderr);
+    const manifest = JSON.parse(await readFile(project, "utf8")) as {characters?: unknown; assets: Array<{kind: string}>};
+    assert.equal(manifest.characters, undefined);
+    assert.deepEqual(manifest.assets.map((asset) => asset.kind), ["font", "license"]);
+    assert.deepEqual(await readdir(join(root, "Assets")), []);
+    await assert.rejects(stat(join(root, "Characters")));
+    assert.doesNotMatch(await readFile(join(root, "Content/UI/Title.tsx"), "utf8"), /Assets\//u);
+    const story = await readFile(join(root, "Story/main.pxstory"), "utf8");
+    assert.doesNotMatch(story, /\[bg|@guide/u);
+    assert.match(story, /故事從這裡開始。/u);
+  } finally { await rm(parent, {recursive: true, force: true}); }
+});
+
 test("create scaffolds a canonical playable starter without author-supplied UUIDs", async () => {
   const parent = await mkdtemp(join(tmpdir(), "prismatix-cli-create-"));
   const root = join(parent, "hello-game");
