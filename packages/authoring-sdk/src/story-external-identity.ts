@@ -178,10 +178,15 @@ export function externalizeStoryIds(source: string, options: {
 }
 
 /** Reconcile an edited Story against its existing sidecar without changing
- * identities of operations that can be matched unambiguously. Never writes. */
+ * identities of operations that can be matched unambiguously. Never writes.
+ * With `renew`, operations that cannot be matched (moved, rewritten into
+ * another kind, ambiguous overlaps) lose their old identity and get a new
+ * one instead of failing, which is what an editor saving on every edit
+ * needs; the removed identities are still reported for review. */
 export function synchronizeStoryIdentityMap(source: string, value: unknown, options: {
-  readonly path?: string; readonly mapPath?: string;
+  readonly path?: string; readonly mapPath?: string; readonly renew?: boolean;
 } = {}): SynchronizeStoryIdsResult {
+  const renew = options.renew === true;
   const path = options.path ?? "Story/main.pxstory";
   const mapPath = options.mapPath ?? `${path}.pxids.json`;
   const failed = (diagnostics: readonly AuthoringDiagnostic[]): SynchronizeStoryIdsResult =>
@@ -229,14 +234,17 @@ export function synchronizeStoryIdentityMap(source: string, value: unknown, opti
   for (let index = 0; index < old.length; index += 1) {
     const key = old[index]!.fingerprint;
     const matching = newPositions.get(key);
-    if (oldPositions.get(key)?.length === 1 && matching?.length === 1)
-      anchors.push({oldIndex: index, newIndex: matching[0]!});
-  }
-  for (let index = 1; index < anchors.length; index += 1) {
-    if (anchors[index]!.newIndex <= anchors[index - 1]!.newIndex)
-      return failed([issue("PXSTORY1413",
-        "Story operations were reordered; review their saved identities manually", path,
-        nodes[anchors[index]!.newIndex])]);
+    if (oldPositions.get(key)?.length === 1 && matching?.length === 1) {
+      const anchor = {oldIndex: index, newIndex: matching[0]!};
+      const previous = anchors.at(-1);
+      if (previous !== undefined && anchor.newIndex <= previous.newIndex) {
+        if (renew) continue;
+        return failed([issue("PXSTORY1413",
+          "Story operations were reordered; review their saved identities manually", path,
+          nodes[anchor.newIndex])]);
+      }
+      anchors.push(anchor);
+    }
   }
 
   const next: StoryIdentityMapEntry[] = new Array(nodes.length);
@@ -268,57 +276,79 @@ export function synchronizeStoryIdentityMap(source: string, value: unknown, opti
     }
     const oldCount = oldEnd - oldStart;
     const newCount = newEnd - newStart;
+    const add = (index: number) => {
+      let salt = 0;
+      let identity: string;
+      do {
+        identity = `story-${hash64(`external-new:${path}:${nodes[index]!.id}:${index}:${salt}`)}`;
+        salt += 1;
+      } while (identities.has(`source:${identity}`));
+      identities.add(`source:${identity}`);
+      const node = nodes[index]!;
+      next[index] = {sourceId: identity, kind: node.kind,
+        ...(node.kind === "command" ? {command: node.name} : {}),
+        fingerprint: current[index]!};
+      addedOperations.push({operation: index + 1, line: node.span.start.line,
+        kind: node.kind,
+        ...(node.kind === "command" ? {command: node.name} : {}),
+        sourceId: identity, preview: Array.from(node.raw.trim()).slice(0, 120).join("")});
+      added += 1;
+    };
+    const remove = (index: number) => {
+      const entry = old[index]!;
+      const identity = entry.id === undefined ? `source:${entry.sourceId}` : `id:${entry.id}`;
+      removed.push(identity);
+      removedOperations.push({oldOperation: index + 1, identity,
+        kind: entry.kind,
+        ...(entry.kind === "command" ? {command: entry.command} : {})});
+    };
+    let problem: AuthoringDiagnostic | undefined;
     if (oldCount > 0 && newCount > 0 && oldCount !== newCount)
-      return issue("PXSTORY1414",
+      problem = issue("PXSTORY1414",
         "Story edits are ambiguous: changed and inserted/removed operations overlap. If possible, sync the prose rewrite first, then add/remove lines and sync again; otherwise review old save identities manually",
         path, nodes[newStart]);
-    if (oldCount > 0 && newCount > 0) {
-      for (let offset = 0; offset < oldCount; offset += 1) {
+    else if (oldCount > 0 && newCount > 0) {
+      for (let offset = 0; offset < oldCount && problem === undefined; offset += 1) {
         const oldIndex = oldStart + offset;
         const newIndex = newStart + offset;
-        if (!sameShape(oldIndex, newIndex)) return issue("PXSTORY1415",
+        if (!sameShape(oldIndex, newIndex)) problem = issue("PXSTORY1415",
           "Story operation changed kind or command; review its saved identity manually",
           path, nodes[newIndex]);
-        if ((newPositions.get(old[oldIndex]!.fingerprint) ?? []).some((position) =>
-          position !== newIndex)) return issue("PXSTORY1413",
+        else if ((newPositions.get(old[oldIndex]!.fingerprint) ?? []).some((position) =>
+          position !== newIndex)) problem = issue("PXSTORY1413",
           "Story operation appears to have moved; review its saved identity manually",
           path, nodes[newIndex]);
-        keep(oldIndex, newIndex);
       }
+      if (problem === undefined)
+        for (let offset = 0; offset < oldCount; offset += 1) keep(oldStart + offset, newStart + offset);
     } else if (newCount > 0) {
-      for (let index = newStart; index < newEnd; index += 1) {
-        if (oldPositions.has(current[index]!)) return issue("PXSTORY1416",
+      for (let index = newStart; index < newEnd && problem === undefined; index += 1)
+        if (!renew && oldPositions.has(current[index]!)) problem = issue("PXSTORY1416",
           "Inserted Story operation duplicates an existing operation; review identities manually",
           path, nodes[index]);
-        let salt = 0;
-        let identity: string;
-        do {
-          identity = `story-${hash64(`external-new:${path}:${nodes[index]!.id}:${index}:${salt}`)}`;
-          salt += 1;
-        } while (identities.has(`source:${identity}`));
-        identities.add(`source:${identity}`);
-        const node = nodes[index]!;
-        next[index] = {sourceId: identity, kind: node.kind,
-          ...(node.kind === "command" ? {command: node.name} : {}),
-          fingerprint: current[index]!};
-        addedOperations.push({operation: index + 1, line: node.span.start.line,
-          kind: node.kind,
-          ...(node.kind === "command" ? {command: node.name} : {}),
-          sourceId: identity, preview: Array.from(node.raw.trim()).slice(0, 120).join("")});
-        added += 1;
-      }
+      if (problem === undefined) for (let index = newStart; index < newEnd; index += 1) add(index);
     } else {
-      for (let index = oldStart; index < oldEnd; index += 1) {
-        const entry = old[index]!;
-        if (newPositions.has(entry.fingerprint)) return issue("PXSTORY1413",
+      for (let index = oldStart; index < oldEnd && problem === undefined; index += 1)
+        if (!renew && newPositions.has(old[index]!.fingerprint)) problem = issue("PXSTORY1413",
           "Removed Story operation appears elsewhere; review its saved identity manually", path);
-        const identity = entry.id === undefined ? `source:${entry.sourceId}` : `id:${entry.id}`;
-        removed.push(identity);
-        removedOperations.push({oldOperation: index + 1, identity,
-          kind: entry.kind,
-          ...(entry.kind === "command" ? {command: entry.command} : {})});
+      if (problem === undefined) for (let index = oldStart; index < oldEnd; index += 1) remove(index);
+    }
+    if (problem === undefined) return undefined;
+    if (!renew) return problem;
+    // Shape-compatible lines in place keep their identity; the rest are new.
+    for (let offset = 0; offset < Math.min(oldCount, newCount); offset += 1) {
+      const oldIndex = oldStart + offset;
+      const newIndex = newStart + offset;
+      if (oldCount === newCount && sameShape(oldIndex, newIndex) &&
+          !(newPositions.get(old[oldIndex]!.fingerprint) ?? []).some((position) => position !== newIndex))
+        keep(oldIndex, newIndex);
+      else {
+        remove(oldIndex);
+        add(newIndex);
       }
     }
+    for (let index = oldStart + Math.min(oldCount, newCount); index < oldEnd; index += 1) remove(index);
+    for (let index = newStart + Math.min(oldCount, newCount); index < newEnd; index += 1) add(index);
     return undefined;
   };
 

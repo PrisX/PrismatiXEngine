@@ -112,6 +112,25 @@ test("sidecar sync rejects reordered, duplicated, or overlapping ambiguous edits
   }
 });
 
+test("sidecar sync with renew gives unmatched operations new identities instead of failing", () => {
+  const converted = externalizeStoryIds("*start\nFirst.\nSecond.\nThird.\n[end]\n", {path: sourcePath});
+  const entries = converted.map!.entries;
+  for (const changed of [
+    "; @prismatix-ids\n*start\nSecond.\nFirst.\nThird.\n[end]\n",
+    "; @prismatix-ids\n*start\nFirst.\nFirst.\nSecond.\nThird.\n[end]\n",
+    "; @prismatix-ids\n*start\nChanged.\nInserted.\nSecond.\nThird.\n[end]\n",
+    "; @prismatix-ids\n*start\nFirst.\n[jump target=start]\nThird.\n[end]\n",
+  ]) {
+    const synced = synchronizeStoryIdentityMap(changed, converted.map, {path: sourcePath, renew: true});
+    assert.equal(synced.valid, true, `${changed}: ${JSON.stringify(synced.diagnostics)}`);
+    assert.equal(compile(changed, synced.map).valid, true, changed);
+    // The label, Third. and [end] are untouched by every edit above.
+    const kept = synced.map!.entries.map(entry => entry.sourceId ?? entry.id);
+    for (const index of [0, 3, 4]) assert.ok(kept.includes(entries[index]!.sourceId ?? entries[index]!.id), changed);
+    assert.equal(synchronizeStoryIdentityMap(changed, synced.map, {path: sourcePath}).added, 0);
+  }
+});
+
 test("aligned sidecar sync preserves repeated show commands after a proven argument edit", () => {
   const original = "*start\n[show character=hero asset=Assets/hero.pxportrait]\n" +
     "First.\n[show character=hero asset=Assets/hero.pxportrait]\nSecond.\n[end]\n";
