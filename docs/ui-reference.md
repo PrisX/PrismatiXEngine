@@ -147,6 +147,38 @@ bottom edge:
   hideTransition={{seconds: 0.22, offset: [0, 96], ease: "cubic"}} />
 ```
 
+A transition can also wait, wipe and scale. `delay` keeps a control unseen
+for that many seconds before it shows (it applies to a screen opening, too);
+`wipe: "left" | "right" | "up" | "down"` reveals the control from that edge
+(and on hide takes it away towards it), clipping its panel and children;
+`scale` is the size it grows from (show) or ends at (hide); `fade: false`
+keeps it opaque, for a pure wipe or slide. `stagger` on a parent starts each
+visible child that many seconds after the previous one, and `hoverScale`
+eases a control to that scale under the pointer:
+
+```tsx
+<Group name="Menu" stagger={0.06}>
+  <Button name="Start" text="開始" hoverScale={1.05}
+    showTransition={{seconds: 0.35, delay: 0.2, offset: [-40, 0], ease: "cubic"}} />
+  <Button name="Load" text="讀取" hoverScale={1.05}
+    showTransition={{seconds: 0.35, delay: 0.2, offset: [-40, 0], ease: "cubic"}} />
+</Group>
+```
+
+The Player makes the items of a `ListView` or `GridView` itself (save slots,
+backlog lines), so the view carries their animation: `itemShowTransition`
+takes the same fields and plays on every item when the view fills (when the
+screen opens or its data is replaced; items scrolled into view later appear
+at once), `stagger` spaces them out in order and `itemHoverScale` sets their
+hover scale. Save slots that wipe in from the left one after another:
+
+```tsx
+<Control name="Slots" kind="grid" runtimeType="GridView"
+  itemShowTransition={{seconds: 0.5, wipe: "left", offset: [0, 0], ease: "cubic"}}
+  stagger={0.08} itemHoverScale={1.03}
+  runtimeProperties={{columns: 3, itemExtent: {type: "vec2", x: 564, y: 150}}} />
+```
+
 ## Data the Player publishes
 
 Controls bind to UI data with `bind={{text: "..."}}`, `visibleWhen` and

@@ -392,6 +392,86 @@ Status RegisterBuiltinUITypes() {
             : "Curve of the hide slide; back pulls back before leaving.";
         control.properties.push_back(std::move(ease));
     }
+    // Delay, wipe, scale, fade, stagger and hover: the rest of an authored
+    // show/hide animation.
+    const auto ranged = [](PropertyInfo info, double minimum, double maximum, double step,
+                           std::string description) {
+        info.editor.hasRange = true;
+        info.editor.minimum = minimum;
+        info.editor.maximum = maximum;
+        info.editor.step = step;
+        info.editor.description = std::move(description);
+        return info;
+    };
+    control.properties.push_back(ranged(NumberProperty("showDelaySeconds", "Display",
+        [](const Object& o) { return static_cast<double>(As<Control>(o)->ShowDelaySeconds()); },
+        [](Object& o, double v) {
+            if (!std::isfinite(v) || v < 0.0 || v > 10.0) return TypeError("showDelaySeconds must be between 0 and 10");
+            As<Control>(o)->SetShowDelaySeconds(static_cast<float>(v));
+            return Status::Ok();
+        }), 0, 10, 0.01, "Seconds the control waits, unseen, before its show transition starts."));
+    control.properties.push_back(ranged(NumberProperty("staggerSeconds", "Display",
+        [](const Object& o) { return static_cast<double>(As<Control>(o)->StaggerSeconds()); },
+        [](Object& o, double v) {
+            if (!std::isfinite(v) || v < 0.0 || v > 2.0) return TypeError("staggerSeconds must be between 0 and 2");
+            As<Control>(o)->SetStaggerSeconds(static_cast<float>(v));
+            return Status::Ok();
+        }), 0, 2, 0.01, "Each visible child (list or grid item) starts its show transition this much after the previous one."));
+    control.properties.push_back(ranged(NumberProperty("hoverScale", "Display",
+        [](const Object& o) { return static_cast<double>(As<Control>(o)->HoverScale()); },
+        [](Object& o, double v) {
+            if (!std::isfinite(v) || v < 0.1 || v > 4.0) return TypeError("hoverScale must be between 0.1 and 4");
+            As<Control>(o)->SetHoverScale(static_cast<float>(v));
+            return Status::Ok();
+        }), 0.1, 4, 0.01, "Scale the control eases to while the pointer is over it; 1 is none."));
+    control.properties.push_back(ranged(NumberProperty("hoverTransitionSeconds", "Display",
+        [](const Object& o) { return static_cast<double>(As<Control>(o)->HoverTransitionSeconds()); },
+        [](Object& o, double v) {
+            if (!std::isfinite(v) || v < 0.0 || v > 2.0) return TypeError("hoverTransitionSeconds must be between 0 and 2");
+            As<Control>(o)->SetHoverTransitionSeconds(static_cast<float>(v));
+            return Status::Ok();
+        }), 0, 2, 0.01, "Seconds the hover scale takes to settle."));
+    for (const bool show : {true, false}) {
+        auto wipe = StringProperty(show ? "showWipe" : "hideWipe", "Display",
+            [show](const Object& o) {
+                const auto* c = As<Control>(o);
+                return std::string(TransitionWipeName(show ? c->ShowWipe() : c->HideWipe()));
+            },
+            [show](Object& o, std::string v) {
+                const auto wipe = ParseTransitionWipe(v);
+                if (!wipe) return TypeError("wipe expects none, left, right, up or down");
+                if (show) As<Control>(o)->SetShowWipe(*wipe); else As<Control>(o)->SetHideWipe(*wipe);
+                return Status::Ok();
+            });
+        wipe.editor.enumChoices = {"none", "left", "right", "up", "down"};
+        wipe.editor.description = show
+            ? "Reveals the control from this edge as it appears (left: left to right)."
+            : "Takes the control away towards this edge as it disappears.";
+        control.properties.push_back(std::move(wipe));
+        control.properties.push_back(ranged(NumberProperty(show ? "showScale" : "hideScale", "Display",
+            [show](const Object& o) {
+                const auto* c = As<Control>(o);
+                return static_cast<double>(show ? c->ShowScale() : c->HideScale());
+            },
+            [show](Object& o, double v) {
+                if (!std::isfinite(v) || v < 0.0 || v > 10.0) return TypeError("transition scale must be between 0 and 10");
+                if (show) As<Control>(o)->SetShowScale(static_cast<float>(v));
+                else As<Control>(o)->SetHideScale(static_cast<float>(v));
+                return Status::Ok();
+            }), 0, 10, 0.01, show ? "Scale the control grows from as it appears; 1 is none."
+                                  : "Scale the control ends at as it disappears; 1 is none."));
+        auto fade = BoolProperty(show ? "showFade" : "hideFade", "Display",
+            [show](const Object& o) {
+                const auto* c = As<Control>(o);
+                return show ? c->ShowFade() : c->HideFade();
+            },
+            [show](Object& o, bool v) {
+                if (show) As<Control>(o)->SetShowFade(v); else As<Control>(o)->SetHideFade(v);
+                return Status::Ok();
+            });
+        fade.editor.description = "Whether the transition fades the opacity (on by default).";
+        control.properties.push_back(std::move(fade));
+    }
     auto visibilityProperty=StringProperty("visibility", "Behavior", [](const Object& o) {
         switch (As<Control>(o)->GetVisibility()) { case Visibility::Visible: return std::string("Visible"); case Visibility::Hidden: return std::string("Hidden"); default: return std::string("Collapsed"); }
     }, [](Object& o, std::string v) {
@@ -883,6 +963,21 @@ Status RegisterBuiltinUITypes() {
     virtualized.properties.push_back(NumberProperty("columns","Data",[](const Object& o){return static_cast<double>(As<VirtualizedView>(o)->GridColumns());},[](Object& o,double v){As<VirtualizedView>(o)->SetGridColumns(static_cast<std::size_t>(std::max(1.0,v)));return Status::Ok();}));
     virtualized.properties.push_back(Vec2Property("itemExtent","Data",[](const Object& o){return As<VirtualizedView>(o)->ItemExtent();},[](Object& o,Vec2 v){As<VirtualizedView>(o)->SetItemExtent(v);return Status::Ok();}));
     virtualized.properties.push_back(Vec2Property("gap","Data",[](const Object& o){return As<VirtualizedView>(o)->Gap();},[](Object& o,Vec2 v){As<VirtualizedView>(o)->SetGap(v);return Status::Ok();}));
+    // The show transition every runtime-made item plays when the view fills;
+    // `staggerSeconds` on the view spaces the items out.
+    virtualized.properties.push_back(NumberProperty("itemShowTransitionSeconds","Display",[](const Object& o){const auto& s=As<VirtualizedView>(o)->ItemShowTransition();return static_cast<double>(s?s->seconds:0.0f);},[](Object& o,double v){if(!std::isfinite(v)||v<0.0||v>2.0)return TypeError("itemShowTransitionSeconds must be between 0 and 2");As<VirtualizedView>(o)->EditItemShowTransition().seconds=static_cast<float>(v);return Status::Ok();}));
+    virtualized.properties.push_back(NumberProperty("itemShowDelaySeconds","Display",[](const Object& o){const auto& s=As<VirtualizedView>(o)->ItemShowTransition();return static_cast<double>(s?s->delaySeconds:0.0f);},[](Object& o,double v){if(!std::isfinite(v)||v<0.0||v>10.0)return TypeError("itemShowDelaySeconds must be between 0 and 10");As<VirtualizedView>(o)->EditItemShowTransition().delaySeconds=static_cast<float>(v);return Status::Ok();}));
+    for (const bool vertical : {false, true})
+        virtualized.properties.push_back(NumberProperty(vertical ? "itemShowOffsetY" : "itemShowOffsetX","Display",[vertical](const Object& o){const auto& s=As<VirtualizedView>(o)->ItemShowTransition();return static_cast<double>(!s?(vertical?8.0f:0.0f):vertical?s->offsetY:s->offsetX);},[vertical](Object& o,double v){if(!std::isfinite(v)||v<-2000.0||v>2000.0)return TypeError("item transition offsets must be between -2000 and 2000");auto& s=As<VirtualizedView>(o)->EditItemShowTransition();(vertical?s.offsetY:s.offsetX)=static_cast<float>(v);return Status::Ok();}));
+    {
+        auto ease=StringProperty("itemShowTransitionEase","Display",[](const Object& o){const auto& s=As<VirtualizedView>(o)->ItemShowTransition();return std::string(TransitionEaseName(s?s->ease:TransitionEase::Quad));},[](Object& o,std::string v){const auto ease=ParseTransitionEase(v);if(!ease)return TypeError("transition ease expects quad, linear, cubic or back");As<VirtualizedView>(o)->EditItemShowTransition().ease=*ease;return Status::Ok();});
+        ease.editor.enumChoices={"quad","linear","cubic","back"};virtualized.properties.push_back(std::move(ease));
+        auto wipe=StringProperty("itemShowWipe","Display",[](const Object& o){const auto& s=As<VirtualizedView>(o)->ItemShowTransition();return std::string(TransitionWipeName(s?s->wipe:TransitionWipe::None));},[](Object& o,std::string v){const auto wipe=ParseTransitionWipe(v);if(!wipe)return TypeError("wipe expects none, left, right, up or down");As<VirtualizedView>(o)->EditItemShowTransition().wipe=*wipe;return Status::Ok();});
+        wipe.editor.enumChoices={"none","left","right","up","down"};virtualized.properties.push_back(std::move(wipe));
+    }
+    virtualized.properties.push_back(NumberProperty("itemShowScale","Display",[](const Object& o){const auto& s=As<VirtualizedView>(o)->ItemShowTransition();return static_cast<double>(s?s->scale:1.0f);},[](Object& o,double v){if(!std::isfinite(v)||v<0.0||v>10.0)return TypeError("itemShowScale must be between 0 and 10");As<VirtualizedView>(o)->EditItemShowTransition().scale=static_cast<float>(v);return Status::Ok();}));
+    virtualized.properties.push_back(BoolProperty("itemShowFade","Display",[](const Object& o){const auto& s=As<VirtualizedView>(o)->ItemShowTransition();return s?s->fade:true;},[](Object& o,bool v){As<VirtualizedView>(o)->EditItemShowTransition().fade=v;return Status::Ok();}));
+    virtualized.properties.push_back(NumberProperty("itemHoverScale","Display",[](const Object& o){return static_cast<double>(As<VirtualizedView>(o)->ItemHoverScale());},[](Object& o,double v){if(!std::isfinite(v)||v<0.1||v>4.0)return TypeError("itemHoverScale must be between 0.1 and 4");As<VirtualizedView>(o)->SetItemHoverScale(static_cast<float>(v));return Status::Ok();}));
     virtualized.properties.push_back(NumberProperty("overscan","Data",[](const Object& o){return static_cast<double>(As<VirtualizedView>(o)->Overscan());},[](Object& o,double v){As<VirtualizedView>(o)->SetOverscan(static_cast<std::size_t>(std::max(0.0,v)));return Status::Ok();}));add(std::move(virtualized));
     add({"ListView", "VirtualizedView", "UI/Data", [] { return std::make_unique<ListView>(); }});
     add({"GridView", "VirtualizedView", "UI/Data", [] { return std::make_unique<GridView>(); }});

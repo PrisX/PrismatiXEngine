@@ -10,6 +10,7 @@
 #include "Engine/UI/GalgameUI.h"
 #include "Engine/UI/UiAdapter.h"
 #include "Engine/UI/UITypeRegistry.h"
+#include "Engine/UI/VirtualizedView.h"
 #include "Engine/UI/Theme.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/VN/Runtime/Stage.h"
@@ -805,6 +806,135 @@ int main() {
                 px::text::HasControlCharacters("plain\n") ||
                 !px::text::HasControlCharacters("tab\t")) {
                 std::cerr << "FAIL: MapDrawableText did not normalise control characters\n";
+                result = 1;
+            }
+        }
+        {
+            // Authored show animations: a delay hides the control, a left
+            // wipe reveals it left to right, a stagger starts siblings one
+            // after another, and list items play the view's item transition.
+            const auto panel = [](const px::Color fill) {
+                auto control = std::make_unique<px::ui::Control>();
+                px::ui::BoxDecoration box;
+                box.fill = fill;
+                control->SetBoxDecoration(box);
+                return control;
+            };
+            const auto frame = [&](px::ui::Control& root, const std::string& name) {
+                ClearFrame(device.Renderer());
+                renderer.DrawRect({0, 0, 640, 360}, {255, 255, 255, 255});
+                root.Draw(renderer, px::ui::Theme{});
+                SaveVisualArtifact(device.Renderer(), name);
+                return SDL_RenderReadPixels(device.Renderer(), nullptr);
+            };
+            const auto red = [](SDL_Surface* surface, const int x, const int y) {
+                const Pixel pixel = ReadLogicalPixel(surface, x, y, 640, 360);
+                return pixel.r > 200 && pixel.g < 80 && pixel.b < 80;
+            };
+            const auto white = [](SDL_Surface* surface, const int x, const int y) {
+                const Pixel pixel = ReadLogicalPixel(surface, x, y, 640, 360);
+                return pixel.r > 240 && pixel.g > 240 && pixel.b > 240;
+            };
+            // Through the UI TypeRegistry, as authored runtimeProperties arrive.
+            px::sdk::UiDocument document;
+            document.id = "12000000-0000-4000-8000-000000000011";
+            document.rootId = "12000000-0000-4000-8000-000000000012";
+            px::sdk::UiNode node;
+            node.id = document.rootId;
+            node.kind = px::sdk::UiNodeKind::Control;
+            node.runtimeType = "Control";
+            node.runtimeProperties.emplace("showTransitionSeconds", 1.0);
+            node.runtimeProperties.emplace("showDelaySeconds", 0.5);
+            node.runtimeProperties.emplace("showWipe", std::string("left"));
+            node.runtimeProperties.emplace("showFade", false);
+            node.runtimeProperties.emplace("showOffsetY", 0.0);
+            node.runtimeProperties.emplace("showTransitionEase", std::string("linear"));
+            document.nodes.push_back(node);
+            auto tree = px::ui::BuildUiRuntimeTree(document);
+            if (!tree.Valid() || tree.root->ShowWipe() != px::ui::TransitionWipe::Left ||
+                tree.root->ShowDelaySeconds() != 0.5f || tree.root->ShowFade()) {
+                std::cerr << "FAIL: authored showWipe/showDelaySeconds/showFade were not applied\n";
+                result = 1;
+            } else {
+                px::ui::BoxDecoration box;
+                box.fill = {230, 30, 40, 255};
+                tree.root->SetBoxDecoration(box);
+                tree.root->Arrange({40, 40, 560, 280});
+                tree.root->Update(0.25f);
+                SDL_Surface* delayed = frame(*tree.root, "show-delay");
+                const bool hidden = white(delayed, 320, 180);
+                SDL_DestroySurface(delayed);
+                tree.root->Update(0.75f);  // halfway through the 1s wipe
+                SDL_Surface* wiping = frame(*tree.root, "show-wipe-left");
+                const bool split = red(wiping, 120, 180) && white(wiping, 520, 180);
+                SDL_DestroySurface(wiping);
+                tree.root->Update(1.0f);
+                SDL_Surface* done = frame(*tree.root, "show-wipe-done");
+                const bool whole = red(done, 120, 180) && red(done, 580, 180);
+                SDL_DestroySurface(done);
+                if (!hidden || !split || !whole) {
+                    std::cerr << "FAIL: delayed left wipe drew hidden=" << hidden
+                              << " split=" << split << " whole=" << whole << '\n';
+                    result = 1;
+                }
+            }
+            // A staggering parent: the second child starts 0.5s after the first.
+            px::ui::Control parent;
+            parent.SetStaggerSeconds(0.5f);
+            for (int index = 0; index < 2; ++index) {
+                auto child = panel({230, 30, 40, 255});
+                child->SetShowTransitionSeconds(0.1f);
+                child->SetShowOffsetY(0.0f);
+                (void)parent.AddChild(std::move(child));
+            }
+            parent.Arrange({0, 0, 640, 360});
+            int slot = 0;
+            for (const auto& child : parent.Children()) {
+                auto* control = dynamic_cast<px::ui::Control*>(child.get());
+                control->Arrange({40.0f + 300.0f * static_cast<float>(slot++), 40, 260, 280});
+            }
+            parent.Update(0.0f);
+            parent.Update(0.3f);
+            SDL_Surface* staggered = frame(parent, "show-stagger");
+            const bool first = red(staggered, 170, 180);
+            const bool secondWaits = white(staggered, 470, 180);
+            SDL_DestroySurface(staggered);
+            parent.Update(0.5f);
+            SDL_Surface* both = frame(parent, "show-stagger-done");
+            const bool second = red(both, 470, 180);
+            SDL_DestroySurface(both);
+            if (!first || !secondWaits || !second) {
+                std::cerr << "FAIL: stagger first=" << first << " secondWaits=" << secondWaits
+                          << " second=" << second << '\n';
+                result = 1;
+            }
+            // Grid items get the view's item transition and stagger when it fills.
+            struct Items final : px::ui::IVirtualItemSource {
+                [[nodiscard]] std::size_t Count() const override { return 2; }
+                [[nodiscard]] std::string StableKey(const std::size_t index) const override {
+                    return std::to_string(index);
+                }
+                px::Status Bind(std::size_t, px::ui::Control&) override { return px::Status::Ok(); }
+                [[nodiscard]] std::uint64_t Revision() const override { return 1; }
+            };
+            px::ui::GridView grid(2);
+            grid.SetItemExtent({260, 280});
+            grid.SetGap({40, 0});
+            grid.SetStaggerSeconds(0.5f);
+            auto& item = grid.EditItemShowTransition();
+            item.seconds = 0.1f;
+            item.offsetY = 0.0f;
+            (void)grid.SetSource(std::make_shared<Items>(), [&] { return panel({230, 30, 40, 255}); });
+            grid.Arrange({40, 40, 560, 280});
+            grid.Update(0.0f);
+            grid.Update(0.3f);
+            SDL_Surface* items = frame(grid, "show-grid-items");
+            const bool firstItem = red(items, 170, 180);
+            const bool secondItemWaits = white(items, 470, 180);
+            SDL_DestroySurface(items);
+            if (!firstItem || !secondItemWaits) {
+                std::cerr << "FAIL: grid item transition first=" << firstItem
+                          << " secondWaits=" << secondItemWaits << '\n';
                 result = 1;
             }
         }

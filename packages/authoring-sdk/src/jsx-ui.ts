@@ -177,6 +177,18 @@ export interface UiNodeProps {
   readonly hideTransition?: UiVisibilityTransition;
   /** Use linear instead of eased show/hide transitions. */
   readonly linearTransition?: boolean;
+  /**
+   * Seconds between the show transitions of consecutive visible children:
+   * on a Group its children, on a list or grid its items (with
+   * `itemShowTransition`), so they come in one after another.
+   */
+  readonly stagger?: number;
+  /** Scale the control eases to while the pointer is over it (1.05 grows it 5%). */
+  readonly hoverScale?: number;
+  /** The show transition every item of a ListView/GridView plays when it fills. */
+  readonly itemShowTransition?: UiVisibilityTransition;
+  /** Hover scale of every item of a ListView/GridView. */
+  readonly itemHoverScale?: number;
   readonly bindings?: UiBindings;
   /** Shorthand bindings; a `"!path"` string applies the `Not` formatter. */
   readonly bind?: Readonly<Record<string, string | UiBinding>>;
@@ -209,6 +221,14 @@ export interface UiVisibilityTransition {
   /** Slide curve: `quad` (default), `linear`, `cubic`, or `back`, which
    * overshoots and settles on show and pulls back before leaving on hide. */
   readonly ease?: "quad" | "linear" | "cubic" | "back";
+  /** Seconds to wait, unseen, before the show starts (show only). */
+  readonly delay?: number;
+  /** Reveal from (show) or take away towards (hide) this edge: `left` wipes left to right. */
+  readonly wipe?: "none" | "left" | "right" | "up" | "down";
+  /** Scale it grows from (show) or ends at (hide); 1 is none. */
+  readonly scale?: number;
+  /** Fade the opacity too (default true); `false` with `wipe` is a pure wipe. */
+  readonly fade?: boolean;
 }
 
 export interface ItemsViewProps extends UiNodeProps {
@@ -635,13 +655,33 @@ function node(
   props: UiNodeProps & {readonly text?: string; readonly assetId?: string | null},
 ): UiElement {
   const {focusMode, mouseFilter, modalCapture, hoverSoundPath, activateSoundPath,
-    clipContent, showTransition, hideTransition, linearTransition, ...rest} = props;
+    clipContent, showTransition, hideTransition, linearTransition, stagger, hoverScale,
+    itemShowTransition, itemHoverScale, ...rest} = props;
   const transition = (phase: "show" | "hide", value: UiVisibilityTransition | undefined) =>
     value === undefined ? {} : {
       [`${phase}TransitionSeconds`]: value.seconds,
       ...offsetProperties(phase, value.offset),
       ...(value.ease === undefined ? {} : {[`${phase}TransitionEase`]: value.ease}),
+      ...(value.delay === undefined || phase === "hide" ? {} : {showDelaySeconds: value.delay}),
+      ...(value.wipe === undefined ? {} : {[`${phase}Wipe`]: value.wipe}),
+      ...(value.scale === undefined ? {} : {[`${phase}Scale`]: value.scale}),
+      ...(value.fade === undefined ? {} : {[`${phase}Fade`]: value.fade}),
     };
+  // A list's item transition: the same fields with an `item` prefix.
+  const itemTransition = (value: UiVisibilityTransition | undefined) => {
+    if (value === undefined) return {};
+    const offset = offsetProperties("show", value.offset);
+    return {
+      itemShowTransitionSeconds: value.seconds,
+      ...(offset.showOffsetX === undefined ? {} : {itemShowOffsetX: offset.showOffsetX}),
+      ...(offset.showOffsetY === undefined ? {} : {itemShowOffsetY: offset.showOffsetY}),
+      ...(value.ease === undefined ? {} : {itemShowTransitionEase: value.ease}),
+      ...(value.delay === undefined ? {} : {itemShowDelaySeconds: value.delay}),
+      ...(value.wipe === undefined ? {} : {itemShowWipe: value.wipe}),
+      ...(value.scale === undefined ? {} : {itemShowScale: value.scale}),
+      ...(value.fade === undefined ? {} : {itemShowFade: value.fade}),
+    };
+  };
   return definitionElement(nodeType, {
     category: "node", kind,
     ...(runtimeType === undefined ? {} : {runtimeType}),
@@ -656,6 +696,10 @@ function node(
       ...transition("show", showTransition),
       ...transition("hide", hideTransition),
       ...(linearTransition === undefined ? {} : {linearTransition}),
+      ...(stagger === undefined ? {} : {staggerSeconds: stagger}),
+      ...(hoverScale === undefined ? {} : {hoverScale}),
+      ...itemTransition(itemShowTransition),
+      ...(itemHoverScale === undefined ? {} : {itemHoverScale}),
     }},
   });
 }

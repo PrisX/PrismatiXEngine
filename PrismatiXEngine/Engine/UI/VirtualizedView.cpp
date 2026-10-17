@@ -35,6 +35,7 @@ Status VirtualizedView::SetSource(std::shared_ptr<IVirtualItemSource> source, Fa
     const auto valid = ValidateKeys(*source); if (!valid) return valid;
     while (!m_realized.empty()) Recycle(m_realized.begin()->first);
     m_pool.clear(); m_source = std::move(source); m_factory = std::move(factory); m_seenRevision = 0; m_scroll = 0;
+    m_revealItems = true;
     m_seenRevision = m_source->Revision(); InvalidateLayout(); return Status::Ok();
 }
 
@@ -85,6 +86,16 @@ std::unique_ptr<Control> VirtualizedView::Acquire(const std::string& key) {
     if (value) AssignItemIds(*value, "px.virtual-item/" + Id().ToString() + "/" +
                                      std::to_string(key.size()) + ":" + key);
     return value;
+}
+
+void VirtualizedView::PresentItem(Control& item) {
+    if (m_itemHoverScale != 1.0f) item.SetHoverScale(m_itemHoverScale);
+    if (!m_itemShow) return;
+    item.ApplyShowTransition(*m_itemShow);
+    // The view's stagger (Control::Update) spaces out items that start together.
+    item.SetStaggerDelaySeconds(0.0f);
+    if (m_revealItems) item.RestartShowTransition();
+    else item.FinishShowTransition();
 }
 
 void VirtualizedView::Recycle(const std::string& key) {
@@ -154,6 +165,7 @@ Status VirtualizedView::Synchronize(Rect viewport) {
             const Uuid id = item->Id();
             const Status add = AddChild(std::move(created)); if (!add) return add;
             m_realized[key] = id;
+            PresentItem(*item);
         }
         const Status bind = m_source->Bind(index, *item); if (!bind) return bind;
         if (m_placedItems) {
@@ -178,6 +190,8 @@ Status VirtualizedView::Synchronize(Rect viewport) {
         const Status moved = MoveChild(found->second, position);
         if (!moved) return moved;
     }
+    // The first fill revealed its items; later ones (scrolling) appear at once.
+    if (!m_realized.empty()) m_revealItems = false;
     return Status::Ok();
 }
 

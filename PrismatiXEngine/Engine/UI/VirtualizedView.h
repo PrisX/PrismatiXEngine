@@ -53,6 +53,15 @@ public:
     void SetItemExtent(Vec2 extent);
     void SetGap(Vec2 gap);
     void SetOverscan(std::size_t rows) { m_overscan = rows; }
+    // The show transition each item plays when the view fills (on open or a
+    // new source); items realized later by scrolling appear at once.
+    [[nodiscard]] const std::optional<ShowTransitionSpec>& ItemShowTransition() const { return m_itemShow; }
+    ShowTransitionSpec& EditItemShowTransition() {
+        if (!m_itemShow) m_itemShow.emplace();
+        return *m_itemShow;
+    }
+    void SetItemHoverScale(float value) { m_itemHoverScale = std::isfinite(value) ? std::clamp(value, 0.1f, 4.0f) : 1.0f; }
+    [[nodiscard]] float ItemHoverScale() const { return m_itemHoverScale; }
     [[nodiscard]] std::size_t GridColumns() const { return m_columns; }
     [[nodiscard]] Vec2 ItemExtent() const { return m_itemExtent; }
     [[nodiscard]] Vec2 Gap() const { return m_gap; }
@@ -88,6 +97,11 @@ private:
     // current index. Reordering data must not recreate focused controls.
     std::unordered_map<std::string, Uuid> m_realized;
     std::vector<std::unique_ptr<Control>> m_pool;
+    void PresentItem(Control& item);
+    std::optional<ShowTransitionSpec> m_itemShow;
+    float m_itemHoverScale = 1.0f;
+    // Items realized before the first full fill play the item transition.
+    bool m_revealItems = true;
     std::size_t m_columns = 1;
     std::size_t m_overscan = 2;
     Vec2 m_itemExtent{320, 72};

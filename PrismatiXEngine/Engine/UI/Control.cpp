@@ -74,7 +74,7 @@ void Control::SetVisibility(Visibility value) {
         m_showElapsed = 0.0f;
         m_hiding = false;
     } else if (value != Visibility::Visible) {
-        m_showElapsed = m_showTransitionSeconds;
+        m_showElapsed = ShowTotalSeconds();
         // A control that never reached the screen has nothing to fade out; a
         // screen rebuilt under a hidden binding must not flash its hidden parts.
         m_hiding = wasVisible && m_presented && m_hideTransitionSeconds > 0.0f;
@@ -278,16 +278,87 @@ void Control::EmitInputSignal(const UIEvent& event) {
     }
 }
 
+const char* TransitionWipeName(const TransitionWipe wipe) {
+    switch (wipe) {
+        case TransitionWipe::Left: return "left";
+        case TransitionWipe::Right: return "right";
+        case TransitionWipe::Up: return "up";
+        case TransitionWipe::Down: return "down";
+        default: return "none";
+    }
+}
+
+std::optional<TransitionWipe> ParseTransitionWipe(const std::string_view value) {
+    if (value == "none") return TransitionWipe::None;
+    if (value == "left") return TransitionWipe::Left;
+    if (value == "right") return TransitionWipe::Right;
+    if (value == "up") return TransitionWipe::Up;
+    if (value == "down") return TransitionWipe::Down;
+    return std::nullopt;
+}
+
+const char* TransitionEaseName(const TransitionEase ease) {
+    switch (ease) {
+        case TransitionEase::Linear: return "linear";
+        case TransitionEase::Cubic: return "cubic";
+        case TransitionEase::Back: return "back";
+        default: return "quad";
+    }
+}
+
+std::optional<TransitionEase> ParseTransitionEase(const std::string_view value) {
+    if (value == "quad") return TransitionEase::Quad;
+    if (value == "linear") return TransitionEase::Linear;
+    if (value == "cubic") return TransitionEase::Cubic;
+    if (value == "back") return TransitionEase::Back;
+    return std::nullopt;
+}
+
+void Control::ApplyShowTransition(const ShowTransitionSpec& spec) {
+    SetShowTransitionSeconds(spec.seconds);
+    SetShowDelaySeconds(spec.delaySeconds);
+    SetShowOffsetX(spec.offsetX);
+    SetShowOffsetY(spec.offsetY);
+    m_showEase = spec.ease;
+    m_showWipe = spec.wipe;
+    SetShowScale(spec.scale);
+    m_showFade = spec.fade;
+}
+
+void Control::RestartShowTransition() {
+    m_showElapsed = 0.0f;
+    m_hiding = false;
+}
+
+void Control::FinishShowTransition() { m_showElapsed = ShowTotalSeconds(); }
+
 void Control::Update(float deltaSeconds) {
-    if (m_visibility == Visibility::Visible && m_showElapsed < m_showTransitionSeconds &&
-        std::isfinite(deltaSeconds) && deltaSeconds > 0.0f)
-        m_showElapsed = std::min(m_showTransitionSeconds, m_showElapsed + deltaSeconds);
-    if (m_hiding && std::isfinite(deltaSeconds) && deltaSeconds > 0.0f) {
+    const bool advance = std::isfinite(deltaSeconds) && deltaSeconds > 0.0f;
+    if (m_visibility == Visibility::Visible && m_showElapsed < ShowTotalSeconds() && advance)
+        m_showElapsed = std::min(ShowTotalSeconds(), m_showElapsed + deltaSeconds);
+    if (m_hiding && advance) {
         m_hideElapsed += deltaSeconds;
         if (m_hideElapsed >= m_hideTransitionSeconds) m_hiding = false;
     }
-    for (const auto& child : Children())
-        if (auto* control = dynamic_cast<Control*>(child.get())) control->Update(deltaSeconds);
+    if (m_hoverScale != 1.0f && advance) {
+        const float target = m_hovered && m_enabled ? 1.0f : 0.0f;
+        const float step = m_hoverTransitionSeconds > 0.0f ? deltaSeconds / m_hoverTransitionSeconds : 1.0f;
+        m_hoverAmount = target > m_hoverAmount ? std::min(target, m_hoverAmount + step)
+                                               : std::max(target, m_hoverAmount - step);
+    }
+    // A staggering parent starts each visible child a step after the last,
+    // as each one begins to appear.
+    std::size_t order = 0;
+    for (const auto& child : Children()) {
+        auto* control = dynamic_cast<Control*>(child.get());
+        if (!control) continue;
+        if (m_staggerSeconds > 0.0f && control->m_visibility == Visibility::Visible) {
+            if (control->m_showElapsed <= 0.0f)
+                control->SetStaggerDelaySeconds(m_staggerSeconds * static_cast<float>(order));
+            ++order;
+        }
+        control->Update(deltaSeconds);
+    }
 }
 
 void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
@@ -298,6 +369,11 @@ void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
     float visible = 1.0f;
     float slide = 0.0f;
     float slideX = 0.0f;
+    // `reveal` is the share a wipe shows from `wipe`'s edge; `grow` the
+    // transition scale.
+    float reveal = 1.0f;
+    float grow = 1.0f;
+    TransitionWipe wipe = TransitionWipe::None;
     // Eased progress 0..1 for a show; Back may overshoot past 1.
     const auto easeOut = [](const TransitionEase ease, const float t) {
         const float u = 1.0f - t;
@@ -317,22 +393,49 @@ void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
     };
     if (m_hiding) {
         const float gone = std::clamp(m_hideElapsed / m_hideTransitionSeconds, 0.0f, 1.0f);
-        visible = m_linearTransition ? 1.0f - gone : 1.0f - gone * gone;
+        if (m_hideFade) visible = m_linearTransition ? 1.0f - gone : 1.0f - gone * gone;
         // A hide runs the curve backwards (ease-in).
         const float travelled = 1.0f - easeOut(effective(m_hideEase), 1.0f - gone);
         slide = m_hideOffsetY * travelled;
         slideX = m_hideOffsetX * travelled;
+        wipe = m_hideWipe;
+        reveal = std::clamp(1.0f - travelled, 0.0f, 1.0f);
+        grow = 1.0f + (m_hideScale - 1.0f) * travelled;
     } else {
+        // A delayed control stays unseen until its show begins.
+        const float shown = m_showElapsed - m_showDelaySeconds - m_staggerDelaySeconds;
+        if (shown < 0.0f) return;
         const float progress = m_showTransitionSeconds > 0.0f
-            ? std::clamp(m_showElapsed / m_showTransitionSeconds, 0.0f, 1.0f) : 1.0f;
+            ? std::clamp(shown / m_showTransitionSeconds, 0.0f, 1.0f) : 1.0f;
         const float remaining = 1.0f - progress;
-        visible = m_linearTransition ? progress : 1.0f - remaining * remaining;
-        const float left = 1.0f - easeOut(effective(m_showEase), progress);
+        if (m_showFade) visible = m_linearTransition ? progress : 1.0f - remaining * remaining;
+        const float eased = easeOut(effective(m_showEase), progress);
+        const float left = 1.0f - eased;
         slide = m_showOffsetY * left;
         slideX = m_showOffsetX * left;
+        wipe = m_showWipe;
+        reveal = std::clamp(eased, 0.0f, 1.0f);
+        grow = m_showScale + (1.0f - m_showScale) * eased;
+    }
+    if (m_hoverScale != 1.0f && m_hoverAmount > 0.0f) {
+        const float t = m_hoverAmount;
+        grow *= 1.0f + (m_hoverScale - 1.0f) * (1.0f - (1.0f - t) * (1.0f - t));
     }
     Color tint=m_modulate;tint.a=static_cast<std::uint8_t>(static_cast<float>(tint.a)*m_opacity*visible);
-    renderer.PushTransform({m_layoutRect.x+m_pivot.x*m_layoutRect.w+m_translation.x+slideX,m_layoutRect.y+m_pivot.y*m_layoutRect.h+m_translation.y+slide},m_scale,m_rotation,tint);
+    renderer.PushTransform({m_layoutRect.x+m_pivot.x*m_layoutRect.w+m_translation.x+slideX,m_layoutRect.y+m_pivot.y*m_layoutRect.h+m_translation.y+slide},{m_scale.x*grow,m_scale.y*grow},m_rotation,tint);
+    // A wipe clips the whole control, panel included, to the revealed part.
+    const bool wiping = wipe != TransitionWipe::None && reveal < 1.0f;
+    if (wiping) {
+        Rect shown = m_layoutRect;
+        if (wipe == TransitionWipe::Left || wipe == TransitionWipe::Right) {
+            if (wipe == TransitionWipe::Right) shown.x += shown.w * (1.0f - reveal);
+            shown.w *= reveal;
+        } else {
+            if (wipe == TransitionWipe::Down) shown.y += shown.h * (1.0f - reveal);
+            shown.h *= reveal;
+        }
+        renderer.PushClip(shown);
+    }
     if (m_box) {
         BoxDecoration box = *m_box;
         if (!m_enabled) {
@@ -358,7 +461,9 @@ void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
     if(m_clipContent)renderer.PushClip(m_layoutRect);
     DrawSelf(renderer, theme);
     for(const auto& child:Children())if(auto* control=dynamic_cast<Control*>(child.get()))control->Draw(renderer,theme);
-    if(m_clipContent)renderer.PopClip();renderer.PopTransform();
+    if(m_clipContent)renderer.PopClip();
+    if(wiping)renderer.PopClip();
+    renderer.PopTransform();
 }
 
 void Control::SetInteractionState(bool hovered, bool pressed, bool focused,

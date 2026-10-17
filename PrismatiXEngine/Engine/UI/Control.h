@@ -12,6 +12,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -45,6 +46,27 @@ enum class Visibility { Visible, Hidden, Collapsed };
 // Curve of a show/hide slide. Back overshoots its rest on show and pulls back
 // before leaving on hide, like a spring.
 enum class TransitionEase { Quad, Linear, Cubic, Back };
+// A show wipe reveals the control from that edge (Left: left to right); a
+// hide wipe takes it away towards that edge.
+enum class TransitionWipe { None, Left, Right, Up, Down };
+
+[[nodiscard]] const char* TransitionWipeName(TransitionWipe wipe);
+[[nodiscard]] std::optional<TransitionWipe> ParseTransitionWipe(std::string_view value);
+[[nodiscard]] const char* TransitionEaseName(TransitionEase ease);
+[[nodiscard]] std::optional<TransitionEase> ParseTransitionEase(std::string_view value);
+
+// Everything a show transition does, for applying one to runtime-made
+// controls (list and grid items).
+struct ShowTransitionSpec {
+    float seconds = 0.0f;
+    float delaySeconds = 0.0f;
+    float offsetX = 0.0f;
+    float offsetY = 8.0f;
+    TransitionEase ease = TransitionEase::Quad;
+    TransitionWipe wipe = TransitionWipe::None;
+    float scale = 1.0f;
+    bool fade = true;
+};
 enum class MouseFilter { Stop, Pass, Ignore };
 enum class FocusMode { None, Click, All };
 enum class SizeFlag : unsigned { ShrinkBegin = 0, Fill = 1, Expand = 2, ShrinkCenter = 4, ShrinkEnd = 8 };
@@ -228,6 +250,52 @@ public:
     [[nodiscard]] TransitionEase ShowEase() const { return m_showEase; }
     void SetHideEase(TransitionEase value) { m_hideEase = value; }
     [[nodiscard]] TransitionEase HideEase() const { return m_hideEase; }
+    // Seconds the control waits, unseen, before its show transition starts.
+    void SetShowDelaySeconds(float value) {
+        m_showDelaySeconds = std::isfinite(value) ? std::clamp(value, 0.0f, 10.0f) : 0.0f;
+    }
+    [[nodiscard]] float ShowDelaySeconds() const { return m_showDelaySeconds; }
+    void SetShowWipe(TransitionWipe value) { m_showWipe = value; }
+    [[nodiscard]] TransitionWipe ShowWipe() const { return m_showWipe; }
+    void SetHideWipe(TransitionWipe value) { m_hideWipe = value; }
+    [[nodiscard]] TransitionWipe HideWipe() const { return m_hideWipe; }
+    // Scale the control grows (or shrinks) from as it appears; 1 is none.
+    void SetShowScale(float value) { m_showScale = std::isfinite(value) ? std::clamp(value, 0.0f, 10.0f) : 1.0f; }
+    [[nodiscard]] float ShowScale() const { return m_showScale; }
+    // Scale the control ends at as it disappears; 1 is none.
+    void SetHideScale(float value) { m_hideScale = std::isfinite(value) ? std::clamp(value, 0.0f, 10.0f) : 1.0f; }
+    [[nodiscard]] float HideScale() const { return m_hideScale; }
+    // Whether the show/hide transition fades the opacity (on by default).
+    void SetShowFade(bool value) { m_showFade = value; }
+    [[nodiscard]] bool ShowFade() const { return m_showFade; }
+    void SetHideFade(bool value) { m_hideFade = value; }
+    [[nodiscard]] bool HideFade() const { return m_hideFade; }
+    // Each child's show transition starts this much later than the previous
+    // visible child's (list and grid items in their order).
+    void SetStaggerSeconds(float value) {
+        m_staggerSeconds = std::isfinite(value) ? std::clamp(value, 0.0f, 2.0f) : 0.0f;
+    }
+    [[nodiscard]] float StaggerSeconds() const { return m_staggerSeconds; }
+    // The delay a staggering parent gives this control.
+    void SetStaggerDelaySeconds(float value) {
+        m_staggerDelaySeconds = std::isfinite(value) ? std::clamp(value, 0.0f, 60.0f) : 0.0f;
+    }
+    [[nodiscard]] float StaggerDelaySeconds() const { return m_staggerDelaySeconds; }
+    // Scale the control eases to while the pointer is over it; 1 is none.
+    void SetHoverScale(float value) { m_hoverScale = std::isfinite(value) ? std::clamp(value, 0.1f, 4.0f) : 1.0f; }
+    [[nodiscard]] float HoverScale() const { return m_hoverScale; }
+    void SetHoverTransitionSeconds(float value) {
+        m_hoverTransitionSeconds = std::isfinite(value) ? std::clamp(value, 0.0f, 2.0f) : 0.12f;
+    }
+    [[nodiscard]] float HoverTransitionSeconds() const { return m_hoverTransitionSeconds; }
+    void ApplyShowTransition(const ShowTransitionSpec& spec);
+    // Starts the show transition again from its delay, as when it appeared.
+    void RestartShowTransition();
+    // Ends any show transition at once (the control is fully shown).
+    void FinishShowTransition();
+    [[nodiscard]] float ShowTotalSeconds() const {
+        return m_showDelaySeconds + m_staggerDelaySeconds + m_showTransitionSeconds;
+    }
     void SetModulate(Color value) { m_modulate = value; }
     [[nodiscard]] Color Modulate() const { return m_modulate; }
     void SetClipContent(bool value) { m_clipContent = value; }
@@ -350,6 +418,18 @@ private:
     float m_showOffsetX = 0.0f;
     float m_hideOffsetX = 0.0f;
     bool m_linearTransition = false;
+    float m_showDelaySeconds = 0.0f;
+    float m_staggerDelaySeconds = 0.0f;
+    float m_staggerSeconds = 0.0f;
+    TransitionWipe m_showWipe = TransitionWipe::None;
+    TransitionWipe m_hideWipe = TransitionWipe::None;
+    float m_showScale = 1.0f;
+    float m_hideScale = 1.0f;
+    bool m_showFade = true;
+    bool m_hideFade = true;
+    float m_hoverScale = 1.0f;
+    float m_hoverTransitionSeconds = 0.12f;
+    float m_hoverAmount = 0.0f;
     TransitionEase m_showEase = TransitionEase::Quad;
     TransitionEase m_hideEase = TransitionEase::Quad;
     Color m_modulate{255,255,255,255};

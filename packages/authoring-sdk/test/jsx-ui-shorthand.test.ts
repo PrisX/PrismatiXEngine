@@ -92,6 +92,23 @@ test("a transition offset may set one axis and leave the Runtime default of the 
   assert.deepEqual(node("Neither").runtimeProperties, {showTransitionSeconds: 0.3});
 });
 
+test("delay, wipe, scale, fade, stagger, hover and list item transitions lower to runtime properties", () => {
+  const node = compiled([
+    jsx(Group, {name: "Menu", position: [0, 0], size: [10, 10], stagger: 0.06, hoverScale: 1.04,
+      showTransition: {seconds: 0.4, delay: 0.2, wipe: "left", scale: 0.9, fade: false, ease: "cubic"},
+      hideTransition: {seconds: 0.2, wipe: "right", scale: 1.1}}),
+    jsx(Control, {name: "Slots", kind: "grid", runtimeType: "GridView", position: [0, 0], size: [10, 10],
+      stagger: 0.08, itemHoverScale: 1.03,
+      itemShowTransition: {seconds: 0.5, wipe: "left", offset: [0, 0], ease: "cubic", delay: 0.1}}),
+  ]);
+  assert.deepEqual(node("Menu").runtimeProperties, {showTransitionSeconds: 0.4, showTransitionEase: "cubic",
+    showDelaySeconds: 0.2, showWipe: "left", showScale: 0.9, showFade: false,
+    hideTransitionSeconds: 0.2, hideWipe: "right", hideScale: 1.1, staggerSeconds: 0.06, hoverScale: 1.04});
+  assert.deepEqual(node("Slots").runtimeProperties, {staggerSeconds: 0.08, itemShowTransitionSeconds: 0.5,
+    itemShowOffsetX: 0, itemShowOffsetY: 0, itemShowTransitionEase: "cubic", itemShowDelaySeconds: 0.1,
+    itemShowWipe: "left", itemHoverScale: 1.03});
+});
+
 test("runtimeProperties with a typed prop, Control sliders and skin-shaped paths are linted", () => {
   const result = compileJsxUi(jsx(Scene, {name: "Lint", width: 640, height: 360,
     children: jsxs(Group, {name: "Root", fill: true, children: [
