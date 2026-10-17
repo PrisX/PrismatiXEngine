@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import {writeFileSync} from "node:fs";
-import {mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, utimes, writeFile} from "node:fs/promises";
+import {link, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, utimes, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import {spawn, spawnSync} from "node:child_process";
@@ -2495,4 +2495,50 @@ test("pack --target android stages the Gradle template and collects the APK and 
     assert.equal(run(["pack", projectPath, "--target", "ios"]).status, 2);
     assert.equal(run(["pack", projectPath, "--target", "android", "--check"]).status, 2);
   } finally { await rm(parent, {recursive: true, force: true}); }
+});
+
+test("run --dev packs into .prismatix/run and reports the game's lifecycle as NDJSON", async () => {
+  const value = await fixture();
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-run-dev-"));
+  try {
+    // The "game" is a Node executable that exits at once (no script on stdin).
+    const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+    await link(process.execPath, player);
+    const mock = join(tools, "mock-packager.mjs");
+    await write(mock, `
+      import {link, readFile} from "node:fs/promises";
+      import {basename, join} from "node:path";
+      const request = JSON.parse(await readFile(process.argv.at(-1), "utf8"));
+      if (request.compression !== "none") process.exit(43);
+      await link(request.playerExecutable, join(request.outputDir, basename(request.playerExecutable)));
+      process.stdout.write(JSON.stringify({protocolVersion: 1, event: "completed",
+        requestId: request.requestId}) + "\\n");
+    `);
+    const result = run(["run", value.root, "--dev", "--packager", mock, "--player", player]);
+    assert.equal(result.status, 0, result.stderr);
+    const records = result.stderr.split(/\r?\n/u).filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((record) => String(record.event).startsWith("run."));
+    assert.deepEqual(records.map((record) => `${String(record.event)}:${String(record.phase)}`),
+      ["run.build:start", "run.build:done", "run.player:start", "run.player:exit"]);
+    const output = join(value.root, ".prismatix", "run");
+    assert.equal(records[1]!.output, output);
+    assert.equal(records[2]!.pid, records[3]!.pid);
+    assert.equal(typeof records[2]!.pid, "number");
+    assert.equal(records[3]!.exitCode, 0);
+    assert.equal((await stat(join(value.root, ".prismatix", "run-artifact", "project.pxproject"))).isFile(), true);
+    // A dev pack records no release lineage in the project.
+    assert.equal((await readdir(value.root)).includes(".prismatix-release"), false);
+  } finally { await rm(tools, {recursive: true, force: true}); }
+});
+
+test("run --at names a Story position and refuses a QA pack outside .prismatix", async () => {
+  const value = await fixture();
+  const outside = run(["run", value.root, "--at", "main:1", "--output", join(value.root, "dist", "qa"),
+    "--player-qa", process.execPath]);
+  assert.equal(outside.status, 1);
+  assert.match(outside.stderr, /QA Player, which is for local development only/u);
+  const help = runHuman(["run", "--help"]);
+  assert.match(help.stdout + help.stderr, /\.prismatix\/run-qa/u);
+  assert.match(help.stdout + help.stderr, /never be released/u);
 });

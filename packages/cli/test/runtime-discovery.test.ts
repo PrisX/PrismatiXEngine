@@ -3,7 +3,7 @@ import {chmod, mkdtemp, mkdir, readFile, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {delimiter, join} from "node:path";
 import test from "node:test";
-import {discoverRuntimeBundle, discoverRuntimeTool, RuntimeDiscoveryFailure} from "../src/runtime-discovery.js";
+import {discoverQaPlayer, discoverRuntimeBundle, discoverRuntimeTool, RuntimeDiscoveryFailure} from "../src/runtime-discovery.js";
 
 async function fixture(t: test.TestContext) {
   const root = await mkdtemp(join(tmpdir(), "prismatix-runtime-discovery-"));
@@ -108,4 +108,21 @@ test("bundle discovery rejects split PATH tools but permits explicit per-tool ov
   assert.match(explicit.packager.source, /unverified developer override/);
   assert.match(explicit.player.source, /unverified developer override/);
   assert.equal(await readFile(f.manifest, "utf8"), JSON.stringify(f.data));
+});
+
+test("the QA Player for run --at is found beside the Player, or named explicitly", async t => {
+  const f = await fixture(t);
+  const qaName = process.platform === "win32" ? "PrismatiXPlayerQA.exe" : "PrismatiXPlayerQA";
+  await assert.rejects(discoverQaPlayer({runtime: f.root, environment: {}}), rejected(/build the PrismatiXPlayerQA target/));
+  await writeFile(join(f.bin, qaName), "fixture");
+  await chmod(join(f.bin, qaName), 0o755);
+  const found = await discoverQaPlayer({runtime: f.root, environment: {}});
+  assert.equal(found.path, join(f.bin, qaName));
+  assert.match(found.source, /QA Player beside it/);
+  const other = join(f.root, "other-qa.mjs");
+  await writeFile(other, "// fixture");
+  assert.equal((await discoverQaPlayer({runtime: f.root, playerQA: other, environment: {}})).path, other);
+  assert.equal((await discoverQaPlayer({runtime: f.root, environment: {PRISMATIX_PLAYER_QA: other}})).path, other);
+  await assert.rejects(discoverQaPlayer({playerQA: join(f.root, "missing.exe"), environment: {}}),
+    rejected(/does not exist/));
 });

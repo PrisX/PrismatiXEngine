@@ -218,6 +218,36 @@ export async function discoverRuntimeBundle<const T extends readonly RuntimeTool
   if (directories.size > 1 || (bundles.size > 0 && directories.size > 0)) throw new RuntimeDiscoveryFailure(tools[0] ?? "player", ["Tools resolved to different runtime locations; select one coherent --runtime bundle"]);
   return Object.fromEntries(entries) as {[K in T[number]]: DiscoveredRuntimeTool};
 }
+const qaPlayerName = process.platform === "win32" ? "PrismatiXPlayerQA.exe" : "PrismatiXPlayerQA";
+
+/**
+ * The QA Player (PrismatiXPlayerQA: the Player with its QA IPC test interface)
+ * for local development packs. It is never part of a shipped game, so a
+ * runtime bundle need not declare it: an explicit `playerQA` path or
+ * PRISMATIX_PLAYER_QA wins, else it is the PrismatiXPlayerQA beside the
+ * discovered Player.
+ */
+export async function discoverQaPlayer(options: RuntimeDiscoveryOptions & {readonly playerQA?: string} = {}):
+  Promise<DiscoveredRuntimeTool> {
+  const environment = options.environment ?? process.env;
+  const attempts: string[] = [];
+  const explicit = options.playerQA ?? environment.PRISMATIX_PLAYER_QA;
+  if (explicit) {
+    const found = await firstExisting([explicit], options.playerQA !== undefined ? "--player-qa" : "PRISMATIX_PLAYER_QA", attempts);
+    if (found) return found;
+    throw new RuntimeDiscoveryFailure("player", [...attempts, "The QA Player named explicitly does not exist"]);
+  }
+  const player = await discoverRuntimeTool("player", options);
+  const sibling = join(dirname(player.path), qaPlayerName);
+  attempts.push(`beside the Player:${sibling}`);
+  const path = await existingFile(sibling);
+  if (path !== undefined) return {path, source: `${player.source}; QA Player beside it`,
+    ...(player.bundleId === undefined ? {} : {bundleId: player.bundleId}),
+    ...(player.version === undefined ? {} : {version: player.version})};
+  throw new RuntimeDiscoveryFailure("player", [...attempts,
+    `this runtime has no ${qaPlayerName}; build the PrismatiXPlayerQA target or pass --player-qa <path>`]);
+}
+
 export function runtimeDiscoveryHint(error: RuntimeDiscoveryFailure): string {
   const option = error.tool === "previewHost" ? "--preview-host" : `--${error.tool}`;
   return `Install a CLI package containing a compatible runtime, or explicitly select a developer runtime using ${option}, --runtime, ${toolEnvironment[error.tool]}, or PRISMATIX_RUNTIME_DIR. Checked: ${error.attempts.join(", ")}`;

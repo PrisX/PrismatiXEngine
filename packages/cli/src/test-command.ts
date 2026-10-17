@@ -156,7 +156,7 @@ export async function loadJourney(file: string, scratch: string): Promise<Loaded
   return {run: journey as Journey, ...(timeoutMs === undefined ? {} : {timeoutMs})};
 }
 
-async function waitForPort(portFile: string, child: ChildProcess, exited: () => boolean,
+export async function waitForPort(portFile: string, child: ChildProcess, exited: () => boolean,
   timeoutMs: number): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

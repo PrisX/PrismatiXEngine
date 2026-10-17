@@ -12,7 +12,7 @@ import {fileURLToPath, pathToFileURL} from "node:url";
 import * as ts from "typescript-compiler";
 
 import {
-  checkoutRuntimeFile, discoverRuntimeTool, discoverRuntimeBundle, RuntimeDiscoveryFailure, runtimeDiscoveryHint,
+  checkoutRuntimeFile, discoverQaPlayer, discoverRuntimeTool, discoverRuntimeBundle, RuntimeDiscoveryFailure, runtimeDiscoveryHint,
   type RuntimeDiscoveryOptions,
 } from "./runtime-discovery.js";
 import {fingerprintFile, publishDirectory, publishedInputs, retainPublishedDirectoryIfMatching,
@@ -46,7 +46,9 @@ import {AndroidExportError, androidSettings, checkAndroidInputs, checkKeystoreEn
 import {exportWeb, resolveWebPlayer} from "./web-export.js";
 import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
 import {transcodeMedia, type TranscodedFile} from "./media-transcode.js";
-import {testCommand, testHelp} from "./test-command.js";
+import {testCommand, testHelp, waitForPort} from "./test-command.js";
+import {PlayerTestClient} from "./qa-client.js";
+import {reachStoryPosition} from "./run-at.js";
 
 import {
   assertLocalBuildFresh,
@@ -106,7 +108,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space no-transcode"},
   pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target android-player gradle android-sdk web-player web-package ffmpeg", flags: "encrypt ignore-disk-space check verify-media debug no-transcode"},
-  run: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
+  run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: ""},
   eject: {values: "project runtime", flags: "force"},
@@ -1951,8 +1953,11 @@ async function applyDistributionDefaults(options: Options): Promise<void> {
     if (value !== undefined && !options.values.has(name)) options.values.set(name, value);
 }
 
-async function packProject(options: Options): Promise<{output: string; player: string;
-  validatedOnly?: boolean; deferredMediaCount?: number}> {
+async function packProject(options: Options, settings: {
+  /** A local development pack (`run --dev`): never records release lineage in the project. */
+  readonly development?: boolean;
+} = {}): Promise<{output: string; player: string;
+  validatedOnly?: boolean; deferredMediaCount?: number; retained?: boolean}> {
   await applyDistributionDefaults(options);
   let packager: string;
   let player: string;
@@ -2064,6 +2069,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
     const lineageCovered = releaseLineage === undefined || outputLineage === undefined ||
       distributionCoversLineage(outputLineage, releaseLineage);
     const recordLineage = async () => {
+      if (settings.development === true) return;
       const packed = await distributionLineage(output, project.id);
       if (packed !== undefined && await recordReleaseLineage(root, project.id, packed))
         progress({severity: "information", code: "PXCLI1224",
@@ -2163,7 +2169,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
         phase: "retain-package", current: inputs.length, total: inputs.length,
         message: `Retained verified unchanged distribution: ${output}`});
       await recordLineage();
-      return {output, player: join(output, packagedPlayer)};
+      return {output, player: join(output, packagedPlayer), retained: true};
     }
     if (previousPackage === undefined && lineageCovered && planKey !== undefined &&
         contentKey !== undefined &&
@@ -2176,7 +2182,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
         phase: "refresh-runtime", current: runtimeSources.size, total: runtimeSources.size,
         message: `Updated Player runtime without rebuilding packaged content: ${output}`});
       await recordLineage();
-      return {output, player: join(output, packagedPlayer)};
+      return {output, player: join(output, packagedPlayer), retained: true};
     }
     const inputBytes = inputs.reduce((sum, input) => sum + BigInt(input.size), 0n);
     const performanceHint = debugPackagerHint(packager, inputBytes);
@@ -2484,15 +2490,159 @@ async function webPackCommand(options: Options): Promise<number> {
   } finally { if (temporary) await rm(temporary, {recursive: true, force: true}); }
 }
 
+function pathWithin(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.startsWith("../"));
+}
+
+/**
+ * `prismatix run`: build, pack and start the real game.
+ *
+ * --dev (an editor's Play button; also implied by --at or an --output under
+ * <project>/.prismatix) compiles into <project>/.prismatix/run-artifact,
+ * packs without transcoding or compression into <project>/.prismatix/run,
+ * and keeps the previous pack when nothing changed. --at packs the QA Player
+ * into <project>/.prismatix/run-qa instead and drives it to a Story position
+ * over its local QA IPC. The game closes when this process goes away.
+ */
 async function runCommand(options: Options): Promise<number> {
+  taggedRecords = machineOutput;
+  const lifecycle = (record: Readonly<Record<string, unknown>>): void => {
+    if (machineOutput) progress({severity: "information", ...record});
+  };
+  let child: ReturnType<typeof spawn> | undefined;
+  let scratch: string | undefined;
+  const stopPlayer = (): void => { child?.kill(); };
+  process.once("SIGINT", stopPlayer); process.once("SIGTERM", stopPlayer);
   try {
-    const result = await packProject(options);
-    const child = await runProcess(result.player, [], undefined, result.output, true);
-    return child.code;
+    const location = await resolveProjectPath(options.positional[0]);
+    const devRoot = join(location.root, ".prismatix");
+    const at = options.values.get("at");
+    const requestedOutput = options.values.get("output");
+    const development = options.flags.has("dev") || at !== undefined ||
+      (requestedOutput !== undefined && pathWithin(devRoot, resolve(requestedOutput)));
+    let result: Awaited<ReturnType<typeof packProject>>;
+    let artifact: BuildArtifact | undefined;
+    let qaPlayer: string | undefined;
+    const buildStarted = Date.now();
+    lifecycle({event: "run.build", phase: "start", code: "PXCLI1311", development, qa: at !== undefined,
+      message: "Building the game"});
+    if (!development) {
+      result = await packProject(options);
+    } else {
+      const output = resolve(requestedOutput ?? join(devRoot, at === undefined ? "run" : "run-qa"));
+      if (at !== undefined && !pathWithin(devRoot, output))
+        throw new Error(`--at packs the QA Player, which is for local development only; ` +
+          `its --output must stay inside ${devRoot}`);
+      if (at !== undefined) {
+        const qaOptions = {...runtimeOptions(options),
+          ...(options.values.has("player-qa") ? {playerQA: options.values.get("player-qa")!} : {})};
+        try { qaPlayer = (await discoverQaPlayer(qaOptions)).path; }
+        catch (error) {
+          if (!(error instanceof RuntimeDiscoveryFailure)) throw error;
+          throw new PackagerFailure([discoveryDiagnostic("PXCLI1314",
+            "The QA Player (PrismatiXPlayerQA) that run --at drives could not be discovered",
+            error, options.positional[0])]);
+        }
+      }
+      let artifactRoot = options.values.get("artifact");
+      if (artifactRoot === undefined) {
+        // A stable artifact folder lets the compiler and the package keep
+        // whatever did not change since the last Play.
+        const built = await buildProject(options.positional[0], join(devRoot, "run-artifact"),
+          undefined, options.values.get("ui-registry"), options.values.get("runtime"));
+        artifact = built.artifact;
+        artifactRoot = built.output;
+      } else if (at !== undefined) {
+        throw new Error("--at compiles the project itself to find the Story position; omit --artifact");
+      }
+      const values = new Map(options.values);
+      for (const name of ["at", "player-qa"]) values.delete(name);
+      values.set("artifact", artifactRoot);
+      values.set("output", output);
+      if (!values.has("compression")) values.set("compression", "none");
+      if (qaPlayer !== undefined) values.set("player", qaPlayer);
+      result = await packProject({values, flags: new Set(options.flags), positional: [...options.positional]},
+        {development: true});
+    }
+    lifecycle({event: "run.build", phase: "done", code: "PXCLI1312", output: result.output,
+      retained: result.retained === true, durationMs: Date.now() - buildStarted,
+      message: `Game built in ${Date.now() - buildStarted} ms: ${result.output}`});
+    // A position that does not exist starts no game.
+    if (at !== undefined && artifact !== undefined) {
+      try { resolvePreviewTarget(artifact, at); }
+      catch (error) {
+        throw new PackagerFailure([diagnostic("PXCLI1315", `--at ${at} names no Story position`,
+          options.positional[0], error instanceof Error ? error.message : String(error))]);
+      }
+    }
+
+    const environment: NodeJS.ProcessEnv = {...process.env,
+      // The game closes when this CLI goes away (an editor's Stop, a crash).
+      PRISMATIX_EXIT_WITH_PROCESS: String(process.pid)};
+    let portFile: string | undefined;
+    if (at !== undefined) {
+      scratch = await mkdtemp(join(tmpdir(), "prismatix-run-"));
+      portFile = join(scratch, "qa-ipc.port");
+      Object.assign(environment, {PRISMATIX_QA_IPC: "127.0.0.1:0", PRISMATIX_QA_IPC_PORT_FILE: portFile});
+    }
+    const started = Date.now();
+    const player = spawn(result.player, [], {cwd: result.output, env: environment, windowsHide: false,
+      stdio: ["ignore", machineOutput ? "ignore" : "inherit", machineOutput ? "ignore" : "inherit"]});
+    child = player;
+    let exitCode: number | null | undefined;
+    const exited = new Promise<number>((accept) => {
+      player.once("exit", (code, signal) => {
+        exitCode = code;
+        lifecycle({event: "run.player", phase: "exit", code: "PXCLI1316", pid: player.pid,
+          exitCode: code, signal, message: `Game exited (${code ?? signal ?? "unknown"})`});
+        accept(code ?? 1);
+      });
+      player.once("error", (error) => {
+        exitCode = null;
+        printDiagnostics([diagnostic("PXCLI1301", "Run failed", options.positional[0], String(error))]);
+        accept(1);
+      });
+    });
+    lifecycle({event: "run.player", phase: "start", code: "PXCLI1313", pid: player.pid,
+      qa: qaPlayer !== undefined, executable: result.player,
+      message: `Game started (pid ${player.pid ?? "unknown"})`});
+    if (at !== undefined && portFile !== undefined && artifact !== undefined) {
+      let client: PlayerTestClient | undefined;
+      try {
+        const port = await waitForPort(portFile, player, () => exitCode !== undefined, 60_000);
+        client = await PlayerTestClient.connect(port, scratch!);
+        const outcome = await reachStoryPosition(client, artifact, at);
+        const position = `${outcome.sourceUri}:${outcome.line}`;
+        if (outcome.reached) {
+          const choices = outcome.branchPath !== undefined && outcome.branchPath.length > 0
+            ? ` (choices ${outcome.branchPath.map((choice) => choice + 1).join(" > ")})` : "";
+          progress({event: "run.at", severity: "information", code: "PXCLI1310",
+            message: `Game is at ${position}${choices} after ${Date.now() - started} ms`,
+            reached: true, sourceUri: outcome.sourceUri, line: outcome.line,
+            operationIndex: outcome.operationIndex, branchPath: outcome.branchPath,
+            durationMs: Date.now() - started});
+        } else {
+          const where = outcome.state?.story.source ?? undefined;
+          printDiagnostics([{severity: "warning", code: "PXCLI1315",
+            message: `The game could not reach ${position}: ${outcome.reason ?? "unknown reason"}; ` +
+              `it stays ${where ? `at ${where.uri}:${where.line}` : "where it stopped"}`,
+            path: outcome.sourceUri, hint: `Played ${outcome.attempts} choice path(s) from the start of the story`}]);
+        }
+      } catch (error) {
+        printDiagnostics([diagnostic("PXCLI1315", `The game could not be brought to ${at}`,
+          options.positional[0], String(error))]);
+      } finally { client?.close(); }
+    }
+    return await exited;
   } catch (error) {
+    child?.kill();
     printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure ? error.diagnostics :
       [diagnostic("PXCLI1301", "Run failed", options.positional[0], String(error))]);
     return 1;
+  } finally {
+    process.removeListener("SIGINT", stopPlayer); process.removeListener("SIGTERM", stopPlayer);
+    if (scratch !== undefined) await rm(scratch, {recursive: true, force: true}).catch(() => {});
   }
 }
 
@@ -3372,7 +3522,25 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "    [--gradle <gradle>] [--android-sdk <dir>] [--debug]   APK, plus an AAB when distribution.android.keystore is set;",
     "    needs JAVA_HOME (JDK 17+), Gradle 8.9+ and an Android SDK with platform 35 (ANDROID_HOME)",
     "prismatix pack [project] --target web --web-player <WASM Player dir> [--web-package <distribution>] [--output <dir>] [--ffmpeg <path>]"],
-  run: ["Build a distribution and start its Player.", "prismatix run [project] [--runtime <dir>]"],
+  run: ["Build a distribution and start its Player.",
+    "prismatix run [project] [--runtime <dir>]",
+    "prismatix run [project] --dev [--json]                 an editor's Play button",
+    "prismatix run [project] --at <scene|scene:line|scene:label|Story/file.pxstory:line> [--json]",
+    "",
+    "--dev compiles into <project>/.prismatix/run-artifact and packs into <project>/.prismatix/run without",
+    "transcoding or compression (--compression to override); when nothing changed since the last run the",
+    "previous pack is kept and the game starts at once. An --output inside <project>/.prismatix implies --dev.",
+    "Dev packs are for this machine only: they never record release lineage. They share the game's saves.",
+    "--at starts the real game at a Story position: it packs PrismatiXPlayerQA (the Player with its QA IPC",
+    "test interface, found beside the Player or given with --player-qa) into <project>/.prismatix/run-qa,",
+    "starts the story and clicks through it, choosing the options that lead there, until that line is",
+    "current, so background, characters and music are what playing there shows. That QA pack is for local",
+    "development only and must never be released or shared. If the line cannot be reached, PXCLI1315 says",
+    "why and the game stays where it stopped.",
+    "The game closes when this command exits or is killed (PRISMATIX_EXIT_WITH_PROCESS), so an editor's",
+    "Stop needs only to end this process.",
+    "--json: stderr is NDJSON: event diagnostic, progress, run.build start/done (output, retained,",
+    "    durationMs), run.player start (pid, qa)/exit (pid, exitCode) and run.at (reached, line, branchPath)."],
   release: ["Validate, build, pack and verify a release candidate in one step.",
     "prismatix release [project] [--output <dir>] [--runtime <dir>]",
     "Defaults for --output, --compression and --archive-shards come from prismatix.json distribution."],
