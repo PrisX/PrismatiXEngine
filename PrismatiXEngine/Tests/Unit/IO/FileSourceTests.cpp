@@ -419,6 +419,21 @@ int main() {
                      "virtual paths still reject traversal");
     });
 
+    suite.Run("Utf8PathStemKeepsNamesTheAnsiCodePageCannotHold", [&] {
+        // A music file name in Japanese on a Big5 (or any non-UTF-8) Windows
+        // code page: the narrow std::filesystem conversion threw and ended
+        // the Player as soon as the Story played it.
+        const std::string path = "Assets/Music/2-01. この櫻ノ詩の下.flac";
+        suite.Expect(px::PathStemUtf8(path) ==
+                         "2-01. この櫻ノ詩の下",
+                     "stem keeps the UTF-8 name and only the last extension goes");
+        suite.Expect(px::PathStemUtf8("Assets/Music/theme.v2.ogg") == "theme.v2",
+                     "dots inside the name stay");
+        suite.Expect(px::PathStemUtf8("Story/第一章.pxstory") ==
+                         "第一章",
+                     "scene file names round-trip");
+    });
+
     suite.Run("DefaultVfsBehaviourIsUnchanged", [&] {
         px::test::TempDirectory temp("file-source-default");
         const Bytes data = Pattern(4096, 3);

@@ -387,9 +387,9 @@ struct QaOps {
         Json source = nullptr;
         if (const auto* mapping = app.m_session->SourceMapping(vm.CurrentOperationId())) {
             source = Json{{"uri", mapping->sourceUri}, {"line", mapping->startLine}};
-            const std::filesystem::path uri(mapping->sourceUri);
+            const std::filesystem::path uri = px::PathFromUtf8(mapping->sourceUri);
             if (uri.extension() == ".pxstory") {
-                const std::string scene = uri.stem().string();
+                const std::string scene = px::PathStemUtf8(mapping->sourceUri);
                 story["scene"] = scene;
                 if (label == "pxscene.entry." + Fnv1a64("scene-entry:" + scene))
                     story["sceneLabel"] = scene;

@@ -5,6 +5,7 @@
 #include "Engine/Audio/AudioEngine.h"
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Support/Logger.h"
+#include "Engine/Support/Utf8Path.h"
 #include "Engine/UI/Actions/PlayerActionContract.h"
 #include "Engine/UI/Layout.h"
 #include "Engine/UI/Widgets.h"
@@ -126,7 +127,7 @@ void PlayerApp::ResetSettings() {
 
 bool PlayerApp::MusicUnlocked(const std::size_t index) const {
     return index < m_musicTracks.size() && m_profile.MusicUnlocked(
-        std::filesystem::path(m_musicTracks[index]).stem().string());
+        px::PathStemUtf8(m_musicTracks[index]));
 }
 
 void PlayerApp::PlayMusicAt(const std::size_t index) {

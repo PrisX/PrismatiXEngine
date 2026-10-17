@@ -1629,7 +1629,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         }
     }
     for (const auto& path : m_musicTracks) {
-        const std::string id = std::filesystem::path(path).stem().string();
+        const std::string id = px::PathStemUtf8(path);
         if (const Status defined = m_ui.DefineUiData(
                 "musicUnlocked." + id, Variant(m_profile.MusicUnlocked(id))); !defined) {
             for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
@@ -2788,11 +2788,11 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
     view.chapterTitle = m_session->VM().Chapter();
     const std::string currentBgm=m_session->VM().CurrentBgm();
     if(!currentBgm.empty()){
-        const std::string key="bgm."+std::filesystem::path(currentBgm).stem().string();
+        const std::string key="bgm."+px::PathStemUtf8(currentBgm);
         if(const auto translated=m_langTable.find(key);translated!=m_langTable.end())
             view.musicTitle=translated->second;
         else
-            view.musicTitle=std::filesystem::path(currentBgm).stem().string();
+            view.musicTitle=px::PathStemUtf8(currentBgm);
     }
     view.effect = m_session->Dialogue().State().effect;
     view.effectProgress = m_session->Dialogue().State().effectProgress;
@@ -3762,7 +3762,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         m_lastStoryBgm = storyBgm;
         if (!storyBgm.empty() &&
             std::ranges::find(m_musicTracks, storyBgm) != m_musicTracks.end()) {
-            const std::string id = std::filesystem::path(storyBgm).stem().string();
+            const std::string id = px::PathStemUtf8(storyBgm);
             if (m_profile.UnlockMusic(id)) {
                 (void)m_ui.UpdateUiData("musicUnlocked." + id, Variant(true));
                 MarkProfileDirty(true);
