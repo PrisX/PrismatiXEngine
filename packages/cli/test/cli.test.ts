@@ -234,6 +234,35 @@ test("create --empty starts without the sample character, backgrounds or story",
   } finally { await rm(parent, {recursive: true, force: true}); }
 });
 
+test("a project without storyIndex builds the scenes `add scene` lists in Story/story.pxindex", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "prismatix-cli-default-index-"));
+  const root = join(parent, "scenes-game");
+  try {
+    await createStarter(root, {name: "Scenes", locale: "zh-TW", empty: true, install: async (directory) => {
+      await writeFile(join(directory, "package-lock.json"), JSON.stringify({lockfileVersion: 3}));
+      await mkdir(join(directory, "node_modules", "@prismatix"), {recursive: true});
+      await symlink(resolve("."), join(directory, "node_modules", "@prismatix", "cli"), "junction");
+    }});
+    const project = join(root, "prismatix.json");
+    assert.equal((JSON.parse(await readFile(project, "utf8")) as {storyIndex?: string}).storyIndex, undefined);
+    await write(join(root, "Story/story.pxindex"), JSON.stringify({
+      format: "PrismatiXStoryIndex", schemaRevision: 1, id: "main", entryScene: "main",
+      chapters: [{id: "chapter-1", title: "Chapter 1", scenes: ["main", "day2"]}],
+      scenes: [{id: "main", sources: {"zh-TW": "Story/main.pxstory"}},
+        {id: "day2", sources: {"zh-TW": "Story/zh-TW/day2.pxstory"}}],
+    }));
+    // A fresh Story without save identities (the starter's map is for its own text).
+    await rm(join(root, "Story/main.pxstory.pxids.json"), {force: true});
+    await write(join(root, "Story/main.pxstory"), "第一天。\n[jump morning scene=day2]\n");
+    await write(join(root, "Story/zh-TW/day2.pxstory"), "*morning\n第二天。\n[end]\n");
+    const validated = run(["validate", project]);
+    assert.equal(validated.status, 0, validated.stdout + validated.stderr);
+    // Both scenes are compiled (progress is reported on stderr).
+    const compiled = validated.stderr.split("\n").filter((line) => line.includes("\"phase\":\"story-compile\""));
+    assert.equal(compiled.length, 2, validated.stderr);
+  } finally { await rm(parent, {recursive: true, force: true}); }
+});
+
 test("create scaffolds a canonical playable starter without author-supplied UUIDs", async () => {
   const parent = await mkdtemp(join(tmpdir(), "prismatix-cli-create-"));
   const root = join(parent, "hello-game");

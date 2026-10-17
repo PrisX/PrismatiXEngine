@@ -1013,6 +1013,13 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     documentSources.set(outputPath, virtualPath);
     return outputPath;
   };
+  // `add scene` lists scenes in Story/story.pxindex when the manifest names
+  // no index; the build reads the same conventional file.
+  if (raw.storyIndex === undefined) {
+    const conventional = projectFile(root, "Story/story.pxindex");
+    if (existsSync(conventional)) raw.storyIndex = "Story/story.pxindex";
+    else absentTextInputs.add(resolve(conventional));
+  }
   await loadDocument(raw.storyIndex);
   await loadDocument(raw.gameCatalog);
   for (const value of Array.isArray(raw.extensions) ? raw.extensions : []) await loadDocument(value);
