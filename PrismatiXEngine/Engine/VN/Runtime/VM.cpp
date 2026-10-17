@@ -260,6 +260,11 @@ ProgramSeekStatus VM::ReplayCompiledProgramAt(
     m_seekTargetPc = operationIndex;
     m_seeking = true;
     m_safetyRejected = false;
+    // A seek is a skip: backgrounds, characters and tweens crossed on the way
+    // (and the target's own) land in their final state at once. Otherwise a
+    // seek that stops paused, which does not tick the stage, would keep the
+    // previous background and a character faded in at zero opacity.
+    m_stage.SetFastForward(true);
 
     std::set<int> retainedBreakpoints = std::move(m_breakpoints);
     m_breakpoints.clear();
@@ -320,6 +325,8 @@ ProgramSeekStatus VM::ReplayCompiledProgramAt(
     m_seeking = false;
     m_stepping = false;
     m_stepBudget = 0;
+    m_stage.SetFastForward(m_fastForward);
+    if (result == ProgramSeekStatus::Applied) m_stage.SettleTransitions();
     return result;
 }
 

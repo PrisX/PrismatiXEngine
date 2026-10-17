@@ -1,0 +1,110 @@
+if(NOT DEFINED PREVIEW_HOST OR NOT EXISTS "${PREVIEW_HOST}")
+    message(FATAL_ERROR "PreviewHost executable is missing")
+endif()
+if(NOT DEFINED FIXTURE_ROOT OR NOT EXISTS "${FIXTURE_ROOT}/seek-stage.pxir")
+    message(FATAL_ERROR "PreviewHost story seek fixture is missing")
+endif()
+if(NOT DEFINED INPUT_FILE)
+    message(FATAL_ERROR "PreviewHost story seek input path is missing")
+endif()
+
+# A seek behind a [choice] lands on the replayed stage: the branch's
+# background has finished its 800ms fade and its character is fully shown,
+# even though the seek leaves Preview paused (which does not tick the stage).
+file(TO_CMAKE_PATH "${FIXTURE_ROOT}" PROJECT_ROOT)
+set(ENVELOPE "\"protocol\":\"PrismatiXPreviewProtocol\",\"schemaRevision\":1,\"protocolVersion\":1,\"sessionId\":\"story-seek-session\"")
+set(DOCUMENT "\"documentId\":\"seek-stage-document\",\"revision\":1")
+set(INPUT "{\"type\":\"hello\",${ENVELOPE},\"requestId\":\"hello-seek\",\"documentId\":\"\",\"revision\":0}\n")
+string(APPEND INPUT "{\"type\":\"applyRuntimeIr\",${ENVELOPE},\"requestId\":\"apply-seek\",${DOCUMENT},\"projectRoot\":\"${PROJECT_ROOT}\",\"committedRevision\":1,\"irPath\":\"seek-stage.pxir\"}\n")
+string(APPEND INPUT "{\"type\":\"play\",${ENVELOPE},\"requestId\":\"play-seek\",${DOCUMENT},\"showTitle\":false}\n")
+string(APPEND INPUT "{\"type\":\"seekStory\",${ENVELOPE},\"requestId\":\"seek-no-path\",${DOCUMENT},\"operationIndex\":6,\"branchPath\":[]}\n")
+string(APPEND INPUT "{\"type\":\"seekStory\",${ENVELOPE},\"requestId\":\"seek-night\",${DOCUMENT},\"operationIndex\":6,\"branchPath\":[0]}\n")
+string(APPEND INPUT "{\"type\":\"capture\",${ENVELOPE},\"requestId\":\"capture-night\",${DOCUMENT}}\n")
+string(APPEND INPUT "{\"type\":\"continue\",${ENVELOPE},\"requestId\":\"continue-night\",${DOCUMENT}}\n")
+string(APPEND INPUT "{\"type\":\"seekStory\",${ENVELOPE},\"requestId\":\"seek-stay\",${DOCUMENT},\"operationIndex\":10,\"branchPath\":[1]}\n")
+string(APPEND INPUT "{\"type\":\"capture\",${ENVELOPE},\"requestId\":\"capture-stay\",${DOCUMENT}}\n")
+string(APPEND INPUT "{\"type\":\"shutdown\",${ENVELOPE},\"requestId\":\"shutdown-seek\",\"documentId\":\"\",\"revision\":0}\n")
+file(WRITE "${INPUT_FILE}" "${INPUT}")
+
+execute_process(
+    COMMAND "${PREVIEW_HOST}"
+    INPUT_FILE "${INPUT_FILE}"
+    OUTPUT_VARIABLE OUTPUT
+    ERROR_VARIABLE ERRORS
+    RESULT_VARIABLE RESULT
+    TIMEOUT 20
+)
+if(NOT RESULT EQUAL 0)
+    message(FATAL_ERROR "PreviewHost story seek fixture failed (${RESULT}): ${ERRORS}")
+endif()
+
+string(REPLACE "\r\n" "\n" OUTPUT "${OUTPUT}")
+string(REGEX REPLACE "\n+$" "" OUTPUT "${OUTPUT}")
+string(REPLACE "\n" ";" OUTPUT_LINES "${OUTPUT}")
+
+function(expect_stage line label background fade previous tweens actors)
+    string(JSON ACTUAL_BACKGROUND GET "${line}" runtimeSnapshot stage background)
+    string(JSON ACTUAL_FADE GET "${line}" runtimeSnapshot stage backgroundFade)
+    string(JSON ACTUAL_PREVIOUS GET "${line}" runtimeSnapshot stage previousBackground)
+    string(JSON ACTUAL_TWEENS GET "${line}" runtimeSnapshot stage tweenCount)
+    string(JSON ACTUAL_ACTORS GET "${line}" runtimeSnapshot stage actorCount)
+    if(NOT ACTUAL_BACKGROUND STREQUAL "${background}" OR NOT ACTUAL_FADE EQUAL ${fade} OR
+       NOT ACTUAL_PREVIOUS STREQUAL "${previous}" OR NOT ACTUAL_TWEENS EQUAL ${tweens} OR
+       NOT ACTUAL_ACTORS EQUAL ${actors})
+        message(FATAL_ERROR "${label} did not land on the replayed stage: ${line}")
+    endif()
+endfunction()
+
+set(NO_PATH_ACK FALSE)
+set(NIGHT_ACK FALSE)
+set(NIGHT_STAGE_ACK FALSE)
+set(CONTINUE_ACK FALSE)
+set(STAY_ACK FALSE)
+set(STAY_STAGE_ACK FALSE)
+foreach(LINE IN LISTS OUTPUT_LINES)
+    string(JSON TYPE GET "${LINE}" type)
+    string(JSON REQUEST_ID GET "${LINE}" requestId)
+    string(JSON ASYNC ERROR_VARIABLE ASYNC_ERROR GET "${LINE}" async)
+    if(NOT ASYNC_ERROR AND ASYNC)
+        continue()
+    endif()
+    if(REQUEST_ID STREQUAL "seek-no-path")
+        string(JSON CODE GET "${LINE}" diagnostics 0 code)
+        if(NOT TYPE STREQUAL "error" OR NOT CODE STREQUAL "PXPREVIEW1104")
+            message(FATAL_ERROR "A seek behind a choice did not ask for a choice path: ${LINE}")
+        endif()
+        set(NO_PATH_ACK TRUE)
+    elseif(REQUEST_ID STREQUAL "seek-night" AND TYPE STREQUAL "storySeekAccepted")
+        # The target is the character change; the seek stops paused after it.
+        string(JSON STATE GET "${LINE}" state)
+        if(NOT STATE STREQUAL "paused")
+            message(FATAL_ERROR "Seek to a non-waiting operation did not pause after it: ${LINE}")
+        endif()
+        set(NIGHT_ACK TRUE)
+    elseif(REQUEST_ID STREQUAL "capture-night" AND TYPE STREQUAL "stateCaptured")
+        expect_stage("${LINE}" "Seek to the night branch" "Assets/night.png" 1 "" 0 1)
+        set(NIGHT_STAGE_ACK TRUE)
+    elseif(REQUEST_ID STREQUAL "continue-night" AND TYPE STREQUAL "continueAccepted")
+        string(JSON STATE GET "${LINE}" state)
+        string(JSON SOURCE_ID GET "${LINE}" sourceId)
+        if(NOT STATE STREQUAL "waitingClick" OR NOT SOURCE_ID STREQUAL "seek-line-source")
+            message(FATAL_ERROR "Continuing after the seek did not show the branch's line: ${LINE}")
+        endif()
+        set(CONTINUE_ACK TRUE)
+    elseif(REQUEST_ID STREQUAL "seek-stay" AND TYPE STREQUAL "storySeekAccepted")
+        string(JSON STATE GET "${LINE}" state)
+        if(NOT STATE STREQUAL "waitingClick")
+            message(FATAL_ERROR "Seek to a dialogue line did not show it: ${LINE}")
+        endif()
+        set(STAY_ACK TRUE)
+    elseif(REQUEST_ID STREQUAL "capture-stay" AND TYPE STREQUAL "stateCaptured")
+        expect_stage("${LINE}" "Seek to the other branch" "Assets/rin.png" 1 "" 0 0)
+        set(STAY_STAGE_ACK TRUE)
+    endif()
+endforeach()
+
+if(NOT NO_PATH_ACK OR NOT NIGHT_ACK OR NOT NIGHT_STAGE_ACK OR NOT CONTINUE_ACK OR
+   NOT STAY_ACK OR NOT STAY_STAGE_ACK)
+    message(FATAL_ERROR
+            "PreviewHost story seek contract incomplete noPath=${NO_PATH_ACK} night=${NIGHT_ACK} nightStage=${NIGHT_STAGE_ACK} continue=${CONTINUE_ACK} stay=${STAY_ACK} stayStage=${STAY_STAGE_ACK}: ${OUTPUT}")
+endif()

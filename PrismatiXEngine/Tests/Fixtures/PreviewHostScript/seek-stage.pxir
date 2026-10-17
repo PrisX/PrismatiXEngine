@@ -1,0 +1,109 @@
+{
+  "format": "PrismatiXRuntimeIR",
+  "schemaRevision": 1,
+  "documentId": "seek-stage-document",
+  "committedRevision": 1,
+  "operations": [
+    {
+      "operationId": "seek-dusk-operation",
+      "sourceId": "seek-dusk-source",
+      "sourceLine": 1,
+      "kind": "background",
+      "text": "[bg dusk]",
+      "arguments": {"asset": "Assets/rin.png"}
+    },
+    {
+      "operationId": "seek-question-operation",
+      "sourceId": "seek-question-source",
+      "sourceLine": 2,
+      "kind": "dialogue",
+      "text": "Where to?",
+      "arguments": {"speaker": "Test", "text": "Where to?"}
+    },
+    {
+      "operationId": "seek-choice-night-operation",
+      "sourceId": "seek-choice-night-source",
+      "sourceLine": 4,
+      "kind": "choiceOption",
+      "text": "Night",
+      "arguments": {"target": "seek-night", "text": "Night"}
+    },
+    {
+      "operationId": "seek-choice-stay-operation",
+      "sourceId": "seek-choice-stay-source",
+      "sourceLine": 5,
+      "kind": "choiceOption",
+      "text": "Stay",
+      "arguments": {"target": "seek-stay", "text": "Stay"}
+    },
+    {
+      "operationId": "seek-night-label-operation",
+      "sourceId": "seek-night-label-source",
+      "sourceLine": 7,
+      "kind": "label",
+      "text": "*seek-night",
+      "arguments": {"target": "seek-night"}
+    },
+    {
+      "operationId": "seek-night-operation",
+      "sourceId": "seek-night-source",
+      "sourceLine": 8,
+      "kind": "background",
+      "text": "[bg night duration=800ms]",
+      "arguments": {"asset": "Assets/night.png", "duration": "800ms"}
+    },
+    {
+      "operationId": "seek-show-operation",
+      "sourceId": "seek-line-source/showCharacter",
+      "sourceLine": 9,
+      "kind": "showCharacter",
+      "text": "@rin Night line",
+      "arguments": {
+        "character": "11111111-1111-4111-8111-111111111111",
+        "expression": "22222222-2222-4222-8222-222222222222",
+        "position": "2",
+        "sprite": "asset:33333333-3333-4333-8333-333333333333"
+      }
+    },
+    {
+      "operationId": "seek-line-operation",
+      "sourceId": "seek-line-source",
+      "sourceLine": 9,
+      "kind": "dialogue",
+      "text": "Night line",
+      "arguments": {"character": "11111111-1111-4111-8111-111111111111", "speaker": "Rin", "text": "Night line"}
+    },
+    {
+      "operationId": "seek-night-end-operation",
+      "sourceId": "seek-night-end-source",
+      "sourceLine": 10,
+      "kind": "endStory",
+      "text": "[end]",
+      "arguments": {}
+    },
+    {
+      "operationId": "seek-stay-label-operation",
+      "sourceId": "seek-stay-label-source",
+      "sourceLine": 12,
+      "kind": "label",
+      "text": "*seek-stay",
+      "arguments": {"target": "seek-stay"}
+    },
+    {
+      "operationId": "seek-stay-operation",
+      "sourceId": "seek-stay-source",
+      "sourceLine": 13,
+      "kind": "dialogue",
+      "text": "Stay line",
+      "arguments": {"speaker": "Test", "text": "Stay line"}
+    },
+    {
+      "operationId": "seek-stay-end-operation",
+      "sourceId": "seek-stay-end-source",
+      "sourceLine": 14,
+      "kind": "endStory",
+      "text": "[end]",
+      "arguments": {}
+    }
+  ]
+}

@@ -266,6 +266,11 @@ public:
     // prepared at all; nothing the player cannot see is decoded or animated.
     void SetFastForward(bool enabled) { m_fastForward = enabled; }
     [[nodiscard]] bool FastForward() const { return m_fastForward; }
+    // Completes every in-flight transition (background fades and dissolves,
+    // tweens, shakes) as if enough time had passed. Used when the story lands
+    // somewhere by seeking instead of playing, so nothing is left half-faded
+    // while a paused Preview does not tick the Stage.
+    void SettleTransitions();
     void Render();
 
     struct SavedActor {

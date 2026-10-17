@@ -1633,6 +1633,23 @@ void Stage::Flash(const Color color, const float peak, const int halfMs, const i
     m_flash.total = m_flash.halfSeconds * 2.0f * static_cast<float>(std::min(cycles, 50));
 }
 
+void Stage::SettleTransitions() {
+    const bool fastForward = m_fastForward;
+    m_fastForward = true;
+    EndRuleTransition();
+    if (m_bgFade < 1.0f) {
+        // The incoming image may still be decoding; it is drawn (loaded on
+        // demand) once fast-forward is off, never the outgoing one.
+        m_bgFade = 1.0f;
+        m_prevBgPath.clear();
+        m_prevBgPlacement.reset();
+        m_bgInstant = false;
+        m_bgWait = 0.0f;
+    }
+    Update(0.0f);
+    m_fastForward = fastForward;
+}
+
 void Stage::Update(float dt) {
     if (m_flash.total > 0.0f) {
         m_flash.elapsed += dt;
