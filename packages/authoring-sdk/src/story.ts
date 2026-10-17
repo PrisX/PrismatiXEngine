@@ -144,6 +144,53 @@ function error(code: string, message: string, sourceSpan?: SourceSpan, details?:
   };
 }
 
+/**
+ * The span of `length` UTF-16 units at `index` of a node's first source
+ * line, so an editor can underline one word. Falls back to the node's span
+ * when the text lies elsewhere or the node was not read from its own line
+ * (macro expansions report at the call).
+ */
+function spanInNode(node: StoryNode, index: number, length: number): SourceSpan {
+  const first = node.raw.split("\n", 1)[0]!.replace(/\r$/u, "");
+  const trimmed = first.trim();
+  if (node.macroOrigin !== undefined || index < 0 || index + length > first.length ||
+      trimmed.length === 0 || first.indexOf(trimmed) + 1 !== node.span.start.column) return node.span;
+  const lineStart = node.span.start.offset -
+    Buffer.byteLength(first.slice(0, node.span.start.column - 1), "utf8");
+  const at = (column: number) => ({line: node.span.start.line, column,
+    offset: lineStart + Buffer.byteLength(first.slice(0, column - 1), "utf8")});
+  return {path: node.span.path, start: at(index + 1), end: at(index + 1 + length)};
+}
+
+/** Where `name` is written as a whole word in a node's first line, from `from` on. */
+function wordSpan(node: StoryNode, name: string, from: number, fallback: SourceSpan): SourceSpan {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\-]/gu, "\\$&");
+  const pattern = new RegExp(`(?<![A-Za-z0-9_.$-])${escaped}(?![A-Za-z0-9_.-])`, "gu");
+  pattern.lastIndex = from;
+  const match = pattern.exec(node.raw.split("\n", 1)[0]!);
+  return match === null ? fallback : spanInNode(node, match.index, name.length);
+}
+
+/** A command's variable argument: its name, after the command's own name. */
+function variableArgumentSpan(node: StoryNode, name: string): SourceSpan {
+  const first = node.raw.split("\n", 1)[0]!;
+  const command = node.name === undefined ? -1 : first.indexOf(node.name);
+  return wordSpan(node, name, command < 0 ? 0 : command + node.name!.length, node.span);
+}
+
+/**
+ * Where an expression names an unknown variable: the name in the node's
+ * first line, searched from where the expression is written (`from`), else
+ * `fallback`.
+ */
+function unknownVariableSpan(node: StoryNode, message: string | undefined, from: SourceSpan | undefined,
+  fallback: SourceSpan): SourceSpan {
+  const unknown = /^Unknown game variable '([^']+)'$/u.exec(message ?? "");
+  if (unknown === null) return fallback;
+  return wordSpan(node, unknown[1]!,
+    from !== undefined && from.start.line === node.span.start.line ? from.start.column - 1 : 0, fallback);
+}
+
 interface Token {
   readonly raw: string;
   readonly start: number;
@@ -883,8 +930,28 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     mappings.push({operationId, sourceId, sourceUri: document.path, startLine: node.span.start.line, startColumn: node.span.start.column, endLine: node.span.end.line, endColumn: node.span.end.column});
   };
 
+  // `{name}` in shown text is replaced by the variable's value; the Player
+  // shows nothing for a name no variable has. Only checked when the catalog
+  // is known (a project build always knows it).
+  const checkInterpolation = (node: StoryNode, text: string): void => {
+    if (game === undefined) return;
+    const line = node.raw.split("\n", 1)[0]!;
+    let from = 0;
+    for (const match of text.matchAll(/\{([A-Za-z0-9_]+)\}/gu)) {
+      const name = match[1]!;
+      const at = line.indexOf(match[0], from);
+      if (at >= 0) from = at + match[0].length;
+      if (variables.has(name)) continue;
+      diagnostics.push({...error("PXSTORY1253",
+        `Text shows {${name}}, but no variable ${name} is declared; the Player shows nothing there`,
+        at < 0 ? node.span : spanInNode(node, at, match[0].length),
+        `Declare it with [var ${name}=""] or fix the name`), severity: "warning"});
+    }
+  };
+
   // Dialogue markup stays in the operation text; the Player reads it.
   const checkTextMarkup = (node: StoryNode, text: string): void => {
+    checkInterpolation(node, text);
     const report = inspectTextMarkup(text);
     for (const issue of report.issues)
       diagnostics.push({...error(issue.code, issue.message, node.span), severity: issue.severity});
@@ -1544,8 +1611,10 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         else if (target === undefined || named("text") === undefined) diagnostics.push(error("PXSTORY1116", "choice requires text and goto", node.span));
         else if (condition !== undefined && (condition.error !== undefined || condition.encoded === undefined))
           diagnostics.push(error("PXSTORY1133",
-            `Invalid choice condition: ${condition.error ?? "unknown error"}`, args.get("if")?.span ?? node.span));
+            `Invalid choice condition: ${condition.error ?? "unknown error"}`,
+            unknownVariableSpan(node, condition.error, args.get("if")?.span, args.get("if")?.span ?? node.span)));
         else {
+          checkInterpolation(node, named("text")!);
           if (!labels.has(target)) diagnostics.push(error("PXSTORY1117", `Unknown choice target: ${target}`, node.span));
           emit(node, "choiceOption", {text: named("text")!, target,
             ...(condition?.encoded === undefined ? {} : {condition: condition.encoded})}, named("text")!);
@@ -1580,7 +1649,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         }
         const descriptor = variableName === undefined ? undefined : variables.get(variableName);
         if (variableName === undefined || value === undefined) diagnostics.push(error("PXSTORY1121", "set requires a variable and value", node.span));
-        else if (game !== undefined && descriptor === undefined) diagnostics.push(error("PXSTORY1122", `Unknown game variable: ${variableName}`, node.span));
+        else if (game !== undefined && descriptor === undefined) diagnostics.push(error("PXSTORY1122", `Unknown game variable: ${variableName}`,
+          variableArgumentSpan(node, variableName)));
         else {
           const parsed = decodeValue(value).value;
           const matches = descriptor === undefined || (descriptor.type === "integer" ? typeof parsed === "number" && Number.isInteger(parsed) : typeof parsed === descriptor.type);
@@ -1602,7 +1672,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         if (variableName === undefined || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(variableName))
           diagnostics.push(error("PXSTORY1420", "input needs var= naming a variable", node.span));
         else if (game !== undefined && descriptor === undefined)
-          diagnostics.push(error("PXSTORY1122", `Unknown game variable: ${variableName}`, node.span));
+          diagnostics.push(error("PXSTORY1122", `Unknown game variable: ${variableName}`,
+            variableArgumentSpan(node, variableName)));
         else if (descriptor !== undefined && descriptor.type !== "string")
           diagnostics.push(error("PXSTORY1123", `input stores text, but ${variableName} is ${descriptor.type}`, node.span));
         else if (!/^\d+$/u.test(maxLength) || Number(maxLength) < 1 || Number(maxLength) > 256)
@@ -1622,7 +1693,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
             !/^-?\d+$/u.test(amount) || !Number.isSafeInteger(Number(amount)))
           diagnostics.push(error("PXSTORY1150", "add requires a variable and a safe integer amount", node.span));
         else if (game !== undefined && descriptor === undefined)
-          diagnostics.push(error("PXSTORY1122", `Unknown game variable: ${variableName}`, node.span));
+          diagnostics.push(error("PXSTORY1122", `Unknown game variable: ${variableName}`,
+            variableArgumentSpan(node, variableName)));
         else if (descriptor !== undefined && descriptor.type !== "integer")
           diagnostics.push(error("PXSTORY1151", `add requires an integer variable: ${variableName}`, node.span));
         else emit(node, "setVariable", {
@@ -1639,7 +1711,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
           diagnostics.push(error(
             "PXSTORY1133",
             `Invalid condition expression: ${expression.error ?? "unknown error"}`,
-            node.span,
+            unknownVariableSpan(node, expression.error, node.arguments?.[0]?.span, node.span),
           ));
         } else {
           emit(node, "condition", {expression: expression.encoded});
@@ -1659,7 +1731,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
           diagnostics.push(error("PXSTORY1244", "[elseif] cannot follow [else] in the same [if]", node.span));
         else if (expression.error !== undefined || expression.encoded === undefined)
           diagnostics.push(error("PXSTORY1133",
-            `Invalid condition expression: ${expression.error ?? "unknown error"}`, node.span));
+            `Invalid condition expression: ${expression.error ?? "unknown error"}`,
+            unknownVariableSpan(node, expression.error, node.arguments?.[0]?.span, node.span)));
         else {
           const sourceId = claimSourceId(node);
           emit(node, "else", {}, node.raw.trim(), sourceId);

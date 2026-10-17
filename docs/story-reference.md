@@ -707,8 +707,11 @@ Declare a variable in Story with `[var]`; no JSON is needed:
 - A declaration emits no operation and takes no entry in the `.pxids.json`
   sidecar. The build merges every Story's declarations into the compiled
   `game.pxgame`, so the Player, saves and UI bindings see an ordinary catalog
-  variable. `[set]`, `[add]`, `[if]` and choice conditions check names and
-  types against it.
+  variable. `[set]`, `[add]`, `[input]`, `[if]` and choice conditions check
+  names and types against it; an unknown name is `PXSTORY1122` (`PXSTORY1133`
+  in a condition), reported on the name itself. `{name}` in a line or choice
+  text shows the value; a name no variable has is the warning `PXSTORY1253`,
+  since the Player would show nothing there.
 - Declaring the same variable again (in another scene, for example) is fine
   when it agrees; a different type, scope or default, including one that
   disagrees with the `.pxgame` file, is `PXSTORY1251` naming the first

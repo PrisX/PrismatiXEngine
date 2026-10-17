@@ -92,3 +92,29 @@ test("project builds merge Story declarations into the published game catalog", 
   assert.equal(plain.valid, true, JSON.stringify(plain.diagnostics));
   assert.deepEqual(JSON.parse(plain.artifact!.files["Content/game.pxgame"]!), game);
 });
+
+test("an unknown variable is reported on its name, so editors can underline it", () => {
+  const at = (source: string) => compile(source).diagnostics.map(({code, span}) =>
+    [code, span?.start.line, span?.start.column, span?.end.column]);
+  assert.deepEqual(at("[set nobody=1]\n"), [["PXSTORY1122", 1, 6, 12]]);
+  assert.deepEqual(at("[input var=nobody]\n"), [["PXSTORY1122", 1, 12, 18]]);
+  assert.deepEqual(at("[input nobody prompt=\"?\"]\n"), [["PXSTORY1122", 1, 8, 14]]);
+  assert.deepEqual(at("[add nobody 1]\n"), [["PXSTORY1122", 1, 6, 12]]);
+  // [if], [elseif] and choice conditions point at the name inside the expression.
+  assert.deepEqual(at("[if route == \"a\" and nobody > 1]\nx\n[endif]\n"), [["PXSTORY1133", 1, 22, 28]]);
+  assert.deepEqual(at("[if if_seen]\nx\n[endif]\n"), [["PXSTORY1133", 1, 5, 12]]);
+  assert.deepEqual(at("[if route == \"a\"]\nx\n[elseif nobody]\ny\n[endif]\n"), [["PXSTORY1133", 3, 9, 15]]);
+  assert.deepEqual(at("*top\n[choice]\n- 行く -> top if nobody\n[endchoice]\n"), [["PXSTORY1133", 3, 16, 22]]);
+});
+
+test("{name} in shown text warns when no variable has that name", () => {
+  const issues = (source: string, withGame = true) => compile(source, withGame).diagnostics
+    .map(({code, severity, span}) => [code, severity, span?.start.line, span?.start.column, span?.end.column]);
+  assert.deepEqual(issues("{route}と{nobody}。\n"), [["PXSTORY1253", "warning", 1, 9, 17]]);
+  assert.deepEqual(issues("  @hero {nobody}さん\n"), [["PXSTORY1253", "warning", 1, 9, 17]]);
+  assert.deepEqual(issues("*top\n[choice]\n- {nobody}へ -> top\n[endchoice]\n"), [["PXSTORY1253", "warning", 3, 3, 11]]);
+  // A declaration in the Story counts; tags and non-identifiers are not names.
+  assert.deepEqual(issues("[var hero=\"\" type=string]\n{hero}{w=300}{ }{あ}\n", false), []);
+  // Without a catalog (a lone Story) the names cannot be checked.
+  assert.deepEqual(issues("{nobody}\n", false), []);
+});
