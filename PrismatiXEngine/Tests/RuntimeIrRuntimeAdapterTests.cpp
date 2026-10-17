@@ -1054,6 +1054,38 @@ int main() {
     assert(playSay("zh-TW") == "凛");
     assert(playSay("ja-JP", "Authored speaker") == "Authored speaker");
 
+    // [bg x duration=300ms] on an empty Stage (the first background of a
+    // game) fades in over its duration like any later change; it used to
+    // appear at once. transition=false still shows it immediately.
+    {
+        const auto firstBackground = [](std::unordered_map<std::string, std::string> arguments) {
+            px::io::VFS vfs;
+            px::audio::AudioEngine audio(vfs);
+            px::graphics::AssetCache assets(nullptr, vfs);
+            px::graphics::Renderer2D renderer(nullptr, assets);
+            px::vn::Stage stage(renderer, assets);
+            px::vn::Dialogue dialogue;
+            px::vn::VariableStore variables;
+            px::vn::Backlog backlog;
+            px::vn::VM vm(vfs, audio, stage, dialogue, variables, backlog);
+            px::sdk::RuntimeIrDocument document;
+            document.documentId = "first-background";
+            document.operations = {Operation("first-bg", "background", std::move(arguments)),
+                                   Operation("first-end", "endStory")};
+            assert(vm.LoadCompiledProgram(px::CompileRuntimeIr(document),
+                                          "memory://first-background"));
+            return stage.CaptureState();
+        };
+        const auto fading = firstBackground(
+            {{"asset", "Assets/first.webp"}, {"duration", "300ms"}});
+        assert(fading.background == "Assets/first.webp");
+        assert(fading.backgroundFade == 0.0f);
+        assert(std::abs(fading.backgroundFadeSpeed - 1000.0f / 300.0f) < 0.001f);
+        const auto instant = firstBackground(
+            {{"asset", "Assets/first.webp"}, {"duration", "300ms"}, {"transition", "false"}});
+        assert(instant.background == "Assets/first.webp" && instant.backgroundFade == 1.0f);
+    }
+
     px::sdk::RuntimeIrDocument unknownDocument;
     unknownDocument.documentId = "unknown-operation";
     unknownDocument.committedRevision = 1;

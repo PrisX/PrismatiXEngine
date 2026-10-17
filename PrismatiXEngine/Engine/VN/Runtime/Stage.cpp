@@ -317,9 +317,12 @@ void Stage::SetBackground(const std::string& path, bool transition,
     m_bgFadeSpeed = fadeMs > 0 ? 1000.0f / static_cast<float>(fadeMs) : kBgFadeSpeed;
     m_bgWait = 0.0f;
     // An instant change still waits for the decode behind the old image
-    // rather than flashing an empty frame; Update completes it at once.
-    m_bgInstant = !transition || m_prevBgPath.empty();
-    m_bgFade = m_prevBgPath.empty() ? 1.0f : 0.0f;
+    // rather than flashing an empty frame; Update completes it at once. The
+    // first background on an empty Stage fades in from it like any other
+    // change; transition=false still shows it at once.
+    m_bgInstant = !transition;
+    m_bgFade = 0.0f;
+    if (m_prevBgPath.empty() && !m_bgInstant) (void)BackgroundSettled(path);
     if (!m_prevBgPath.empty() && !BackgroundSettled(path) && m_bgInstant) return;
     if (m_bgInstant) {
         m_bgFade = 1.0f;
@@ -514,7 +517,7 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
     m_renderer.GetLogicalSize(w, h);
     if (oldBackgroundPath.empty() || w <= 0 || h <= 0 ||
         !m_assets.ResourceExists(oldBackgroundPath) || !m_assets.ResourceExists(rulePath)) {
-        SetBackground(newBgPath, true);
+        SetBackground(newBgPath, true, durationMs);
         return;
     }
 

@@ -438,6 +438,10 @@ The starter registers `guide`, its `smile`, `happy`, `talk` and `surprised` expr
 [hide guide]
 ```
 
+A new background crossfades from the previous one over `duration` (400 ms
+when omitted); the first background on an empty Stage fades in the same way.
+`transition=false` shows it at once.
+
 Use `[hide all]` to fade out every character without listing its aliases.
 `[hide all transition=false]` removes them immediately. Neither form clears
 the background or independent stage layers. The same operation is available
