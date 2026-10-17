@@ -165,6 +165,13 @@ export interface CompileProjectInput {
   /** Native Input key-name table for validating authored keyboard defaults. */
   readonly inputKeyRegistry?: InputKeyRegistryMetadata;
   readonly committedRevision?: number;
+  /**
+   * What a supported locale whose Story does not match the default locale
+   * does. "error" (the default) fails the build; "default-locale" plays the
+   * default locale's Story in its place with a warning, so a development
+   * build is not blocked by translations that have not caught up yet.
+   */
+  readonly untranslatedLocales?: "error" | "default-locale";
   /** Reuse unchanged Story compilation across repeated project builds. */
   readonly storyCompilationCache?: StoryProjectCompilationCache;
   /** Completed Story scenes across all locales; callbacks are synchronous. */
@@ -1005,23 +1012,35 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   const storyResourcePaths = new Set(compiled.resourceDependencies ?? []);
   const storyResourceLocations = new Map<string, SourceSpan>(
     (compiled.resourceLocations ?? []).map((item) => [item.source, item.span]));
+  const fallBack = input.untranslatedLocales === "default-locale";
   for (const locale of project.supportedLocales) {
     const localized = locale === project.defaultLocale ? compiled : compileLocale(locale);
-    if (localized !== compiled) diagnostics.push(...localized.diagnostics);
+    // With the default-locale fallback a locale's own problems are collected
+    // here first and only become errors when the fallback is off.
+    const localeDiagnostics: AuthoringDiagnostic[] = [];
+    if (localized !== compiled) localeDiagnostics.push(...localized.diagnostics);
     for (const dependency of localized.resourceDependencies ?? [])
       storyResourcePaths.add(dependency);
     for (const location of localized.resourceLocations ?? [])
       if (!storyResourceLocations.has(location.source))
         storyResourceLocations.set(location.source, location.span);
-    if (!localized.valid || localized.runtimeIr === undefined ||
-        localized.sourceMap === undefined) continue;
-    const aligned = locale === project.defaultLocale
-      ? {runtimeIr: localized.runtimeIr, sourceMap: localized.sourceMap}
-      : alignLocalizedProgram(locale,
-        {runtimeIr: compiled.runtimeIr, sourceMap: compiled.sourceMap},
-        {runtimeIr: localized.runtimeIr, sourceMap: localized.sourceMap},
-        customResourceParameters,
-        diagnostics);
+    let aligned = !localized.valid || localized.runtimeIr === undefined ||
+        localized.sourceMap === undefined ? undefined
+      : locale === project.defaultLocale
+        ? {runtimeIr: localized.runtimeIr, sourceMap: localized.sourceMap}
+        : alignLocalizedProgram(locale,
+          {runtimeIr: compiled.runtimeIr, sourceMap: compiled.sourceMap},
+          {runtimeIr: localized.runtimeIr, sourceMap: localized.sourceMap},
+          customResourceParameters,
+          localeDiagnostics);
+    if (fallBack && locale !== project.defaultLocale &&
+        (aligned === undefined || localeDiagnostics.some((item) => item.severity === "error"))) {
+      diagnostics.push(...localeDiagnostics.map((item) => ({...item, severity: "warning" as const})),
+        {...issue("PXBUILD1033",
+          `Story locale ${locale} does not match the default locale yet; this build plays ${project.defaultLocale} in its place`,
+          undefined, locale), severity: "warning"});
+      aligned = {runtimeIr: compiled.runtimeIr, sourceMap: compiled.sourceMap};
+    } else diagnostics.push(...localeDiagnostics);
     if (aligned === undefined) continue;
     localeArtifacts[locale] = {
       ...aligned,

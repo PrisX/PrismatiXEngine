@@ -1313,7 +1313,7 @@ async function loadInputKeyRegistry(runtimeHint?: string,
 async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
   registryOverride?: string, runtimeHint?: string, packagerPath?: string,
   onStoryProgress?: NonNullable<CompileProjectInput["onStoryProgress"]>,
-  storyCompilationCache?: StoryProjectCompilationCache) {
+  storyCompilationCache?: StoryProjectCompilationCache, development = false) {
   const uiTypeRegistry = await loadUiRegistry(registryOverride, runtimeHint, packagerPath);
   // A UI registry named on its own sits in a Runtime build directory, beside
   // the input key registry that directory also exports.
@@ -1360,6 +1360,8 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
     ...(onStoryProgress === undefined ? {} : {onStoryProgress}),
     ...(storyCompilationCache === undefined ? {} : {storyCompilationCache}),
     ...(committedRevision === undefined ? {} : {committedRevision}),
+    // Playtests run before every translation has caught up with the Story.
+    ...(development ? {untranslatedLocales: "default-locale" as const} : {}),
     ...(uiTypeRegistry === undefined ? {} : {uiTypeRegistry}),
     ...(inputKeyRegistry === undefined ? {} : {inputKeyRegistry})});
   const authored = [...loaded.uiWarnings, ...compiled.diagnostics];
@@ -1594,7 +1596,8 @@ function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string
 async function buildProject(projectArgument: string | undefined, outputArgument: string | undefined,
   committedRevision?: number, registryOverride?: string, runtimeHint?: string,
   packagerPath?: string, storyCompilationCache?: StoryProjectCompilationCache,
-  previousBuild?: BuildResult, transcodeTool?: () => Promise<string>): Promise<BuildResult> {
+  previousBuild?: BuildResult, transcodeTool?: () => Promise<string>,
+  development = false): Promise<BuildResult> {
   buildProgress("load", 0, 1);
   const loaded = await loadProject(projectArgument);
   buildProgress("load", 1, 1, 0, true);
@@ -1622,7 +1625,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   const effectiveStoryCompilationCache = storyCompilationCache ??
     await loadStoryCompilationCache(loaded.root);
   const compiled = await compileLoaded(loaded, committedRevision, registryOverride,
-    runtimeHint, packagerPath, storyProgressReporter(), effectiveStoryCompilationCache);
+    runtimeHint, packagerPath, storyProgressReporter(), effectiveStoryCompilationCache, development);
   printDiagnostics(compiled.diagnostics);
   if (!compiled.valid || compiled.artifact === undefined) throw new Error("Project validation or compilation failed");
   buildProgress("compile", 1, 1, 0, true);
@@ -1986,7 +1989,7 @@ async function packProject(options: Options, settings: {
     if (suppliedArtifact === undefined) {
       const built = await buildProject(options.positional[0], join(temp, "artifact"),
         undefined, options.values.get("ui-registry"), options.values.get("runtime"),
-        packager, undefined, undefined, transcodeToolFor(options, packager));
+        packager, undefined, undefined, transcodeToolFor(options, packager), settings.development);
       root = built.root;
       artifactRoot = built.output;
       project = built.artifact.project;
@@ -2550,7 +2553,8 @@ async function runCommand(options: Options): Promise<number> {
         // A stable artifact folder lets the compiler and the package keep
         // whatever did not change since the last Play.
         const built = await buildProject(options.positional[0], join(devRoot, "run-artifact"),
-          undefined, options.values.get("ui-registry"), options.values.get("runtime"));
+          undefined, options.values.get("ui-registry"), options.values.get("runtime"),
+          undefined, undefined, undefined, undefined, true);
         artifact = built.artifact;
         artifactRoot = built.output;
       } else if (at !== undefined) {
@@ -2956,7 +2960,7 @@ async function devCommand(options: Options): Promise<number> {
       try {
         updated = !rebuild ? built! : await buildProject(projectArgument, join(revisionRoot, String(revision)),
           revision, options.values.get("ui-registry"), options.values.get("runtime"),
-          undefined, storyCompilationCache, built);
+          undefined, storyCompilationCache, built, undefined, true);
         if (rebuild) lifecycle({event: "dev.rebuild", phase: "done", code: "PXCLI1612", revision,
           valid: true, durationMs: Date.now() - buildStarted, output: updated.output,
           message: `Revision ${revision} built`});
