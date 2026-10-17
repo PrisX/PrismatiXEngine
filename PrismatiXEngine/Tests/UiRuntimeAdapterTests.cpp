@@ -1073,6 +1073,66 @@ int main() {
                   mountedWheel->Text() == "Wheel Up",
               "authored wheel settings properties adapt to the Runtime control");
     }
+    {
+        // An authored HUD (JSX <Group>, runtimeType Control): a click on the
+        // message window's background or text is not the UI's, so it still
+        // advances the dialogue; its button and a group that asks to block
+        // (mouseFilter Stop) keep the click.
+        px::sdk::UiDocument hud;
+        hud.id = "13000000-0000-4000-8000-000000000001";
+        hud.rootId = "13000000-0000-4000-8000-000000000002";
+        const auto group = [](const char* id, std::optional<std::string> parent,
+                              float x, float y, float w, float h) {
+            px::sdk::UiNode node;
+            node.id = id;
+            node.parentId = std::move(parent);
+            node.kind = px::sdk::UiNodeKind::Group;
+            node.runtimeType = "Control";
+            node.appearance.backgroundColor = "#000000B3";
+            node.layout.x = x; node.layout.y = y;
+            node.layout.width = w; node.layout.height = h;
+            return node;
+        };
+        px::sdk::UiNode root = group(hud.rootId.c_str(), std::nullopt, 0, 0, 800, 600);
+        root.runtimeType = "Container";
+        px::sdk::UiNode window = group("13000000-0000-4000-8000-000000000003", root.id, 0, 400, 800, 200);
+        px::sdk::UiNode text;
+        text.id = "13000000-0000-4000-8000-000000000004";
+        text.parentId = window.id;
+        text.kind = px::sdk::UiNodeKind::Label;
+        text.runtimeType = "RichTextLabel";
+        text.text = "Dialogue";
+        text.layout.x = 40; text.layout.y = 40; text.layout.width = 500; text.layout.height = 100;
+        px::sdk::UiNode button;
+        button.id = "13000000-0000-4000-8000-000000000005";
+        button.parentId = window.id;
+        button.kind = px::sdk::UiNodeKind::Button;
+        button.runtimeType = "Button";
+        button.text = "AUTO";
+        button.onClick = px::sdk::UiAction{.id = "player.auto"};
+        button.layout.x = 700; button.layout.y = 10; button.layout.width = 80; button.layout.height = 30;
+        px::sdk::UiNode blocker = group("13000000-0000-4000-8000-000000000006", root.id, 0, 0, 200, 100);
+        blocker.runtimeProperties.emplace("mouseFilter", std::string("Stop"));
+        hud.nodes = {root, window, text, button, blocker};
+        auto tree = px::ui::BuildUiRuntimeTree(hud);
+        Check(tree.Valid(), "authored HUD groups adapt to Runtime");
+        px::ui::UIContext context;
+        Check(context.SetRoot(std::move(tree.root)).IsOk(), "authored HUD mounts");
+        px::Input input;
+        const auto press = [&](const float x, const float y) {
+            input.InjectFrame(x, y, false);
+            (void)context.Update(input, 800, 600, 0.0f);
+            input.InjectFrame(x, y, true);
+            const bool consumed = context.Update(input, 800, 600, 0.0f);
+            input.InjectFrame(x, y, false);
+            (void)context.Update(input, 800, 600, 0.0f);
+            return consumed;
+        };
+        Check(!press(20.0f, 580.0f), "a click on the message window background advances the dialogue");
+        Check(!press(100.0f, 470.0f), "a click on the dialogue text advances the dialogue");
+        Check(press(740.0f, 425.0f), "the window's button keeps its click");
+        Check(press(50.0f, 50.0f), "a group with mouseFilter Stop keeps its click");
+    }
     for (const std::string type : {"Label", "RichTextLabel", "Button", "IconButton"}) {
         px::sdk::UiDocument captions;
         captions.id = "11000000-0000-4000-8000-000000000001";

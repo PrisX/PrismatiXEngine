@@ -656,6 +656,12 @@ std::unique_ptr<Control> CreateControl(
             return nullptr;
         }
         control.reset(static_cast<Control*>(object.release()));
+        // A group (JSX <Group>, a Studio panel) is layout and decoration: a
+        // click on its background passes through, so clicking anywhere on a
+        // message window advances like a click on the Stage. Only its
+        // buttons act; an authored mouseFilter (below) can still block.
+        if (node.kind == sdk::UiNodeKind::Group && control->TypeName() == "Control")
+            control->SetMouseFilter(MouseFilter::Pass);
         // Reflected factories construct empty controls. Canonical node text is
         // separate from accessibilityLabel and runtimeProperties, and must be
         // applied just as it is by the legacy kind-based constructors below.
