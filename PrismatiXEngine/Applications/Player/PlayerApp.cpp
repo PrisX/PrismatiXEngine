@@ -1149,7 +1149,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             m_session->VM().State() == vn::VMState::WaitingChoice)
             return false;
         m_session->Advance();
-        m_autoMode = false;
+        // As a click does: a Story [auto on] section (possibly started by
+        // this very advance) keeps reading; the player's own auto stops.
+        m_autoMode = m_storyAuto.has_value();
         m_skipMode = false;
         return true;
     };
