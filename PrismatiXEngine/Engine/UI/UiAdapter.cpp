@@ -750,7 +750,17 @@ std::unique_ptr<Control> CreateControl(
         label->SetColor(ParseColor(node.appearance.textColor));
     if (auto* button = dynamic_cast<Button*>(control.get()))
         button->SetTextColor(ParseColor(node.appearance.textColor));
-    control->SetBoxDecoration(DecorationFor(node.appearance));
+    auto decoration = DecorationFor(node.appearance);
+    // A plain Control (JSX <Group style={{background}}>, a Studio panel) has
+    // no drawing of its own: its flat background is a box fill, or the
+    // panel (an NVL page, a name prompt) would be invisible.
+    if (!decoration && control->TypeName() == "Control" &&
+        ParseColor(node.appearance.backgroundColor).a > 0) {
+        decoration.emplace();
+        decoration->fill = ParseColor(node.appearance.backgroundColor);
+        decoration->disabledOpacity = node.appearance.disabledOpacity;
+    }
+    control->SetBoxDecoration(std::move(decoration));
     control->SetId(*id);
     control->SetName(node.name);
     control->SetAccessibilityLabel(node.accessibilityLabel);

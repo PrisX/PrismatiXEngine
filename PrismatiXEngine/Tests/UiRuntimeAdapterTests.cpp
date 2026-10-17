@@ -1118,6 +1118,14 @@ int main() {
         Check(tree.Valid(), "authored HUD groups adapt to Runtime");
         px::ui::UIContext context;
         Check(context.SetRoot(std::move(tree.root)).IsOk(), "authored HUD mounts");
+        // A flat style={{background}} on a group is drawn (the NVL page and
+        // the name prompt were invisible without it).
+        const auto* panel = dynamic_cast<const px::ui::Control*>(
+            context.Root()->Find(*px::Uuid::Parse(window.id)));
+        Check(panel && panel->GetBoxDecoration() &&
+                  panel->GetBoxDecoration()->fill.a == 0xB3 &&
+                  !panel->GetBoxDecoration()->fillEnd,
+              "an authored group's flat background is drawn");
         px::Input input;
         const auto press = [&](const float x, const float y) {
             input.InjectFrame(x, y, false);
