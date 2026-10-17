@@ -656,7 +656,7 @@ std::unique_ptr<Control> CreateControl(
             return nullptr;
         }
         control.reset(static_cast<Control*>(object.release()));
-        // A group (JSX <Group>, a Studio panel) is layout and decoration: a
+        // A group (JSX <Group>, an editor-made panel) is layout and decoration: a
         // click on its background passes through, so clicking anywhere on a
         // message window advances like a click on the Stage. Only its
         // buttons act; an authored mouseFilter (below) can still block.
@@ -751,7 +751,7 @@ std::unique_ptr<Control> CreateControl(
     if (auto* button = dynamic_cast<Button*>(control.get()))
         button->SetTextColor(ParseColor(node.appearance.textColor));
     auto decoration = DecorationFor(node.appearance);
-    // A plain Control (JSX <Group style={{background}}>, a Studio panel) has
+    // A plain Control (JSX <Group style={{background}}>, an editor-made panel) has
     // no drawing of its own: its flat background is a box fill, or the
     // panel (an NVL page, a name prompt) would be invisible.
     if (!decoration && control->TypeName() == "Control" &&
