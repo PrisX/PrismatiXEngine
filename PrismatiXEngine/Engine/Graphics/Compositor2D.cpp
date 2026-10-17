@@ -435,6 +435,13 @@ void Compositor2D::DestroyTarget() {
     m_stage = nullptr;
     if (m_intermediate) SDL_DestroyTexture(m_intermediate);
     m_intermediate = nullptr;
+#if !defined(__EMSCRIPTEN__)
+    if (m_transitionIncoming) {
+        InvalidateCustomTransitionTargets();
+        SDL_DestroyTexture(m_transitionIncoming);
+        m_transitionIncoming = nullptr;
+    }
+#endif
     m_recording = false;
     m_previousTarget = nullptr;
 }
@@ -578,14 +585,45 @@ bool Compositor2D::ApplyCustomTransition(
     (void)randomSeed; (void)parameters;
     return false;
 #else
+    // The caller falls back to a crossfade; say why once.
+    const auto unavailable = [&](const char* reason) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            PX_LOG_WARN("Custom transition '{}' cannot draw ({}); crossfading instead: {}",
+                        id, reason, SDL_GetError());
+        }
+        return false;
+    };
     auto found = m_customEffects.find(std::string(id));
     if (found == m_customEffects.end() || !outgoing || !incoming ||
         found->second.descriptor.targetLayer != "transition")
-        return false;
-    SDL_GPUTexture* incomingGpu = static_cast<SDL_GPUTexture*>(
-        SDL_GetPointerProperty(SDL_GetTextureProperties(incoming),
-                               SDL_PROP_TEXTURE_GPU_TEXTURE_POINTER, nullptr));
-    if (!incomingGpu) return false;
+        return unavailable("not a loaded transition effect");
+    const auto gpuTexture = [](SDL_Texture* texture) {
+        return static_cast<SDL_GPUTexture*>(SDL_GetPointerProperty(
+            SDL_GetTextureProperties(texture), SDL_PROP_TEXTURE_GPU_TEXTURE_POINTER, nullptr));
+    };
+    SDL_GPUTexture* incomingGpu = gpuTexture(incoming);
+    if (!incomingGpu) {
+        // A frame target in a format the GPU renderer converts (RGBA8888)
+        // has no GPU texture of its own: sample a native RGBA32 copy.
+        if (!m_transitionIncoming) {
+            m_transitionIncoming = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA32,
+                                                     SDL_TEXTUREACCESS_TARGET, m_width, m_height);
+            if (!m_transitionIncoming) return unavailable("incoming frame copy");
+            SDL_SetTextureScaleMode(m_transitionIncoming, SDL_SCALEMODE_LINEAR);
+        }
+        SDL_BlendMode blend = SDL_BLENDMODE_BLEND;
+        (void)SDL_GetTextureBlendMode(incoming, &blend);
+        (void)SDL_SetTextureBlendMode(incoming, SDL_BLENDMODE_NONE);
+        SDL_Texture* previous = SDL_GetRenderTarget(m_renderer);
+        const bool copied = SDL_SetRenderTarget(m_renderer, m_transitionIncoming) &&
+                            SDL_RenderTexture(m_renderer, incoming, nullptr, nullptr);
+        (void)SDL_SetRenderTarget(m_renderer, previous);
+        (void)SDL_SetTextureBlendMode(incoming, blend);
+        incomingGpu = copied ? gpuTexture(m_transitionIncoming) : nullptr;
+    }
+    if (!incomingGpu) return unavailable("the incoming frame is not a GPU texture");
     SDL_GPURenderState* state = nullptr;
     if (const auto cached = found->second.transitionStates.find(incomingGpu);
         cached != found->second.transitionStates.end()) {
@@ -598,7 +636,7 @@ bool Compositor2D::ApplyCustomTransition(
         stateInfo.num_sampler_bindings = 1;
         stateInfo.sampler_bindings = &binding;
         state = SDL_CreateGPURenderState(m_renderer, &stateInfo);
-        if (!state) return false;
+        if (!state) return unavailable("render state");
         found->second.transitionStates.emplace(incomingGpu, state);
     }
     const std::array<float, 4> viewport{
@@ -607,13 +645,13 @@ bool Compositor2D::ApplyCustomTransition(
                            m_width, m_height, progress, randomSeed, parameters,
                            viewport) ||
         !SDL_SetGPURenderState(m_renderer, state))
-        return false;
+        return unavailable("uniforms");
     const SDL_FRect destination{0.0f, 0.0f, static_cast<float>(m_width),
                                 static_cast<float>(m_height)};
     const bool rendered =
         SDL_RenderTexture(m_renderer, outgoing, nullptr, &destination);
     (void)SDL_SetGPURenderState(m_renderer, nullptr);
-    return rendered;
+    return rendered || unavailable("draw");
 #endif
 }
 

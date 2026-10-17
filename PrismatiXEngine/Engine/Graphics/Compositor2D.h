@@ -95,6 +95,9 @@ private:
     SDL_Texture* m_intermediate = nullptr;
     SDL_Texture* m_previousTarget = nullptr;
 #if !defined(__EMSCRIPTEN__)
+    // The incoming frame of a custom transition, copied into a format the
+    // GPU renderer keeps as its own GPU texture so the shader can sample it.
+    SDL_Texture* m_transitionIncoming = nullptr;
     SDL_GPUShader* m_shader = nullptr;
     SDL_GPUShader* m_ruleShader = nullptr;
     SDL_GPUSampler* m_ruleSampler = nullptr;
