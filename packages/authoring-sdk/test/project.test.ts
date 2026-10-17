@@ -1504,6 +1504,19 @@ test("compileProject rejects unknown and unsupported-tier Story effects before p
   assert.ok(wrongTier.diagnostics.some((diagnostic) =>
     diagnostic.code === "PXBUILD1025"));
 
+  // The diagnostics point at the Story line, and a sepia tone names itself.
+  const located = compile("Opening.\n[tone sepia]\n[effect missing-effect]\n[end]\n");
+  const tone = located.diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1025");
+  assert.equal(tone?.span?.start.line, 2, JSON.stringify(located.diagnostics));
+  assert.match(tone?.message ?? "", /tone sepia/u);
+  const missing = located.diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1024");
+  assert.equal(missing?.span?.start.line, 3);
+  assert.match(missing?.message ?? "", /missing-effect/u);
+
+  // [camera x= y= zoom=] (the documented pan and zoom) is not an effect preset.
+  const camera = compile("[camera x=120 y=-30 zoom=1.2 duration=800ms]\n[camera x=0 y=0 zoom=1]\n[end]\n");
+  assert.equal(camera.valid, true, JSON.stringify(camera.diagnostics));
+
   const gpu = compile("[effect blur]\n[camera pan]\n[end]\n",
     {graphicsTier:"gpu-effects"});
   assert.equal(gpu.valid, true, JSON.stringify(gpu.diagnostics));

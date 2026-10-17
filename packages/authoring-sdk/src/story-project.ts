@@ -368,7 +368,7 @@ function fallbackSpan(path: string): SourceSpan {
   };
 }
 
-function mappedSpan(source: string, mapping: SourceMapEntry): SourceSpan {
+export function mappedSpan(source: string, mapping: SourceMapEntry): SourceSpan {
   const offsetAt = (line: number, column: number): number => {
     let offset = 0;
     for (let current = 1; current < line; current += 1) {

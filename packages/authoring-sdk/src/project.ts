@@ -26,7 +26,7 @@ import {
   type ProjectDependencyReference,
 } from "./resources.js";
 import {compileStoryProject, type StoryIndexDocument, type StoryProjectCompilationCache,
-  type StoryProjectProgress} from "./story-project.js";
+  type StoryProjectProgress, mappedSpan} from "./story-project.js";
 import {ENGINE_VERSION} from "./version.js";
 import type {
   AuthoringDiagnostic,
@@ -299,18 +299,24 @@ function validateStoryEffects(
   sourceMap: RuntimeSourceMap,
   customEffects: ReadonlySet<string>,
   graphicsTier: "basic" | "gpu-effects",
+  sourceFiles: Readonly<Record<string, string>>,
 ): AuthoringDiagnostic[] {
   const diagnostics: AuthoringDiagnostic[] = [];
   const mappings = new Map(sourceMap.mappings.map((value) =>
     [value.operationId, value]));
   for (const operation of runtimeIr.operations) {
     if (operation.kind !== "effect" && operation.kind !== "camera") continue;
+    // [camera x= y= zoom=] moves the view; only a camera preset names an effect.
+    if (operation.kind === "camera" && operation.arguments.value === undefined) continue;
     const preset = operation.arguments.value ?? "";
     const mapping = mappings.get(operation.operationId);
     const path = mapping?.sourceUri;
+    const source = path === undefined ? undefined : sourceFiles[path];
+    const span = mapping === undefined || source === undefined ? {} : {span: mappedSpan(source, mapping)};
     if (!builtInScreenEffects.has(preset) && preset !== "tone" && !customEffects.has(preset)) {
       diagnostics.push({
-        ...issue("PXBUILD1024", "Story references an unknown screen effect preset", path, preset),
+        ...issue("PXBUILD1024", `Story references an unknown screen effect preset: ${preset}`, path, preset),
+        ...span,
         documentId: runtimeIr.documentId,
         sourceId: operation.sourceId,
         hint: "Use a built-in Screen preset or declare a validated project effect.",
@@ -318,7 +324,8 @@ function validateStoryEffects(
     } else if ((needsGpuEffects(operation, preset) || customEffects.has(preset)) &&
                graphicsTier !== "gpu-effects") {
       diagnostics.push({
-        ...issue("PXBUILD1025", "Story effect requires graphicsTier gpu-effects", path, preset),
+        ...issue("PXBUILD1025", `Story effect ${preset === "tone" ? `tone ${operation.arguments.mode}` : preset} requires graphicsTier gpu-effects`, path, preset),
+        ...span,
         documentId: runtimeIr.documentId,
         sourceId: operation.sourceId,
         hint: "Set project.graphicsTier to gpu-effects or select a basic-tier effect.",
@@ -992,7 +999,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   }
   diagnostics.push(...validateStoryEffects(
     compiled.runtimeIr, compiled.sourceMap, effectIds,
-    project.graphicsTier ?? "basic",
+    project.graphicsTier ?? "basic", sourceFiles,
   ));
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
     return {diagnostics, valid: false};
