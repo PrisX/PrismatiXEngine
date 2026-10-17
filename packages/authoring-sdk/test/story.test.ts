@@ -367,6 +367,23 @@ test("Story audio options reject unsupported or invalid playback requests", () =
   }
 });
 
+test("Story audio names a file format the Player cannot decode at build time", () => {
+  for (const source of ["[bgm Assets/Audio/theme.m4a]", "[se Assets/Audio/click.wma]",
+    "[voice Assets/Audio/line.aac]", "[bgm Assets/Audio/theme.ogg intro=Assets/Audio/intro.mid]"]) {
+    const compiled = compileStory(parseStory(source, "Story/audio-format.pxstory"),
+      {documentId: "audio-format"});
+    assert.equal(compiled.valid, false, source);
+    const diagnostic = compiled.diagnostics.find((entry) => entry.code === "PXSTORY1178");
+    assert.match(diagnostic?.message ?? "", /cannot play .*\.(m4a|wma|aac|mid)/u, source);
+  }
+  // FLAC, MP3, Opus and WAV play, whatever the file is called.
+  const playable = compileStory(parseStory([
+    "[bgm \"Assets/Music/2-01. この櫻ノ詩の下.FLAC\"]",
+    "[se Assets/Audio/click.mp3]", "[voice Assets/Audio/line.opus]", "[ambience Assets/Audio/rain.wav]",
+  ].join("\n"), "Story/audio-format.pxstory"), {documentId: "audio-format"});
+  assert.equal(playable.valid, true, JSON.stringify(playable.diagnostics));
+});
+
 test("unlock lowers to a typed Runtime IR operation", () => {
   const compiled = compileStory(
     parseStory("[unlock kind=cg id=ev101a]\n", "Story/unlock.pxstory"),

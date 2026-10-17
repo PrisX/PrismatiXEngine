@@ -673,6 +673,10 @@ After registering suitable decodable media, the compiler accepts:
 suffix) and `loop=true|false`. `bgm intro=...` plays the intro once, then
 loops its main asset; it cannot be combined with `loop=false`. Both BGM files
 are collected for packaging. `bgm.stop` and `ambience.stop` also accept `fade`.
+The Player plays `.ogg` (Vorbis or Opus), `.opus`, `.flac`, `.mp3`, `.wav`,
+`.aiff`/`.aif`, `.voc` and `.au`; any file name works, including spaces, dots
+and non-Latin characters. Other formats (`.m4a`, `.aac`, `.wma`, `.mid`) are
+build error `PXSTORY1178`: convert them first.
 Unsupported options on `voice` and on `se` without `channel=`, invalid timing, and unsafe paths are
 authoring errors instead of silently changing playback. A missing reference is a build diagnostic.
 

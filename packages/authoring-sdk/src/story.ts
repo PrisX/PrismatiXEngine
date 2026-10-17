@@ -1783,7 +1783,12 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
             ? node.name : "se";
           const resolved = resolveResource(node, asset, category);
           const resolvedIntro = intro === undefined ? undefined : resolveResource(node, intro, category);
-          if (resolved !== undefined && (intro === undefined || resolvedIntro !== undefined)) {
+          const undecodable = [resolved, resolvedIntro].find((path) => path !== undefined && !playerDecodesAudio(path));
+          if (undecodable !== undefined)
+            diagnostics.push(error("PXSTORY1178",
+              `The Player cannot play ${undecodable}: ${node.name} plays ${playerAudioExtensions.join(", ")} files`,
+              node.span, "Convert it, for example to .ogg or .flac, and name the converted file"));
+          else if (resolved !== undefined && (intro === undefined || resolvedIntro !== undefined)) {
             emit(node, node.name === "se" ? "soundEffect" : node.name, {
               asset: resolved,
               ...(fade === undefined ? {} : {fade}),
@@ -2124,4 +2129,13 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
 
 // Every built-in command name; storyCommandSchema (story-command-schema.ts)
 // describes each one and the schema tests keep the two in step.
+/** What the Player's audio decoders (SDL_mixer: WAV, Vorbis, Opus, FLAC,
+ * MP3, AIFF, VOC, AU) read. AAC/M4A, WMA and MIDI are not among them. */
+const playerAudioExtensions = [".ogg", ".opus", ".flac", ".mp3", ".wav", ".aiff", ".aif", ".voc", ".au"];
+/** A cataloged asset identity has no extension and is not judged here. */
+function playerDecodesAudio(reference: string): boolean {
+  const dot = reference.lastIndexOf(".");
+  return dot <= reference.lastIndexOf("/") || playerAudioExtensions.includes(reference.slice(dot).toLowerCase());
+}
+
 const builtinStoryCommands = ["id", "chapter", "say", "narrate", "bg", "image", "image.hide", "transition", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "add", "if", "elseif", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "hud", "unlock", "effect", "flash", "tone", "shake", "camera", "act", "se.stop", "voice.stop", "nvl", "adv", "nvl.clear", "auto", "skip.stop", "skip.disable", "skip.enable", "macro", "endmacro", "endchoice", "var", "face", "credits", "endcredits", "input"];
