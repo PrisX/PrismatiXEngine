@@ -37,7 +37,7 @@ import {debugPackagerHint} from "./package-tool-hint.js";
 import {distributionCoversLineage, distributionLineage, readReleaseLineage,
   recordReleaseLineage, releaseLineageFile, saveCompatibilityWarning} from "./release-lineage.js";
 import {addCharacter, addScene} from "./scaffold.js";
-import {resolvePreviewTarget} from "./preview-target.js";
+import {resolvePreviewTarget, seekStoryTarget} from "./preview-target.js";
 import {isProjectEdit} from "./dev-watch.js";
 import {builtinRoutes, ejectBuiltinUi} from "./eject.js";
 import {AndroidExportError, androidSettings, checkAndroidInputs, checkKeystoreEnvironment,
@@ -2509,6 +2509,8 @@ class PreviewClient {
     readonly timer: NodeJS.Timeout;
     readonly documentId: string;
     readonly revision: number;
+    /** The response is the caller's to report; it is not echoed to stderr. */
+    readonly quiet: boolean;
   }>();
   private outputBuffer = "";
   private exited = false;
@@ -2536,18 +2538,20 @@ class PreviewClient {
           try {
             const message = object(JSON.parse(line) as unknown);
             const requestId = message?.requestId;
+            let quiet = false;
             if (message !== undefined && typeof requestId === "string") {
               const waiter = this.waiters.get(requestId);
               if (waiter !== undefined && message.event === undefined &&
                   message.protocol === "PrismatiXPreviewProtocol" && message.schemaRevision === 1 &&
                   message.protocolVersion === 1 && message.sessionId === this.sessionId &&
                   message.documentId === waiter.documentId && message.revision === waiter.revision) {
+                quiet = waiter.quiet;
                 clearTimeout(waiter.timer); this.waiters.delete(requestId); waiter.accept(message);
               }
             }
             if (machineOutput && !process.stdout.write(`${line}\n`)) {
               child.stdout.pause(); process.stdout.once("drain", () => child.stdout.resume());
-            } else if (!machineOutput && typeof message?.message === "string" && message.code !== undefined) {
+            } else if (!machineOutput && !quiet && typeof message?.message === "string" && message.code !== undefined) {
               if (!process.stderr.write(`${String(message.code)}: ${message.message}\n`)) {
                 child.stdout.pause(); process.stderr.once("drain", () => child.stdout.resume());
               }
@@ -2601,7 +2605,7 @@ class PreviewClient {
   get alive(): boolean { return !this.exited && this.child.exitCode === null; }
 
   request(type: string, documentId: string, revision: number,
-    fields: Readonly<Record<string, unknown>>, timeoutMs = 20_000): Promise<PreviewMessage> {
+    fields: Readonly<Record<string, unknown>>, timeoutMs = 20_000, quiet = false): Promise<PreviewMessage> {
     if (!this.alive) return Promise.reject(new Error("PreviewHost is not running"));
     const requestId = `cli-${randomUUID()}`;
     const request = {protocol: "PrismatiXPreviewProtocol", schemaRevision: 1,
@@ -2612,7 +2616,7 @@ class PreviewClient {
         this.waiters.delete(requestId);
         reject(new Error(`PreviewHost timed out waiting for ${type}`));
       }, timeoutMs);
-      this.waiters.set(requestId, {accept, reject, timer, documentId, revision});
+      this.waiters.set(requestId, {accept, reject, timer, documentId, revision, quiet});
       this.child.stdin.write(`${JSON.stringify(request)}\n`, (error) => {
         if (error === null || error === undefined) return;
         const waiter = this.waiters.get(requestId);
@@ -2691,6 +2695,43 @@ async function applyPreviewBuild(client: PreviewClient, built: BuildResult,
       message: incremental ? "Preview updated" : "Preview started",
       applyMode: response.applyMode, revision});
   }
+}
+
+/**
+ * `dev --at`: seeks Preview to a Story line, choosing the [choice] options
+ * that lead there, and plays on from it. Rejections while searching for the
+ * choice path are not echoed; only the outcome is reported.
+ */
+async function previewAt(client: PreviewClient, build: BuildResult, at: string): Promise<void> {
+  const target = resolvePreviewTarget(build.artifact, at);
+  const {documentId, committedRevision} = build.artifact.runtimeIr;
+  const outcome = await seekStoryTarget(build.artifact, target.operationIndex, (branchPath) =>
+    client.request("seekStory", documentId, committedRevision,
+      {operationIndex: target.operationIndex, branchPath}, 20_000, true));
+  if (!outcome.accepted) {
+    const diagnostics = Array.isArray(outcome.response.diagnostics) ? outcome.response.diagnostics : [];
+    const first = object(diagnostics[0]);
+    const reason = typeof first?.message === "string" ? `${String(first.code)}: ${first.message}`
+      : typeof outcome.response.message === "string" ? outcome.response.message
+      : JSON.stringify(outcome.response);
+    printDiagnostics([{severity: "warning", code: "PXCLI1609",
+      message: `Preview could not reach ${target.sourceUri}:${target.line} (${reason}); it plays from the start of the story instead`,
+      path: target.sourceUri, hint: `Tried ${outcome.attempts} choice path(s)`}]);
+    return;
+  }
+  // A seek stops right after the target operation, paused when that
+  // operation does not wait (a [bg] or a character change). Play on from
+  // there so the line's text appears as it does in the game.
+  if (outcome.response.state === "paused") {
+    const resumed = await client.request("continue", documentId, committedRevision, {});
+    if (resumed.type !== "continueAccepted") throw previewResponseError("Continue after --at", resumed);
+  }
+  const choices = outcome.branchPath !== undefined && outcome.branchPath.length > 0
+    ? ` (choices ${outcome.branchPath.map((choice) => choice + 1).join(" > ")})` : "";
+  progress({event: "dev.at", severity: "information", code: "PXCLI1610",
+    message: `Preview starts at ${target.sourceUri}:${target.line}${choices}`,
+    sourceUri: target.sourceUri, line: target.line, operationIndex: target.operationIndex,
+    branchPath: outcome.branchPath});
 }
 
 function waitFor(milliseconds: number): Promise<void> {
@@ -2790,28 +2831,7 @@ async function devCommand(options: Options): Promise<number> {
         if (route !== undefined) await previewRoute(candidate, updated, route);
         // --at replays every revision up to the same Story position, so an
         // edit deep in a scene is seen without playing up to it again.
-        if (at !== undefined) {
-          const target = resolvePreviewTarget(updated.artifact, at);
-          const seek = (branchPath: readonly number[]) => candidate!.request("seekStory",
-            updated!.artifact.runtimeIr.documentId, updated!.artifact.runtimeIr.committedRevision,
-            {operationIndex: target.operationIndex, branchPath});
-          const needsChoices = (response: PreviewMessage) => JSON.stringify(response).includes("PXPREVIEW1104");
-          let sought = await seek([]);
-          // Behind a choice, try the first few choice paths breadth-first.
-          const pending: number[][] = [[0], [1], [2], [3]];
-          for (let attempts = 0; needsChoices(sought) && attempts < 40 && pending.length > 0; attempts += 1) {
-            const path = pending.shift()!;
-            sought = await seek(path);
-            if (needsChoices(sought) && path.length < 3)
-              pending.push(...[0, 1, 2, 3].map((choice) => [...path, choice]));
-          }
-          if (sought.type !== "storySeekAccepted")
-            printDiagnostics([{severity: "warning", code: "PXCLI1609",
-              message: `Preview could not start at ${at}; a choice may lead there, so it starts at the scene's beginning instead`,
-              path: target.sourceUri, hint: JSON.stringify(sought)}]);
-          else progress({event: "dev.at", severity: "information", code: "PXCLI1610",
-            message: `Preview starts at ${target.sourceUri}:${target.line}`});
-        }
+        if (at !== undefined) await previewAt(candidate, updated, at);
         const previous = client;
         const previousBuild = built;
         client = candidate;
