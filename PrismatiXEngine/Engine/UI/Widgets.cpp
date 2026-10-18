@@ -599,10 +599,14 @@ void TextureButton::DrawSelf(graphics::Renderer2D& renderer,
     else if (Pressed() && !m_pressedPath.empty()) path = &m_pressedPath;
     else if ((Hovered() || FocusVisible()) && !m_hoverPath.empty()) path = &m_hoverPath;
     if (!path->empty()) {
-        renderer.DrawImageInRect(*path, LayoutRect(), ToScaleMode(m_scaleMode),
-                                 graphics::HorizontalAlignment::Center,
-                                 graphics::VerticalAlignment::Center,
-                                 Enabled() ? 255 : 128);
+        if (NineSlice())
+            renderer.DrawNinePatch(*path, LayoutRect(), m_patchMargins, true,
+                                   Enabled() ? 255 : 128, m_patchScale);
+        else
+            renderer.DrawImageInRect(*path, LayoutRect(), ToScaleMode(m_scaleMode),
+                                     graphics::HorizontalAlignment::Center,
+                                     graphics::VerticalAlignment::Center,
+                                     Enabled() ? 255 : 128);
         DrawTextContent(renderer, theme);
         return;
     }
@@ -1440,7 +1444,7 @@ void RichTextLabel::DrawStyled(graphics::Renderer2D& renderer, const Theme& them
 void NinePatchRect::CollectImageDependencies(std::vector<std::string>& paths) const {
     if (!m_path.empty()) paths.push_back(m_path);
 }
-void NinePatchRect::DrawSelf(graphics::Renderer2D& renderer,const Theme&){if(!m_path.empty())renderer.DrawNinePatch(m_path,LayoutRect(),m_margins,m_drawCenter);}
+void NinePatchRect::DrawSelf(graphics::Renderer2D& renderer,const Theme&){if(!m_path.empty())renderer.DrawNinePatch(m_path,LayoutRect(),m_margins,m_drawCenter,255,m_patchScale);}
 
 TextEdit::TextEdit(std::string text,std::string name)
     :Control(std::move(name)),m_text(std::move(text)),m_cursor(m_text.size()),

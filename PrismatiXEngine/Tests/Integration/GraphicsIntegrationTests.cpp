@@ -180,6 +180,125 @@ int main() {
         px::graphics::AssetCache assets(device.Renderer(), vfs);
         px::graphics::Renderer2D renderer(device.Renderer(), assets, true);
         renderer.SetLogicalSize(640, 360);
+        // Nine-slice: a 30px image with a 10px red border around a blue
+        // middle keeps its border at patchMargins * patchScale on screen,
+        // for an image (NinePatchRect) and for a TextureButton's states.
+        {
+            const auto sliceRoot = std::filesystem::temp_directory_path() /
+                ("prismatix-nine-slice-" + std::to_string(SDL_GetTicksNS()));
+            std::error_code sliceError;
+            std::filesystem::create_directories(sliceRoot / "Assets", sliceError);
+            SDL_Surface* patch = SDL_CreateSurface(30, 30, SDL_PIXELFORMAT_RGBA32);
+            bool saved = patch != nullptr;
+            for (int y = 0; saved && y < 30; ++y)
+                for (int x = 0; saved && x < 30; ++x) {
+                    const bool edge = x < 10 || x >= 20 || y < 10 || y >= 20;
+                    saved = SDL_WriteSurfacePixel(patch, x, y, edge ? 230 : 30, edge ? 30 : 60,
+                                                  edge ? 40 : 230, 255);
+                }
+            saved = saved && SDL_SaveBMP(patch, (sliceRoot / "Assets/patch.bmp").string().c_str());
+            if (patch) SDL_DestroySurface(patch);
+            if (sliceError || !saved) {
+                std::cerr << "FAIL: nine-slice texture fixture\n";
+                result = 1;
+            } else {
+                px::io::VFS sliceVfs;
+                sliceVfs.MountDirectory(sliceRoot.generic_string());
+                px::graphics::AssetCache sliceAssets(device.Renderer(), sliceVfs);
+                px::graphics::Renderer2D sliceRenderer(device.Renderer(), sliceAssets, true);
+                sliceRenderer.SetLogicalSize(640, 360);
+                const auto draw = [&](px::ui::Control& control, const std::string& name) {
+                    ClearFrame(device.Renderer());
+                    sliceRenderer.DrawRect({0, 0, 640, 360}, {255, 255, 255, 255});
+                    control.Draw(sliceRenderer, px::ui::Theme{});
+                    SaveVisualArtifact(device.Renderer(), name);
+                    return SDL_RenderReadPixels(device.Renderer(), nullptr);
+                };
+                const auto isRed = [](SDL_Surface* surface, const int x, const int y) {
+                    const Pixel pixel = ReadLogicalPixel(surface, x, y, 640, 360);
+                    return pixel.r > 200 && pixel.g < 80 && pixel.b < 80;
+                };
+                const auto isBlue = [](SDL_Surface* surface, const int x, const int y) {
+                    const Pixel pixel = ReadLogicalPixel(surface, x, y, 640, 360);
+                    return pixel.b > 200 && pixel.r < 80;
+                };
+                // Through the registry, as an authored <Image slice sliceScale> arrives.
+                px::sdk::UiDocument sliced;
+                sliced.id = "12000000-0000-4000-8000-000000000031";
+                sliced.rootId = "12000000-0000-4000-8000-000000000032";
+                px::sdk::UiNode frameNode;
+                frameNode.id = sliced.rootId;
+                frameNode.kind = px::sdk::UiNodeKind::Image;
+                frameNode.runtimeType = "NinePatchRect";
+                frameNode.runtimeProperties.emplace("path", std::string("Assets/patch.bmp"));
+                frameNode.runtimeProperties.emplace("patchMargins", px::sdk::UiRectValue{10, 10, 10, 10});
+                frameNode.runtimeProperties.emplace("patchScale", 2.0);
+                sliced.nodes.push_back(frameNode);
+                auto built = px::ui::BuildUiRuntimeTree(sliced);
+                auto* frame = built.Valid() ? dynamic_cast<px::ui::NinePatchRect*>(built.root.get()) : nullptr;
+                if (!frame || frame->PatchScale() != 2.0f) {
+                    std::cerr << "FAIL: authored patchScale did not reach the NinePatchRect\n";
+                    result = 1;
+                } else {
+                    frame->Arrange({100, 100, 300, 160});
+                    SDL_Surface* pixels = draw(*frame, "nine-slice-image-scale2");
+                    // A 20px border: red at 110 and 395, blue from 120 to 380.
+                    const bool scaled = isRed(pixels, 110, 180) && isRed(pixels, 395, 180) &&
+                        isBlue(pixels, 125, 180) && isBlue(pixels, 375, 180) &&
+                        isRed(pixels, 250, 115) && isBlue(pixels, 250, 125);
+                    SDL_DestroySurface(pixels);
+                    frame->SetPatchScale(1.0f);
+                    pixels = draw(*frame, "nine-slice-image-scale1");
+                    const bool native = isRed(pixels, 105, 180) && isBlue(pixels, 115, 180);
+                    SDL_DestroySurface(pixels);
+                    if (!scaled || !native) {
+                        std::cerr << "FAIL: nine-slice border scaled=" << scaled << " native=" << native << '\n';
+                        result = 1;
+                    }
+                }
+                sliced.nodes[0].runtimeProperties["patchScale"] = 0.0;
+                if (px::ui::BuildUiRuntimeTree(sliced).Valid()) {
+                    std::cerr << "FAIL: patchScale 0 was accepted\n";
+                    result = 1;
+                }
+                // A TextureButton with margins draws its state image as a
+                // nine-slice; without them the image stretches.
+                px::sdk::UiNode buttonNode;
+                buttonNode.id = sliced.rootId;
+                buttonNode.kind = px::sdk::UiNodeKind::Button;
+                buttonNode.runtimeType = "TextureButton";
+                buttonNode.runtimeProperties.emplace("normalPath", std::string("Assets/patch.bmp"));
+                buttonNode.runtimeProperties.emplace("patchMargins", px::sdk::UiRectValue{10, 10, 10, 10});
+                buttonNode.runtimeProperties.emplace("patchScale", 0.5);
+                sliced.nodes[0] = buttonNode;
+                auto builtButton = px::ui::BuildUiRuntimeTree(sliced);
+                auto* button = builtButton.Valid() ? dynamic_cast<px::ui::TextureButton*>(builtButton.root.get()) : nullptr;
+                if (!button || !button->NineSlice() || button->PatchScale() != 0.5f) {
+                    std::cerr << "FAIL: authored TextureButton patchMargins/patchScale were not applied\n";
+                    result = 1;
+                } else {
+                    button->Arrange({100, 100, 300, 160});
+                    SDL_Surface* pixels = draw(*button, "nine-slice-button");
+                    const bool thin = isRed(pixels, 102, 180) && isBlue(pixels, 108, 180) && isBlue(pixels, 392, 180);
+                    SDL_DestroySurface(pixels);
+                    button->SetPatchMargins({0, 0, 0, 0});
+                    pixels = draw(*button, "nine-slice-button-stretched");
+                    // Stretched 10x across: the border is 100px wide.
+                    const bool stretched = isRed(pixels, 180, 180) && isBlue(pixels, 250, 180);
+                    SDL_DestroySurface(pixels);
+                    if (!thin || !stretched) {
+                        std::cerr << "FAIL: TextureButton nine-slice thin=" << thin << " stretched=" << stretched << '\n';
+                        result = 1;
+                    }
+                }
+                sliced.nodes[0].runtimeProperties["patchMargins"] = px::sdk::UiRectValue{-1, 0, 0, 0};
+                if (px::ui::BuildUiRuntimeTree(sliced).Valid()) {
+                    std::cerr << "FAIL: negative TextureButton patchMargins were accepted\n";
+                    result = 1;
+                }
+            }
+            std::filesystem::remove_all(sliceRoot, sliceError);
+        }
         // Revision-2 atlas motion must change the sampled texture region,
         // not merely its pose metadata, at the authored step timestamp.
         {

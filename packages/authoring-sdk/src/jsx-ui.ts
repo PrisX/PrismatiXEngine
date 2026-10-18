@@ -314,6 +314,9 @@ export interface ColorRectProps extends UiNodeProps {
   readonly color: string;
 }
 
+/** Nine-slice margins in image pixels: one number for every side, or `[left, top, right, bottom]`. */
+export type UiSlice = number | readonly [left: number, top: number, right: number, bottom: number];
+
 export interface ImageProps extends UiNodeProps {
   readonly assetId?: string | null;
   readonly path?: string;
@@ -322,6 +325,16 @@ export interface ImageProps extends UiNodeProps {
   readonly opacity?: number;
   /** Atlas cell `[x, y, width, height]` in image pixels; placed like a whole image of that size. */
   readonly region?: readonly [x: number, y: number, width: number, height: number];
+  /**
+   * Draw the image as a nine-slice: these image pixels at the edges keep
+   * their size (corners) or stretch along one axis (sides) while the middle
+   * fills the rest, so one frame or panel image fits any size.
+   */
+  readonly slice?: UiSlice;
+  /** Drawn size of the slice border relative to the image: 0.5 for an image made at twice the layout's resolution. Default 1. */
+  readonly sliceScale?: number;
+  /** `false` leaves the middle of a nine-slice empty (a frame around children). Default true. */
+  readonly sliceCenter?: boolean;
 }
 
 /** A layered, time-sampled .pxmotion clip rendered inside a UI layout box. */
@@ -381,6 +394,14 @@ export interface TextureButtonProps extends ButtonProps {
   readonly pressedPath?: string;
   readonly disabledPath?: string;
   readonly scaleMode?: "Stretch" | "Fit" | "Fill" | "Original";
+  /**
+   * Draw every state image as a nine-slice (image pixels kept at the edges:
+   * one number or `[left, top, right, bottom]`), so one skin fits buttons
+   * of any size.
+   */
+  readonly slice?: UiSlice;
+  /** Drawn size of the slice border relative to the image: 0.5 for images made at twice the layout's resolution. Default 1. */
+  readonly sliceScale?: number;
   /**
    * Shown while the pointer is over this button, positioned relative to the
    * button. The button is wrapped in a `<name>Group` and needs a `name`.
@@ -900,10 +921,45 @@ export function ColorRect(props: ColorRectProps): UiElement {
     runtimeProperties: {...props.runtimeProperties, color: {type: "color", value: color}}});
 }
 
+/** Nine-slice runtime properties (`patchMargins`, `patchScale`), checked. */
+function sliceProperties(owner: string, slice: UiSlice | undefined, scale: number | undefined): Record<string, JsonValue> {
+  if (slice === undefined) {
+    if (scale !== undefined) throw new TypeError(`${owner} sliceScale needs slice`);
+    return {};
+  }
+  const sides = typeof slice === "number" ? [slice, slice, slice, slice] : [...slice];
+  if (sides.length !== 4 || sides.some((value) => typeof value !== "number" || !Number.isFinite(value) || value < 0))
+    throw new TypeError(`${owner} slice needs one non-negative number or [left, top, right, bottom]`);
+  if (scale !== undefined && (!Number.isFinite(scale) || scale < 0.01 || scale > 16))
+    throw new TypeError(`${owner} sliceScale must be between 0.01 and 16`);
+  return {
+    patchMargins: {type: "rect", x: sides[0]!, y: sides[1]!, width: sides[2]!, height: sides[3]!},
+    ...(scale === undefined ? {} : {patchScale: scale}),
+  };
+}
+
 export function Image(props: ImageProps): UiElement {
-  const {path, scaleMode, lockAspectRatio, opacity, region, ...rest} = props;
+  const {path, scaleMode, lockAspectRatio, opacity, region, slice, sliceScale, sliceCenter, ...rest} = props;
   if (region !== undefined && region.some((value) => !Number.isFinite(value) || value < 0))
     throw new TypeError(`Image ${props.name ?? ""} region needs four non-negative numbers`);
+  const owner = `Image ${props.name ?? ""}`.trimEnd();
+  if (slice !== undefined) {
+    // A nine-slice is the runtime's NinePatchRect: a plain stretched image
+    // whose edges keep their size.
+    if (path === undefined || path === "") throw new TypeError(`${owner} slice needs a path`);
+    if (region !== undefined || (scaleMode !== undefined && scaleMode !== "Stretch") || lockAspectRatio === true)
+      throw new TypeError(`${owner} slice stretches the image: it takes no region, scaleMode or lockAspectRatio`);
+    return node("image", "NinePatchRect", {...rest,
+      ...(opacity === undefined ? {} : {style: {...rest.style, opacity}}),
+      runtimeProperties: {
+        ...props.runtimeProperties,
+        path,
+        ...sliceProperties(owner, slice, sliceScale),
+        ...(sliceCenter === undefined ? {} : {drawCenter: sliceCenter}),
+      }});
+  }
+  if (sliceScale !== undefined || sliceCenter !== undefined)
+    throw new TypeError(`${owner} sliceScale and sliceCenter need slice`);
   return node("image", "TextureRect", {...rest, runtimeProperties: {
     ...props.runtimeProperties,
     ...(path === undefined ? {} : {path}),
@@ -992,7 +1048,10 @@ export function TextureButton(props: TextureButtonProps): UiElement {
       ]});
   }
   const text = props.text ?? textualChildren(props.children);
-  const {children: _children, skin, scaleMode, ...rest} = props;
+  const {children: _children, skin, scaleMode, slice, sliceScale, ...rest} = props;
+  if (slice !== undefined && scaleMode !== undefined && scaleMode !== "Stretch")
+    throw new TypeError(`TextureButton ${props.name ?? ""} slice stretches its images: it takes no scaleMode`);
+  const sliced = sliceProperties(`TextureButton ${props.name ?? ""}`.trimEnd(), slice, sliceScale);
   const derived = skinPaths(skin);
   const normalPath = props.normalPath ?? derived.normalPath;
   const hoverPath = props.hoverPath ?? derived.hoverPath;
@@ -1012,6 +1071,7 @@ export function TextureButton(props: TextureButtonProps): UiElement {
       ...(pressedPath === undefined ? {} : {pressedPath}),
       ...(disabledPath === undefined ? {} : {disabledPath}),
       ...(scaleMode === undefined ? {} : {scaleMode}),
+      ...sliced,
     },
   });
 }

@@ -14,6 +14,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace px::graphics {
@@ -1008,17 +1009,27 @@ void Renderer2D::DrawImageInRect(const std::string& path, const Rect& bounds,
     PushClip(bounds);Blit(texture,{x,y,w,h},alpha);PopClip();
 }
 
-void Renderer2D::DrawNinePatch(const std::string& path,const Rect& bounds,Rect margins,const bool drawCenter,const std::uint8_t alpha){
+void Renderer2D::DrawNinePatch(const std::string& path,const Rect& bounds,Rect margins,const bool drawCenter,const std::uint8_t alpha,const float marginScale){
     const TextureHandle handle=m_assets.Texture(path);SDL_Texture* texture=NativeTexture(handle);if(!texture||bounds.w<=0||bounds.h<=0)return;int width=0,height=0;AssetCache::TextureSize(handle,width,height);if(width<=0||height<=0)return;
     float left=std::clamp(margins.x,0.0f,static_cast<float>(width)),top=std::clamp(margins.y,0.0f,static_cast<float>(height));
     float right=std::clamp(margins.w,0.0f,static_cast<float>(width)-left),bottom=std::clamp(margins.h,0.0f,static_cast<float>(height)-top);
-    const float destinationLeft=std::min(left,bounds.w*.5f),destinationRight=std::min(right,bounds.w-destinationLeft);
-    const float destinationTop=std::min(top,bounds.h*.5f),destinationBottom=std::min(bottom,bounds.h-destinationTop);
+    const float scale=std::isfinite(marginScale)&&marginScale>0.0f?marginScale:1.0f;
+    const float destinationLeft=std::min(left*scale,bounds.w*.5f),destinationRight=std::min(right*scale,bounds.w-destinationLeft);
+    const float destinationTop=std::min(top*scale,bounds.h*.5f),destinationBottom=std::min(bottom*scale,bounds.h-destinationTop);
     const float sourceX[4]{0,left,static_cast<float>(width)-right,static_cast<float>(width)};
     const float sourceY[4]{0,top,static_cast<float>(height)-bottom,static_cast<float>(height)};
     const float destinationX[4]{bounds.x,bounds.x+destinationLeft,bounds.x+bounds.w-destinationRight,bounds.x+bounds.w};
     const float destinationY[4]{bounds.y,bounds.y+destinationTop,bounds.y+bounds.h-destinationBottom,bounds.y+bounds.h};
-    for(int y=0;y<3;++y)for(int x=0;x<3;++x){if(!drawCenter&&x==1&&y==1)continue;BlitRegion(texture,{sourceX[x],sourceY[y],sourceX[x+1]-sourceX[x],sourceY[y+1]-sourceY[y]},{destinationX[x],destinationY[y],destinationX[x+1]-destinationX[x],destinationY[y+1]-destinationY[y]},alpha);}
+    // The stretched middle row and column sample half a texel inside their
+    // own pixels, so filtering does not bleed the border into them.
+    const auto inset=[](float from,float to){return to-from>1.0f?std::pair{from+.5f,to-.5f}:std::pair{from,to};};
+    for(int y=0;y<3;++y)for(int x=0;x<3;++x){
+        if(!drawCenter&&x==1&&y==1)continue;
+        auto [x0,x1]=x==1?inset(sourceX[1],sourceX[2]):std::pair{sourceX[x],sourceX[x+1]};
+        auto [y0,y1]=y==1?inset(sourceY[1],sourceY[2]):std::pair{sourceY[y],sourceY[y+1]};
+        if(x1-x0<=0.0f||y1-y0<=0.0f)continue;
+        BlitRegion(texture,{x0,y0,x1-x0,y1-y0},{destinationX[x],destinationY[y],destinationX[x+1]-destinationX[x],destinationY[y+1]-destinationY[y]},alpha);
+    }
 }
 
 void Renderer2D::DrawTexture(const TextureHandle texture, const Rect& dst,

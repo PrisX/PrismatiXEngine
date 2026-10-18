@@ -228,6 +228,38 @@ test("Image region selects an atlas cell", () => {
   assert.throws(() => jsx(Image, {name: "Bad", path: "a.png", region: [0, 0, -1, 4]}), /non-negative/u);
 });
 
+test("slice draws an Image or a TextureButton's states as a nine-slice", () => {
+  const node = compiled([
+    jsx(Image, {name: "Frame", path: "Assets/UI/frame.png", slice: [48, 40, 48, 56], sliceScale: 0.5,
+      sliceCenter: false, opacity: 0.8, position: [0, 0], size: [600, 200]}),
+    jsx(Image, {name: "Even", path: "Assets/UI/panel.png", slice: 24, position: [0, 0], size: [200, 200]}),
+    jsx(TextureButton, {name: "Choice", skin: "Assets/UI/choice", slice: [40, 0, 40, 0], sliceScale: 0.5,
+      text: "Go", position: [0, 220], size: [900, 80], action: "mode.auto"}),
+  ]);
+  const frame = node("Frame");
+  assert.equal(frame.runtimeType, "NinePatchRect");
+  assert.deepEqual(frame.runtimeProperties.patchMargins, {type: "rect", x: 48, y: 40, width: 48, height: 56});
+  assert.equal(frame.runtimeProperties.patchScale, 0.5);
+  assert.equal(frame.runtimeProperties.drawCenter, false);
+  assert.equal(frame.runtimeProperties.path, "Assets/UI/frame.png");
+  assert.equal(frame.appearance?.opacity, 0.8);
+  assert.equal("scaleMode" in frame.runtimeProperties, false);
+  assert.deepEqual(node("Even").runtimeProperties.patchMargins, {type: "rect", x: 24, y: 24, width: 24, height: 24});
+  assert.equal("patchScale" in node("Even").runtimeProperties, false);
+  const choice = node("Choice");
+  assert.equal(choice.runtimeType, "TextureButton");
+  assert.deepEqual(choice.runtimeProperties.patchMargins, {type: "rect", x: 40, y: 0, width: 40, height: 0});
+  assert.equal(choice.runtimeProperties.patchScale, 0.5);
+  assert.equal(choice.runtimeProperties.normalPath, "Assets/UI/choice-normal.png");
+  assert.throws(() => jsx(Image, {name: "NoPath", slice: 8}), /slice needs a path/u);
+  assert.throws(() => jsx(Image, {name: "Fit", path: "a.png", slice: 8, scaleMode: "Fit"}), /no region, scaleMode/u);
+  assert.throws(() => jsx(Image, {name: "Neg", path: "a.png", slice: [1, 2, -3, 4]}), /non-negative/u);
+  assert.throws(() => jsx(Image, {name: "Tiny", path: "a.png", slice: 4, sliceScale: 0}), /between 0.01 and 16/u);
+  assert.throws(() => jsx(Image, {name: "Lonely", path: "a.png", sliceScale: 0.5}), /need slice/u);
+  assert.throws(() => jsx(TextureButton, {name: "Lonely", skin: "a", sliceScale: 0.5}), /sliceScale needs slice/u);
+  assert.throws(() => jsx(TextureButton, {name: "Fit", skin: "a", slice: 4, scaleMode: "Fit"}), /no scaleMode/u);
+});
+
 test("ItemsPlaced choiceLayout lowers to the choice properties the Player reads", async () => {
   const {ItemsPlaced, Group} = await import("../src/index.js");
   const result = compileJsxUi(jsx(Scene, {name: "HUD", width: 1920, height: 1080,

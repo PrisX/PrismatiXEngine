@@ -263,6 +263,16 @@ public:
     void CollectImageDependencies(std::vector<std::string>& paths) const override;
     void SetScaleMode(TextureScaleMode value) { m_scaleMode = value; }
     [[nodiscard]] TextureScaleMode ScaleMode() const { return m_scaleMode; }
+    // Non-zero margins (image pixels: left, top, right, bottom) draw every
+    // state image as a nine-slice: corners keep their size (times
+    // PatchScale), edges and centre stretch to the button.
+    void SetPatchMargins(Rect value) { m_patchMargins = value; }
+    [[nodiscard]] Rect PatchMargins() const { return m_patchMargins; }
+    void SetPatchScale(float value) { m_patchScale = value; }
+    [[nodiscard]] float PatchScale() const { return m_patchScale; }
+    [[nodiscard]] bool NineSlice() const {
+        return m_patchMargins.x > 0 || m_patchMargins.y > 0 || m_patchMargins.w > 0 || m_patchMargins.h > 0;
+    }
 
 protected:
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
@@ -273,6 +283,8 @@ private:
     std::string m_pressedPath;
     std::string m_disabledPath;
     TextureScaleMode m_scaleMode = TextureScaleMode::Stretch;
+    Rect m_patchMargins{0, 0, 0, 0};
+    float m_patchScale = 1.0f;
 };
 
 class TextureRect : public Control {
@@ -594,8 +606,12 @@ public:
     [[nodiscard]] Rect PatchMargins()const{return m_margins;}
     void SetDrawCenter(bool value){m_drawCenter=value;}
     [[nodiscard]] bool DrawCenter()const{return m_drawCenter;}
+    // The border is drawn this many times its size in the image (0.5 for an
+    // image made at twice the layout's resolution).
+    void SetPatchScale(float value){m_patchScale=value;}
+    [[nodiscard]] float PatchScale()const{return m_patchScale;}
 protected:void DrawSelf(graphics::Renderer2D& renderer,const Theme& theme)override;
-private:std::string m_path;Rect m_margins{16,16,16,16};bool m_drawCenter=true;
+private:std::string m_path;Rect m_margins{16,16,16,16};bool m_drawCenter=true;float m_patchScale=1.0f;
 };
 
 class TextEdit : public Control {

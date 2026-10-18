@@ -202,8 +202,11 @@ public:
                          HorizontalAlignment horizontal = HorizontalAlignment::Center,
                          VerticalAlignment vertical = VerticalAlignment::Center,
                          std::uint8_t alpha = 255);
+    // `margins` are in image pixels; the border is drawn `marginScale` times
+    // that size (0.5 for an image drawn at twice the layout's resolution).
     void DrawNinePatch(const std::string& path, const Rect& bounds, Rect margins,
-                       bool drawCenter = true, std::uint8_t alpha = 255);
+                       bool drawCenter = true, std::uint8_t alpha = 255,
+                       float marginScale = 1.0f);
     // Draws a caller-owned backend-neutral texture (for example video or a
     // streaming transition mask).
     void DrawTexture(TextureHandle texture, const Rect& dst,

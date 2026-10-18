@@ -877,6 +877,37 @@ Status RegisterBuiltinUITypes() {
         });
     textureButtonScale.editor.enumChoices = {"Stretch", "Fit", "Fill", "Original"};
     textureButton.properties.push_back(std::move(textureButtonScale));
+    {
+        PropertyInfo margins{"patchMargins", "Display", VariantType::Rect,
+            PropertyFlags::Editable | PropertyFlags::Serializable | PropertyFlags::Bindable,
+            Variant(Rect{0, 0, 0, 0}),
+            [](const Object& o) { return Variant(As<TextureButton>(o)->PatchMargins()); },
+            [](Object& o, const Variant& v) {
+                const auto* margins = v.TryGet<Rect>();
+                if (!margins) return TypeError("patchMargins expects Rect");
+                for (const float side : {margins->x, margins->y, margins->w, margins->h})
+                    if (!std::isfinite(side) || side < 0.0f)
+                        return TypeError("patchMargins must be four non-negative numbers");
+                As<TextureButton>(o)->SetPatchMargins(*margins);
+                return Status::Ok();
+            }};
+        margins.editor.displayName = "Nine-slice margins";
+        margins.editor.description = "Image pixels kept unstretched at the left, top, right and bottom of every state image; zero draws the images by scaleMode.";
+        textureButton.properties.push_back(std::move(margins));
+        auto scale = NumberProperty("patchScale", "Display",
+            [](const Object& o) { return static_cast<double>(As<TextureButton>(o)->PatchScale()); },
+            [](Object& o, double v) {
+                if (!std::isfinite(v) || v < 0.01 || v > 16.0) return TypeError("patchScale must be between 0.01 and 16");
+                As<TextureButton>(o)->SetPatchScale(static_cast<float>(v));
+                return Status::Ok();
+            });
+        scale.editor.hasRange = true;
+        scale.editor.minimum = 0.01;
+        scale.editor.maximum = 16;
+        scale.editor.step = 0.01;
+        scale.editor.description = "Size of the drawn nine-slice border relative to patchMargins in the image.";
+        textureButton.properties.push_back(std::move(scale));
+    }
     add(std::move(textureButton));
 
     TypeInfo texture{"TextureRect", "Control", "UI/Display", [] { return std::make_unique<TextureRect>(); }};
@@ -1116,7 +1147,10 @@ Status RegisterBuiltinUITypes() {
     ninePatchPath.flags=ninePatchPath.flags|PropertyFlags::ResourcePath;ninePatchPath.editor.displayName="圖片";ninePatchPath.editor.resourceFilter="image";ninePatch.properties.push_back(std::move(ninePatchPath));
     ninePatch.properties.push_back({"patchMargins","Display",VariantType::Rect,PropertyFlags::Editable|PropertyFlags::Serializable|PropertyFlags::Bindable,Variant(Rect{16,16,16,16}),
         [](const Object& o){return Variant(As<NinePatchRect>(o)->PatchMargins());},[](Object& o,const Variant& v){const auto* margins=v.TryGet<Rect>();if(!margins)return TypeError("patchMargins expects Rect");As<NinePatchRect>(o)->SetPatchMargins(*margins);return Status::Ok();}});
-    ninePatch.properties.push_back(BoolProperty("drawCenter","Display",[](const Object& o){return As<NinePatchRect>(o)->DrawCenter();},[](Object& o,bool v){As<NinePatchRect>(o)->SetDrawCenter(v);return Status::Ok();}));add(std::move(ninePatch));
+    ninePatch.properties.push_back(BoolProperty("drawCenter","Display",[](const Object& o){return As<NinePatchRect>(o)->DrawCenter();},[](Object& o,bool v){As<NinePatchRect>(o)->SetDrawCenter(v);return Status::Ok();}));
+    auto ninePatchScale=NumberProperty("patchScale","Display",[](const Object& o){return static_cast<double>(As<NinePatchRect>(o)->PatchScale());},[](Object& o,double v){if(!std::isfinite(v)||v<0.01||v>16.0)return TypeError("patchScale must be between 0.01 and 16");As<NinePatchRect>(o)->SetPatchScale(static_cast<float>(v));return Status::Ok();});
+    ninePatchScale.editor.hasRange=true;ninePatchScale.editor.minimum=0.01;ninePatchScale.editor.maximum=16;ninePatchScale.editor.step=0.01;ninePatchScale.editor.description="Size of the drawn border relative to patchMargins in the image: 0.5 for an image made at twice the layout's resolution.";
+    ninePatch.properties.push_back(std::move(ninePatchScale));add(std::move(ninePatch));
 
     TypeInfo textEdit{"TextEdit","Control","UI/Input",[]{return std::make_unique<TextEdit>();}};
     auto multilineText=StringProperty("text","Content",[](const Object& o){return As<TextEdit>(o)->Text();},[](Object& o,std::string v){As<TextEdit>(o)->SetText(std::move(v));return Status::Ok();});multilineText.editor.multiline=true;textEdit.properties.push_back(std::move(multilineText));

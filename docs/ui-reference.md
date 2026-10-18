@@ -96,6 +96,25 @@ one cell of an atlas (in image pixels) as if it were a whole image of that
 size, so sprite sheets need neither pre-cut files nor a clipping group with a
 negative offset.
 
+`slice` draws an image as a nine-slice, so one frame, panel or button skin fits
+any size: the image pixels it names at the left, top, right and bottom keep
+their size at the corners and stretch along one axis at the sides, and the
+middle fills the rest. `sliceScale` sets the drawn size of that border
+relative to the image (`0.5` for art made at twice the layout's resolution),
+and `sliceCenter={false}` leaves the middle empty, for a frame drawn around
+other controls. On a `TextureButton` every state image is sliced the same way:
+
+```tsx
+<Image name="WindowFrame" path="Assets/UI/window.png" slice={[96, 80, 96, 80]} sliceScale={0.5}
+  position={[160, 790]} size={[1600, 260]} />
+<TextureButton name="Choice" skin="Assets/UI/choice" slice={[60, 0, 60, 0]} sliceScale={0.5}
+  text="一起去看星星" position={[480, 500]} size={[960, 84]} action={actions.choice.select(0)} />
+```
+
+A sliced image stretches by definition, so it takes no `region`, `scaleMode` or
+`lockAspectRatio`; `validate` reports a negative margin or a `sliceScale`
+outside 0.01–16.
+
 `visibleWhen="profileFlags.cleared"` and `enabledWhen="!saveLoad.page1"` bind
 one condition each, so a helper can pass either without one `bind` object
 replacing the other. `tooltip={<Image path="Assets/UI/help-save.png"
