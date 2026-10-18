@@ -228,7 +228,7 @@ test("create --empty starts without the sample character, backgrounds or story",
     assert.deepEqual(await readdir(join(root, "Assets")), []);
     // An empty project still opens with the PrismatiX startup screen.
     assert.deepEqual((await readdir(join(root, "Content/UI/PrismatiX"))).sort(),
-      ["NOTICE.md", "prismatix-mark.png", "prismatix-wordmark.png"]);
+      ["NOTICE.md", "PrismatiXEngine_Logo.png"]);
     await assert.rejects(stat(join(root, "Characters")));
     assert.doesNotMatch(await readFile(join(root, "Content/UI/Title.tsx"), "utf8"), /Assets\//u);
     const story = await readFile(join(root, "Story/main.pxstory"), "utf8");
@@ -261,9 +261,10 @@ test("create starts with the PrismatiX splash, a Studio screen the author can ed
       {format: string; scene: {width: number; height: number}};
     assert.equal(layout.format, "PrismatiXStudioLayout");
     assert.deepEqual([layout.scene.width, layout.scene.height], [1920, 1080]);
-    for (const file of ["prismatix-mark.png", "prismatix-wordmark.png"])
-      assert.deepEqual(await readFile(join(root, "Content/UI/PrismatiX", file)),
-        await readFile(join("templates/minimal/Content/UI/PrismatiX", file)));
+    // The engine's own logo, byte for byte, on a black backdrop.
+    assert.deepEqual(await readFile(join(root, "Content/UI/PrismatiX/PrismatiXEngine_Logo.png")),
+      await readFile("../../Resources/Branding/PrismatiXEngine_Logo.png"));
+    assert.match(tsx, /<ColorRect name="Backdrop" fill color="#000000FF" \/>/u);
     const validated = run(["validate", project]);
     assert.equal(validated.status, 0, validated.stdout + validated.stderr);
     assert.doesNotMatch(validated.stdout + validated.stderr, /PXBUILD1055|PXBOOT/u);
@@ -2407,7 +2408,7 @@ test("distribution.transcode stores smaller media under the same paths and cache
     assert.deepEqual(call!.images, {lossless: false, quality: 80, effort: 4});
     assert.deepEqual(call!.audio, {codec: "opus", bitrate: 48000});
     // The starter's PrismatiX splash logo is encoded with the rest.
-    const logo = ["Content/UI/PrismatiX/prismatix-mark.png", "Content/UI/PrismatiX/prismatix-wordmark.png"];
+    const logo = ["Content/UI/PrismatiX/PrismatiXEngine_Logo.png"];
     assert.deepEqual(call!.jobs.map((path) => path.slice(root.length + 1)).sort(), [
       "Assets/extra/broken.png", "Assets/extra/grow.png", "Assets/hikari-happy.png",
       "Assets/hikari-smile.png", "Assets/hikari-surprised.png", "Assets/hikari-talk.png", "Assets/theme.ogg", ...logo]);
@@ -2421,12 +2422,12 @@ test("distribution.transcode stores smaller media under the same paths and cache
     const summary = first.stderr.split("\n").map((line) => {
       try { return JSON.parse(line) as Record<string, unknown>; } catch { return {}; }
     }).find((event) => event.code === "PXCLI1230");
-    assert.deepEqual(summary?.images, {files: 8, inputBytes: original.length +
+    assert.deepEqual(summary?.images, {files: 7, inputBytes: original.length +
       (await stat(join(root, "Assets", "hikari-happy.png"))).size +
       (await stat(join(root, "Assets", "hikari-surprised.png"))).size +
       (await stat(join(root, "Assets", "hikari-talk.png"))).size + 5 + 4096 +
-      (await stat(join(root, logo[0]!))).size + (await stat(join(root, logo[1]!))).size,
-    outputBytes: 12 * 6 + 5 + 4096});
+      (await stat(join(root, logo[0]!))).size,
+    outputBytes: 12 * 5 + 5 + 4096});
 
     // Unchanged media comes from the cache, and the artifact is kept as is;
     // only the failed file is tried again.

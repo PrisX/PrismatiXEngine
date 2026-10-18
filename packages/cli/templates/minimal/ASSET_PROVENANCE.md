@@ -44,9 +44,9 @@ scaled to 1920x1080.
 
 ## PrismatiX logo
 
-`Content/UI/PrismatiX/prismatix-mark.png` and
-`Content/UI/PrismatiX/prismatix-wordmark.png`, shown by the startup screen
-`Content/UI/Splash.tsx`, are the PrismatiX mark and wordmark rendered from
-PrismatiX Studio's vector mark; the wordmark is set in Geist (SIL Open Font
-License 1.1). `Content/UI/PrismatiX/NOTICE.md` (kept by `create --empty`) says
-how they may be used.
+`Content/UI/PrismatiX/PrismatiXEngine_Logo.png`, shown on black by the
+startup screen `Content/UI/Splash.tsx`, is the PrismatiX Engine logo from the
+repository's `Resources/Branding` (SHA-256
+`4502d5660798694cc99e6306ed2625aa0f4ceca651a38f163a091236dbde0214`).
+`Content/UI/PrismatiX/NOTICE.md` (kept by `create --empty`) says how it may be
+used.
