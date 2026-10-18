@@ -486,6 +486,33 @@ void TestCjkRubyAndVerticalText() {
     editor.HandleEvent(remove);
     Check(editor.Text() == "é🇯🇵",
           "TextEdit delete must not split an emoji ZWJ sequence");
+    // A name prompt's field: typing stops at maxLength (grapheme clusters),
+    // a typed line break never enters, and Escape runs the cancel handler.
+    px::ui::LineEdit name;
+    name.SetMaxLength(4);
+    px::ui::UIEvent typed{.type = px::ui::UIEventType::TextInput};
+    typed.text = "A" + clusters + "B";
+    name.HandleEvent(typed);
+    Check(name.Text() == "A" + clusters, "LineEdit keeps at most maxLength grapheme clusters");
+    px::ui::UIEvent more{.type = px::ui::UIEventType::TextInput};
+    more.text = "x";
+    name.HandleEvent(more);
+    Check(name.Text() == "A" + clusters, "a full LineEdit takes no more text");
+    px::ui::LineEdit pastedLine;
+    px::ui::UIEvent pasted{.type = px::ui::UIEventType::TextInput};
+    pasted.text = "first\nsecond";
+    pastedLine.HandleEvent(pasted);
+    Check(pastedLine.Text() == "first", "LineEdit stops at a pasted line break");
+    bool cancelled = false;
+    pastedLine.SetOnCancelled([&cancelled] { cancelled = true; });
+    px::ui::UIEvent cancel{.type = px::ui::UIEventType::Cancel};
+    pastedLine.HandleEvent(cancel);
+    Check(cancelled && cancel.handled && pastedLine.Text() == "first",
+          "Escape in a LineEdit runs its cancel handler and keeps the text");
+    px::ui::LineEdit plain;
+    px::ui::UIEvent passOn{.type = px::ui::UIEventType::Cancel};
+    plain.HandleEvent(passOn);
+    Check(!passOn.handled, "without a cancel handler Escape passes on");
 }
 
 void TestImmutableTextLayoutRanges() {

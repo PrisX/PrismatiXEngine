@@ -1038,12 +1038,46 @@ bool LineEdit::DeleteSelection() {
     return true;
 }
 void LineEdit::SetCaretFromPoint(const Vec2 point, const bool extend) {
-    const auto layout = MeasureTextLayout(m_text, 0);
+    const auto layout = MeasureTextLayout(m_text, m_fontSize);
     const std::size_t target = layout
-        ? layout->ByteOffsetAt({point.x - LayoutRect().x - 10.0f,
-                                point.y - LayoutRect().y - 8.0f})
+        ? layout->ByteOffsetAt({point.x - LayoutRect().x - m_textOffset.x,
+                                point.y - LayoutRect().y - m_textOffset.y})
         : m_text.size();
     MoveCaret(target, extend);
+    m_caretClock = 0.0f;
+}
+void LineEdit::InsertText(const std::string_view value) {
+    (void)DeleteSelection();
+    std::string inserted(value);
+    // One line: a pasted line break ends the text.
+    if (const auto end = inserted.find_first_of("\r\n"); end != std::string::npos)
+        inserted.resize(end);
+    if (m_maxLength > 0) {
+        // Grapheme clusters, so a combined emoji or a decomposed kana counts once.
+        // Boundaries list 0 and the end, so N clusters have N + 1 entries.
+        const std::size_t have = text::GraphemeBoundaries(m_text).size() - 1;
+        const std::size_t room = have >= m_maxLength ? 0 : m_maxLength - have;
+        const auto boundaries = text::GraphemeBoundaries(inserted);
+        if (boundaries.size() - 1 > room)
+            inserted.resize(room == 0 ? 0 : boundaries[room]);
+    }
+    m_caretClock = 0.0f;
+    if (inserted.empty()) return;
+    m_text.insert(m_cursor, inserted);
+    m_cursor += inserted.size();
+    m_selectionAnchor = m_cursor;
+    InvalidateLayout();
+    EmitSignal("textChanged", {{"text", m_text}});
+}
+void LineEdit::Update(const float deltaSeconds) {
+    Control::Update(deltaSeconds);
+    if (std::isfinite(deltaSeconds) && deltaSeconds > 0.0f)
+        m_caretClock = std::fmod(m_caretClock + deltaSeconds, 1.06f);
+}
+Rect LineEdit::CaretRect() const {
+    const Rect area = LayoutRect();
+    return {area.x + m_textOffset.x + m_caret.x, area.y + m_textOffset.y,
+            1.0f, m_lineHeight};
 }
 void LineEdit::HandleEvent(UIEvent& event) {
     if (event.type == UIEventType::PointerDown) {
@@ -1061,12 +1095,7 @@ void LineEdit::HandleEvent(UIEvent& event) {
         event.type == UIEventType::FocusLost)
         m_pointerSelecting = false;
     if (event.type == UIEventType::TextInput) {
-        (void)DeleteSelection();
-        m_text.insert(m_cursor, event.text);
-        m_cursor += event.text.size();
-        m_selectionAnchor = m_cursor;
-        InvalidateLayout();
-        EmitSignal("textChanged", {{"text", m_text}});
+        InsertText(event.text);
         event.handled = true;
         return;
     }
@@ -1076,10 +1105,29 @@ void LineEdit::HandleEvent(UIEvent& event) {
         event.handled = true;
         return;
     }
+    // Escape (or a gamepad's cancel button) arrives as Cancel.
+    if (event.type == UIEventType::Cancel) {
+        if (!m_cancelled) return;
+        EmitSignal("cancelled");
+        m_cancelled();
+        event.handled = true;
+        return;
+    }
     if (event.type != UIEventType::KeyDown) return;
     bool changed = false;
+    m_caretClock = 0.0f;
     if (event.control && event.key == SDL_SCANCODE_A) {
         SetSelectionBytes(0, m_text.size());
+    } else if (event.control && event.key == SDL_SCANCODE_C) {
+        if (SelectionStartByteOffset() != SelectionEndByteOffset())
+            (void)SDL_SetClipboardText(m_text.substr(SelectionStartByteOffset(),
+                SelectionEndByteOffset() - SelectionStartByteOffset()).c_str());
+    } else if (event.control && event.key == SDL_SCANCODE_V) {
+        if (char* clipboard = SDL_GetClipboardText()) {
+            const std::string pasted(clipboard);
+            SDL_free(clipboard);
+            InsertText(pasted);
+        }
     } else if (event.key == SDL_SCANCODE_BACKSPACE) {
         changed = DeleteSelection();
         if (!changed && m_cursor > 0) {
@@ -1121,11 +1169,11 @@ void LineEdit::HandleEvent(UIEvent& event) {
 }
 AccessibilitySemantics LineEdit::DescribeAccessibility() const {
     auto semantics = Control::DescribeAccessibility();
-    text::TextLayout layout = MeasureTextLayout(m_text, 0)
+    text::TextLayout layout = MeasureTextLayout(m_text, m_fontSize)
                                   .value_or(text::TextLayout(m_text, "und", {}, {}));
     semantics.text = AccessibilityTextSemantics{
         .layout = std::move(layout),
-        .origin = {10.0f, 8.0f},
+        .origin = m_textOffset,
         .caretByteOffset = m_cursor,
         .selectionStartByteOffset = SelectionStartByteOffset(),
         .selectionEndByteOffset = SelectionEndByteOffset(),
@@ -1187,24 +1235,45 @@ bool LineEdit::PerformAccessibilityAction(const std::string_view action,
 Vec2 LineEdit::MeasureOverride(Vec2){return{220,44};}
 void LineEdit::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) {
     const auto& style=theme.Resolve(*this);
-    DrawBox(renderer,LayoutRect(),StateBox(*this,style));
-    const bool placeholder = m_text.empty();
-    const std::string& shown=placeholder?m_placeholder:m_text;
-    const Color color=placeholder?style.textDisabled:style.text;
-    const Vec2 origin{LayoutRect().x+10,LayoutRect().y+8};
-    const auto shownLayout=renderer.LayoutText(shown,style.font,style.fontSize);
-    if (!placeholder)
-        DrawSelection(renderer, shownLayout, origin, SelectionStartByteOffset(),
-                      SelectionEndByteOffset());
-    renderer.DrawTextLayout(shownLayout, origin, style.font, style.fontSize, color);
-    if(Focused()){
-        const auto layout=placeholder
-                              ? renderer.LayoutText("",style.font,style.fontSize)
-                              : shownLayout;
-        const Vec2 caret=layout.CaretPosition(m_cursor);
-        renderer.DrawRect({origin.x+caret.x,origin.y+caret.y,1,
-                           static_cast<float>(style.fontSize+4)},
-                          style.focused.border);
+    m_themeFontSize=style.fontSize;
+    const Rect area=LayoutRect();
+    // An authored box (corner radius, border...) has been drawn by Control;
+    // focus then shows as a ring in the focus colour over it.
+    const auto& box=GetBoxDecoration();
+    if(!box)DrawBox(renderer,area,StateBox(*this,style));
+    const int size=EffectiveFontSize();
+    const Color textColor=m_textColor.value_or(style.text);
+    const bool placeholder=m_text.empty();
+    Color hint=m_textColor?textColor:style.textDisabled;
+    if(m_textColor)hint.a=static_cast<std::uint8_t>(static_cast<float>(hint.a)*0.42f);
+    const auto layout=renderer.LayoutText(m_text,style.font,size);
+    const auto hintLayout=renderer.LayoutText(placeholder?m_placeholder:std::string(),style.font,size);
+    // Side padding grows with the field, so a scaled-up field keeps its proportions.
+    const float padding=std::clamp(area.h*0.32f,6.0f,40.0f);
+    const float lineHeight=std::max({layout.Size().y,hintLayout.Size().y,static_cast<float>(size)*1.25f});
+    const float inner=std::max(1.0f,area.w-padding*2.0f);
+    m_caret=layout.CaretPosition(m_cursor);
+    // Scroll so the caret stays inside, never past the text's end.
+    if(m_caret.x-m_scroll>inner)m_scroll=m_caret.x-inner;
+    if(m_caret.x-m_scroll<0.0f)m_scroll=m_caret.x;
+    m_scroll=std::clamp(m_scroll,0.0f,std::max(0.0f,layout.Size().x-inner+1.0f));
+    m_lineHeight=lineHeight;
+    m_textOffset={padding-m_scroll,std::round((area.h-lineHeight)*0.5f)};
+    const Vec2 origin{area.x+m_textOffset.x,area.y+m_textOffset.y};
+    renderer.PushClip({area.x+padding*0.5f,area.y,std::max(0.0f,area.w-padding),area.h});
+    if(placeholder)renderer.DrawTextLayout(hintLayout,{area.x+padding,origin.y},style.font,size,hint);
+    else{
+        DrawSelection(renderer,layout,origin,SelectionStartByteOffset(),SelectionEndByteOffset());
+        renderer.DrawTextLayout(layout,origin,style.font,size,textColor);
+    }
+    // A blinking caret in the text colour, as tall as the line.
+    if(Focused()&&m_caretClock<0.6f)
+        renderer.DrawRect({std::round(origin.x+m_caret.x),origin.y,
+                           std::max(1.0f,std::round(static_cast<float>(size)/14.0f)),lineHeight},textColor);
+    renderer.PopClip();
+    if(box&&Focused()){
+        const Color ring=m_focusColor.value_or(style.focused.border);
+        renderer.DrawRoundedBorder(area,std::max(1.0f,box->borderWidth),box->radius,ring);
     }
 }
 

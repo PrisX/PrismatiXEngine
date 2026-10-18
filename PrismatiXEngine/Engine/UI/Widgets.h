@@ -503,6 +503,21 @@ public:
     void SetPlaceholder(std::string value){m_placeholder=std::move(value);}
     [[nodiscard]] const std::string& Placeholder() const{return m_placeholder;}
     void SetOnSubmitted(Submitted value){m_submitted=std::move(value);}
+    // Escape while focused runs this (a name prompt cancels); without a
+    // handler Escape passes on.
+    void SetOnCancelled(std::function<void()> value){m_cancelled=std::move(value);}
+    // Text size in pixels; 0 uses the theme's.
+    void SetFontSize(int value){m_fontSize=std::max(0,value);InvalidateLayout();}
+    [[nodiscard]] int FontSize() const{return m_fontSize;}
+    // Most characters (grapheme clusters) typing or pasting may leave; 0: no limit.
+    void SetMaxLength(std::size_t value){m_maxLength=value;}
+    [[nodiscard]] std::size_t MaxLength() const{return m_maxLength;}
+    // Authored colours; without them the theme's are used.
+    void SetTextColor(std::optional<Color> value){m_textColor=value;}
+    void SetFocusColor(std::optional<Color> value){m_focusColor=value;}
+    // The caret's rectangle in layout coordinates (for an IME's candidate window).
+    [[nodiscard]] Rect CaretRect() const;
+    void Update(float deltaSeconds) override;
     void HandleEvent(UIEvent& event) override;
     [[nodiscard]] AccessibilitySemantics DescribeAccessibility() const override;
     bool PerformAccessibilityAction(std::string_view action,
@@ -512,11 +527,27 @@ private:
     void MoveCaret(std::size_t value, bool extend);
     bool DeleteSelection();
     void SetCaretFromPoint(Vec2 point, bool extend);
+    // Inserts typed or pasted text at the caret, cut to MaxLength.
+    void InsertText(std::string_view value);
+    [[nodiscard]] int EffectiveFontSize() const{return m_fontSize>0?m_fontSize:m_themeFontSize;}
     std::string m_text,m_placeholder;
     std::size_t m_cursor=0;
     std::size_t m_selectionAnchor=0;
     bool m_pointerSelecting=false;
     Submitted m_submitted;
+    std::function<void()> m_cancelled;
+    int m_fontSize=0;
+    int m_themeFontSize=24;
+    std::size_t m_maxLength=0;
+    std::optional<Color> m_textColor,m_focusColor;
+    // Where the last draw put the text, relative to the field (the side
+    // padding scales with its height; scrolled so the caret stays inside).
+    Vec2 m_textOffset{10.0f,8.0f};
+    float m_lineHeight=24.0f;
+    float m_scroll=0.0f;
+    Vec2 m_caret{};
+    // Caret blink clock, restarted by every edit or caret move.
+    float m_caretClock=0.0f;
 };
 
 class RichTextLabel : public Label {

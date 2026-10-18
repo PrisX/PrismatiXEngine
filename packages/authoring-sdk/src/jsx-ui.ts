@@ -830,6 +830,10 @@ export interface TextFieldProps extends UiNodeProps {
   readonly text?: string;
   /** Hint shown while the field is empty. */
   readonly placeholder?: string;
+  /** Text size in pixels (the theme's when absent). */
+  readonly fontSize?: number;
+  /** Most characters typing or pasting may leave; a Story [input] sets its `max`. */
+  readonly maxLength?: number;
 }
 
 /**
@@ -839,11 +843,13 @@ export interface TextFieldProps extends UiNodeProps {
  * `SlotComment` to edit slot comments (`actions.save.comment`).
  */
 export function TextField(props: TextFieldProps): UiElement {
-  const {text, placeholder, ...rest} = props;
+  const {text, placeholder, fontSize, maxLength, ...rest} = props;
   return node("control", "LineEdit", {...rest, runtimeProperties: {
     ...props.runtimeProperties,
     ...(text === undefined ? {} : {text}),
     ...(placeholder === undefined ? {} : {placeholder}),
+    ...(fontSize === undefined ? {} : {fontSize}),
+    ...(maxLength === undefined ? {} : {maxLength}),
   }});
 }
 

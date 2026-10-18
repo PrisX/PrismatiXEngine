@@ -1102,8 +1102,11 @@ Status RegisterBuiltinUITypes() {
     TypeInfo lineEdit{"LineEdit","Control","UI/Input",[]{return std::make_unique<LineEdit>();}};
     lineEdit.properties.push_back(StringProperty("text","Content",[](const Object& o){return As<LineEdit>(o)->Text();},[](Object& o,std::string v){As<LineEdit>(o)->SetText(std::move(v));return Status::Ok();}));
     lineEdit.properties.push_back(StringProperty("placeholder","Content",[](const Object& o){return As<LineEdit>(o)->Placeholder();},[](Object& o,std::string v){As<LineEdit>(o)->SetPlaceholder(std::move(v));return Status::Ok();}));
+    lineEdit.properties.push_back(NumberProperty("fontSize","Theme",[](const Object& o){return static_cast<double>(As<LineEdit>(o)->FontSize());},[](Object& o,double v){As<LineEdit>(o)->SetFontSize(static_cast<int>(v));return Status::Ok();}));
+    auto maxLength=NumberProperty("maxLength","Content",[](const Object& o){return static_cast<double>(As<LineEdit>(o)->MaxLength());},[](Object& o,double v){As<LineEdit>(o)->SetMaxLength(static_cast<std::size_t>(std::clamp(v,0.0,4096.0)));return Status::Ok();});maxLength.editor.hasRange=true;maxLength.editor.minimum=0;maxLength.editor.maximum=4096;maxLength.editor.step=1;maxLength.editor.description="Most characters the field takes; 0: no limit.";lineEdit.properties.push_back(std::move(maxLength));
     lineEdit.signals.push_back({"textChanged", "文字變更", "Text content changed.", {{"text", VariantType::String}}});
-    lineEdit.signals.push_back({"submitted", "送出", "Text was submitted.", {{"text", VariantType::String}}});add(std::move(lineEdit));
+    lineEdit.signals.push_back({"submitted", "送出", "Text was submitted.", {{"text", VariantType::String}}});
+    lineEdit.signals.push_back({"cancelled", "取消", "Escape was pressed in the field.", {}});add(std::move(lineEdit));
     TypeInfo rich{"RichTextLabel","Label","UI/Display",[]{return std::make_unique<RichTextLabel>();}};
     rich.properties.push_back(StringProperty("markup","Content",[](const Object& o){return As<RichTextLabel>(o)->Markup();},[](Object& o,std::string v){As<RichTextLabel>(o)->SetMarkup(std::move(v));return Status::Ok();}));
     rich.properties.push_back(BoolProperty("vertical","Content",[](const Object& o){return As<RichTextLabel>(o)->Vertical();},[](Object& o,bool v){As<RichTextLabel>(o)->SetVertical(v);return Status::Ok();}));

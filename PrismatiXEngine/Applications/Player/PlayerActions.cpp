@@ -353,8 +353,12 @@ void PlayerApp::BeginTextInput(const vn::Command& command) {
     }
     m_autoMode = false;
     m_skipMode = false;
+    // The default starts selected, so typing replaces it and Enter keeps it.
     field->SetText(request.fallback);
+    field->SetSelectionBytes(0, request.fallback.size());
+    field->SetMaxLength(request.maxLength);
     field->SetOnSubmitted([this](const std::string&) { HandleUIAction({"input.accept", {}}); });
+    field->SetOnCancelled([this] { HandleUIAction({"input.cancel", {}}); });
     (void)m_ui.UpdateUiData("input.prompt", Variant(command.Get("prompt")));
     (void)m_ui.UpdateUiData("input.visible", Variant(true));
     m_ui.FocusControl(field);
@@ -381,9 +385,32 @@ void PlayerApp::FinishTextInput() {
 
 void PlayerApp::SyncTextInput() {
     const bool wanted = m_ui.TextFieldFocused();
-    if (wanted == m_sdlTextInputActive) return;
     SDL_Window* window = m_runtime.GetWindow().Handle();
     if (!window) return;
+    if (wanted) {
+        // The IME's composition and candidate window open at the caret.
+        if (const auto* field = dynamic_cast<const ui::LineEdit*>(m_ui.FocusedControl())) {
+            const Rect caret = field->CaretRect();
+            float left = caret.x, top = caret.y, right = caret.x + caret.w,
+                  bottom = caret.y + caret.h;
+            if (SDL_Renderer* renderer = m_runtime.GetWindow().Renderer()) {
+                (void)SDL_RenderCoordinatesToWindow(renderer, left, top, &left, &top);
+                (void)SDL_RenderCoordinatesToWindow(renderer, right, bottom, &right, &bottom);
+            }
+            // Set again only when the caret moves; the IME redraws on every call.
+            static SDL_Rect lastArea{};
+            const SDL_Rect area{static_cast<int>(std::lround(left)),
+                                static_cast<int>(std::lround(top)),
+                                std::max(1, static_cast<int>(std::lround(right - left))),
+                                std::max(1, static_cast<int>(std::lround(bottom - top)))};
+            if (!m_sdlTextInputActive || area.x != lastArea.x ||
+                area.y != lastArea.y || area.h != lastArea.h) {
+                (void)SDL_SetTextInputArea(window, &area, 0);
+                lastArea = area;
+            }
+        }
+    }
+    if (wanted == m_sdlTextInputActive) return;
     if (wanted) SDL_StartTextInput(window);
     else SDL_StopTextInput(window);
     m_sdlTextInputActive = wanted;
@@ -428,6 +455,13 @@ PlayerApp::ActionHandlers() {
         });
         on("hud.hide", [](PlayerApp& app, A) { app.m_hudHidden = true; });
         on("input.accept", [](PlayerApp& app, A) { app.FinishTextInput(); });
+        // Cancelling answers with the [input]'s default, as an empty field does.
+        on("input.cancel", [](PlayerApp& app, A) {
+            if (!app.m_textInput) return;
+            if (auto* field = FindUiControlNamed<ui::LineEdit>(app.m_ui.Root(), "TextInput"))
+                field->SetText({});
+            app.FinishTextInput();
+        });
         on("mode.auto", [](PlayerApp& app, A) {
             app.m_autoMode = !app.m_autoMode;
             if (app.m_autoMode) app.m_skipMode = false;
@@ -986,7 +1020,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         ~MuteSync() { if (active) app->PublishMuteData(); }
     } muteSync{this, t.starts_with("set.") || t.starts_with("settings.")};
     // A name prompt is modal: only its own button and quitting get through.
-    if (m_textInput && t != "input.accept" && t != "app.quit") {
+    if (m_textInput && t != "input.accept" && t != "input.cancel" && t != "app.quit") {
         muteSync.active = false;
         return;
     }

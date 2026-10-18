@@ -83,13 +83,21 @@ function typedNodeProps(runtime: Json): string[] {
     const offsetX = take<number>(`${phase}OffsetX`, "number");
     const offsetY = take<number>(`${phase}OffsetY`, "number");
     const ease = take<string>(`${phase}TransitionEase`, "string");
+    const delay = phase === "show" ? take<number>("showDelaySeconds", "number") : undefined;
+    const scale = take<number>(`${phase}Scale`, "number");
+    const wipe = take<string>(`${phase}Wipe`, "string");
+    const fade = take<boolean>(`${phase}Fade`, "boolean");
     const y = offsetY === undefined ? undefined : phase === "show" ? `sf(${offsetY})` : String(offsetY);
     // One authored axis stays one axis, so the other keeps its Runtime default.
     const offset = offsetX !== undefined && y !== undefined ? `[${offsetX}, ${y}]`
       : offsetX !== undefined ? `{x: ${offsetX}}` : y !== undefined ? `{y: ${y}}` : undefined;
     const fields = [`seconds: ${seconds}`,
       ...(offset === undefined ? [] : [`offset: ${offset}`]),
-      ...(ease === undefined ? [] : [`ease: ${literal(ease)}`])];
+      ...(ease === undefined ? [] : [`ease: ${literal(ease)}`]),
+      ...(delay === undefined ? [] : [`delay: ${delay}`]),
+      ...(scale === undefined ? [] : [`scale: ${scale}`]),
+      ...(wipe === undefined ? [] : [`wipe: ${literal(wipe)}`]),
+      ...(fade === undefined ? [] : [`fade: ${fade}`])];
     out.push(`${phase}Transition={{${fields.join(", ")}}}`);
   }
   return out;
@@ -148,7 +156,7 @@ export function builtinScreenTsx(route: string, document: Json, width: number, h
       if (typeof runtime[key] === "number") {
         const value = runtime[key] as number;
         delete runtime[key];
-        if (key === "fontSize" && ["Text", "RichTextLabel", "Button"].includes(component))
+        if (key === "fontSize" && ["Text", "RichTextLabel", "Button", "TextField"].includes(component))
           out.push(`fontSize={sf(${value})}`);
         else scaled.push(`${key}: sf(${value})`);
       }
@@ -159,6 +167,12 @@ export function builtinScreenTsx(route: string, document: Json, width: number, h
         scaled.push(`${key}: {type: "vec2", x: sx(${value.x}), y: sy(${value.y})}`);
       }
     }
+    if (component === "TextField")
+      for (const key of ["placeholder", "maxLength"])
+        if (runtime[key] !== undefined) {
+          out.push(`${key}={${literal(runtime[key])}}`);
+          delete runtime[key];
+        }
     if (component === "RichTextLabel" && typeof runtime.wrap === "boolean") {
       if (runtime.wrap) out.push("wrap"); else out.push("wrap={false}");
       delete runtime.wrap;

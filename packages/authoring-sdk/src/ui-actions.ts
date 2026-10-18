@@ -67,8 +67,11 @@ export const actions = {
   mode: {auto: action("mode.auto"), skip: action("mode.skip")},
   hud: {hide: action("hud.hide"), pinToolbar: action("hud.toolbar.pin")},
   voice: {replay: action("voice.replay")},
-  /** Stores the HUD TextInput field for a Story [input]. */
-  input: {accept: action("input.accept")},
+  /**
+   * A Story [input]: `accept` stores the HUD TextInput field, `cancel`
+   * closes the prompt with the [input]'s default (as Escape does).
+   */
+  input: {accept: action("input.accept"), cancel: action("input.cancel")},
   backlog: {
     voice: (index: number | ItemPlaceholder) => action("backlog.voice", {index}),
     rollback: (index: number | ItemPlaceholder) => action("backlog.rollback", {index}),

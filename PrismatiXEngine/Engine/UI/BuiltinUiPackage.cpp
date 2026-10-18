@@ -222,25 +222,51 @@ sdk::UiDocument Hud() {
     choices.runtimeProperties.emplace("separation", std::int64_t{10});
     auto& mode = screen.Label(root, "Label", "ModeState", Layout(1040, 20, 216, 20), "", 12, kMuted);
     mode.runtimeProperties.emplace("horizontalAlignment", std::string("Right"));
-    // Story [input]: a prompt, a text field and OK, shown while the
-    // Player waits for a name.
-    auto& input = screen.Box(root, "TextInputPanel", Layout(390, 270, 500, 170), kOverlay);
-    input.appearance.cornerRadius = 4.0f;
+    // Story [input]: the game dims and a card rises with the prompt, a text
+    // field holding the default (selected, so typing replaces it), Cancel
+    // (the default, as Escape) and OK (as Enter). The Player needs only the
+    // field's name and the input.visible / input.prompt data.
+    auto& input = screen.Box(root, "TextInputPanel", Layout(0, 0, kDesignWidth, kDesignHeight),
+                             "#00000099");
     input.visible = false;
     input.bindings.emplace("visible", sdk::UiPropertyBinding{"input.visible", {}});
     input.accessibilityRole = "dialog";
     input.accessibilityLabel = "Text input";
-    const std::string inputId = input.id;
-    auto& prompt = screen.Label(inputId, "Label", "TextInputPrompt",
-                                Layout(28, 22, 444, 30), "", 18);
+    input.runtimeProperties.emplace("showTransitionSeconds", 0.2);
+    input.runtimeProperties.emplace("modalCapture", true);
+    auto& card = screen.Box(input.id, "TextInputCard", Layout(380, 248, 520, 216), "#121216F5");
+    card.appearance.cornerRadius = 10.0f;
+    card.appearance.borderWidth = 1.0f;
+    card.appearance.borderColor = kLine;
+    card.appearance.shadowColor = "#000000B3";
+    card.appearance.shadowBlur = 48.0f;
+    card.appearance.shadowOffsetY = 16.0f;
+    card.runtimeProperties.emplace("showTransitionSeconds", 0.32);
+    card.runtimeProperties.emplace("showOffsetY", 12.0);
+    card.runtimeProperties.emplace("showScale", 0.97);
+    card.runtimeProperties.emplace("showTransitionEase", std::string("cubic"));
+    const std::string cardId = card.id;
+    auto& prompt = screen.Label(cardId, "Label", "TextInputPrompt",
+                                Layout(32, 28, 456, 30), "", 19);
     prompt.bindings.emplace("text", sdk::UiPropertyBinding{"input.prompt", {}});
-    auto& field = screen.Node(inputId, sdk::UiNodeKind::Control, "LineEdit", "TextInput",
-                              Layout(28, 62, 444, 40), "textbox", "Text");
-    field.appearance.backgroundColor = kHover;
+    auto& field = screen.Node(cardId, sdk::UiNodeKind::Control, "LineEdit", "TextInput",
+                              Layout(32, 74, 456, 52), "textbox", "Text");
+    field.appearance.backgroundColor = "#FFFFFF0D";
+    field.appearance.cornerRadius = 6.0f;
+    field.appearance.borderWidth = 1.0f;
+    field.appearance.borderColor = "#FFFFFF2E";
     field.appearance.textColor = kText;
-    field.appearance.focusColor = kFocus;
-    screen.TextButton(inputId, "TextInputAccept", Layout(392, 118, 80, 34), "OK",
-                      "input.accept", 16, false, kText);
+    field.appearance.focusColor = "#FFFFFFB3";
+    field.runtimeProperties.emplace("fontSize", std::int64_t{22});
+    screen.TextButton(cardId, "TextInputCancel", Layout(268, 150, 104, 40), "Cancel",
+                      "input.cancel", 16);
+    auto& accept = screen.TextButton(cardId, "TextInputAccept", Layout(384, 150, 104, 40), "OK",
+                                     "input.accept", 16, false, "#0C0C0EFF");
+    accept.appearance.backgroundColor = "#FFFFFFE6";
+    accept.appearance.hoverBackgroundColor = "#FFFFFFFF";
+    accept.appearance.hoverTextColor = "#000000FF";
+    accept.appearance.focusColor = "#FFFFFF80";
+    accept.appearance.cornerRadius = 6.0f;
     return screen.Finish();
 }
 

@@ -750,11 +750,20 @@ std::unique_ptr<Control> CreateControl(
         label->SetColor(ParseColor(node.appearance.textColor));
     if (auto* button = dynamic_cast<Button*>(control.get()))
         button->SetTextColor(ParseColor(node.appearance.textColor));
+    // A text field draws its text, placeholder and caret in the authored
+    // colour, and its focus ring in the focus colour.
+    if (auto* line = dynamic_cast<LineEdit*>(control.get())) {
+        line->SetTextColor(ParseColor(node.appearance.textColor));
+        if (node.appearance.focusColor)
+            line->SetFocusColor(ParseColor(*node.appearance.focusColor));
+    }
     auto decoration = DecorationFor(node.appearance);
     // A plain Control (JSX <Group style={{background}}>, an editor-made panel) has
     // no drawing of its own: its flat background is a box fill, or the
     // panel (an NVL page, a name prompt) would be invisible.
-    if (!decoration && control->TypeName() == "Control" &&
+    // A text field with an authored fill likewise draws it instead of the
+    // theme's box.
+    if (!decoration && (control->TypeName() == "Control" || control->TypeName() == "LineEdit") &&
         ParseColor(node.appearance.backgroundColor).a > 0) {
         decoration.emplace();
         decoration->fill = ParseColor(node.appearance.backgroundColor);

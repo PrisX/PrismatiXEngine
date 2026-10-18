@@ -20,6 +20,7 @@ export const playerActions: Readonly<Record<string, PlayerActionSpec>> = {
   "app.quit": {category: "Game"},
   "hud.hide": {category: "Game"},
   "input.accept": {category: "Game"},
+  "input.cancel": {category: "Game"},
   "mode.auto": {category: "Game"},
   "mode.skip": {category: "Game"},
   "choice.select": {argument: {key: "index", type: "integer"}, category: "Game"},

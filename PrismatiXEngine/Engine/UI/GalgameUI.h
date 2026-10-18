@@ -242,6 +242,11 @@ public:
     void FocusControl(Control* control) {
         if (auto* router = m_context.InputRouting()) router->SetFocus(control);
     }
+    /** The control with keyboard focus, if any. */
+    [[nodiscard]] Control* FocusedControl() const {
+        const auto* router = m_context.InputRouting();
+        return router ? router->Focused() : nullptr;
+    }
     /** True while the focused control takes typed text, such as a LineEdit. */
     [[nodiscard]] bool TextFieldFocused() const {
         const auto* router = m_context.InputRouting();

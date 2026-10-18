@@ -771,22 +771,41 @@ Use `session` for story state that belongs to a checkpoint; use `profile` intent
 @hero 俺は{hero}だ。
 ```
 
-The Player shows the HUD's text input panel, waits, and stores the trimmed text
-(or the default, when the field is left empty) in the string variable; `{hero}`
-in a line shows it. `max` counts characters (1-256, default 32). The built-in
-HUD has the panel. In your own HUD add one, bound to the Player's data:
+The Player dims the game and shows the HUD's text input panel: the prompt, a
+field holding the default (selected, so typing replaces it) and Cancel / OK.
+It waits, then stores the trimmed text (or the default, when the field is left
+empty) in the string variable; `{hero}` in a line shows it. `max` counts
+characters (1-256, default 32): the field takes no more while typing or
+pasting. Enter (or OK) accepts; Escape, a gamepad's cancel button or Cancel
+stores the default. While the field has focus the platform's text input (and
+an IME, whose composition and candidate window open at the caret) is on.
+While the prompt is open the Player ignores other UI actions and clicks.
+Preview has no prompt and stores the default.
+
+The built-in HUD has the panel. To restyle it, eject the HUD
+(`prismatix eject ui hud`, or a HUD from PrismatiX Studio's preset library,
+which comes with an input dialog in its style) and edit the `TextInputPanel`
+group in `Content/UI/HUD.tsx`. In your own HUD add one, bound to the Player's
+data:
 
 ```tsx
-<Group name="NamePanel" bind={{visible: "input.visible"}} position={[460, 380]} size={[1000, 260]}>
-  <Text name="NamePrompt" bind={{text: "input.prompt"}} position={[40, 30]} size={[920, 50]} />
-  <TextField name="TextInput" position={[40, 100]} size={[920, 64]} />
-  <Button name="NameOk" text="OK" action={actions.input.accept} position={[800, 190]} size={[160, 50]} />
+<Group name="NamePanel" visible={false} bind={{visible: "input.visible"}} fill modalCapture
+  style={{background: "#00000099"}} showTransition={{seconds: 0.2}}>
+  <Group name="NameCard" position={[570, 378]} size={[780, 324]}
+    style={{background: "#111113F7", radius: 12, border: [1, "#FFFFFF1F"]}}
+    showTransition={{seconds: 0.34, offset: [0, 14], scale: 0.97, ease: "cubic"}}>
+    <Text name="NamePrompt" bind={{text: "input.prompt"}} position={[48, 42]} size={[684, 44]} fontSize={30} />
+    <TextField name="TextInput" position={[48, 108]} size={[684, 76]} fontSize={32}
+      style={{background: "#FFFFFF0A", radius: 8, border: [1, "#FFFFFF29"], focus: "#FFFFFFB3"}} />
+    <Button name="NameCancel" text="Cancel" action={actions.input.cancel} position={[408, 216]} size={[156, 60]} />
+    <Button name="NameOk" text="OK" action={actions.input.accept} position={[576, 216]} size={[156, 60]} />
+  </Group>
 </Group>
 ```
 
-The field must be named `TextInput`. Enter accepts as well. While the prompt is
-open the Player ignores other UI actions and clicks. Preview has no prompt and
-stores the default.
+The field must be named `TextInput`. A `TextField`'s `fontSize` sets its text
+size, `style` its box (with `radius` or a `border`, the focused field shows a
+ring in the `focus` colour) and `color` its text, placeholder and caret.
 
 ### `[elseif]`, conditional choices and choice blocks
 
