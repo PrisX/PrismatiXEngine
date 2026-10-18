@@ -1325,11 +1325,20 @@ void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
         Text(), font, baseSize,
         std::max(1, static_cast<int>(std::floor(LayoutRect().h))),
         text::TextOrientation::Vertical, m_verticalRows);
+    // The column sits centred across the label; down it, where the label's
+    // vertical alignment puts it. Its colour is the authored one, as for
+    // horizontal text.
+    float top = LayoutRect().y;
+    if (VerticalAlignment() == VerticalTextAlignment::Center)
+        top += std::max(0.0f, (LayoutRect().h - layout.Size().y) * 0.5f);
+    else if (VerticalAlignment() == VerticalTextAlignment::Bottom)
+        top += std::max(0.0f, LayoutRect().h - layout.Size().y);
     const Vec2 origin{LayoutRect().x +
                           (LayoutRect().w - layout.Size().x) * 0.5f,
-                      LayoutRect().y};
+                      top};
+    const Color color = HasColor() ? GetColor() : (Enabled() ? style.text : style.textDisabled);
     renderer.PushClip(LayoutRect());
-    renderer.DrawTextLayout(layout, origin, font, baseSize, style.text);
+    renderer.DrawTextLayout(layout, origin, font, baseSize, color);
     for (const auto& ruby : m_ruby) {
         const Rect base = layout.BoundsForRange(ruby.prefix.size(),
                                                 ruby.base.size());
@@ -1340,7 +1349,7 @@ void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
         renderer.DrawTextLayout(rubyLayout,
                                 {origin.x + base.x + base.w,
                                  origin.y + base.y},
-                                font, rubySize, style.text);
+                                font, rubySize, color);
     }
     renderer.PopClip();
 }

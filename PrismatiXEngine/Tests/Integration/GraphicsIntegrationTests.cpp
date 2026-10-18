@@ -927,6 +927,39 @@ int main() {
                 std::cerr << "FAIL: MapDrawableText did not normalise control characters\n";
                 result = 1;
             }
+            // Vertical writing draws in the label's authored colour and
+            // follows its vertical alignment, as horizontal text does.
+            {
+                px::ui::RichTextLabel column;
+                column.SetText("星降");
+                column.SetFontPath(font);
+                column.SetFontSize(48);
+                column.SetVertical(true);
+                column.SetColor({230, 30, 40, 255});
+                column.SetVerticalAlignment(px::ui::VerticalTextAlignment::Center);
+                column.Arrange({270, 0, 100, 360});
+                ClearFrame(device.Renderer());
+                renderer.DrawRect({0, 0, 640, 360}, {255, 255, 255, 255});
+                column.Draw(renderer, px::ui::Theme{});
+                SDL_Surface* pixels = SDL_RenderReadPixels(device.Renderer(), nullptr);
+                int redTop = 360;
+                int redBottom = -1;
+                for (int y = 0; pixels && y < 360; ++y)
+                    for (int x = 270; x < 370; ++x) {
+                        const Pixel pixel = ReadLogicalPixel(pixels, x, y, 640, 360);
+                        if (pixel.r > 170 && pixel.g < 110 && pixel.b < 110) {
+                            redTop = std::min(redTop, y);
+                            redBottom = std::max(redBottom, y);
+                        }
+                    }
+                if (pixels) SDL_DestroySurface(pixels);
+                // Two 48px characters stacked in the middle of a 360px column.
+                if (redBottom < 0 || redTop < 60 || redBottom > 300) {
+                    std::cerr << "FAIL: vertical RichTextLabel colour/alignment top=" << redTop
+                              << " bottom=" << redBottom << '\n';
+                    result = 1;
+                }
+            }
         }
         {
             // Authored show animations: a delay hides the control, a left
