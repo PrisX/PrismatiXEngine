@@ -772,6 +772,10 @@ test("compileProject validates splash voice variants and packages every possible
     "player.splashes": [{scene: "Content/UI/Title.pxui",
       transitionPreset: "none", transitionDuration: 0}]});
   assert.equal(instant.valid, true, JSON.stringify(instant.diagnostics));
+  // An empty enter/exit name plays no animation (SplashSequencePlayer skips it).
+  const still = compile({...settings, "player.splashes": [{scene: "Content/UI/Title.pxui",
+    enterAnimation: "", exitAnimation: ""}]});
+  assert.equal(still.valid, true, JSON.stringify(still.diagnostics));
   assert.deepEqual(valid.artifact?.dependencies
     .filter((dependency) => dependency.source.startsWith("Assets/Voice/"))
     .map((dependency) => dependency.source).sort(), [
@@ -802,6 +806,8 @@ test("compileProject validates splash voice variants and packages every possible
       transitionDuration: 11}]},
     {...settings, "player.splashes": [{scene: "Content/UI/Title.pxui",
       transitionPreset: "custom"}]},
+    {...settings, "player.splashes": [{scene: "Content/UI/Title.pxui",
+      enterAnimation: "x".repeat(129)}]},
   ]) assert.equal(compile(invalidSettings).valid, false);
   const unknownRoute = compile({...settings, "player.presentationTransitions": {
     routeOverrides: [{from: "title", to: "typo", preset: "crossfade", duration: 0.3}]}});

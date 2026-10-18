@@ -485,6 +485,12 @@ A splash sound plays `audioDelay` seconds into the startup screen; inside any
 other screen, put `showSound={{path, delay}}` on its root (see
 [typed props](#typed-props)).
 
+The screen's own `animations` play with it: the entry state as it is
+installed, then the state named by `enterAnimation` (default `enter`) as it
+appears and the one named by `exitAnimation` (default `exit`) before it leaves.
+An empty name (`"enterAnimation": ""`) plays nothing there; a name the screen
+has no state for warns (PXBOOT1104/PXBOOT1105).
+
 The splash scene must be listed in `uiEntryPoints`; for a TSX-authored route,
 use its `.tsx` source path in both places and the CLI publishes the compiled
 `.pxui` path. The compiler collects

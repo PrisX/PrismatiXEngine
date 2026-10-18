@@ -93,8 +93,8 @@
         "transitionPreset":{"enum":["none","fade","crossfade","slide-left","slide-right"]},
         "transitionDuration":{"type":"number","minimum":0,"maximum":10},
         "skippable":{"type":"boolean"},"skipAllowedAfter":{"type":"number","minimum":0},
-        "enterAnimation":{"type":"string","minLength":1,"maxLength":128},
-        "exitAnimation":{"type":"string","minLength":1,"maxLength":128}
+        "enterAnimation":{"type":"string","maxLength":128},
+        "exitAnimation":{"type":"string","maxLength":128}
       }}}
     }}
   }

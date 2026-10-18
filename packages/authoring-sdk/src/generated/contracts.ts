@@ -2838,12 +2838,10 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                 },
                 "enterAnimation": {
                   "maxLength": 128,
-                  "minLength": 1,
                   "type": "string"
                 },
                 "exitAnimation": {
                   "maxLength": 128,
-                  "minLength": 1,
                   "type": "string"
                 },
                 "minimumDuration": {
@@ -4997,7 +4995,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "locale.schema.json": "391e4abe7616d74554af376e2ae3563961215b1631cdd04faf5034016aaff774",
   "motion.schema.json": "6cc663c16bc82c6d966609bb2410bb2873ae43a16d5da3611234bec041d54268",
   "portrait.schema.json": "ca95b26741547fda727696a570e35df4933b03103f260041d0144adfc0194a6f",
-  "project.schema.json": "743970f13ddc0423e879277b084ff6177700f3abad6eff38b64aedb8f998faab",
+  "project.schema.json": "1e8594fb4d039125084de11c96ce191d61e0f1dec1b6e7771c33bf741ee0eb14",
   "runtime-ir.schema.json": "87c80cfb6dbdff136db7b7117e209a85ce4cb7bc64f66bae38bb942cae1af3c3",
   "save-migration.schema.json": "dbeb66ade2f356f3540994a12c1ef66c51dbe81d8ca5148e0aff30293507cbe7",
   "source-map.schema.json": "7870837298e9d117b988fb06889627dfb7a62ab42007e99b43e0bd42e092f223",
