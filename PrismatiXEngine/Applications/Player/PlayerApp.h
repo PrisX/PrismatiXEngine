@@ -370,6 +370,16 @@ private:
     std::string m_defaultUiHoverSound;
     std::string m_defaultUiActivateSound;
     std::string m_defaultUiCancelSound;
+    // Sounds controls played as they appeared or hid, latest last (QA state).
+    struct UiSoundPlayed {
+        std::string phase;
+        std::string path;
+        std::string control;
+        float afterSeconds = 0.0f;
+    };
+    std::deque<UiSoundPlayed> m_uiSoundsPlayed;
+    // showSound/hideSound: plays the control's sound on the SE channel.
+    void PlayUiControlSound(const ui::Control& control, bool show);
     // Story `[shake target=window]` offsets only the HUD layer.
     std::chrono::steady_clock::time_point m_windowShakeStart{};
     float m_windowShakeDuration = 0.0f;

@@ -937,6 +937,195 @@ int main() {
                           << " secondWaits=" << secondItemWaits << '\n';
                 result = 1;
             }
+            // A show offset moves the control: halfway through a linear 1s
+            // slide from 200px to the right it is drawn 100px right of its
+            // place, and at rest it is back.
+            {
+                auto sliding = panel({230, 30, 40, 255});
+                sliding->SetShowTransitionSeconds(1.0f);
+                sliding->SetShowOffsetX(200.0f);
+                sliding->SetShowOffsetY(0.0f);
+                sliding->SetShowFade(false);
+                sliding->SetShowEase(px::ui::TransitionEase::Linear);
+                sliding->Arrange({40, 40, 260, 280});
+                sliding->Update(0.0f);
+                sliding->Update(0.5f);
+                SDL_Surface* moving = frame(*sliding, "show-slide-half");
+                const bool moved = white(moving, 120, 180) && red(moving, 380, 180);
+                SDL_DestroySurface(moving);
+                sliding->Update(0.6f);
+                SDL_Surface* rest = frame(*sliding, "show-slide-rest");
+                const bool settled = red(rest, 60, 180) && white(rest, 380, 180);
+                SDL_DestroySurface(rest);
+                // Scale grows about the centre and composes with the slide.
+                sliding->SetShowScale(0.5f);
+                sliding->RestartShowTransition();
+                sliding->Update(0.0f);
+                sliding->Update(0.5f);
+                SDL_Surface* growing = frame(*sliding, "show-slide-scale-half");
+                // At 0.5: scale 0.75 about the centre (170,180) is 195 wide,
+                // then 100px right: x from 172.5 to 367.5.
+                const bool composed = white(growing, 165, 180) && red(growing, 180, 180) &&
+                    red(growing, 360, 180) && white(growing, 375, 180);
+                SDL_DestroySurface(growing);
+                if (!moved || !settled || !composed) {
+                    std::cerr << "FAIL: show slide moved=" << moved << " settled=" << settled
+                              << " composed=" << composed << '\n';
+                    result = 1;
+                }
+                // A hide slides away: halfway through a linear hide towards
+                // 200px down it is drawn 100px lower.
+                sliding->SetShowScale(1.0f);
+                sliding->FinishShowTransition();
+                sliding->SetHideTransitionSeconds(1.0f);
+                sliding->SetHideOffsetY(200.0f);
+                sliding->SetHideFade(false);
+                sliding->SetHideEase(px::ui::TransitionEase::Linear);
+                SDL_DestroySurface(frame(*sliding, "hide-slide-before"));
+                sliding->SetVisibility(px::ui::Visibility::Hidden);
+                sliding->Update(0.5f);
+                SDL_Surface* leaving = frame(*sliding, "hide-slide-half");
+                const bool lower = white(leaving, 170, 100) && red(leaving, 170, 330);
+                SDL_DestroySurface(leaving);
+                if (!lower) {
+                    std::cerr << "FAIL: hide slide did not move the control\n";
+                    result = 1;
+                }
+                // `translation` moves the control as HitTest maps it.
+                auto offsetPanel = panel({230, 30, 40, 255});
+                offsetPanel->SetTranslation({200.0f, 0.0f});
+                offsetPanel->Arrange({40, 40, 260, 280});
+                SDL_Surface* translated = frame(*offsetPanel, "translation");
+                const bool shifted = white(translated, 120, 180) && red(translated, 450, 180);
+                SDL_DestroySurface(translated);
+                if (!shifted || !offsetPanel->HitTest({450, 180}) || offsetPanel->HitTest({120, 180})) {
+                    std::cerr << "FAIL: translation did not move the drawn control with its hit area\n";
+                    result = 1;
+                }
+            }
+            // showSound fires once as the show begins: after the parent's
+            // delay and the control's own stagger, not again on re-layout, and
+            // hideSound once as a shown control hides.
+            {
+                px::ui::Control screen;
+                screen.SetShowDelaySeconds(1.5f);
+                screen.SetStaggerSeconds(0.25f);
+                std::vector<std::pair<std::string, float>> fired;
+                float clock = 0.0f;
+                const auto listen = [&](px::ui::Control& control, const std::string& name) {
+                    (void)control.ConnectSignal("showSound", [&fired, &clock, name](const auto&) {
+                        fired.emplace_back(name + ".show", clock);
+                    });
+                    (void)control.ConnectSignal("hideSound", [&fired, &clock, name](const auto&) {
+                        fired.emplace_back(name + ".hide", clock);
+                    });
+                };
+                listen(screen, "screen");
+                std::vector<px::ui::Control*> rows;
+                for (int index = 0; index < 3; ++index) {
+                    auto row = std::make_unique<px::ui::Control>();
+                    row->SetShowTransitionSeconds(0.3f);
+                    row->SetShowDelaySeconds(index == 0 ? 0.0f : 1.6f);
+                    rows.push_back(row.get());
+                    (void)screen.AddChild(std::move(row));
+                }
+                listen(*rows[0], "first");
+                listen(*rows[2], "third");
+                screen.Arrange({0, 0, 640, 360});
+                const auto run = [&](const float until) {
+                    while (clock + 0.0001f < until) {
+                        clock += 0.05f;
+                        screen.Update(0.05f);
+                    }
+                };
+                screen.Update(0.0f);
+                run(1.4f);
+                const bool quietDuringDelay = fired.empty();
+                run(1.6f);
+                screen.Arrange({0, 0, 640, 360});
+                run(2.5f);
+                // The screen and its first child start at 1.5 (the child
+                // waits for its parent); the third waits 1.6 + 2 * 0.25.
+                const auto at = [&](const std::string& name) {
+                    for (const auto& [event, time] : fired) if (event == name) return time;
+                    return -1.0f;
+                };
+                const auto count = [&](const std::string& name) {
+                    return std::ranges::count_if(fired, [&](const auto& entry) { return entry.first == name; });
+                };
+                const bool timed = std::abs(at("screen.show") - 1.5f) < 0.06f &&
+                    std::abs(at("first.show") - 1.5f) < 0.06f && std::abs(at("third.show") - 2.1f) < 0.06f;
+                const bool once = count("screen.show") == 1 && count("first.show") == 1 && count("third.show") == 1;
+                SDL_DestroySurface(frame(screen, "show-sound-shown"));
+                rows[2]->SetVisibility(px::ui::Visibility::Hidden);
+                run(2.6f);
+                rows[2]->SetVisibility(px::ui::Visibility::Visible);
+                // Shown again it waits its delay and stagger anew (2.6 + 2.1).
+                run(5.0f);
+                const bool hid = count("third.hide") == 1 && count("third.show") == 2;
+                if (!quietDuringDelay || !timed || !once || !hid) {
+                    std::cerr << "FAIL: show/hide signals quiet=" << quietDuringDelay << " timed=" << timed
+                              << " once=" << once << " hid=" << hid << " screen=" << at("screen.show")
+                              << " first=" << at("first.show") << " third=" << at("third.show") << '\n';
+                    result = 1;
+                }
+            }
+            // A show sound's own delay counts from the moment the control
+            // began to show, and does not hold the control back: a screen
+            // root shows at once and sounds 1.5s later.
+            {
+                px::ui::Control opening;
+                opening.EditShowSound().path = "Assets/Audio/open.ogg";
+                opening.EditShowSound().delaySeconds = 1.5f;
+                float clock = 0.0f;
+                float soundedAt = -1.0f;
+                (void)opening.ConnectSignal("showSound", [&](const auto&) { soundedAt = clock; });
+                opening.Arrange({0, 0, 640, 360});
+                opening.Update(0.0f);
+                const bool drawnAtOnce = opening.ShowStartedInTree();
+                while (clock < 2.0f) {
+                    clock += 0.05f;
+                    opening.Update(0.05f);
+                }
+                if (!drawnAtOnce || std::abs(soundedAt - 1.5f) > 0.06f ||
+                    std::abs(opening.VisibleSeconds() - 2.0f) > 0.06f) {
+                    std::cerr << "FAIL: show sound delay drawnAtOnce=" << drawnAtOnce
+                              << " soundedAt=" << soundedAt << '\n';
+                    result = 1;
+                }
+            }
+            // Authored showSound*/hideSound* runtime properties reach the control.
+            {
+                px::sdk::UiDocument sounding;
+                sounding.id = "12000000-0000-4000-8000-000000000021";
+                sounding.rootId = "12000000-0000-4000-8000-000000000022";
+                px::sdk::UiNode root;
+                root.id = sounding.rootId;
+                root.kind = px::sdk::UiNodeKind::Control;
+                root.runtimeType = "Control";
+                root.runtimeProperties.emplace("showSoundPath", std::string("Assets/Audio/open.ogg"));
+                root.runtimeProperties.emplace("showSoundVariants", px::sdk::UiArrayValue{
+                    R"(["Assets/Audio/open-a.ogg","Assets/Audio/open-b.ogg"])"});
+                root.runtimeProperties.emplace("showSoundVolume", 0.6);
+                root.runtimeProperties.emplace("showSoundDelaySeconds", 1.5);
+                root.runtimeProperties.emplace("hideSoundPath", std::string("Assets/Audio/close.ogg"));
+                sounding.nodes.push_back(root);
+                auto built = px::ui::BuildUiRuntimeTree(sounding);
+                const bool applied = built.Valid() &&
+                    built.root->ShowSound().path == "Assets/Audio/open.ogg" &&
+                    built.root->ShowSound().variants.size() == 2 &&
+                    std::abs(built.root->ShowSound().volume - 0.6f) < 0.001f &&
+                    built.root->ShowSound().delaySeconds == 1.5f &&
+                    built.root->HideSound().path == "Assets/Audio/close.ogg" &&
+                    built.root->HideSound().volume == 1.0f;
+                sounding.nodes[0].runtimeProperties["showSoundVolume"] = 1.5;
+                const bool rejected = !px::ui::BuildUiRuntimeTree(sounding).Valid();
+                if (!applied || !rejected) {
+                    std::cerr << "FAIL: authored show/hide sounds applied=" << applied
+                              << " rejectedLoudVolume=" << rejected << '\n';
+                    result = 1;
+                }
+            }
         }
         const auto drawFixture = [&] {
             renderer.DrawRect({0, 0, 640, 360}, {230, 230, 210, 255});

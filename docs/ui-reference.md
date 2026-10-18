@@ -132,10 +132,35 @@ props: `player.uiActivateSound` plays for every button and
 `player.uiCancelSound` for `overlay.close`, `route.back` and `*.cancel`
 actions; `activateSoundPath=` overrides one button.
 
+Any control can also sound as it appears: `showSound` plays when its show
+transition starts, after its `delay` and any parent `stagger` and once its
+parents have begun to show (at once without a transition), and `hideSound`
+as it starts to hide. They play on the SE channel at the player's SE volume;
+`variants` picks one file at random each time (and replaces `path`),
+`volume` (0 to 1) scales it and `delay` (show only, up to 10 s) waits that
+long after the control begins to show. On a screen's root that plays a sound
+seconds after the screen opens without holding the screen back (a show
+transition's `delay` would keep the whole screen unseen); a staggered list of
+cards sounds card by card. A re-layout does not play it again; showing the
+control again does:
+
+```tsx
+<Group name="Root" fill showSound={{path: "Assets/Audio/se/chime.ogg", delay: 1.5}}>
+  <Group name="Cards" stagger={0.12}>
+    <Image name="Card1" path="Assets/UI/card.png" position={[200, 300]} size={[240, 320]}
+      showTransition={{seconds: 0.3, delay: 0.4, offset: [0, 40]}}
+      showSound={{variants: ["Assets/Audio/se/flip-a.ogg", "Assets/Audio/se/flip-b.ogg"], volume: 0.7}} />
+  </Group>
+</Group>
+```
+
+The compiler packages every file (variants included) and reports missing ones.
+
 Any control can fade out when hidden instead of vanishing:
 `showTransition={{seconds: 0.2, offset: [0, -50]}}`,
 `hideTransition={{seconds: 0.2, offset: [0, 50]}}` and `linearTransition`
-slide and fade it. `ease` picks the slide curve: `quad` (default), `linear`,
+slide and fade it (`translation` and the slide move the whole control, its
+panel and children with it). `ease` picks the slide curve: `quad` (default), `linear`,
 `cubic`, or `back`, which overshoots and settles on show and pulls back before
 leaving on hide. `offset: {y: -50}` or `{x: 40}` sets one axis and keeps the
 Runtime default of the other: without an offset a control slides up 8px as it
@@ -427,6 +452,10 @@ project's `settings` instead of duplicating them in `resourceIncludes`:
   }]
 }
 ```
+
+A splash sound plays `audioDelay` seconds into the startup screen; inside any
+other screen, put `showSound={{path, delay}}` on its root (see
+[typed props](#typed-props)).
 
 The splash scene must be listed in `uiEntryPoints`; for a TSX-authored route,
 use its `.tsx` source path in both places and the CLI publishes the compiled

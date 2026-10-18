@@ -109,6 +109,33 @@ test("delay, wipe, scale, fade, stagger, hover and list item transitions lower t
     itemShowWipe: "left", itemHoverScale: 1.03});
 });
 
+test("showSound and hideSound lower to runtime properties and are checked", () => {
+  const node = compiled([
+    jsx(Group, {name: "Screen", position: [0, 0], size: [10, 10],
+      showSound: {path: "Assets/Audio/se/open.ogg", delay: 1.5}}),
+    jsx(Group, {name: "Card", position: [0, 0], size: [10, 10],
+      showSound: {variants: ["Assets/Audio/se/a.ogg", "Assets/Audio/se/b.ogg"], volume: 0.6},
+      hideSound: {path: "Assets/Audio/se/close.ogg", volume: 0}}),
+  ]);
+  assert.deepEqual(node("Screen").runtimeProperties, {showSoundPath: "Assets/Audio/se/open.ogg",
+    showSoundDelaySeconds: 1.5});
+  assert.deepEqual(node("Card").runtimeProperties, {
+    showSoundVariants: ["Assets/Audio/se/a.ogg", "Assets/Audio/se/b.ogg"], showSoundVolume: 0.6,
+    hideSoundPath: "Assets/Audio/se/close.ogg", hideSoundVolume: 0});
+  const group = (showSound: unknown) => jsx(Group, {name: "Bad", position: [0, 0], size: [10, 10],
+    showSound: showSound as string});
+  assert.throws(() => group({path: "Assets/Audio/se/open.ogg", volume: 1.5}), /Bad's showSound volume/u);
+  assert.throws(() => group({volume: 0.5}), /needs a path or variants/u);
+  assert.throws(() => group(""), /must be a file path/u);
+  assert.throws(() => group({variants: ["Assets/Audio/se/a.ogg", ""]}), /variants must be file paths/u);
+  assert.throws(() => group({path: "Assets/Audio/se/open.ogg", delay: 11}), /delay must be between 0 and 10/u);
+  assert.throws(() => jsx(Group, {name: "Bad", position: [0, 0], size: [10, 10],
+    hideSound: {path: "Assets/Audio/se/close.ogg", delay: 1}}), /has no delay/u);
+  const raw = compileJsxUi(jsx(Scene, {name: "Raw", width: 640, height: 360,
+    children: jsx(Group, {name: "Root", fill: true, runtimeProperties: {showSoundPath: "Assets/Audio/se/open.ogg"}})}));
+  assert.ok(raw.diagnostics.some((item) => item.code === "PXSDKJSX1100" && /showSound=/u.test(item.message)));
+});
+
 test("runtimeProperties with a typed prop, Control sliders and skin-shaped paths are linted", () => {
   const result = compileJsxUi(jsx(Scene, {name: "Lint", width: 640, height: 360,
     children: jsxs(Group, {name: "Root", fill: true, children: [

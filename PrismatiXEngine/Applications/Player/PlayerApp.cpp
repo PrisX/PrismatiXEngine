@@ -927,6 +927,13 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             auto player=std::make_shared<video::VideoPlayer>(m_runtime.Renderer().Handle(),m_runtime.VFS());
             rectangle->SetPlayback({[player](const std::string_view path){return player->Open(std::string(path));},[player]{player->Close();},[player](const float delta){player->Update(delta);},[player]{return player->Playing();},[player]{return player->Texture();},[player]{return Vec2{static_cast<float>(player->Width()),static_cast<float>(player->Height())};}});
         }
+        // Any control may sound as it appears or starts to hide. The handler
+        // lives on the control, so it goes with it; a tree configured again
+        // keeps the one it has.
+        if(!control.ShowSound().Empty()&&!control.HasSignalHandlers("showSound"))
+            (void)control.ConnectSignal("showSound",[this,&control](const ui::Control::SignalArguments&){PlayUiControlSound(control,true);});
+        if(!control.HideSound().Empty()&&!control.HasSignalHandlers("hideSound"))
+            (void)control.ConnectSignal("hideSound",[this,&control](const ui::Control::SignalArguments&){PlayUiControlSound(control,false);});
         if(dynamic_cast<ui::Button*>(&control)){
             const std::string hover=control.HoverSoundPath().empty()
                 ? m_defaultUiHoverSound : control.HoverSoundPath();
@@ -2042,6 +2049,34 @@ void PlayerApp::FinishBootPresentation() {
         for (const auto& path : images.Value())
             m_runtime.Assets().PreloadTexture(path, graphics::AssetPreloadPriority::Low);
     }
+}
+
+void PlayerApp::PlayUiControlSound(const ui::Control& control, const bool show) {
+    const ui::Control::Sound& sound = show ? control.ShowSound() : control.HideSound();
+    // Variants replace the path; one available file is picked each time.
+    std::vector<std::string> available;
+    for (const auto& variant : sound.variants)
+        if (const auto safe = SafeVfsRelativePath(variant); safe && m_runtime.VFS().Exists(*safe))
+            available.push_back(*safe);
+    std::string path;
+    if (!available.empty()) {
+        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
+        path = available[static_cast<std::size_t>(tick) % available.size()];
+    } else if (!sound.path.empty()) {
+        if (const auto safe = SafeVfsRelativePath(sound.path); safe && m_runtime.VFS().Exists(*safe))
+            path = *safe;
+    }
+    const char* phase = show ? "show" : "hide";
+    if (path.empty()) {
+        PX_LOG_WARN("Player UI {} sound is missing control={} path={}", phase, control.Name(),
+                    sound.path.empty() && !sound.variants.empty() ? sound.variants.front() : sound.path);
+        return;
+    }
+    m_runtime.Audio().PlaySE(path, sound.volume);
+    const float after = control.VisibleSeconds();
+    PX_LOG_INFO("Player UI {} sound path={} control={} after={:.3f}s", phase, path, control.Name(), after);
+    m_uiSoundsPlayed.push_back({phase, path, control.Name(), after});
+    while (m_uiSoundsPlayed.size() > 32) m_uiSoundsPlayed.pop_front();
 }
 
 void PlayerApp::BeginPresentationTransition(

@@ -541,6 +541,69 @@ Status RegisterBuiltinUITypes() {
         [](Object& o, std::string v) { As<Control>(o)->SetHoverSoundPath(std::move(v)); return Status::Ok(); }));
     control.properties.push_back(StringProperty("activateSoundPath", "Audio", [](const Object& o) { return As<Control>(o)->ActivateSoundPath(); },
         [](Object& o, std::string v) { As<Control>(o)->SetActivateSoundPath(std::move(v)); return Status::Ok(); }));
+    // A sound as the control appears (show) or starts to hide.
+    for (const bool show : {true, false}) {
+        const std::string prefix = show ? "showSound" : "hideSound";
+        const auto sound = [show](Object& o) -> Control::Sound& {
+            return show ? As<Control>(o)->EditShowSound() : As<Control>(o)->EditHideSound();
+        };
+        const auto read = [show](const Object& o) -> const Control::Sound& {
+            return show ? As<Control>(o)->ShowSound() : As<Control>(o)->HideSound();
+        };
+        auto path = StringProperty(prefix + "Path", "Audio", [read](const Object& o) { return read(o).path; },
+            [sound](Object& o, std::string v) { sound(o).path = std::move(v); return Status::Ok(); });
+        path.editor.description = show
+            ? "Sound played as the control appears: when its show transition starts, after its delay and any stagger."
+            : "Sound played as the control starts to hide.";
+        control.properties.push_back(std::move(path));
+        control.properties.push_back({prefix + "Variants", "Audio", VariantType::Array,
+            PropertyFlags::Editable | PropertyFlags::Serializable, Variant(VariantArray{}),
+            [read](const Object& o) {
+                VariantArray values;
+                for (const auto& variant : read(o).variants) values.emplace_back(variant);
+                return Variant(std::move(values));
+            },
+            [sound, prefix](Object& o, const Variant& v) {
+                const auto* array = v.AsArray();
+                if (!array) return TypeError(prefix + "Variants expects Array");
+                std::vector<std::string> values;
+                for (const auto& item : *array) {
+                    const auto* text = item.TryGet<std::string>();
+                    if (!text || text->empty()) return TypeError(prefix + "Variants entries must be non-empty String");
+                    values.push_back(*text);
+                }
+                sound(o).variants = std::move(values);
+                return Status::Ok();
+            }});
+        auto volume = NumberProperty(prefix + "Volume", "Audio",
+            [read](const Object& o) { return static_cast<double>(read(o).volume); },
+            [sound, prefix](Object& o, double v) {
+                if (!std::isfinite(v) || v < 0.0 || v > 1.0) return TypeError(prefix + "Volume must be between 0 and 1");
+                sound(o).volume = static_cast<float>(v);
+                return Status::Ok();
+            });
+        volume.editor.hasRange = true;
+        volume.editor.minimum = 0;
+        volume.editor.maximum = 1;
+        volume.editor.step = 0.05;
+        volume.editor.description = "Volume of the sound before the player's SE volume (1 is full).";
+        control.properties.push_back(std::move(volume));
+    }
+    {
+        auto delay = NumberProperty("showSoundDelaySeconds", "Audio",
+            [](const Object& o) { return static_cast<double>(As<Control>(o)->ShowSound().delaySeconds); },
+            [](Object& o, double v) {
+                if (!std::isfinite(v) || v < 0.0 || v > 10.0) return TypeError("showSoundDelaySeconds must be between 0 and 10");
+                As<Control>(o)->EditShowSound().delaySeconds = static_cast<float>(v);
+                return Status::Ok();
+            });
+        delay.editor.hasRange = true;
+        delay.editor.minimum = 0;
+        delay.editor.maximum = 10;
+        delay.editor.step = 0.05;
+        delay.editor.description = "Seconds the show sound waits after the control begins to show; on a screen's root, after the screen opens.";
+        control.properties.push_back(std::move(delay));
+    }
     control.properties.push_back(StringProperty("accessibilityLabel", "Accessibility", [](const Object& o) { return As<Control>(o)->AccessibilityLabel(); },
         [](Object& o, std::string v) { As<Control>(o)->SetAccessibilityLabel(std::move(v)); return Status::Ok(); }));
     control.properties.push_back(StringProperty("accessibilityRole", "Accessibility", [](const Object& o) { return As<Control>(o)->AccessibilityRole(); },

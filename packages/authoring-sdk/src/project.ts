@@ -1214,6 +1214,12 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         const itemPointer = `${pointer}/${pointerSegment(key)}`;
         if (typeof item === "string" && (key === "path" || key.endsWith("Path")))
           addResourceRef(item, `${origin}:${itemPath}`, origin, itemPointer);
+        // showSoundVariants/hideSoundVariants: every candidate is packaged.
+        else if (Array.isArray(item) && key.endsWith("SoundVariants"))
+          for (const [index, variant] of item.entries()) {
+            if (typeof variant === "string")
+              addResourceRef(variant, `${origin}:${itemPath}[${index}]`, origin, `${itemPointer}/${index}`);
+          }
         else visitProperties(item, itemPath, itemPointer);
       }
     };

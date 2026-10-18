@@ -53,7 +53,10 @@ export interface PlayerState {
   /** While the Player boots: the startup screen on show (player.splashes). */
   readonly splash?: {readonly index: number; readonly scene: string};
   readonly locales?: readonly string[];
-  readonly audio?: {readonly music: string; readonly voice: string; readonly mainVolume: number};
+  readonly audio?: {readonly music: string; readonly voice: string; readonly mainVolume: number;
+    /** showSound/hideSound plays, latest last; `after` is seconds since the control was shown. */
+    readonly uiSounds?: readonly {readonly phase: "show" | "hide"; readonly path: string;
+      readonly control: string; readonly after: number}[]};
   readonly backlog?: {readonly count: number; readonly lastVoice: string};
   readonly settings?: Readonly<Record<string, unknown>>;
   readonly voiceProfiles?: readonly string[];

@@ -472,6 +472,13 @@ struct QaOps {
             lastVoice = voiced->voice;
         state["audio"] = {{"music", audio.music.path}, {"voice", audio.voice.path},
                           {"mainVolume", app.m_runtime.Audio().MainVolume()}};
+        // showSound/hideSound plays, latest last; `after` is the seconds the
+        // control had been visible (since its screen opened or it was shown).
+        auto uiSounds = nlohmann::json::array();
+        for (const auto& played : app.m_uiSoundsPlayed)
+            uiSounds.push_back({{"phase", played.phase}, {"path", played.path},
+                                {"control", played.control}, {"after", played.afterSeconds}});
+        state["audio"]["uiSounds"] = std::move(uiSounds);
         state["backlog"] = {{"count", backlog.size()}, {"lastVoice", lastVoice}};
         state["locales"] = app.m_supportedLocales;
         state["settings"] = Settings(app);

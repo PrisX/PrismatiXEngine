@@ -73,8 +73,15 @@ void Control::SetVisibility(Visibility value) {
     if (!wasVisible && value == Visibility::Visible) {
         m_showElapsed = 0.0f;
         m_hiding = false;
+        m_showSignalPending = true;
+        m_showSoundWait = -1.0f;
+        m_visibleSeconds = 0.0f;
+        m_hideSignalPending = false;
     } else if (value != Visibility::Visible) {
         m_showElapsed = ShowTotalSeconds();
+        m_showSignalPending = false;
+        // Only a control that was on screen has something to take away.
+        if (wasVisible && m_presented) m_hideSignalPending = true;
         // A control that never reached the screen has nothing to fade out; a
         // screen rebuilt under a hidden binding must not flash its hidden parts.
         m_hiding = wasVisible && m_presented && m_hideTransitionSeconds > 0.0f;
@@ -251,6 +258,11 @@ bool Control::DisconnectSignal(const std::string_view signal, const SignalConnec
     return removed;
 }
 
+bool Control::HasSignalHandlers(const std::string_view signal) const {
+    const auto found = m_signalHandlers.find(std::string(signal));
+    return found != m_signalHandlers.end() && !found->second.empty();
+}
+
 void Control::EmitSignal(const std::string_view signal, const SignalArguments& arguments) {
     const auto found = m_signalHandlers.find(std::string(signal));
     if (found == m_signalHandlers.end()) return;
@@ -328,17 +340,53 @@ void Control::ApplyShowTransition(const ShowTransitionSpec& spec) {
 void Control::RestartShowTransition() {
     m_showElapsed = 0.0f;
     m_hiding = false;
+    m_showSignalPending = true;
+    m_showSoundWait = -1.0f;
+    m_visibleSeconds = 0.0f;
 }
 
-void Control::FinishShowTransition() { m_showElapsed = ShowTotalSeconds(); }
+void Control::FinishShowTransition() {
+    m_showElapsed = ShowTotalSeconds();
+    // Shown at once (an item scrolled into view): it does not announce itself.
+    m_showSignalPending = false;
+}
+
+bool Control::ShowStartedInTree() const {
+    for (const Control* control = this; control;
+         control = dynamic_cast<const Control*>(control->Parent())) {
+        if (control->m_visibility != Visibility::Visible) return false;
+        if (control->m_showElapsed < control->m_showDelaySeconds + control->m_staggerDelaySeconds)
+            return false;
+    }
+    return true;
+}
 
 void Control::Update(float deltaSeconds) {
     const bool advance = std::isfinite(deltaSeconds) && deltaSeconds > 0.0f;
     if (m_visibility == Visibility::Visible && m_showElapsed < ShowTotalSeconds() && advance)
         m_showElapsed = std::min(ShowTotalSeconds(), m_showElapsed + deltaSeconds);
+    if (m_visibility == Visibility::Visible && advance) m_visibleSeconds += deltaSeconds;
     if (m_hiding && advance) {
         m_hideElapsed += deltaSeconds;
         if (m_hideElapsed >= m_hideTransitionSeconds) m_hiding = false;
+    }
+    // Parents update before their children, so the tree's clocks are current.
+    // The show sound waits its own delay from the moment the control began
+    // to show (a delay on a screen's root would hide the whole screen).
+    if (m_showSignalPending) {
+        if (m_showSoundWait >= 0.0f) {
+            if (advance) m_showSoundWait += deltaSeconds;
+        } else if (ShowStartedInTree()) {
+            m_showSoundWait = 0.0f;
+        }
+        if (m_showSoundWait >= 0.0f && m_showSoundWait + 1e-4f >= m_showSound.delaySeconds) {
+            m_showSignalPending = false;
+            EmitSignal("showSound");
+        }
+    }
+    if (m_hideSignalPending) {
+        m_hideSignalPending = false;
+        EmitSignal("hideSound");
     }
     if (m_hoverScale != 1.0f && advance) {
         const float target = m_hovered && m_enabled ? 1.0f : 0.0f;
@@ -422,7 +470,20 @@ void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
         grow *= 1.0f + (m_hoverScale - 1.0f) * (1.0f - (1.0f - t) * (1.0f - t));
     }
     Color tint=m_modulate;tint.a=static_cast<std::uint8_t>(static_cast<float>(tint.a)*m_opacity*visible);
-    renderer.PushTransform({m_layoutRect.x+m_pivot.x*m_layoutRect.w+m_translation.x+slideX,m_layoutRect.y+m_pivot.y*m_layoutRect.h+m_translation.y+slide},{m_scale.x*grow,m_scale.y*grow},m_rotation,tint);
+    // Scale and rotation turn about the pivot; the translation and the
+    // transition's slide then move the whole control, as HitTest maps it (a
+    // pivot shift alone would leave an unscaled control in place).
+    {
+        const Vec2 pivot{m_layoutRect.x + m_pivot.x * m_layoutRect.w,
+                         m_layoutRect.y + m_pivot.y * m_layoutRect.h};
+        const float radians = m_rotation * 3.14159265358979323846f / 180.0f;
+        const float cs = std::cos(radians), sn = std::sin(radians);
+        graphics::AffineTransform2D local{cs * m_scale.x * grow, sn * m_scale.x * grow,
+                                          -sn * m_scale.y * grow, cs * m_scale.y * grow, 0.0f, 0.0f};
+        local.tx = pivot.x - (local.a * pivot.x + local.c * pivot.y) + m_translation.x + slideX;
+        local.ty = pivot.y - (local.b * pivot.x + local.d * pivot.y) + m_translation.y + slide;
+        renderer.PushAffineTransform(local, tint);
+    }
     // A wipe clips the whole control, panel included, to the revealed part.
     const bool wiping = wipe != TransitionWipe::None && reveal < 1.0f;
     if (wiping) {

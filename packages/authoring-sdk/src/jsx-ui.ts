@@ -189,6 +189,16 @@ export interface UiNodeProps {
   readonly itemShowTransition?: UiVisibilityTransition;
   /** Hover scale of every item of a ListView/GridView. */
   readonly itemHoverScale?: number;
+  /**
+   * Sound played as the control appears: when its show transition starts,
+   * after its `delay` and any parent `stagger` (once its parents have begun
+   * to show), or at once without a transition, and the sound's own `delay`
+   * after that. On a screen's root, `{path, delay: 1.5}` plays 1.5s after
+   * the screen opens without holding the screen back.
+   */
+  readonly showSound?: string | UiSound;
+  /** Sound played as the control starts to hide. */
+  readonly hideSound?: string | UiSound;
   readonly bindings?: UiBindings;
   /** Shorthand bindings; a `"!path"` string applies the `Not` formatter. */
   readonly bind?: Readonly<Record<string, string | UiBinding>>;
@@ -229,6 +239,17 @@ export interface UiVisibilityTransition {
   readonly scale?: number;
   /** Fade the opacity too (default true); `false` with `wipe` is a pure wipe. */
   readonly fade?: boolean;
+}
+
+/** A UI sound, played on the SE channel at the player's SE volume. */
+export interface UiSound {
+  readonly path?: string;
+  /** Files of which one is picked at random each time; they replace `path`. */
+  readonly variants?: readonly string[];
+  /** Volume before the player's SE volume, 0 to 1 (default 1). */
+  readonly volume?: number;
+  /** Seconds after the control begins to show (showSound only, 0 to 10). */
+  readonly delay?: number;
 }
 
 export interface ItemsViewProps extends UiNodeProps {
@@ -649,6 +670,32 @@ function offsetProperties(phase: "show" | "hide", offset: UiVisibilityTransition
     ...(y === undefined ? {} : {[`${phase}OffsetY`]: y})};
 }
 
+function soundProperties(phase: "show" | "hide", value: string | UiSound | undefined, owner: string | undefined):
+  Record<string, JsonValue> {
+  if (value === undefined) return {};
+  const sound: UiSound = typeof value === "string" ? {path: value} : value;
+  const label = `${owner ?? "A node"}'s ${phase}Sound`;
+  if (sound.path !== undefined && (typeof sound.path !== "string" || sound.path === ""))
+    throw new TypeError(`${label} path must be a file path`);
+  if (sound.variants !== undefined && (!Array.isArray(sound.variants) ||
+      sound.variants.some((variant) => typeof variant !== "string" || variant === "")))
+    throw new TypeError(`${label} variants must be file paths`);
+  if (sound.path === undefined && !sound.variants?.length)
+    throw new TypeError(`${label} needs a path or variants`);
+  if (sound.volume !== undefined && (!Number.isFinite(sound.volume) || sound.volume < 0 || sound.volume > 1))
+    throw new TypeError(`${label} volume must be between 0 and 1`);
+  if (sound.delay !== undefined && phase === "hide")
+    throw new TypeError(`${label} has no delay; it plays as the control starts to hide`);
+  if (sound.delay !== undefined && (!Number.isFinite(sound.delay) || sound.delay < 0 || sound.delay > 10))
+    throw new TypeError(`${label} delay must be between 0 and 10 seconds`);
+  return {
+    ...(sound.path === undefined ? {} : {[`${phase}SoundPath`]: sound.path}),
+    ...(sound.variants?.length ? {[`${phase}SoundVariants`]: [...sound.variants]} : {}),
+    ...(sound.volume === undefined ? {} : {[`${phase}SoundVolume`]: sound.volume}),
+    ...(sound.delay === undefined ? {} : {showSoundDelaySeconds: sound.delay}),
+  };
+}
+
 function node(
   kind: UiNodeKind,
   runtimeType: string | undefined,
@@ -656,7 +703,7 @@ function node(
 ): UiElement {
   const {focusMode, mouseFilter, modalCapture, hoverSoundPath, activateSoundPath,
     clipContent, showTransition, hideTransition, linearTransition, stagger, hoverScale,
-    itemShowTransition, itemHoverScale, ...rest} = props;
+    itemShowTransition, itemHoverScale, showSound, hideSound, ...rest} = props;
   const transition = (phase: "show" | "hide", value: UiVisibilityTransition | undefined) =>
     value === undefined ? {} : {
       [`${phase}TransitionSeconds`]: value.seconds,
@@ -700,6 +747,8 @@ function node(
       ...(hoverScale === undefined ? {} : {hoverScale}),
       ...itemTransition(itemShowTransition),
       ...(itemHoverScale === undefined ? {} : {itemHoverScale}),
+      ...soundProperties("show", showSound, props.name),
+      ...soundProperties("hide", hideSound, props.name),
     }},
   });
 }

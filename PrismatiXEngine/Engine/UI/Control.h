@@ -213,6 +213,24 @@ public:
     [[nodiscard]] const std::string& HoverSoundPath() const { return m_hoverSoundPath; }
     void SetActivateSoundPath(std::string value) { m_activateSoundPath = std::move(value); }
     [[nodiscard]] const std::string& ActivateSoundPath() const { return m_activateSoundPath; }
+    // A sound the control plays as it appears: when its show transition
+    // starts (after its delay and any stagger, once every parent has begun
+    // to show), or at once without one, and `delaySeconds` after that. The
+    // hide sound plays as it starts to hide. Variants, when given, replace
+    // the path; one is picked each time.
+    struct Sound {
+        std::string path;
+        std::vector<std::string> variants;
+        float volume = 1.0f;
+        float delaySeconds = 0.0f;
+        [[nodiscard]] bool Empty() const { return path.empty() && variants.empty(); }
+    };
+    [[nodiscard]] Sound& EditShowSound() { return m_showSound; }
+    [[nodiscard]] const Sound& ShowSound() const { return m_showSound; }
+    [[nodiscard]] Sound& EditHideSound() { return m_hideSound; }
+    [[nodiscard]] const Sound& HideSound() const { return m_hideSound; }
+    // Seconds the control has been visible since it was last shown.
+    [[nodiscard]] float VisibleSeconds() const { return m_visibleSeconds; }
     void SetPivot(Vec2 value) { m_pivot = value; }
     [[nodiscard]] Vec2 Pivot() const { return m_pivot; }
     void SetScale(Vec2 value) { m_scale = value; }
@@ -293,6 +311,9 @@ public:
     void RestartShowTransition();
     // Ends any show transition at once (the control is fully shown).
     void FinishShowTransition();
+    // Whether this control and every parent have begun to show: their delays
+    // and staggers have passed.
+    [[nodiscard]] bool ShowStartedInTree() const;
     [[nodiscard]] float ShowTotalSeconds() const {
         return m_showDelaySeconds + m_staggerDelaySeconds + m_showTransitionSeconds;
     }
@@ -339,6 +360,7 @@ public:
     void EmitInputSignal(const UIEvent& event);
     [[nodiscard]] SignalConnection ConnectSignal(std::string signal, SignalHandler handler);
     bool DisconnectSignal(std::string_view signal, SignalConnection connection);
+    [[nodiscard]] bool HasSignalHandlers(std::string_view signal) const;
     void EmitSignal(std::string_view signal, const SignalArguments& arguments = {});
     virtual void Update(float deltaSeconds);
     virtual void Draw(graphics::Renderer2D& renderer, const Theme& theme);
@@ -402,6 +424,15 @@ private:
     std::string m_tooltip;
     std::string m_hoverSoundPath;
     std::string m_activateSoundPath;
+    Sound m_showSound;
+    Sound m_hideSound;
+    // The show/hide has begun and its "showSound"/"hideSound" signal is
+    // still to be emitted; m_showSoundWait counts the show sound's delay from
+    // the moment the control began to show.
+    bool m_showSignalPending = true;
+    bool m_hideSignalPending = false;
+    float m_showSoundWait = -1.0f;
+    float m_visibleSeconds = 0.0f;
     Vec2 m_pivot{.5f,.5f};
     Vec2 m_scale{1,1};
     Vec2 m_translation{};

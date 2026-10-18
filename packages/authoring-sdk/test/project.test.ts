@@ -546,6 +546,38 @@ test("compileProject collects UI runtime texture dependencies", () => {
     dependency.source === "Assets/Audio/activate.ogg"));
 });
 
+test("compileProject packages UI show and hide sounds and reports missing ones", () => {
+  const soundUi = {...ui, nodes: [{...ui.nodes[0],
+    runtimeProperties: {
+      showSoundPath: "Assets/Audio/se/open.ogg",
+      showSoundVariants: ["Assets/Audio/se/open-a.ogg", "Assets/Audio/se/missing-b.ogg"],
+      hideSoundPath: "Assets/Audio/se/close.ogg",
+    },
+  }]};
+  const result = compileProject({
+    project,
+    documents: {"Story/story.pxindex": storyIndex, "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": soundUi},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1, locale: "zh-TW", strings: {}}},
+    resourceExists: (path) => !path.includes("/missing-"),
+  });
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.diagnostics.filter((item) => item.code === "PXBUILD1044").map((item) => item.path),
+    ["Assets/Audio/se/missing-b.ogg"]);
+  const packaged = compileProject({
+    project,
+    documents: {"Story/story.pxindex": storyIndex, "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": soundUi},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1, locale: "zh-TW", strings: {}}},
+  });
+  assert.equal(packaged.valid, true, JSON.stringify(packaged.diagnostics));
+  for (const path of ["Assets/Audio/se/open.ogg", "Assets/Audio/se/open-a.ogg",
+    "Assets/Audio/se/missing-b.ogg", "Assets/Audio/se/close.ogg"])
+    assert.ok(packaged.artifact?.dependencies.some((dependency) => dependency.source === path), path);
+});
+
 test("missing UI dependencies point to their authored values only for matching source", () => {
   const authored = {...ui, nodes: [{...ui.nodes[0],
     runtimeType: "TextureButton",
