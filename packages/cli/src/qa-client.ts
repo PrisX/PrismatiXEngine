@@ -133,6 +133,8 @@ export interface PrismatixTestClient {
   action(id: string, argument?: string | number | boolean): Promise<void>;
   /** A key press, by key name ("F8", "Escape", "Return"). */
   key(name: string, options?: {readonly held?: boolean}): Promise<void>;
+  /** Text typed into the focused text field (a Story [input]), as an IME commits it. */
+  type(text: string): Promise<void>;
   /**
    * A click at a point in game pixels, hit-tested like a real one: left by
    * default, `{button: "secondary"}` for a right click.
@@ -289,6 +291,7 @@ export class PlayerTestClient implements PrismatixTestClient {
   async key(name: string, options: {readonly held?: boolean} = {}): Promise<void> {
     await this.request("key", {name, ...(options.held === undefined ? {} : {held: options.held})});
   }
+  async type(text: string): Promise<void> { await this.request("type", {text}); }
   async tap(x: number, y: number, options: {readonly button?: "primary" | "secondary"} = {}): Promise<void> {
     await this.request("tap", {x, y, ...(options.button === undefined ? {} : {button: options.button})});
   }

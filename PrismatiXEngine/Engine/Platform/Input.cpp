@@ -718,6 +718,15 @@ void Input::InjectKeyPress(const int scancode,const bool held) {
     AppendActionEventsForKey(scancode);
 }
 
+void Input::InjectText(const std::string_view text) {
+    if (text.empty()) return;
+    m_textInput += text;
+    InputEvent inputEvent;
+    inputEvent.type = InputEventType::TextInput;
+    inputEvent.text = std::string(text);
+    (void)AppendEvent(std::move(inputEvent));
+}
+
 void Input::InjectTap(const float x, const float y) {
     constexpr std::uint64_t kInjectedPointer = 0x5141;  // "QA"
     AppendPrimaryPress(x, y, kInjectedPointer);

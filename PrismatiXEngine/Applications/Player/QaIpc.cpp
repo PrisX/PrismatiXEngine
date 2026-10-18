@@ -754,6 +754,11 @@ struct QaOps {
             app.m_runtime.GetInput().InjectKeyPress(*code, request.value("held", false));
             return Json::object();
         }
+        if (op == "type") {
+            // Typed text for the focused text field, as an IME commits it.
+            app.m_runtime.GetInput().InjectText(Text(request, "text"));
+            return Json::object();
+        }
         if (op == "tap") {
             if (!request.contains("x") || !request["x"].is_number() ||
                 !request.contains("y") || !request["y"].is_number())
