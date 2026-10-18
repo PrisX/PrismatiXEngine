@@ -470,18 +470,26 @@ void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
         grow *= 1.0f + (m_hoverScale - 1.0f) * (1.0f - (1.0f - t) * (1.0f - t));
     }
     Color tint=m_modulate;tint.a=static_cast<std::uint8_t>(static_cast<float>(tint.a)*m_opacity*visible);
-    // Scale and rotation turn about the pivot; the translation and the
-    // transition's slide then move the whole control, as HitTest maps it (a
-    // pivot shift alone would leave an unscaled control in place).
+    // Scale and rotation turn about the pivot; the transition's grow (and the
+    // hover grow) about the centre whatever the pivot, since a document's
+    // pivot is its layout pivot (the top-left corner unless authored). The
+    // translation and the transition's slide then move the whole control, as
+    // HitTest maps it (a pivot shift alone would leave an unscaled control in
+    // place).
     {
         const Vec2 pivot{m_layoutRect.x + m_pivot.x * m_layoutRect.w,
                          m_layoutRect.y + m_pivot.y * m_layoutRect.h};
+        const Vec2 centre{m_layoutRect.x + 0.5f * m_layoutRect.w,
+                          m_layoutRect.y + 0.5f * m_layoutRect.h};
         const float radians = m_rotation * 3.14159265358979323846f / 180.0f;
         const float cs = std::cos(radians), sn = std::sin(radians);
         graphics::AffineTransform2D local{cs * m_scale.x * grow, sn * m_scale.x * grow,
                                           -sn * m_scale.y * grow, cs * m_scale.y * grow, 0.0f, 0.0f};
-        local.tx = pivot.x - (local.a * pivot.x + local.c * pivot.y) + m_translation.x + slideX;
-        local.ty = pivot.y - (local.b * pivot.x + local.d * pivot.y) + m_translation.y + slide;
+        // x -> centre + grow * (pivot + RS (x - pivot) - centre) + translation.
+        const float turnedX = cs * m_scale.x * pivot.x - sn * m_scale.y * pivot.y;
+        const float turnedY = sn * m_scale.x * pivot.x + cs * m_scale.y * pivot.y;
+        local.tx = centre.x + grow * (pivot.x - turnedX - centre.x) + m_translation.x + slideX;
+        local.ty = centre.y + grow * (pivot.y - turnedY - centre.y) + m_translation.y + slide;
         renderer.PushAffineTransform(local, tint);
     }
     // A wipe clips the whole control, panel included, to the revealed part.

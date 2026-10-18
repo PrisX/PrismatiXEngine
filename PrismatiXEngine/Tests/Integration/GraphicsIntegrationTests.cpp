@@ -1120,9 +1120,20 @@ int main() {
                 const bool composed = white(growing, 165, 180) && red(growing, 180, 180) &&
                     red(growing, 360, 180) && white(growing, 375, 180);
                 SDL_DestroySurface(growing);
-                if (!moved || !settled || !composed) {
+                // A document's controls take their layout pivot (the top-left
+                // corner by default); the grow still centres.
+                sliding->SetPivot({0.0f, 0.0f});
+                sliding->RestartShowTransition();
+                sliding->Update(0.0f);
+                sliding->Update(0.5f);
+                SDL_Surface* corner = frame(*sliding, "show-slide-scale-pivot");
+                const bool centred = white(corner, 165, 180) && red(corner, 180, 180) &&
+                    red(corner, 360, 180) && white(corner, 375, 180);
+                SDL_DestroySurface(corner);
+                sliding->SetPivot({0.5f, 0.5f});
+                if (!moved || !settled || !composed || !centred) {
                     std::cerr << "FAIL: show slide moved=" << moved << " settled=" << settled
-                              << " composed=" << composed << '\n';
+                              << " composed=" << composed << " centred=" << centred << '\n';
                     result = 1;
                 }
                 // A hide slides away: halfway through a linear hide towards
