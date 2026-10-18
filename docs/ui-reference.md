@@ -438,6 +438,15 @@ Declare locale resources and `fontChain` in `Content/Localization/<locale>.json`
 
 ## Startup screens
 
+A new project (`prismatix create`, with or without `--empty`) opens with a
+"Made with PrismatiX" screen: the `splash` route, `Content/UI/Splash.tsx`
+(laid out for the project's resolution, with the PrismatiX Studio layout
+`Splash.studio.json` beside it), listed first in `player.splashes`. It fades
+the logo in and out over its `enter` and `exit` animations in about three
+seconds, and a click or a key skips it after 0.4 s. Edit it like any screen,
+point the entry's `scene` at your own logo screen, or delete the entry (and,
+if you like, the route and `Content/UI/PrismatiX/`) to start at the title.
+
 For startup screens and title voices, declare all random candidates in the
 project's `settings` instead of duplicating them in `resourceIncludes`:
 

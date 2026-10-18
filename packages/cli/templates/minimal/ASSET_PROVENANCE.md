@@ -41,3 +41,12 @@ scaled to 1920x1080.
 ## Font
 
 `Content/Fonts/NotoSansTC-Bold.ttf` is Noto Sans Traditional Chinese Bold from the repository's `Resources/Fonts` inventory, under SIL Open Font License 1.1. Its SHA-256 is `ed4ae6ed781e34d0beee896e9be5d835a938ac7adabbcc1b6b6904290006f372`. Keep `Content/Fonts/OFL-1.1.txt` with distributions. Upstream: https://github.com/notofonts
+
+## PrismatiX logo
+
+`Content/UI/PrismatiX/prismatix-mark.png` and
+`Content/UI/PrismatiX/prismatix-wordmark.png`, shown by the startup screen
+`Content/UI/Splash.tsx`, are the PrismatiX mark and wordmark rendered from
+PrismatiX Studio's vector mark; the wordmark is set in Geist (SIL Open Font
+License 1.1). `Content/UI/PrismatiX/NOTICE.md` (kept by `create --empty`) says
+how they may be used.

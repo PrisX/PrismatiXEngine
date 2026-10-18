@@ -4,6 +4,7 @@ import {copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, rmdir, w
 import {basename, dirname, extname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {externalizeStoryIds, serializeStoryIdentityMap} from "@prismatix/authoring-sdk";
+import {splashStudio, splashSource, splashStudioDocument, splashTsx} from "./splash.js";
 
 export interface StarterOptions {
   readonly name?: string;
@@ -275,6 +276,10 @@ export async function createStarter(targetArgument: string, options: StarterOpti
     };
     await copy(templateRoot, staging);
     if (options.empty === true) await emptyStarter(staging, locale);
+    // The "Made with PrismatiX" startup screen, laid out for this resolution
+    // as a Studio layout with its generated TSX (player.splashes shows it).
+    await writeFile(join(staging, splashStudio), `${JSON.stringify(splashStudioDocument(width, height), null, 2)}\n`, "utf8");
+    await writeFile(join(staging, splashSource), splashTsx(width, height), "utf8");
     const manager = options.packageManager ?? detectPackageManager();
     const command = options.install === undefined
       ? manager === "pnpm" ? await pnpmCommand() : await npmCommand() : [];

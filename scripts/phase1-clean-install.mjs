@@ -312,19 +312,25 @@ await writeFile(join(process.cwd(), "phase1-artifact-launched.json"),
   }, null, 2)}\n`, "utf8");
   const property = (id, valueType) => ({id, valueType,
     writable: true, bindable: true, animatable: false});
+  // What the starter's startup screen (Content/UI/Splash.tsx) uses: show
+  // transitions, centred text and an opacity animation on its Logo group.
+  const showTransition = [property("showTransitionSeconds", "number"), property("showOffsetX", "number"),
+    property("showOffsetY", "number"), property("showTransitionEase", "string"),
+    property("showDelaySeconds", "number"), property("showScale", "number")];
   await writeFile(join(manifestDirectory, "PrismatiXUiTypeRegistry.json"), `${JSON.stringify({
     format: "PrismatiXUiTypeRegistry", schemaRevision: 1, testOnly: true,
     controls: [
-      {runtimeType: "Control", properties: []},
+      {runtimeType: "Control", properties: [{...property("opacity", "number"), animatable: true}]},
       {runtimeType: "Panel", properties: []},
       {runtimeType: "Label", properties: [property("fontSize", "number"), property("wrap", "boolean"),
-        property("letterSpacing", "number")]},
+        property("letterSpacing", "number"), property("horizontalAlignment", "string"),
+        property("verticalAlignment", "string"), ...showTransition]},
       {runtimeType: "RichTextLabel", properties: [property("fontSize", "number"), property("wrap", "boolean")]},
       {runtimeType: "Button", properties: [property("focusMode", "string"), property("horizontalAlignment", "string"),
         property("fontSize", "number"), property("mouseFilter", "string")]},
       // What the starter's TSX title writes (packages/cli/templates/minimal).
       {runtimeType: "TextureRect", properties: [property("path", "string"),
-        property("scaleMode", "string"), property("mouseFilter", "string")]},
+        property("scaleMode", "string"), property("mouseFilter", "string"), ...showTransition]},
       {runtimeType: "ColorRect", properties: [property("color", "color"),
         property("mouseFilter", "string")]},
     ],
