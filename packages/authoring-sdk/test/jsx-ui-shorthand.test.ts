@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {Control, Group, Image, Radio, Scene, Slider, Text, TextureButton, Toggle, compileJsxUi} from "../src/index.js";
+import {Button, Control, Group, Image, Radio, Scene, Slider, Text, TextureButton, Toggle, compileJsxUi} from "../src/index.js";
 import {jsx, jsxs, type UiElement} from "../src/jsx-runtime.js";
 
 function compiled(children: readonly UiElement[]) {
@@ -258,6 +258,21 @@ test("slice draws an Image or a TextureButton's states as a nine-slice", () => {
   assert.throws(() => jsx(Image, {name: "Lonely", path: "a.png", sliceScale: 0.5}), /need slice/u);
   assert.throws(() => jsx(TextureButton, {name: "Lonely", skin: "a", sliceScale: 0.5}), /sliceScale needs slice/u);
   assert.throws(() => jsx(TextureButton, {name: "Fit", skin: "a", slice: 4, scaleMode: "Fit"}), /no scaleMode/u);
+});
+
+test("contentPadding insets a button caption as the runtime contentPadding rect", () => {
+  const node = compiled([
+    jsx(TextureButton, {name: "Shadowed", skin: "Assets/UI/choice", contentPadding: [0, 0, 0, 8],
+      text: "Go", position: [0, 0], size: [400, 80], action: "mode.auto"}),
+    jsx(Button, {name: "Even", contentPadding: 12, text: "Back", position: [0, 100], size: [200, 60], action: "mode.auto"}),
+    jsx(Button, {name: "Plain", text: "Plain", position: [0, 200], size: [200, 60], action: "mode.auto"}),
+  ]);
+  assert.deepEqual(node("Shadowed").runtimeProperties.contentPadding, {type: "rect", x: 0, y: 0, width: 0, height: 8});
+  assert.deepEqual(node("Even").runtimeProperties.contentPadding, {type: "rect", x: 12, y: 12, width: 12, height: 12});
+  assert.equal("contentPadding" in node("Plain").runtimeProperties, false);
+  assert.throws(() => jsx(Button, {name: "Neg", contentPadding: [0, -1, 0, 0]}), /contentPadding needs/u);
+  assert.throws(() => jsx(TextureButton, {name: "Huge", skin: "a", contentPadding: 4096}), /from 0 to 2048/u);
+  assert.throws(() => jsx(Button, {name: "Three", contentPadding: [1, 2, 3] as unknown as [number, number, number, number]}), /\[left, top, right, bottom\]/u);
 });
 
 test("ItemsPlaced choiceLayout lowers to the choice properties the Player reads", async () => {

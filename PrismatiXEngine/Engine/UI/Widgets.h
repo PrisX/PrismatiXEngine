@@ -172,6 +172,16 @@ public:
     void SetVerticalAlignment(VerticalTextAlignment value) { m_verticalAlignment=value; }
     [[nodiscard]] HorizontalTextAlignment HorizontalAlignment() const { return m_horizontalAlignment; }
     [[nodiscard]] VerticalTextAlignment VerticalAlignment() const { return m_verticalAlignment; }
+    // Inset of the caption's area from the layout box: x = left, y = top,
+    // w = right, h = bottom, in layout pixels. Moves the text off uneven
+    // button art (a drop shadow under the face) without editing the image.
+    // Each side is clamped to 0..kMaxContentPadding; non-finite sides are 0.
+    static constexpr float kMaxContentPadding = 2048.0f;
+    void SetContentPadding(Rect value);
+    [[nodiscard]] Rect ContentPadding() const { return m_contentPadding; }
+    // The rectangle the caption is laid out in: the layout box minus
+    // contentPadding, then a small side inset on narrow buttons.
+    [[nodiscard]] Rect CaptionArea() const;
     void Activate();
     void HandleEvent(UIEvent& event) override;
     void Update(float deltaSeconds) override;
@@ -228,6 +238,7 @@ private:
     std::string m_activationActionId;
     HorizontalTextAlignment m_horizontalAlignment = HorizontalTextAlignment::Center;
     VerticalTextAlignment m_verticalAlignment = VerticalTextAlignment::Center;
+    Rect m_contentPadding{0, 0, 0, 0};
 };
 
 // A compact button that keeps the normal button interaction and actions but

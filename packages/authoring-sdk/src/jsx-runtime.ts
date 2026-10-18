@@ -115,6 +115,7 @@ const typedRuntimeProperties: Readonly<Record<string, string>> = {
   patchMargins: "slice= on <Image> or <TextureButton>",
   patchScale: "sliceScale=",
   drawCenter: "sliceCenter= on <Image>",
+  contentPadding: "contentPadding= on <Button> or <TextureButton>",
   optionKey: "option= on <Slider>",
   fontSize: "fontSize=",
   wrap: "wrap",

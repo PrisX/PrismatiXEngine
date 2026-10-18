@@ -593,10 +593,7 @@ protected:
         }
         if (FocusVisible() || (!box && Focused()))
             renderer.DrawRoundedBorder(LayoutRect(), 2.0f, radius, m_focus);
-        const float inset = std::min(12.0f, LayoutRect().w * 0.08f);
-        Rect textArea = LayoutRect();
-        textArea.x += inset;
-        textArea.w = std::max(0.0f, textArea.w - inset * 2.0f);
+        const Rect textArea = CaptionArea();
         Color textColor = Hovered() && Enabled() ? m_hoverText : m_text;
         if (!Enabled()) textColor.a = static_cast<std::uint8_t>(textColor.a * m_disabledOpacity);
         const auto style = theme.Resolve(*this);

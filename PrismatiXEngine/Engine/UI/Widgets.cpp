@@ -555,11 +555,37 @@ void Button::ApplyBindingKey(const int key,
 }
 
 Vec2 Button::MeasureOverride(Vec2) {
+    const float padX = m_contentPadding.x + m_contentPadding.w;
+    const float padY = m_contentPadding.y + m_contentPadding.h;
     if (const auto layout = MeasureTextLayout(m_text, m_fontSize))
-        return {std::max(88.0f, layout->Size().x + 28.0f),
-                std::max(48.0f, layout->Size().y + 16.0f)};
+        return {std::max(88.0f, layout->Size().x + 28.0f + padX),
+                std::max(48.0f, layout->Size().y + 16.0f + padY)};
     const float size = m_fontSize > 0 ? static_cast<float>(m_fontSize) : 24.0f;
-    return {std::max(88.0f, static_cast<float>(m_text.size()) * size * 0.58f + 28.0f), 48.0f};
+    return {std::max(88.0f, static_cast<float>(m_text.size()) * size * 0.58f + 28.0f + padX),
+            std::max(48.0f, 48.0f + padY)};
+}
+
+void Button::SetContentPadding(Rect value) {
+    const auto side = [](float v) {
+        return std::isfinite(v) ? std::clamp(v, 0.0f, kMaxContentPadding) : 0.0f;
+    };
+    const Rect next{side(value.x), side(value.y), side(value.w), side(value.h)};
+    if (next.x == m_contentPadding.x && next.y == m_contentPadding.y &&
+        next.w == m_contentPadding.w && next.h == m_contentPadding.h) return;
+    m_contentPadding = next;
+    InvalidateLayout();
+}
+
+Rect Button::CaptionArea() const {
+    const Rect box = LayoutRect();
+    Rect area{box.x + m_contentPadding.x, box.y + m_contentPadding.y,
+              std::max(0.0f, box.w - m_contentPadding.x - m_contentPadding.w),
+              std::max(0.0f, box.h - m_contentPadding.y - m_contentPadding.h)};
+    // Narrow buttons (toolbar captions) keep less side room so text is not clipped.
+    const float inset = std::min(12.0f, area.w * 0.08f);
+    area.x += inset;
+    area.w = std::max(0.0f, area.w - inset * 2.0f);
+    return area;
 }
 
 void Button::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
@@ -576,9 +602,7 @@ void Button::DrawTextContent(graphics::Renderer2D& renderer,
     if (m_text.empty()) return;
     const auto& style = theme.Resolve(*this);
     const int fontSize = m_fontSize > 0 ? m_fontSize : style.fontSize;
-    // Narrow buttons (toolbar captions) keep less padding so text is not clipped.
-    const float inset=std::min(12.0f,LayoutRect().w*0.08f);
-    Rect textArea=LayoutRect();textArea.x+=inset;textArea.w=std::max(0.0f,textArea.w-inset*2);
+    const Rect textArea = CaptionArea();
     Color color=Enabled()?(m_hasTextColor?m_textColor:style.text):style.textDisabled;
     if(Hovered()&&Enabled()&&GetBoxDecoration()&&GetBoxDecoration()->hoverText)color=*GetBoxDecoration()->hoverText;
     renderer.DrawTextInRect(m_text,textArea,m_fontPath.empty()?style.font:m_fontPath,fontSize,color,

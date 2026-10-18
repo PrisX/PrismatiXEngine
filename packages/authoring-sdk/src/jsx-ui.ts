@@ -363,6 +363,9 @@ export interface SpriteTextProps extends Omit<UiNodeProps, "children"> {
   readonly advance?: number;
 }
 
+/** Caption inset in layout pixels: one number for every side, or `[left, top, right, bottom]`. */
+export type UiPadding = number | readonly [left: number, top: number, right: number, bottom: number];
+
 export interface ButtonProps extends Omit<UiNodeProps, "children"> {
   readonly text?: string;
   readonly fontSize?: number;
@@ -370,6 +373,12 @@ export interface ButtonProps extends Omit<UiNodeProps, "children"> {
   readonly font?: string;
   readonly horizontalAlignment?: "Left" | "Center" | "Right";
   readonly verticalAlignment?: "Top" | "Center" | "Bottom";
+  /**
+   * Insets the caption from the button's edges (0-2048 layout pixels per
+   * side), for every alignment. Centred text moves by (top - bottom) / 2, so
+   * `[0, 0, 0, 8]` lifts it 4px above a face that has a drop shadow below it.
+   */
+  readonly contentPadding?: UiPadding;
   readonly children?: string | number | readonly (string | number)[];
 }
 
@@ -993,15 +1002,26 @@ export function SpriteText(props: SpriteTextProps): UiElement {
   }});
 }
 
+/** The runtime `contentPadding` rect for a button caption inset, checked. */
+function contentPaddingProperty(owner: string, padding: UiPadding | undefined): Record<string, JsonValue> {
+  if (padding === undefined) return {};
+  const sides = typeof padding === "number" ? [padding, padding, padding, padding] : [...padding];
+  if (sides.length !== 4 || sides.some((value) => typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 2048))
+    throw new TypeError(`${owner} contentPadding needs one number or [left, top, right, bottom], each from 0 to 2048`);
+  return {contentPadding: {type: "rect", x: sides[0]!, y: sides[1]!, width: sides[2]!, height: sides[3]!}};
+}
+
 function buttonNode(runtimeType: "Button" | "TextureButton", props: ButtonProps): UiElement {
   const text = props.text ?? textualChildren(props.children);
-  const {children: _children, fontSize, font, horizontalAlignment, verticalAlignment, ...rest} = props;
+  const {children: _children, fontSize, font, horizontalAlignment, verticalAlignment, contentPadding, ...rest} = props;
+  const padding = contentPaddingProperty(`${runtimeType} ${props.name ?? ""}`.trimEnd(), contentPadding);
   return node("button", runtimeType, {...rest, ...(text === undefined ? {} : {text}),
     runtimeProperties: {...props.runtimeProperties,
       ...(fontSize === undefined ? {} : {fontSize}),
       ...(font === undefined ? {} : {fontPath: font}),
       ...(horizontalAlignment === undefined ? {} : {horizontalAlignment}),
-      ...(verticalAlignment === undefined ? {} : {verticalAlignment})}});
+      ...(verticalAlignment === undefined ? {} : {verticalAlignment}),
+      ...padding}});
 }
 
 export function Button(props: ButtonProps): UiElement {

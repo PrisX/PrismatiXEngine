@@ -1062,6 +1062,121 @@ int main() {
                     std::cerr << "FAIL: optical centre offset for NotoSansTC " << cjk << '\n';
                     result = 1;
                 }
+                // contentPadding insets a button's caption area. Centred text
+                // moves by (top - bottom) / 2, so a face with a shadow below
+                // it can be compensated without editing the image; Left and
+                // Right captions start inside the padded side.
+                {
+                    // The first and last columns of dark ink in a logical rectangle.
+                    const auto inkColumns = [&](const px::Rect& area) {
+                        SDL_Surface* pixels = SDL_RenderReadPixels(device.Renderer(), nullptr);
+                        float left = -1.0f, right = -1.0f;
+                        if (pixels) {
+                            const float sy = static_cast<float>(pixels->h) / 360.0f;
+                            const float sx = static_cast<float>(pixels->w) / 640.0f;
+                            const int y0 = static_cast<int>(area.y * sy), y1 = static_cast<int>((area.y + area.h) * sy);
+                            const int x0 = static_cast<int>(area.x * sx), x1 = static_cast<int>((area.x + area.w) * sx);
+                            for (int x = x0; x < x1; ++x)
+                                for (int y = y0; y < y1; ++y) {
+                                    std::uint8_t r = 0, g = 0, b = 0, a = 0;
+                                    if (SDL_ReadSurfacePixel(pixels, x, y, &r, &g, &b, &a) && r < 128) {
+                                        if (left < 0.0f) left = static_cast<float>(x) / sx;
+                                        right = static_cast<float>(x + 1) / sx;
+                                        break;
+                                    }
+                                }
+                            SDL_DestroySurface(pixels);
+                        }
+                        return std::pair{left, right};
+                    };
+                    px::ui::Button padded("回憶鑑賞");
+                    padded.SetFontPath(font);
+                    padded.SetFontSize(29);
+                    padded.SetTextColor({20, 20, 20, 255});
+                    px::ui::BoxDecoration paper;
+                    paper.fill = px::Color{255, 255, 255, 255};
+                    padded.SetBoxDecoration(paper);
+                    const auto zero = padded.ContentPadding();
+                    if (zero.x != 0.0f || zero.y != 0.0f || zero.w != 0.0f || zero.h != 0.0f) {
+                        std::cerr << "FAIL: a new Button has contentPadding\n";
+                        result = 1;
+                    }
+                    const auto drawPadded = [&](const std::string& name) {
+                        padded.Arrange(box);
+                        ClearFrame(device.Renderer());
+                        renderer.DrawRect({0, 0, 640, 360}, {255, 255, 255, 255});
+                        padded.Draw(renderer, px::ui::Theme{});
+                        SaveVisualArtifact(device.Renderer(), name);
+                    };
+                    for (const auto& [top, bottom] : {std::pair{0.0f, 24.0f}, std::pair{30.0f, 0.0f}, std::pair{10.0f, 16.0f}}) {
+                        padded.SetContentPadding({0, top, 0, bottom});
+                        const std::string name = "content-padding-" + std::to_string(static_cast<int>(top)) + "-" +
+                                                 std::to_string(static_cast<int>(bottom));
+                        drawPadded(name);
+                        const auto [inkTop, inkBottom] = inkRows(box);
+                        const float ink = (inkTop + inkBottom) * 0.5f;
+                        const float expected = middle + (top - bottom) * 0.5f;
+                        if (inkTop < 0.0f || std::abs(ink - expected) > 1.0f) {
+                            std::cerr << "FAIL: " << name << " ink middle " << ink << " expected " << expected << '\n';
+                            result = 1;
+                        }
+                    }
+                    // Left: the caption starts at the padded side plus the
+                    // narrow-button inset (12px here); Right mirrors it.
+                    padded.SetHorizontalAlignment(px::ui::HorizontalTextAlignment::Left);
+                    padded.SetContentPadding({60, 0, 0, 0});
+                    drawPadded("content-padding-left");
+                    const float leftEdge = inkColumns(box).first;
+                    if (leftEdge < box.x + 72.0f - 1.0f || leftEdge > box.x + 72.0f + 4.0f) {
+                        std::cerr << "FAIL: left-aligned padded caption starts at " << leftEdge << '\n';
+                        result = 1;
+                    }
+                    padded.SetHorizontalAlignment(px::ui::HorizontalTextAlignment::Right);
+                    padded.SetContentPadding({0, 0, 50, 0});
+                    drawPadded("content-padding-right");
+                    const float rightEdge = inkColumns(box).second;
+                    if (rightEdge > box.x + box.w - 62.0f + 1.0f || rightEdge < box.x + box.w - 62.0f - 4.0f) {
+                        std::cerr << "FAIL: right-aligned padded caption ends at " << rightEdge << '\n';
+                        result = 1;
+                    }
+                    // Through the registry, as an authored <TextureButton
+                    // contentPadding> and a styled <Button> arrive.
+                    px::sdk::UiDocument authored;
+                    authored.id = "12000000-0000-4000-8000-000000000041";
+                    authored.rootId = "12000000-0000-4000-8000-000000000042";
+                    px::sdk::UiNode node;
+                    node.id = authored.rootId;
+                    node.kind = px::sdk::UiNodeKind::Button;
+                    node.text = "回憶鑑賞";
+                    node.runtimeType = "TextureButton";
+                    node.runtimeProperties.emplace("contentPadding", px::sdk::UiRectValue{4, 0, 6, 18});
+                    authored.nodes.push_back(node);
+                    for (const bool texture : {true, false}) {
+                        if (!texture) authored.nodes[0].runtimeType.reset();
+                        auto built = px::ui::BuildUiRuntimeTree(authored);
+                        auto* button = built.Valid() ? dynamic_cast<px::ui::Button*>(built.root.get()) : nullptr;
+                        const auto value = button ? button->ContentPadding() : px::Rect{};
+                        if (!button || value.x != 4.0f || value.y != 0.0f || value.w != 6.0f || value.h != 18.0f) {
+                            std::cerr << "FAIL: authored contentPadding did not reach the "
+                                      << (texture ? "TextureButton" : "Button") << '\n';
+                            result = 1;
+                        } else {
+                            button->Arrange(box);
+                            const auto area = button->CaptionArea();
+                            if (std::abs(area.y - box.y) > 0.01f || std::abs(area.h - (box.h - 18.0f)) > 0.01f) {
+                                std::cerr << "FAIL: padded caption area " << area.y << "+" << area.h << '\n';
+                                result = 1;
+                            }
+                        }
+                    }
+                    for (const px::sdk::UiRectValue bad : {px::sdk::UiRectValue{0, -1, 0, 0}, px::sdk::UiRectValue{0, 0, 0, 5000}}) {
+                        authored.nodes[0].runtimeProperties["contentPadding"] = bad;
+                        if (px::ui::BuildUiRuntimeTree(authored).Valid()) {
+                            std::cerr << "FAIL: contentPadding " << bad.y << "/" << bad.height << " was accepted\n";
+                            result = 1;
+                        }
+                    }
+                }
             }
         }
         {

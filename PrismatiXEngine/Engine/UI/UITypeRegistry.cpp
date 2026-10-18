@@ -813,6 +813,28 @@ Status RegisterBuiltinUITypes() {
     button.properties.push_back(std::move(buttonTextColor));
     auto buttonH=StringProperty("horizontalAlignment","Content",[](const Object& o){switch(As<Button>(o)->HorizontalAlignment()){case HorizontalTextAlignment::Left:return std::string("Left");case HorizontalTextAlignment::Right:return std::string("Right");default:return std::string("Center");}},[](Object& o,std::string v){if(v=="Left")As<Button>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Left);else if(v=="Center")As<Button>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Center);else if(v=="Right")As<Button>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Right);else return TypeError("horizontalAlignment expects Left, Center, or Right");return Status::Ok();});buttonH.editor.displayName="Horizontal alignment";buttonH.editor.enumChoices={"Left","Center","Right"};button.properties.push_back(std::move(buttonH));
     auto buttonV=StringProperty("verticalAlignment","Content",[](const Object& o){switch(As<Button>(o)->VerticalAlignment()){case VerticalTextAlignment::Top:return std::string("Top");case VerticalTextAlignment::Bottom:return std::string("Bottom");default:return std::string("Center");}},[](Object& o,std::string v){if(v=="Top")As<Button>(o)->SetVerticalAlignment(VerticalTextAlignment::Top);else if(v=="Center")As<Button>(o)->SetVerticalAlignment(VerticalTextAlignment::Center);else if(v=="Bottom")As<Button>(o)->SetVerticalAlignment(VerticalTextAlignment::Bottom);else return TypeError("verticalAlignment expects Top, Center, or Bottom");return Status::Ok();});buttonV.editor.displayName="Vertical alignment";buttonV.editor.enumChoices={"Top","Center","Bottom"};button.properties.push_back(std::move(buttonV));
+    {
+        PropertyInfo padding{"contentPadding", "Content", VariantType::Rect,
+            PropertyFlags::Editable | PropertyFlags::Serializable | PropertyFlags::Bindable,
+            Variant(Rect{0, 0, 0, 0}),
+            [](const Object& o) { return Variant(As<Button>(o)->ContentPadding()); },
+            [](Object& o, const Variant& v) {
+                const auto* padding = v.TryGet<Rect>();
+                if (!padding) return TypeError("contentPadding expects Rect");
+                for (const float side : {padding->x, padding->y, padding->w, padding->h})
+                    if (!std::isfinite(side) || side < 0.0f || side > Button::kMaxContentPadding)
+                        return TypeError("contentPadding must be four numbers from 0 to 2048");
+                As<Button>(o)->SetContentPadding(*padding);
+                return Status::Ok();
+            }};
+        padding.editor.displayName = "Content padding";
+        padding.editor.description = "Insets the caption from the left, top, right and bottom of the button, in layout pixels, so text can be centred on uneven art such as a face with a drop shadow below it.";
+        padding.editor.hasRange = true;
+        padding.editor.minimum = 0.0;
+        padding.editor.maximum = Button::kMaxContentPadding;
+        padding.editor.step = 1.0;
+        button.properties.push_back(std::move(padding));
+    }
     button.signals.push_back({"activated", "啟用", "Button was activated by pointer or keyboard.", {}}); add(std::move(button));
     add({"IconButton", "Button", "UI/Input", [] { return std::make_unique<IconButton>(); }});
     TypeInfo textureButton{"TextureButton", "Button", "UI/Input",

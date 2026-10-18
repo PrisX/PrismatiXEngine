@@ -115,6 +115,23 @@ A sliced image stretches by definition, so it takes no `region`, `scaleMode` or
 `lockAspectRatio`; `validate` reports a negative margin or a `sliceScale`
 outside 0.01–16.
 
+A caption is laid out in the whole button and centred on its letters, so on
+art whose face is not the middle of the image (a drop shadow or glow below it)
+the text looks low. `contentPadding` insets the caption's area in layout
+pixels, one number for every side or `[left, top, right, bottom]`, for every
+alignment of every `Button`, `TextureButton`, `KeyBindingButton` and
+`WheelBindingButton`. Centred text moves by half the difference of top and
+bottom, so a face with 8px of shadow under it takes:
+
+```tsx
+<TextureButton name="Start" skin="Assets/UI/start" contentPadding={[0, 0, 0, 8]}
+  text="開始遊戲" position={[760, 600]} size={[400, 88]} action="game.start" />
+```
+
+The default is no padding. Each side is 0–2048; `validate` reports a negative
+or larger value. Narrow buttons still keep a small side inset inside the
+padding so their caption is not clipped.
+
 `visibleWhen="profileFlags.cleared"` and `enabledWhen="!saveLoad.page1"` bind
 one condition each, so a helper can pass either without one `bind` object
 replacing the other. `tooltip={<Image path="Assets/UI/help-save.png"
