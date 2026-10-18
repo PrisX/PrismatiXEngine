@@ -234,10 +234,12 @@ void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     float x = area.x;
     if (m_horizontalAlignment == HorizontalTextAlignment::Center) x += (area.w - width) / 2.0f;
     else if (m_horizontalAlignment == HorizontalTextAlignment::Right) x += area.w - width;
+    // Every character centres on the whole caption's reference letter, so a
+    // mixed caption ("第1章") keeps one baseline.
     for (const auto& [character, advance] : characters) {
         renderer.DrawTextInRect(character, {x, area.y, advance + 1.0f, area.h}, font, size, color,
                                 graphics::HorizontalAlignment::Left, Vertical(m_verticalAlignment),
-                                false, 255, m_outlineSize, m_outlineColor);
+                                false, 255, m_outlineSize, m_outlineColor, false, m_text);
         x += advance + m_letterSpacing;
     }
 }
@@ -1262,7 +1264,11 @@ void LineEdit::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) {
     if(m_caret.x-m_scroll<0.0f)m_scroll=m_caret.x;
     m_scroll=std::clamp(m_scroll,0.0f,std::max(0.0f,layout.Size().x-inner+1.0f));
     m_lineHeight=lineHeight;
-    m_textOffset={padding-m_scroll,std::round((area.h-lineHeight)*0.5f)};
+    // Centred on the letters, as centred labels and buttons are; the caret
+    // and selection follow the text. The hint and the typed text share the
+    // reference, so the line does not move when typing starts.
+    const float optical=renderer.OpticalCenterOffset(m_placeholder+m_text,style.font,size);
+    m_textOffset={padding-m_scroll,std::round((area.h-lineHeight)*0.5f+optical)};
     const Vec2 origin{area.x+m_textOffset.x,area.y+m_textOffset.y};
     renderer.PushClip({area.x+padding*0.5f,area.y,std::max(0.0f,area.w-padding),area.h});
     if(placeholder)renderer.DrawTextLayout(hintLayout,{area.x+padding,origin.y},style.font,size,hint);
@@ -1376,8 +1382,10 @@ void RichTextLabel::DrawStyled(graphics::Renderer2D& renderer, const Theme& them
     const int wrap = Wrap() ? std::max(1, static_cast<int>(std::floor(area.w))) : 0;
     const auto layout = renderer.LayoutTextRuns(laid, runs, wrap);
     Vec2 origin{area.x, area.y};
+    // Centred on the letters of the base font, as plain labels are.
     if (VerticalAlignment() == VerticalTextAlignment::Center)
-        origin.y += (area.h - layout.Size().y) * 0.5f;
+        origin.y += (area.h - layout.Size().y) * 0.5f +
+                    renderer.OpticalCenterOffset(laid, baseFont, baseSize);
     else if (VerticalAlignment() == VerticalTextAlignment::Bottom)
         origin.y += area.h - layout.Size().y;
     // Lines align on their own width, as SDL_ttf aligns wrapped lines.

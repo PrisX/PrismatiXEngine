@@ -18,6 +18,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <cstdint>
@@ -28,6 +29,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -957,6 +959,107 @@ int main() {
                 if (redBottom < 0 || redTop < 60 || redBottom > 300) {
                     std::cerr << "FAIL: vertical RichTextLabel colour/alignment top=" << redTop
                               << " bottom=" << redBottom << '\n';
+                    result = 1;
+                }
+            }
+            // Vertically centred captions centre their letters, not the
+            // font's line box: NotoSansTC's deep descent used to draw every
+            // centred button label about 0.06em low. The ink of a CJK caption
+            // (and of a capitals-and-digits one) sits within a pixel of the
+            // middle, for buttons, plain, tracked and styled labels; Top
+            // alignment keeps the line box on the top edge.
+            {
+                // The first and last rows of dark ink in a logical rectangle.
+                const auto inkRows = [&](const px::Rect& area) {
+                    SDL_Surface* pixels = SDL_RenderReadPixels(device.Renderer(), nullptr);
+                    float top = -1.0f, bottom = -1.0f;
+                    if (pixels) {
+                        const float sy = static_cast<float>(pixels->h) / 360.0f;
+                        const float sx = static_cast<float>(pixels->w) / 640.0f;
+                        const int y0 = static_cast<int>(area.y * sy), y1 = static_cast<int>((area.y + area.h) * sy);
+                        const int x0 = static_cast<int>(area.x * sx), x1 = static_cast<int>((area.x + area.w) * sx);
+                        for (int y = y0; y < y1; ++y)
+                            for (int x = x0; x < x1; ++x) {
+                                std::uint8_t r = 0, g = 0, b = 0, a = 0;
+                                if (SDL_ReadSurfacePixel(pixels, x, y, &r, &g, &b, &a) && r < 128) {
+                                    if (top < 0.0f) top = static_cast<float>(y) / sy;
+                                    bottom = static_cast<float>(y + 1) / sy;
+                                    break;
+                                }
+                            }
+                        SDL_DestroySurface(pixels);
+                    }
+                    return std::pair{top, bottom};
+                };
+                const px::Rect box{120, 140, 400, 76};
+                const float middle = box.y + box.h * 0.5f;
+                const auto centred = [&](px::ui::Control& control, const std::string& name) {
+                    control.Arrange(box);
+                    ClearFrame(device.Renderer());
+                    renderer.DrawRect({0, 0, 640, 360}, {255, 255, 255, 255});
+                    control.Draw(renderer, px::ui::Theme{});
+                    SaveVisualArtifact(device.Renderer(), name);
+                    const auto [top, bottom] = inkRows(box);
+                    const float ink = (top + bottom) * 0.5f;
+                    if (top < 0.0f || std::abs(ink - middle) > 1.0f) {
+                        std::cerr << "FAIL: centred caption " << name << " ink " << top << ".." << bottom
+                                  << " (middle " << ink << ") is off the box middle " << middle << '\n';
+                        result = 1;
+                    }
+                };
+                int index = 0;
+                for (const std::string caption : {"回憶鑑賞", "製作群", "START 2026", "第1章"}) {
+                    const std::string tag = std::to_string(++index);
+                    px::ui::Button button(caption);
+                    button.SetFontPath(font);
+                    button.SetFontSize(29);
+                    button.SetTextColor({20, 20, 20, 255});
+                    px::ui::BoxDecoration paper;
+                    paper.fill = px::Color{255, 255, 255, 255};
+                    button.SetBoxDecoration(paper);
+                    centred(button, "optical-button-" + tag);
+                    px::ui::Label label(caption);
+                    label.SetFontPath(font);
+                    label.SetFontSize(34);
+                    label.SetColor({20, 20, 20, 255});
+                    label.SetHorizontalAlignment(px::ui::HorizontalTextAlignment::Center);
+                    label.SetVerticalAlignment(px::ui::VerticalTextAlignment::Center);
+                    centred(label, "optical-label-" + tag);
+                    label.SetLetterSpacing(6.0f);
+                    centred(label, "optical-tracked-" + tag);
+                }
+                px::ui::RichTextLabel styled("[b]回憶[/b]鑑賞");
+                styled.SetFontPath(font);
+                styled.SetFontSize(32);
+                styled.SetWrap(false);
+                styled.SetColor({20, 20, 20, 255});
+                styled.SetHorizontalAlignment(px::ui::HorizontalTextAlignment::Center);
+                styled.SetVerticalAlignment(px::ui::VerticalTextAlignment::Center);
+                centred(styled, "optical-styled");
+                // Top is untouched: the line box's top on the box's top edge,
+                // exactly where DrawText puts it.
+                px::ui::Label topLabel("回憶鑑賞");
+                topLabel.SetFontPath(font);
+                topLabel.SetFontSize(34);
+                topLabel.SetColor({20, 20, 20, 255});
+                topLabel.Arrange(box);
+                ClearFrame(device.Renderer());
+                renderer.DrawRect({0, 0, 640, 360}, {255, 255, 255, 255});
+                topLabel.Draw(renderer, px::ui::Theme{});
+                const auto viaLabel = CaptureFrame(device.Renderer(), "optical-top-label").hash;
+                ClearFrame(device.Renderer());
+                renderer.DrawRect({0, 0, 640, 360}, {255, 255, 255, 255});
+                renderer.DrawText("回憶鑑賞", box.x, box.y, font, 34, {20, 20, 20, 255});
+                const auto viaText = CaptureFrame(device.Renderer(), "optical-top-text").hash;
+                if (viaLabel == 0 || viaLabel != viaText) {
+                    std::cerr << "FAIL: top-aligned text moved with the optical centring\n";
+                    result = 1;
+                }
+                // The shift follows the font, not the string: CJK captions
+                // share one line, and NotoSansTC's is lifted.
+                const float cjk = renderer.OpticalCenterOffset("回憶", font, 29);
+                if (cjk >= 0.0f || cjk != renderer.OpticalCenterOffset("製作群", font, 29)) {
+                    std::cerr << "FAIL: optical centre offset for NotoSansTC " << cjk << '\n';
                     result = 1;
                 }
             }

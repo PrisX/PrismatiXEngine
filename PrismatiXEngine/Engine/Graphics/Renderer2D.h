@@ -232,11 +232,25 @@ public:
     Rect DrawImageAuto(const std::string& path, DisplayMode mode, std::uint8_t alpha = 255, int offsetX = 0, int offsetY = 0, float scale = 1.0f, Shadow shadow = {});
 
     void DrawText(const std::string& text, float x, float y, const std::string& fontPath, int size, Color color, std::uint8_t alpha = 255, int wrap = 0);
+    // Centre puts the letters in the middle of `bounds`, not the line box:
+    // the line moves by OpticalCenterOffset. `opticalReference` is the text
+    // whose script picks the reference letter (a tracked label drawn one
+    // character at a time passes its whole text); empty means `text`.
     void DrawTextInRect(const std::string& text, const Rect& bounds, const std::string& fontPath,
                         int size, Color color, HorizontalAlignment horizontal,
                         VerticalAlignment vertical, bool wrap, std::uint8_t alpha = 255,
                         int outlineSize = 0, Color outlineColor = {0, 0, 0, 255},
-                        bool newlinesOnly = false);
+                        bool newlinesOnly = false, std::string_view opticalReference = {});
+    // How far a vertically centred line of `text` moves (logical pixels,
+    // negative is up) so that the ink of a reference letter, rather than the
+    // font's ascent-plus-descent line box, sits on the middle: the ideograph
+    // 中 when the text has CJK, kana or Hangul (its face fills the em box the
+    // way the other ideographs do), else the capital H (cap height, as CSS
+    // text-box-trim and most UI toolkits centre Latin). Fonts with a deep
+    // descent otherwise draw every centred caption visibly low. Per font,
+    // size and reference; cached.
+    [[nodiscard]] float OpticalCenterOffset(std::string_view text, const std::string& fontPath,
+                                            int size);
     void DrawTextOutline(const std::string& text, float x, float y, const std::string& fontPath, int size, Color textColor, Color outlineColor, int outlineSize, std::uint8_t alpha = 255, bool shadow = false, int wrap = 0);
     [[nodiscard]] Vec2 MeasureText(const std::string& text, const std::string& fontPath, int size, int wrap = 0);
     [[nodiscard]] text::TextLayout LayoutText(
@@ -380,6 +394,7 @@ private:
     float m_displayPixelsPerLogical = 1.0f;
     bool m_clarityCompensation = false;
     std::unordered_map<std::string, CachedText> m_textCache;
+    std::unordered_map<std::string, float> m_opticalOffsets;
     std::vector<Rect> m_clipStack;
     std::vector<TransformState> m_transformStack{{}};
     struct CompositionState {

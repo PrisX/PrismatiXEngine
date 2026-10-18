@@ -1523,6 +1523,7 @@ void Renderer2D::SetTextLocale(
 
 void Renderer2D::ClearTextCache() {
     m_textLayout.ClearCache();
+    m_opticalOffsets.clear();
     for (auto& [key, entry] : m_textCache) {
         if (entry.texture) SDL_DestroyTexture(entry.texture);
     }
@@ -1539,19 +1540,86 @@ void Renderer2D::SetTextSupersample(int factor) {
     ClearTextCache();
 }
 
+namespace {
+// CJK ideographs, kana, Hangul and fullwidth forms take the ideographic
+// reference; everything below U+2E80 (Latin, digits, Greek, Cyrillic,
+// punctuation) the capital one.
+bool HasIdeographicText(const std::string_view text) {
+    for (std::size_t index = 0; index < text.size();) {
+        const auto lead = static_cast<unsigned char>(text[index]);
+        if (lead < 0x80) { ++index; continue; }
+        const std::size_t length = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+        if (index + length > text.size()) break;
+        std::uint32_t code = length == 4 ? lead & 0x07u : length == 3 ? lead & 0x0Fu : lead & 0x1Fu;
+        for (std::size_t next = 1; next < length; ++next)
+            code = (code << 6) | (static_cast<unsigned char>(text[index + next]) & 0x3Fu);
+        // Variation selectors ride on the letter before them.
+        if (code >= 0x2E80 && !(code >= 0xFE00 && code <= 0xFE0F)) return true;
+        index += length;
+    }
+    return false;
+}
+}  // namespace
+
+float Renderer2D::OpticalCenterOffset(const std::string_view text, const std::string& fontPath,
+                                      const int size) {
+    if (size <= 0) return 0.0f;
+    const bool ideographic = HasIdeographicText(text);
+    const int ss = m_effectiveTextSupersample;
+    std::string key = fontPath;
+    key += '|';
+    key += std::to_string(size);
+    key += '|';
+    key += std::to_string(ss);
+    key += ideographic ? "|i" : "|c";
+    if (const auto found = m_opticalOffsets.find(key); found != m_opticalOffsets.end())
+        return found->second;
+    float offset = 0.0f;
+    // The font the text is rasterised with (fallbacks included), at the same
+    // supersampled size, so the metrics are those of the drawn pixels.
+    if (TTF_Font* font = m_assets.Font(fontPath, size * ss, 0)) {
+        int minY = 0, maxY = 0;
+        bool measured = ideographic &&
+            TTF_GetGlyphMetrics(font, 0x4E2D, nullptr, nullptr, &minY, &maxY, nullptr) && maxY > minY;
+        if (!measured)
+            measured = TTF_GetGlyphMetrics(font, 'H', nullptr, nullptr, &minY, &maxY, nullptr) && maxY > minY;
+        if (measured) {
+            // Rows from the top of the line box: the baseline is `ascent`
+            // down; the glyph's ink spans minY..maxY above it.
+            const float ascent = static_cast<float>(TTF_GetFontAscent(font));
+            const float lineBox = static_cast<float>(TTF_GetFontHeight(font));
+            const float ink = ascent - (static_cast<float>(minY) + static_cast<float>(maxY)) * 0.5f;
+            offset = (lineBox * 0.5f - ink) / static_cast<float>(ss);
+            // A font with nonsensical metrics must not throw text away.
+            const float limit = static_cast<float>(size) * 0.25f;
+            offset = std::clamp(offset, -limit, limit);
+        }
+    }
+    m_opticalOffsets.emplace(std::move(key), offset);
+    return offset;
+}
+
 void Renderer2D::DrawTextInRect(const std::string& text, const Rect& bounds,
                                 const std::string& fontPath, int size, Color color,
                                 HorizontalAlignment horizontal, VerticalAlignment vertical,
                                 bool wrap, std::uint8_t alpha,
-                                int outlineSize, Color outlineColor, bool newlinesOnly) {
+                                int outlineSize, Color outlineColor, bool newlinesOnly,
+                                const std::string_view opticalReference) {
     const int wrapWidth=newlinesOnly?-1:wrap?std::max(1,static_cast<int>(std::floor(bounds.w))):0;
+    // Centred text is centred on its letters (see OpticalCenterOffset); Top
+    // and Bottom keep the line box flush with the edge.
+    const float optical=vertical==VerticalAlignment::Center
+        ?OpticalCenterOffset(opticalReference.empty()?std::string_view(text):opticalReference,fontPath,size):0.0f;
     const CachedText* t=AcquireText(text,fontPath,size,color,0,wrapWidth,horizontal);if(!t)return;
     float x=bounds.x,y=bounds.y;
     if(horizontal==HorizontalAlignment::Center)x+=(bounds.w-t->w)*.5f;else if(horizontal==HorizontalAlignment::Right)x+=bounds.w-t->w;
-    if(vertical==VerticalAlignment::Center)y+=(bounds.h-t->h)*.5f;else if(vertical==VerticalAlignment::Bottom)y+=bounds.h-t->h;
+    if(vertical==VerticalAlignment::Center)y+=(bounds.h-t->h)*.5f+optical;else if(vertical==VerticalAlignment::Bottom)y+=bounds.h-t->h;
     const int edge=std::clamp(outlineSize,0,8);
     const float bleed=static_cast<float>(edge);
-    PushClip({bounds.x-bleed,bounds.y-bleed,bounds.w+bleed*2.0f,bounds.h+bleed*2.0f});
+    // The optical shift may move the line box past a tight rectangle's edge;
+    // the clip follows it so nothing that showed before is cut.
+    const float above=bleed+std::max(0.0f,-optical),below=bleed+std::max(0.0f,optical);
+    PushClip({bounds.x-bleed,bounds.y-above,bounds.w+bleed*2.0f,bounds.h+above+below});
     if(edge>0){
         // SDL_ttf wraps outlined glyphs using their enlarged metrics. During
         // typewriter reveal this can move the edge to the next line before the
