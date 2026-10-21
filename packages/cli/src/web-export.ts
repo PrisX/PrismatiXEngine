@@ -1,11 +1,13 @@
 import {spawn} from "node:child_process";
 import {createHash} from "node:crypto";
+import {readFileSync} from "node:fs";
 import {copyFile, mkdir, open, readFile, readdir, stat, writeFile} from "node:fs/promises";
-import {basename, dirname, extname, join, relative, resolve} from "node:path";
+import {basename, delimiter, dirname, extname, join, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {fingerprintFile, publishDirectory} from "./output-safety.js";
 import {readWebShaderArtifact} from "./web-pdx.js";
-import {convertWebShader} from "./web-shader.js";
+import {checkoutRoot, cliPackageRoot} from "./runtime-discovery.js";
+import {convertWebShader, sdlGpuWgsl} from "./web-shader.js";
 
 export const webTemplateRoot = fileURLToPath(new URL("../../templates/web", import.meta.url));
 const chunkSize = 1024 * 1024;
@@ -15,6 +17,8 @@ export interface WebExportOptions {
   projectRoot: string;
   distribution: string;
   playerDirectory: string;
+  /** Which of the package's renderers the export uses (default webgl2). */
+  renderer?: WebRenderer;
   output: string;
   ffmpeg?: string;
   onProgress?: (message: string) => void;
@@ -45,31 +49,110 @@ async function runFfmpeg(executable: string, source: string, output: string): Pr
     child.on("close", code => code === 0 ? accept() : reject(new Error(`Video transcode failed (${code}): ${error}`)));
   });
 }
-export async function resolveWebPlayer(directory: string): Promise<string> {
+export const webRenderers = ["webgl2", "webgpu"] as const;
+export type WebRenderer = typeof webRenderers[number];
+const CLI_VERSION = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {version: string}).version;
+interface WebPlayerManifest {
+  format?: string; schemaRevision?: number; variant?: string; engineVersion?: string; defaultRenderer?: string;
+  artifacts?: Record<string, string>; notices?: string[]; sources?: string[];
+  renderers?: Record<string, {directory?: string; artifacts?: Record<string, string>; notices?: string[]} & Record<string, unknown>>;
+}
+/** One renderer of a verified Web Player package: what an export copies, by export path. */
+export interface ResolvedWebPlayer {
+  root: string;
+  renderer: WebRenderer;
+  engineVersion: string;
+  /** Export path to package path, for every file the export copies. */
+  files: Map<string, string>;
+  notices: string[];
+  sources: string[];
+  /** The export's own web-player.json: this renderer only, with export paths. */
+  exportManifest: Record<string, unknown>;
+}
+/**
+ * Verifies a shipping Web Player package (scripts/build-wasm-player.mjs,
+ * schema revision 2) and selects one renderer: every shared file and every
+ * file of that renderer must match its SHA-256, and the package must be this
+ * CLI's version.
+ */
+export async function resolveWebPlayer(directory: string, renderer: WebRenderer = "webgl2"): Promise<ResolvedWebPlayer> {
   const root = resolve(directory);
-  const metadata = JSON.parse(await readFile(join(root, "web-player.json"), "utf8")) as
-    {format?: string; schemaRevision?: number; variant?: string; artifacts?: Record<string, string>; notices?: string[]; sources?: string[]};
-  if (metadata.format !== "PrismatiXWebPlayer" || metadata.schemaRevision !== 1 || metadata.variant !== "shipped")
+  const metadata = JSON.parse(await readFile(join(root, "web-player.json"), "utf8")) as WebPlayerManifest;
+  if (metadata.format !== "PrismatiXWebPlayer" || metadata.variant !== "shipped")
     throw new Error("--web-player must select a shipping Web Player; Preview and QA runtimes cannot be exported");
-  for (const filename of ["prismatix-player.mjs", "prismatix-player.wasm", "web-shaders.json", ...(metadata.notices ?? []), ...(metadata.sources ?? [])]) {
-    if (!safePath(filename)) throw new Error(`Unsafe Web Player artifact path: ${filename}`);
-    if (metadata.artifacts?.[filename] !== await fingerprintFile(join(root, filename)))
-      throw new Error(`Web Player artifact checksum mismatch: ${filename}`);
-  }
-  const handle = await open(join(root, "prismatix-player.wasm"), "r");
+  if (metadata.schemaRevision !== 2)
+    throw new Error(`Web Player schema revision ${String(metadata.schemaRevision)} is not supported; rebuild it with scripts/build-wasm-player.mjs`);
+  if (metadata.engineVersion !== CLI_VERSION)
+    throw new Error(`Web Player ${String(metadata.engineVersion)} does not match this CLI (${CLI_VERSION})`);
+  const entry = metadata.renderers?.[renderer];
+  if (!entry || typeof entry.directory !== "string" || !safePath(entry.directory))
+    throw new Error(`This Web Player package has no ${renderer} renderer (it has ${Object.keys(metadata.renderers ?? {}).join(", ") || "none"})`);
+  const prefix = `${entry.directory}/`;
+  const files = new Map<string, string>();
+  const verify = async (path: string, hashes: Record<string, string> | undefined, exportPath: string) => {
+    if (!safePath(path) || !safePath(exportPath)) throw new Error(`Unsafe Web Player artifact path: ${path}`);
+    if (hashes?.[path] !== await fingerprintFile(join(root, ...path.split("/"))))
+      throw new Error(`Web Player artifact checksum mismatch: ${path}`);
+    if (files.has(exportPath)) throw new Error(`Web Player artifact appears twice: ${exportPath}`);
+    files.set(exportPath, path);
+  };
+  const unprefixed = (path: string) => {
+    if (!path.startsWith(prefix)) throw new Error(`Web Player ${renderer} artifact outside ${prefix}: ${path}`);
+    return path.slice(prefix.length);
+  };
+  for (const path of ["web-shaders.json", ...(metadata.notices ?? []), ...(metadata.sources ?? [])])
+    await verify(path, metadata.artifacts, path);
+  for (const path of [`${prefix}prismatix-player.mjs`, `${prefix}prismatix-player.wasm`, ...(entry.notices ?? [])])
+    await verify(path, entry.artifacts, unprefixed(path));
+  const handle = await open(join(root, ...`${prefix}prismatix-player.wasm`.split("/")), "r");
   try {
     const header = Buffer.alloc(8);
     const {bytesRead} = await handle.read(header, 0, 8, 0);
     if (bytesRead !== 8 || !header.equals(Buffer.from([0, 97, 115, 109, 1, 0, 0, 0])))
       throw new Error("Web Player is not a WebAssembly module");
   } finally { await handle.close(); }
-  return root;
+  const notices = [...(metadata.notices ?? []), ...(entry.notices ?? []).map(unprefixed)];
+  const sources = metadata.sources ?? [];
+  const artifacts: Record<string, string> = {};
+  for (const [exportPath, path] of files)
+    artifacts[exportPath] = path.startsWith(prefix) ? entry.artifacts![path]! : metadata.artifacts![path]!;
+  const details = Object.fromEntries(Object.entries(entry).filter(([key]) => !["directory", "artifacts", "notices"].includes(key)));
+  return {root, renderer, engineVersion: metadata.engineVersion, files, notices, sources,
+    exportManifest: {format: "PrismatiXWebPlayer", schemaRevision: 2, variant: "shipped", status: "experimental",
+      engineVersion: metadata.engineVersion, renderer, ...details, artifacts, notices, sources}};
+}
+
+/**
+ * The Web Player `prismatix pack --target web` uses without --web-player:
+ * the one a release CLI carries in runtime/web, else (CLI running from an
+ * engine checkout) that checkout's out/package/wasm-player.
+ */
+export async function defaultWebPlayerDirectory(environment: NodeJS.ProcessEnv = process.env): Promise<string> {
+  const candidates = [join(cliPackageRoot, "runtime", "web")];
+  const checkout = await checkoutRoot(environment);
+  if (checkout) candidates.push(join(checkout, "out", "package", "wasm-player"));
+  for (const candidate of candidates)
+    if (await stat(join(candidate, "web-player.json")).then(info => info.isFile(), () => false)) return candidate;
+  throw new Error(`This CLI carries no Web Player (looked in ${candidates.join(", ")}); ` +
+    "pass --web-player <dir> built by scripts/build-wasm-player.mjs (docs/web-export.md)");
+}
+
+/** A host shader converter: the environment override, the package's tools/, then PATH. */
+async function shaderTool(name: "spirv-cross" | "naga", variable: string, player: string): Promise<string> {
+  const suffix = process.platform === "win32" ? ".exe" : "";
+  const candidates = [process.env[variable], join(player, "tools", `${name}${suffix}`),
+    ...(process.env.PATH ?? "").split(delimiter).filter(Boolean).map(directory => join(directory, `${name}${suffix}`))];
+  for (const candidate of candidates)
+    if (candidate && await stat(candidate).then(info => info.isFile(), () => false)) return candidate;
+  throw new Error(`Custom effects need the ${name} shader converter for Web export: set ${variable}, or put ${name} on PATH ` +
+    "(see docs/web-export.md, custom effects)");
 }
 
 /** Immutable chunks support on-demand reads, CDN hosting and offline playback
  * without depending on HTTP Range support or allocating a complete PDX shard. */
 export async function exportWeb(options: WebExportOptions) {
-  const player = await resolveWebPlayer(options.playerDirectory);
+  const resolved = await resolveWebPlayer(options.playerDirectory, options.renderer ?? "webgl2");
+  const player = resolved.root;
   const source = resolve(options.distribution);
   const packageManifest = JSON.parse(await readFile(join(source, "Package", "manifest.json"), "utf8")) as
     {format: string; schemaRevision: number; gameId: string; title: string; packageFingerprint: string;
@@ -153,23 +236,22 @@ export async function exportWeb(options: WebExportOptions) {
       options.onProgress?.(`Converting Web effect: ${effect.id}`);
       const temporary = join(cache, `${artifact.fingerprint}.spv`);
       await writeFile(temporary, bytes);
-      const suffix = process.platform === "win32" ? ".exe" : "";
       const shader = await convertWebShader(temporary, join(cache, artifact.fingerprint),
-        process.env.PRISMATIX_SPIRV_CROSS ?? join(player, "tools", `spirv-cross${suffix}`),
-        process.env.PRISMATIX_NAGA ?? join(player, "tools", `naga${suffix}`));
-      const json = join(cache, `${artifact.fingerprint}.json`);
-      await writeFile(json, JSON.stringify(shader));
+        await shaderTool("spirv-cross", "PRISMATIX_SPIRV_CROSS", player), await shaderTool("naga", "PRISMATIX_NAGA", player));
+      // The WebGPU renderer hands the WGSL to SDL_GPU, which binds differently.
+      const json = join(cache, `${artifact.fingerprint}.${resolved.renderer}.json`);
+      await writeFile(json, JSON.stringify(resolved.renderer === "webgpu" ? {...shader, sdlGpuWgsl: sdlGpuWgsl(shader.wgsl)} : shader));
       const path = `effects/${artifact.fingerprint}.json`;
       await addFile(path, json); effects[effect.id] = {fingerprint: artifact.fingerprint, path};
     }
-    for (const filename of ["prismatix-player.mjs", "prismatix-player.wasm", "web-player.json", "web-shaders.json"])
-      await copyFile(join(player, filename), join(staging, filename));
-    const playerMetadata = JSON.parse(await readFile(join(player, "web-player.json"), "utf8")) as {notices?: string[]; sources?: string[]};
-    const notices = playerMetadata.notices ?? [];
-    for (const filename of [...notices, ...(playerMetadata.sources ?? [])]) {
-      await mkdir(dirname(join(staging, filename)), {recursive: true});
-      await copyFile(join(player, filename), join(staging, filename));
+    // Only the chosen renderer's files: its runtime and notices at the export
+    // root, beside the shared shaders, notices and source archives.
+    for (const [exportPath, packagePath] of resolved.files) {
+      await mkdir(dirname(join(staging, ...exportPath.split("/"))), {recursive: true});
+      await copyFile(join(player, ...packagePath.split("/")), join(staging, ...exportPath.split("/")));
     }
+    await writeFile(join(staging, "web-player.json"), `${JSON.stringify(resolved.exportManifest, null, 2)}\n`);
+    const notices = resolved.notices;
     const templates = ["index.html", "player.mjs", "files.mjs", "video.mjs", "effects.mjs", "accessibility.mjs", "sw.mjs", "styles.css"];
     for (const filename of templates) await copyFile(join(webTemplateRoot, filename), join(staging, filename));
     const projectConfig = JSON.parse(await readFile(join(options.projectRoot, "prismatix.json"), "utf8").catch(() => "{}")) as {defaultLocale?: string};
@@ -177,17 +259,18 @@ export async function exportWeb(options: WebExportOptions) {
       gameId: packageManifest.gameId, title: packageManifest.title,
       locale: packageManifest.defaultLocale ?? projectConfig.defaultLocale ?? "und",
       packageFingerprint: packageManifest.packageFingerprint, resolution: packageManifest.resolution,
+      renderer: resolved.renderer, engineVersion: resolved.engineVersion,
       files: files.sort((a, b) => a.path.localeCompare(b.path)), videos, effects,
       shell: ["./", ...templates, "web-export.json", "prismatix-player.mjs", "prismatix-player.wasm", "web-player.json", "web-shaders.json", ...notices]};
     const identity = createHash("sha256").update(JSON.stringify(manifest));
-    for (const filename of [...templates, "prismatix-player.mjs", "prismatix-player.wasm", "web-player.json", "web-shaders.json", ...notices, ...(playerMetadata.sources ?? [])])
+    for (const filename of [...templates, "prismatix-player.mjs", "prismatix-player.wasm", "web-player.json", "web-shaders.json", ...notices, ...resolved.sources])
       identity.update(await fingerprintFile(join(staging, filename)));
     const exportId = identity.digest("hex");
     const serviceWorker = await readFile(join(staging, "sw.mjs"), "utf8");
     await writeFile(join(staging, "sw.mjs"), serviceWorker.replaceAll("__PRISMATIX_EXPORT_ID__", exportId));
     await writeFile(join(staging, "web-export.json"), JSON.stringify({...manifest, exportId}));
     await writeFile(join(staging, "_headers"), "/*\n  Cross-Origin-Opener-Policy: same-origin\n  Cross-Origin-Embedder-Policy: require-corp\n  X-Content-Type-Options: nosniff\n  Cache-Control: no-cache\n\n/*.wasm\n  Content-Type: application/wasm\n\n/_data/*\n  Cache-Control: public, max-age=31536000, immutable\n");
-    return {output: resolve(options.output), target: "web", gameId: manifest.gameId,
+    return {output: resolve(options.output), target: "web", renderer: resolved.renderer, gameId: manifest.gameId,
       files: files.length, videos: videoSources.size,
       bytes: files.reduce((sum, file) => sum + file.size, 0)};
   });

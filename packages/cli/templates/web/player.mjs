@@ -52,6 +52,10 @@ async function boot() {
     throw new Error("不相容的 Web 匯出格式");
   document.title = $("title").textContent = manifest.title;
   document.documentElement.lang = manifest.locale ?? "und";
+  // A WebGPU export has no WebGL fallback inside it; its author exports a
+  // WebGL2 build for browsers without WebGPU.
+  if (manifest.renderer === "webgpu" && !(await navigator.gpu?.requestAdapter().catch(() => null)))
+    throw new Error("此遊戲的網頁版使用 WebGPU，但這個瀏覽器無法使用 WebGPU。請改用支援 WebGPU 的瀏覽器。");
   const accessibility = new WebAccessibility($("semantics"), manifest.locale ?? "und");
   const files = new WebFiles(manifest, base);
   const video = new WebVideo(manifest, base, resume => {

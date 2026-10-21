@@ -157,6 +157,13 @@ async function isSourceCheckout(): Promise<boolean> {
   return await exists(join(packageRoot, "src")) &&
     await exists(resolve(packageRoot, "..", "..", "CMakePresets.json"));
 }
+/** This CLI package's root directory (where a release carries runtime/). */
+export const cliPackageRoot = packageRoot;
+/** The engine checkout's root, for a source-checkout CLI; PRISMATIX_NO_CHECKOUT_RUNTIME=1 disables it. */
+export async function checkoutRoot(environment: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+  if (environment.PRISMATIX_NO_CHECKOUT_RUNTIME === "1" || !(await isSourceCheckout())) return undefined;
+  return resolve(packageRoot, "..", "..");
+}
 /** The engine checkout's native build directory holding `file`, for a source-checkout CLI. */
 export async function checkoutRuntimeFile(file: string,
   environment: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {

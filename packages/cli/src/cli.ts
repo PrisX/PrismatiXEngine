@@ -44,7 +44,7 @@ import {builtinRoutes, ejectBuiltinUi} from "./eject.js";
 import {AndroidExportError, androidSettings, checkAndroidInputs, checkKeystoreEnvironment,
   claimAndroidOutput, collectAndroidOutputs, findAndroidSdk, findGradle, resolveAndroidPlayer,
   runGradle, stageGradleProject, templateSdlVersion} from "./android-export.js";
-import {exportWeb, resolveWebPlayer} from "./web-export.js";
+import {defaultWebPlayerDirectory, exportWeb, resolveWebPlayer, webRenderers, type WebRenderer} from "./web-export.js";
 import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
 import {transcodeMedia, type TranscodedFile} from "./media-transcode.js";
 import {testCommand, testHelp, waitForPort} from "./test-command.js";
@@ -110,7 +110,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   dev: {values: "runtime preview-host debounce ui-registry at route", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space no-transcode"},
-  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target android-player gradle android-sdk web-player web-package ffmpeg", flags: "encrypt ignore-disk-space check verify-media debug no-transcode"},
+  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target android-player gradle android-sdk web-player web-renderer web-package ffmpeg", flags: "encrypt ignore-disk-space check verify-media debug no-transcode"},
   run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: ""},
@@ -208,8 +208,10 @@ function parseOptions(command: string, args: readonly string[]): Options {
       !["desktop", "android", "web"].includes(values.get("target")!))
     throw new Error("--target must be desktop, android or web");
   const web = command === "pack" && values.get("target") === "web";
-  for (const name of ["web-player", "web-package", "ffmpeg"])
+  for (const name of ["web-player", "web-renderer", "web-package", "ffmpeg"])
     if (values.has(name) && !web) throw new Error(`--${name} requires --target web`);
+  if (values.has("web-renderer") && !(webRenderers as readonly string[]).includes(values.get("web-renderer")!))
+    throw new Error("--web-renderer must be webgl2 or webgpu");
   if (web && flags.has("check")) throw new Error("--check cannot be combined with --target web");
   const android = command === "pack" && values.get("target") === "android";
   for (const name of ["android-player", "gradle", "android-sdk"])
@@ -2521,24 +2523,24 @@ async function webPackCommand(options: Options): Promise<number> {
   let temporary: string | undefined;
   try {
     const location = await resolveProjectPath(options.positional[0]);
-    const argument = options.values.get("web-player");
-    if (!argument) throw new Error("--target web needs --web-player <shipping WASM Player directory>");
-    const playerDirectory = await resolveWebPlayer(argument);
+    // Both renderers are experimental; WebGL2 runs in more browsers.
+    const renderer = (options.values.get("web-renderer") ?? "webgl2") as WebRenderer;
+    const playerDirectory = (await resolveWebPlayer(options.values.get("web-player") ?? await defaultWebPlayerDirectory(), renderer)).root;
     const output = resolve(options.values.get("output") ?? join(location.root, "dist", "web"));
     let distribution = options.values.get("web-package");
     if (!distribution) {
       temporary = await mkdtemp(join(tmpdir(), "prismatix-web-"));
       const values = new Map(options.values);
-      for (const name of ["target", "web-player", "web-package", "ffmpeg"]) values.delete(name);
+      for (const name of ["target", "web-player", "web-renderer", "web-package", "ffmpeg"]) values.delete(name);
       values.set("output", join(temporary, "package"));
       distribution = (await packProject({values, flags: new Set(options.flags), positional: [...options.positional]})).output;
     }
     const result = await exportWeb({projectRoot: location.root, distribution,
-      playerDirectory, output,
+      playerDirectory, renderer, output,
       ...(options.values.has("ffmpeg") ? {ffmpeg: options.values.get("ffmpeg")!} : {}),
       onProgress: message => progress({severity: "information", code: "PXCLI1261", message})});
     process.stdout.write(machineOutput ? `${JSON.stringify({packed: true, ...result})}\n`
-      : `Web game exported: ${result.output}\n  ${result.files} resource files, ${result.videos} videos\n`);
+      : `Web game exported (${result.renderer}, experimental): ${result.output}\n  ${result.files} resource files, ${result.videos} videos\n`);
     return 0;
   } catch (error) {
     printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure ? error.diagnostics :
@@ -3595,7 +3597,9 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "prismatix pack [project] --target android --android-player <arm64-v8a dir> [--artifact <dir>] [--output <dir>]",
     "    [--gradle <gradle>] [--android-sdk <dir>] [--debug]   APK, plus an AAB when distribution.android.keystore is set;",
     "    needs JAVA_HOME (JDK 17+), Gradle 8.9+ and an Android SDK with platform 35 (ANDROID_HOME)",
-    "prismatix pack [project] --target web --web-player <WASM Player dir> [--web-package <distribution>] [--output <dir>] [--ffmpeg <path>]"],
+    "prismatix pack [project] --target web [--web-renderer webgl2|webgpu] [--web-player <WASM Player dir>]",
+    "    [--web-package <distribution>] [--output <dir>] [--ffmpeg <path>]   experimental; webgl2 (default) or webgpu,",
+    "    from the Web Player this CLI carries unless --web-player names another (docs/web-export.md)"],
   run: ["Build a distribution and start its Player.",
     "prismatix run [project] [--runtime <dir>]",
     "prismatix run [project] --dev [--json]                 an editor's Play button",

@@ -39,6 +39,21 @@ export interface WebShader {
   textures: {name: string; binding: number}[];
   samplers: {name: string; binding: number}[];
 }
+/**
+ * Rebinds a translated fragment shader for SDL_GPU's WebGPU backend (the
+ * WebGPU Web Player). The WGSL above has texture i at @group(2) @binding(i)
+ * and its sampler at i + 16 (see webSpirv); the backend expects texture i at
+ * binding 2i and its sampler at 2i + 1. Trailing spaces are trimmed so the
+ * output is stable text.
+ */
+export function sdlGpuWgsl(wgsl: string): string {
+  return wgsl.replace(/@group\(2\)\s*@binding\((\d+)\)(\s*var\s+\w+\s*:\s*(\w+))/gu, (_, binding: string, declaration: string, type: string) => {
+    const slot = Number(binding);
+    const sampler = type === "sampler" || type === "sampler_comparison";
+    if (sampler ? slot < 16 : slot >= 16) throw new Error(`Unexpected ${sampler ? "sampler" : "texture"} binding ${slot}`);
+    return `@group(2) @binding(${sampler ? (slot - 16) * 2 + 1 : slot * 2})${declaration}`;
+  }).replace(/[ \t]+$/gmu, "");
+}
 export async function convertWebShader(input: string, outputStem: string, spirvCross: string, naga: string): Promise<WebShader> {
   await mkdir(dirname(outputStem), {recursive: true});
   const bytes = await readFile(input);
