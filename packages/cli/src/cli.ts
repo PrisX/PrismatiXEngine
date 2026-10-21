@@ -2968,13 +2968,28 @@ async function devCommand(options: Options): Promise<number> {
     // Subscribe before the first build, including files not yet in a successful
     // dependency graph. Failed imports/assets and atomic saves remain observable.
     let changes = 1;
-    watcher = watch(location.root, {recursive: true}, (_event, filename) => {
-      if (isProjectEdit(filename)) changes += 1;
-    });
-    watcher.on("error", (error) => {
-      printDiagnostics([diagnostic("PXCLI1607", "Project watcher failed", location.root, String(error))]);
-      stopped = true;
-    });
+    const subscribe = (): void => {
+      const current = watch(location.root, {recursive: true}, (_event, filename) => {
+        if (isProjectEdit(filename)) changes += 1;
+      });
+      watcher = current;
+      current.on("error", (error) => {
+        // Node's recursive watcher on Linux indexes new directories itself and
+        // fails with ENOENT when one vanishes first, which this loop causes by
+        // retiring superseded preview revisions under .prismatix. That is a
+        // race, not a broken project: subscribe again and count it as a change
+        // so an edit made during the gap is still built.
+        if ((error as NodeJS.ErrnoException).code === "ENOENT" && !stopped && watcher === current) {
+          current.close();
+          subscribe();
+          changes += 1;
+          return;
+        }
+        printDiagnostics([diagnostic("PXCLI1607", "Project watcher failed", location.root, String(error))]);
+        stopped = true;
+      });
+    };
+    subscribe();
     const revisionRoot = join(location.root, ".prismatix", "dev", randomUUID());
     const storyCompilationCache = await loadStoryCompilationCache(location.root);
     let revision = 0;
