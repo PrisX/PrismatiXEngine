@@ -7,11 +7,24 @@ const fakeTty = fileURLToPath(new URL("../../test/fixtures/fake-tty.mjs", import
 export const keys = {enter: "\r", down: "\x1b[B", up: "\x1b[A", escape: "\x1b", ctrlC: "\x03", backspace: "\x7f"};
 
 /**
- * Runs the CLI as if in a terminal and types `steps` one at a time, each after
- * the screen has been quiet for a moment (the previous prompt has drawn).
+ * Whether `output` (everything written since the last keystroke) ends with a
+ * prompt that is listening: a prompt draws its active (◆) or error (▲) frame
+ * only after it has attached its key listener, and an answered (◇) or
+ * cancelled (■) frame means the next prompt has not drawn yet.
+ */
+function promptListening(output: string): boolean {
+  const listening = Math.max(output.lastIndexOf("◆"), output.lastIndexOf("▲"));
+  return listening >= 0 && listening > Math.max(output.lastIndexOf("◇"), output.lastIndexOf("■"));
+}
+
+/**
+ * Runs the CLI as if in a terminal and types `steps` one at a time. Each step
+ * waits until the CLI has reacted to the previous one and a prompt is
+ * listening again, so keys never reach the CLI between prompts (where they
+ * would be dropped) however slowly a loaded machine draws.
  */
 export async function driveCli(args: readonly string[], steps: readonly string[], options: {
-  readonly cwd?: string; readonly env?: NodeJS.ProcessEnv; readonly settleMs?: number;
+  readonly cwd?: string; readonly env?: NodeJS.ProcessEnv; readonly settleMs?: number; readonly stepTimeoutMs?: number;
 } = {}): Promise<{code: number | null; stdout: string; stderr: string}> {
   const child = spawn(process.execPath, ["--import", `file:///${fakeTty.replaceAll("\\", "/")}`,
     `${packageRoot}dist/src/cli.js`, ...args], {
@@ -20,18 +33,30 @@ export async function driveCli(args: readonly string[], steps: readonly string[]
   });
   let stdout = "";
   let stderr = "";
+  let sinceKeystroke = "";
   let lastOutput = Date.now();
+  let closed = false;
   child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; lastOutput = Date.now(); });
-  child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; lastOutput = Date.now(); });
-  const exited = new Promise<number | null>((accept) => child.once("close", accept));
-  const settle = options.settleMs ?? 250;
-  for (const step of steps) {
-    // Wait for the prompt to appear and the screen to settle before typing.
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    stderr += chunk; sinceKeystroke += chunk; lastOutput = Date.now();
+  });
+  const exited = new Promise<number | null>((accept) => child.once("close", (code) => { closed = true; accept(code); }));
+  const settle = options.settleMs ?? 100;
+  // Creating a project installs its tools before the last prompt; allow for a slow machine.
+  const stepTimeout = options.stepTimeoutMs ?? 240_000;
+  for (const [index, step] of steps.entries()) {
     const started = Date.now();
-    while (Date.now() - lastOutput < settle || stderr.length === 0) {
-      if (Date.now() - started > 30_000) break;
+    while (!promptListening(sinceKeystroke) || Date.now() - lastOutput < settle) {
+      if (closed) break;
+      if (Date.now() - started > stepTimeout) {
+        child.kill();
+        throw new Error(`No prompt was listening for step ${index + 1} (${JSON.stringify(step)}) after ` +
+          `${stepTimeout} ms; screen so far:\n${finalScreen(stderr)}`);
+      }
       await new Promise((accept) => setTimeout(accept, 25));
     }
+    if (closed) break;
+    sinceKeystroke = "";
     child.stdin.write(step);
     lastOutput = Date.now();
   }

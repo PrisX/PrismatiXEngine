@@ -947,8 +947,10 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
             COMMAND "${PRISMATIX_NODE_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test-package-verifier-cold-start.mjs"
                     $<TARGET_FILE:PrismatiXPackager>)
+        # Each of its 33 fresh Packager processes verifies with four workers;
+        # PROCESSORS keeps a parallel ctest from oversubscribing the machine.
         set_tests_properties(PrismatiX.SDK.PackageVerifierColdStart PROPERTIES
-            LABELS "sdk;contract;packager;native" TIMEOUT 90)
+            LABELS "sdk;contract;packager;native" TIMEOUT 90 PROCESSORS 4)
     endif()
     add_test(
         NAME PrismatiX.Player.CatalogNativeAcceptance
@@ -1345,10 +1347,20 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
     # A crashed assertion can open a native debug dialog on Windows and leave
     # the process alive forever. Every registered release-gate test therefore
     # has an explicit upper bound; long stress coverage gets its own budget.
+    # A test that declared its own bound above keeps it.
     get_property(PRISMATIX_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
-    set_tests_properties(${PRISMATIX_REGISTERED_TESTS} PROPERTIES TIMEOUT 60)
+    foreach(PRISMATIX_TEST IN LISTS PRISMATIX_REGISTERED_TESTS)
+        get_test_property(${PRISMATIX_TEST} TIMEOUT PRISMATIX_TEST_TIMEOUT)
+        if(NOT PRISMATIX_TEST_TIMEOUT)
+            set_tests_properties(${PRISMATIX_TEST} PROPERTIES TIMEOUT 60)
+        endif()
+    endforeach()
+    # The packaged-Player journey packs six distributions and launches the
+    # Player eight times: about three minutes on a Windows release build, more
+    # under sanitizers or a parallel run. Its waits end as soon as each step
+    # is logged, so this bound only limits how long a hung run takes to fail.
     set_tests_properties(PrismatiX.Player.CatalogNativeAcceptance
-                         PROPERTIES TIMEOUT 300)
+                         PROPERTIES TIMEOUT 1200)
     # The weekly RSS gate streams a real multi-GiB media entry. Regular runs
     # use 32 MiB through the identical path; only input size changes.
     set_tests_properties(PrismatiX.SDK.PackagerContract PROPERTIES TIMEOUT 600)

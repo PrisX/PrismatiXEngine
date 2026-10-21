@@ -9,8 +9,14 @@ import test from "node:test";
 
 const entry = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 const require = createRequire(import.meta.url);
+// Every wait here polls for an event and returns as soon as it happens; the
+// bound only limits how long a hung run takes to fail. A dev start (CLI, then
+// compile, then Preview) takes seconds on an idle machine and far longer on a
+// loaded one, such as node --test running the test files in parallel, so a
+// tight wall-clock bound made these tests fail without any defect.
+const STEP_TIMEOUT_MS = 120_000;
 async function until(check: () => Promise<boolean>, message: () => string): Promise<void> {
-  const deadline = Date.now() + 12_000;
+  const deadline = Date.now() + STEP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await check()) return;
     await new Promise(resolve => setTimeout(resolve, 30));
@@ -20,7 +26,7 @@ async function until(check: () => Promise<boolean>, message: () => string): Prom
 function alive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch { return false; } }
 
 for (const mode of ["ipc-stop", "launcher-crash"] as const) {
-  test(`global to pinned local CLI to PreviewHost exits cleanly on ${mode}`, {timeout: 25_000}, async t => {
+  test(`global to pinned local CLI to PreviewHost exits cleanly on ${mode}`, {timeout: 3 * STEP_TIMEOUT_MS}, async t => {
     const root = await mkdtemp(join(tmpdir(), "prismatix-launcher-lifecycle-"));
     let cleanupProcess: () => Promise<void> = async () => {};
     t.after(async () => { await cleanupProcess(); await rm(root, {recursive: true, force: true}); });

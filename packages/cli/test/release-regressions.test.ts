@@ -12,7 +12,14 @@ async function fixture() {
   await writeFile(join(root, 'Story/main.pxstory'), 'Original dialogue.\n[end]\n');
   return root;
 }
-const run = (args: string[]) => spawnSync(process.execPath, [cli, ...args, "--json"], {encoding: 'utf8', timeout: 30000});
+// Every wait here polls for an event and returns as soon as it happens; the
+// bound only limits how long a hung run takes to fail. A dev start (CLI, then
+// compile, then Preview) takes seconds on an idle machine and far longer on a
+// loaded one, such as node --test running the test files in parallel, so a
+// tight wall-clock bound made these tests fail without any defect.
+const STEP_TIMEOUT_MS = 120_000;
+const TEST_TIMEOUT_MS = 6 * STEP_TIMEOUT_MS;
+const run = (args: string[]) => spawnSync(process.execPath, [cli, ...args, "--json"], {encoding: 'utf8', timeout: STEP_TIMEOUT_MS});
 
 test('artifact output never replaces Story or an unrelated directory', async () => {
   const root = await fixture();
@@ -38,7 +45,7 @@ test('build --output still requests a distribution', async () => {
 });
 
 async function until(check: () => Promise<boolean>, diagnostic: () => string): Promise<void> {
-  const deadline = Date.now() + 15000;
+  const deadline = Date.now() + STEP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await check()) return;
     await new Promise((accept) => setTimeout(accept, 50));
@@ -46,7 +53,7 @@ async function until(check: () => Promise<boolean>, diagnostic: () => string): P
   assert.fail(`Timed out: ${diagnostic()}`);
 }
 
-test('dev recovers first failure, retains acknowledged revision on rejection, and plays after crash', {timeout: 45000}, async () => {
+test('dev recovers first failure, retains acknowledged revision on rejection, and plays after crash', {timeout: TEST_TIMEOUT_MS}, async () => {
   const root = await fixture();
   const host = join(root, 'host.mjs');
   const log = join(root, '.prismatix', 'host-log.jsonl');
@@ -121,7 +128,7 @@ test('typed options reject misspellings, missing values and conflicting modes', 
   } finally { await rm(root,{recursive:true,force:true}); }
 });
 
-test('Preview rejects incompatible contracts, oversized frames and stale acknowledgements', {timeout:30000}, async()=>{
+test('Preview rejects incompatible contracts, oversized frames and stale acknowledgements', {timeout: TEST_TIMEOUT_MS}, async()=>{
   const root=await fixture();
   try {
     for(const mode of ['schema','oversize','stale']) {

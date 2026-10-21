@@ -48,6 +48,15 @@ set(STEP_WATCH_ACK FALSE)
 set(CONTINUE_ACK FALSE)
 set(SHUTDOWN_ACK FALSE)
 set(BREAKPOINT_EVENT FALSE)
+# The first advance normally finds the line still revealing and only shows
+# it, so the second advance runs the command. On a loaded machine the Host
+# draws enough frames before the first advance arrives (requests are read one
+# per frame) that the line has finished revealing: the first advance then runs
+# the command and hits the breakpoint, and the second is correctly refused
+# because the Runtime is no longer waiting for a click. Either order verifies
+# the same debugger contract; BREAKPOINT_REQUEST records which advance ran it.
+set(BREAKPOINT_REQUEST "")
+set(ADVANCE_REFUSED FALSE)
 set(STEP_EVENT FALSE)
 set(PRINT_EVENT FALSE)
 set(WARN_EVENT FALSE)
@@ -115,6 +124,12 @@ foreach(LINE IN LISTS OUTPUT_LINES)
         set(CONTINUE_ACK TRUE)
     elseif(TYPE STREQUAL "shutdownAccepted")
         set(SHUTDOWN_ACK TRUE)
+    elseif(TYPE STREQUAL "error" AND REQUEST_ID STREQUAL "advance-debug")
+        string(JSON CODE GET "${LINE}" code)
+        if(NOT CODE STREQUAL "preview-cannot-advance" OR NOT BREAKPOINT_REQUEST STREQUAL "advance-show-all")
+            message(FATAL_ERROR "The second advance was refused although the first did not run the command: ${LINE}")
+        endif()
+        set(ADVANCE_REFUSED TRUE)
     elseif(TYPE STREQUAL "debug")
         string(JSON ASYNC GET "${LINE}" async)
         if(NOT ASYNC)
@@ -134,14 +149,20 @@ foreach(LINE IN LISTS OUTPUT_LINES)
         string(JSON SOURCE GET "${LINE}" scriptCallStack 0 source)
         string(JSON SOURCE_LINE GET "${LINE}" scriptCallStack 0 line)
         string(JSON LOCALS_COUNT LENGTH "${LINE}" scriptCallStack 0 locals)
-        if(REQUEST_ID STREQUAL "advance-debug")
-            if(NOT ADVANCE_ACK OR NOT REASON STREQUAL "breakpoint" OR
+        if(REQUEST_ID STREQUAL "advance-debug" OR REQUEST_ID STREQUAL "advance-show-all")
+            if(REQUEST_ID STREQUAL "advance-debug")
+                set(ADVANCE_REQUEST_ACK ${ADVANCE_ACK})
+            else()
+                set(ADVANCE_REQUEST_ACK ${SHOW_ALL_ACK})
+            endif()
+            if(NOT ADVANCE_REQUEST_ACK OR NOT REASON STREQUAL "breakpoint" OR
                NOT SOURCE STREQUAL "Content/Extensions/debug.js" OR
                NOT SOURCE_LINE EQUAL 3 OR STACK_COUNT LESS 1 OR
                LOCALS_COUNT LESS 2)
                 message(FATAL_ERROR "Async script breakpoint payload is incomplete or preceded its acknowledgement: ${LINE}")
             endif()
             set(BREAKPOINT_EVENT TRUE)
+            set(BREAKPOINT_REQUEST "${REQUEST_ID}")
         elseif(REQUEST_ID STREQUAL "script-step")
             if(NOT STEP_ACK OR NOT REASON STREQUAL "step" OR
                NOT SOURCE STREQUAL "Content/Extensions/debug.js" OR
@@ -178,7 +199,11 @@ foreach(LINE IN LISTS OUTPUT_LINES)
     endif()
 endforeach()
 
-if(NOT APPLY_ACK OR NOT BREAKPOINTS_ACK OR NOT SHOW_ALL_ACK OR NOT ADVANCE_ACK OR
+if(ADVANCE_ACK AND NOT BREAKPOINT_REQUEST STREQUAL "advance-debug")
+    message(FATAL_ERROR "The second advance was accepted but did not run the command to its breakpoint: ${OUTPUT}")
+endif()
+if(NOT APPLY_ACK OR NOT BREAKPOINTS_ACK OR NOT SHOW_ALL_ACK OR
+   NOT (ADVANCE_ACK OR ADVANCE_REFUSED) OR
    NOT BREAKPOINT_WATCH_ACK OR NOT STEP_ACK OR NOT STEP_WATCH_ACK OR
    NOT CONTINUE_ACK OR NOT SHUTDOWN_ACK)
     message(FATAL_ERROR "PreviewHost script debugger acknowledgements are incomplete: ${OUTPUT}")

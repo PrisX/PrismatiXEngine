@@ -66,6 +66,14 @@ px::sdk::PackageInput Input(const std::filesystem::path& root,
             std::filesystem::file_size(path)};
 }
 
+// Every wait below returns as soon as its log line appears or its process
+// exits, so this bound only decides how long a broken run takes to fail. It
+// used to be 10 s per log line and 35 s per exit, which a cold Player start
+// (GPU device, archive mounts, font atlas) exceeds on a loaded machine: a
+// parallel ctest run or a sanitizer build. The journey content, not its
+// speed, is what this test verifies.
+constexpr std::chrono::milliseconds kPlayerStepTimeout = 180s;
+
 bool WaitUntil(const std::chrono::milliseconds timeout,
                const std::function<bool()>& condition) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -78,7 +86,7 @@ bool WaitUntil(const std::chrono::milliseconds timeout,
 
 bool WaitForLog(const std::filesystem::path& log,
                 const std::string_view expected,
-                const std::chrono::milliseconds timeout = 10s) {
+                const std::chrono::milliseconds timeout = kPlayerStepTimeout) {
     return WaitUntil(timeout, [&] {
         std::error_code error;
         if (!std::filesystem::is_regular_file(log, error) || error) return false;
@@ -984,7 +992,7 @@ int main(int argc, char* argv[]) {
         suite.Require(WaitForLog(log, "Player E2E journey complete name=catalog"),
                       "Player completes the deterministic packaged journey");
         std::optional<int> exitCode;
-        suite.Require(WaitUntil(35s, [&] {
+        suite.Require(WaitUntil(kPlayerStepTimeout, [&] {
                           exitCode = process.CompletedExitCode();
                           return exitCode.has_value();
                       }),
@@ -1083,7 +1091,7 @@ int main(int argc, char* argv[]) {
                       "standalone new distribution launches with an old encrypted slot");
         suite.Require(WaitForLog(standaloneLog,
                                  "Player E2E previous-version save loaded") &&
-                          WaitUntil(35s, [&] {
+                          WaitUntil(kPlayerStepTimeout, [&] {
                               return standaloneProcess.CompletedExitCode().has_value();
                           }),
                       "standalone distribution loads a predecessor slot without an overlay");
@@ -1101,7 +1109,7 @@ int main(int argc, char* argv[]) {
                           WaitForLog(signedLog,
                                      "Player presentation ready route=title"),
                       "Player mounts signed updates and loads the base-version save");
-        suite.Require(WaitUntil(35s, [&] {
+        suite.Require(WaitUntil(kPlayerStepTimeout, [&] {
                           return signedProcess.CompletedExitCode().has_value();
                       }), "signed-overlay Player completes its native journey");
         suite.Expect(signedProcess.CompletedExitCode() == 0,
@@ -1120,7 +1128,7 @@ int main(int argc, char* argv[]) {
         suite.Require(enableAdult.Start(packagedPlayer, launchDirectory,
                                         signedDataRoot,
                                         "--optional-pack adult on") &&
-                          WaitUntil(10s, [&] {
+                          WaitUntil(kPlayerStepTimeout, [&] {
                               return enableAdult.CompletedExitCode().has_value();
                           }) && enableAdult.CompletedExitCode() == 0 &&
                           px::progress::ReadEnabledOptionalPackId(
@@ -1134,7 +1142,7 @@ int main(int argc, char* argv[]) {
                           WaitForLog(signedLog,
                                      "Player optional pack enabled id=adult"),
                       "Player mounts adult content after both signed updates");
-        suite.Require(WaitUntil(35s, [&] {
+        suite.Require(WaitUntil(kPlayerStepTimeout, [&] {
                           return adultProcess.CompletedExitCode().has_value();
                       }), "optional-pack Player completes its native journey");
         suite.Expect(adultProcess.CompletedExitCode() == 0,
@@ -1155,7 +1163,7 @@ int main(int argc, char* argv[]) {
         suite.Require(disableAdult.Start(packagedPlayer, launchDirectory,
                                          signedDataRoot,
                                          "--optional-pack adult off") &&
-                          WaitUntil(10s, [&] {
+                          WaitUntil(kPlayerStepTimeout, [&] {
                               return disableAdult.CompletedExitCode().has_value();
                           }) && disableAdult.CompletedExitCode() == 0 &&
                           px::progress::ReadEnabledOptionalPackId(
@@ -1181,7 +1189,7 @@ int main(int argc, char* argv[]) {
                           WaitForLog(migratedLog,
                                      "Player E2E previous-version save loaded"),
                       "Player migrates and restores a real save from the base release");
-        suite.Require(WaitUntil(35s, [&] {
+        suite.Require(WaitUntil(kPlayerStepTimeout, [&] {
                           return migratedProcess.CompletedExitCode().has_value();
                       }), "migrated-save Player completes its native journey");
         suite.Expect(migratedProcess.CompletedExitCode() == 0,
@@ -1206,7 +1214,7 @@ int main(int argc, char* argv[]) {
                           WaitForLog(rejectedLog,
                                      "Player presentation ready route=title"),
                       "Player rejects unsigned content and starts the base package");
-        suite.Require(WaitUntil(35s, [&] {
+        suite.Require(WaitUntil(kPlayerStepTimeout, [&] {
                           return rejectedProcess.CompletedExitCode().has_value();
                       }), "base Player completes after rejecting the overlay");
         suite.Expect(rejectedProcess.CompletedExitCode() == 0,
