@@ -47,7 +47,7 @@
     }
   ],
   "policy": {
-    "sampleAssets": "Each sample under Samples/ carries SAMPLE_PROVENANCE.json listing every file with its SHA-256, origin and licence; scripts/check-sample-provenance.mjs --release rejects an unlisted or changed file and any licence still pending.",
+    "sampleAssets": "Each sample under Samples/ carries SAMPLE_PROVENANCE.json listing every file with its SHA-256, origin and licence; scripts/check-sample-provenance.mjs --release rejects an unlisted or changed file and any licence still pending. The project owner's AI-generated pictures for samples (PrismatiX Studio's new-project background and cast) are recorded as \"sample-only\": accepted in samples, for their exact bytes only, and to be replaced before a game is released.",
     "unknownOrigin": "Shipped assets (anything in an npm package, runtime bundle, template or sample) with unknown origin or redistribution terms are release-blocking. A repository test fixture that is not shipped may be recorded here with an unknown origin, marked as such in its redistribution field."
   }
 }

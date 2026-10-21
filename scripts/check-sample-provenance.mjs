@@ -10,8 +10,11 @@
 //                                                       (re)write one inventory
 //
 // A licence that is not settled is recorded as "license": "TBD" with
-// "status": "pending" and the reason; it never passes a release check. Text
-// files are hashed with LF line endings, so a CRLF checkout verifies too.
+// "status": "pending" and the reason; it never passes a release check.
+// The project owner's own pictures for samples are recorded as
+// "license": "sample-only" with "status": "sample-only": they pass, but only
+// with the exact bytes listed in `sampleOnly` below. Text files are hashed
+// with LF line endings, so a CRLF checkout verifies too.
 
 import {spawnSync} from "node:child_process";
 import {createHash} from "node:crypto";
@@ -22,7 +25,21 @@ import {fileURLToPath} from "node:url";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const samplesRoot = join(repositoryRoot, "Samples");
 const inventoryName = "SAMPLE_PROVENANCE.json";
-const licenses = new Set(["MIT", "OFL-1.1", "project-branding-restricted", "TBD"]);
+const licenses = new Set(["MIT", "OFL-1.1", "project-branding-restricted", "sample-only", "TBD"]);
+const statuses = new Set(["pending", "sample-only"]);
+
+// Pictures the project owner supplied for samples only (PrismatiX Studio's
+// new-project background and cast), by SHA-256. "sample-only" passes a
+// release check for these bytes and for nothing else.
+const sampleOnlyNote = "AI-generated image supplied by the project owner (Owen Liu) for use in samples only. Replace it before releasing a game.";
+const sampleOnly = new Map([
+  ["4c134ca7dda9cd5b2e386cf3e0574f9ba648aa21dece660cd78c65688ce90116",
+    "the street background PrismatiX Studio puts in every new project"],
+  ["7fdf790ad270134cc32bf6be23cf06117f01f2076636d06c0eb79e42f27b77d7",
+    "the portrait of 白音 (Shirone), one of the two characters PrismatiX Studio puts in every new project"],
+  ["3b8c6b014f3304fcf40220eb3ab78af965f66608d5414f91956912be07644655",
+    "the portrait of 小春 (Koharu), one of the two characters PrismatiX Studio puts in every new project"],
+]);
 const binary = /\.(?:png|jpe?g|webp|gif|ttf|otf|woff2?|wav|ogg|opus|mp3|flac|mp4|webm)$/iu;
 const posix = (path) => path.split(sep).join("/");
 
@@ -68,10 +85,9 @@ function describe(path, sha256, engine) {
     return {origin: `Copy of the engine's ${copied.path} (${copied.origin})`, license: copied.license, copyOf: copied.path};
   if (path === "Content/Fonts/OFL-1.1.txt")
     return {origin: "SIL Open Font License 1.1 text, as in the engine's Resources/Fonts/OFL-1.1.txt", license: "OFL-1.1"};
-  if (path === "Assets/Backgrounds/street.jpg")
-    return {origin: "Supplied by the project owner (Owen Liu) as PrismatiX Studio's new-project background; ASSET_PROVENANCE.md records its generation metadata",
-      license: "TBD", status: "pending",
-      note: "Licence: TBD. Pending the project owner's confirmation of redistribution rights (including the terms of the model and LoRA named in ASSET_PROVENANCE.md). Release-blocking until confirmed."};
+  if (sampleOnly.has(sha256))
+    return {origin: `Supplied by the project owner (Owen Liu): ${sampleOnly.get(sha256)}`,
+      license: "sample-only", status: "sample-only", note: sampleOnlyNote};
   if (!binary.test(path)) return {origin: starterOrigin, license: "MIT"};
   throw new Error(`${path}: no known origin; add it to ${inventoryName} by hand`);
 }
@@ -84,7 +100,9 @@ async function write(root) {
   const files = [];
   for (const file of await sampleFiles(root)) {
     const sha256 = await digest(join(root, file));
-    const kept = before.get(file);
+    // The owner's sample pictures are always described afresh, so an older
+    // entry (a pending licence, say) does not outlive their settled terms.
+    const kept = sampleOnly.has(sha256) ? undefined : before.get(file);
     const {path: _path, sha256: _sha, ...description} = kept?.sha256 === sha256 ? kept : describe(file, sha256, engine);
     files.push({path: file, sha256, ...description});
   }
@@ -97,6 +115,7 @@ async function check(release) {
   const engine = await engineInventory();
   const problems = [];
   const pending = [];
+  let ownerSupplied = 0;
   const samples = (await readdir(samplesRoot, {withFileTypes: true})).filter((entry) => entry.isDirectory());
   if (samples.length === 0) problems.push("Samples/ has no sample");
   let checked = 0;
@@ -123,6 +142,15 @@ async function check(release) {
         problems.push(`${label}/${file} has an unknown licence ${JSON.stringify(entry.license)}`);
       if (entry.copyOf !== undefined && engine.get(entry.sha256)?.path !== entry.copyOf)
         problems.push(`${label}/${file} is not byte-identical to the engine's ${entry.copyOf}`);
+      if (entry.status !== undefined && !statuses.has(entry.status))
+        problems.push(`${label}/${file} has an unknown status ${JSON.stringify(entry.status)}`);
+      if (entry.license === "sample-only" || entry.status === "sample-only") {
+        if (entry.license !== "sample-only" || entry.status !== "sample-only")
+          problems.push(`${label}/${file} must record both "license" and "status" as "sample-only"`);
+        else if (!sampleOnly.has(entry.sha256))
+          problems.push(`${label}/${file} is marked sample-only but is not one of the owner-supplied sample pictures`);
+        else ownerSupplied += 1;
+      }
       if (entry.license === "TBD" || entry.status === "pending")
         pending.push(`${label}/${file}: ${entry.note ?? "licence pending"}`);
     }
@@ -137,6 +165,7 @@ async function check(release) {
     process.exit(1);
   }
   process.stdout.write(`sample provenance: ${checked} files in ${samples.length} sample(s) listed and verified` +
+    `${ownerSupplied > 0 ? `; ${ownerSupplied} owner-supplied picture(s) for sample use only` : ""}` +
     `${pending.length > 0 ? `; ${pending.length} licence(s) pending (release-blocking)` : ""}\n`);
 }
 

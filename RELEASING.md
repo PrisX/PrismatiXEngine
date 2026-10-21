@@ -14,7 +14,9 @@ which does all of it. Nothing is published from a developer machine.
    `docs/releases/X.Y.Z.md`), and the tagged commit must be on `master`.
    `node scripts/check-sample-provenance.mjs --release` must pass: every file
    under `Samples/` listed in its `SAMPLE_PROVENANCE.json` with a settled
-   licence. A licence recorded as pending (`"license": "TBD"`) blocks the tag.
+   licence. A licence recorded as pending (`"license": "TBD"`) blocks the tag;
+   the project owner's AI-generated pictures for samples, recorded as
+   `"sample-only"`, pass for their exact bytes only.
 2. **javascript**: `pnpm run check` (contracts, every TypeScript package test,
    the mock clean-install journey, docs examples).
 3. **native**, on Windows x64, Linux x64, macOS x64 and macOS arm64: the same
