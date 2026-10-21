@@ -75,6 +75,7 @@ jobs:
       - uses: ./.github/actions/setup-js
         with:
           build: "false"
+          cache-write: "false"
       - name: Check schemas, generated contracts, TypeScript, and every package test
         run: pnpm run check
 
@@ -109,6 +110,8 @@ jobs:
         with:
           submodules: recursive
       - uses: ./.github/actions/setup-js
+        with:
+          cache-write: "false"
       - uses: ./.github/actions/native-build
         with:
           triplet: ${{ matrix.triplet }}
@@ -117,6 +120,8 @@ jobs:
           c-compiler: ${{ matrix.c-compiler }}
           cxx-compiler: ${{ matrix.cxx-compiler }}
           vcpkg-install-root: out/release/vcpkg
+          # Restore-only: a release never writes a cache that CI builds trust.
+          cache-write: "false"
       - uses: ./.github/actions/native-tests
         with:
           build-dir: out/release/build
@@ -149,6 +154,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - uses: ./.github/actions/setup-js
+        with:
+          cache-write: "false"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: runtime-*
@@ -190,6 +197,7 @@ jobs:
       - uses: ./.github/actions/setup-js
         with:
           build: "false"
+          cache-write: "false"
       - name: Install Linux display and audio libraries for the Player launch
         if: runner.os == 'Linux'
         run: bash .github/scripts/install-linux-dependencies.sh

@@ -4,12 +4,20 @@ description: >-
   (through Corepack), the locked workspace dependencies and, unless disabled,
   the built TypeScript packages.
 
+  The pnpm store is cached between runs (keyed by pnpm-lock.yaml), so a run
+  only downloads packages the lockfile gained. pnpm verifies every stored
+  package against the lockfile's integrity hashes, but the release workflow
+  still passes cache-write "false" so it only restores.
+
 inputs:
   node-version:
     description: Node.js version.
     default: "24.14.0"
   build:
     description: Run `pnpm run build` (contracts check and every TypeScript package).
+    default: "true"
+  cache-write:
+    description: '"true" to save the pnpm store cache; "false" to only restore it.'
     default: "true"
 
 runs:
@@ -22,9 +30,28 @@ runs:
     - name: Enable pnpm
       shell: bash
       run: corepack enable pnpm
+    - name: Locate the pnpm store
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+    - name: Restore the pnpm store
+      id: pnpm-cache
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ inputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-store-${{ runner.os }}-${{ inputs.node-version }}-
     - name: Install locked workspace dependencies
       shell: bash
       run: pnpm install --frozen-lockfile --ignore-scripts
+    - name: Save the pnpm store
+      if: always() && inputs.cache-write == 'true' && steps.pnpm-cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ inputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}
     - name: Build installable author tooling
       if: inputs.build == 'true'
       shell: bash

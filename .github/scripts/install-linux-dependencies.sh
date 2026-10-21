@@ -3,7 +3,7 @@ set -euo pipefail
 
 sudo apt-get update
 sudo apt-get install --yes --no-install-recommends \
-  autoconf autoconf-archive automake libtool libltdl-dev \
+  autoconf autoconf-archive automake ccache libtool libltdl-dev \
   nasm yasm pkg-config python3-jinja2 python3-venv libclang-rt-dev \
   libasound2-dev libpulse-dev libaudio-dev libjack-dev libsndio-dev \
   libdbus-1-dev libibus-1.0-dev libudev-dev libpipewire-0.3-dev \

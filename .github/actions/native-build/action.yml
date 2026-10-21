@@ -5,6 +5,19 @@ description: >-
   and compiles it. Used by the quality gate and the release workflow so both
   build the same way.
 
+  Two caches keep CI fast. The vcpkg binary cache (built ports) is shared by
+  every job with the same OS, triplet and vcpkg inputs. A ccache compiler
+  cache is used on Linux and macOS; MSVC is left uncached because ccache
+  needs /Z7-style debug info there, which would change the Windows build
+  flags. Both are saved even when a later step fails, so a failing compile
+  does not throw away the dependency build.
+
+  With cache-write "false" (the release workflow) the vcpkg cache is
+  restore-only and ccache is not used at all: a release never writes a cache
+  entry that later builds would trust, and its binaries are compiled cold.
+  Caches written on a pull request are only readable by that pull request, so
+  restoring on master only ever reads entries written by master.
+
 inputs:
   triplet:
     description: vcpkg target triplet (x64-linux, x64-windows, x64-osx, arm64-osx).
@@ -27,6 +40,11 @@ inputs:
   vcpkg-install-root:
     description: Where vcpkg installs the dependencies, relative to the workspace.
     required: true
+  cache-write:
+    description: >-
+      "true" to save the vcpkg binary cache and the compiler cache; "false" to
+      only restore the vcpkg binary cache and not use ccache.
+    default: "true"
 
 runs:
   using: composite
@@ -38,7 +56,7 @@ runs:
     - name: Install macOS build tools
       if: runner.os == 'macOS'
       shell: bash
-      run: brew install autoconf automake libtool nasm pkg-config
+      run: brew install autoconf automake libtool nasm pkg-config ccache
     - name: Check the runner architecture matches the triplet
       if: runner.os == 'macOS'
       shell: bash
@@ -56,6 +74,31 @@ runs:
     - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
       with:
         vcpkgDirectory: ${{ runner.temp }}/vcpkg
+    # run-vcpkg sets VCPKG_BINARY_SOURCES to the removed x-gha backend; point
+    # vcpkg at a workspace directory that actions/cache can persist instead.
+    - name: Use a persistent vcpkg binary cache
+      shell: bash
+      run: |
+        workspace="${GITHUB_WORKSPACE//\\//}"
+        dir="$workspace/out/ci/vcpkg-binary-cache"
+        mkdir -p "$dir"
+        {
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$dir"
+          echo "VCPKG_BINARY_SOURCES=clear;files,$dir,readwrite"
+        } >> "$GITHUB_ENV"
+    # The key names everything that decides which ports are built (vcpkg
+    # inputs, overlay ports and triplets, the vcpkg baseline) plus the runner
+    # image. The restore key falls back to the newest older entry for this OS,
+    # triplet and compiler; vcpkg itself checks each package's ABI hash, so a
+    # stale entry only ever supplies ports that are still valid.
+    - name: Restore the vcpkg binary cache
+      id: vcpkg-cache
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      with:
+        path: out/ci/vcpkg-binary-cache
+        key: vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-${{ env.ImageVersion }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}
+        restore-keys: |
+          vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-
     - name: Resolve dependencies
       if: runner.os != 'Windows'
       shell: bash
@@ -69,16 +112,53 @@ runs:
         $installRoot = Join-Path $env:GITHUB_WORKSPACE "${{ inputs.vcpkg-install-root }}"
         & "$env:VCPKG_ROOT/vcpkg.exe" install --triplet "${{ inputs.triplet }}" "--x-install-root=$installRoot"
         if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency resolution failed" }
+    # Saved right after the install, even if the install itself failed: the
+    # ports that did build are kept. An exact hit means there is nothing new.
+    - name: Save the vcpkg binary cache
+      if: always() && inputs.cache-write == 'true' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      with:
+        path: out/ci/vcpkg-binary-cache
+        key: vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-${{ env.ImageVersion }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}
+    - name: Prepare the compiler cache
+      id: ccache-setup
+      if: runner.os != 'Windows' && inputs.cache-write == 'true'
+      shell: bash
+      run: |
+        {
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/out/ci/ccache"
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+          echo "CCACHE_MAXSIZE=400M"
+          echo "CCACHE_COMPRESS=1"
+          echo "CCACHE_COMPILERCHECK=content"
+        } >> "$GITHUB_ENV"
+        mkdir -p "$GITHUB_WORKSPACE/out/ci/ccache"
+        echo "enabled=true" >> "$GITHUB_OUTPUT"
+    - name: Restore the compiler cache
+      if: steps.ccache-setup.outputs.enabled == 'true'
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      with:
+        path: out/ci/ccache
+        key: ccache-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.build-type }}-${{ inputs.sanitizers }}-${{ github.sha }}
+        restore-keys: |
+          ccache-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.build-type }}-${{ inputs.sanitizers }}-
     - name: Configure
       if: runner.os != 'Windows'
       shell: bash
       env:
         PX_C_COMPILER: ${{ inputs.c-compiler }}
         PX_CXX_COMPILER: ${{ inputs.cxx-compiler }}
+        PX_CCACHE: ${{ steps.ccache-setup.outputs.enabled }}
       run: |
         compilers=()
         [[ -n "$PX_C_COMPILER" ]] && compilers+=("-DCMAKE_C_COMPILER=$PX_C_COMPILER")
         [[ -n "$PX_CXX_COMPILER" ]] && compilers+=("-DCMAKE_CXX_COMPILER=$PX_CXX_COMPILER")
+        if [[ "$PX_CCACHE" == "true" ]]; then
+          compilers+=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+                      -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache)
+          ccache --zero-stats
+        fi
         cmake -S . -B "${{ inputs.build-dir }}" -G Ninja \
           -DCMAKE_BUILD_TYPE="${{ inputs.build-type }}" \
           "${compilers[@]}" \
@@ -119,3 +199,16 @@ runs:
       run: |
         cmake --build "${{ inputs.build-dir }}" --parallel
         if ($LASTEXITCODE -ne 0) { throw "CMake build failed" }
+    # Saved after a failed compile too: ccache keeps every object that did
+    # build, so the next push only recompiles what changed.
+    - name: Show compiler cache statistics
+      if: always() && steps.ccache-setup.outputs.enabled == 'true'
+      shell: bash
+      run: ccache --show-stats || true
+    - name: Save the compiler cache
+      if: always() && steps.ccache-setup.outputs.enabled == 'true'
+      continue-on-error: true
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      with:
+        path: out/ci/ccache
+        key: ccache-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.build-type }}-${{ inputs.sanitizers }}-${{ github.sha }}
