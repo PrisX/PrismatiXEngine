@@ -1,5 +1,6 @@
 import {lstat, readFile} from "node:fs/promises";
 import {join, resolve} from "node:path";
+import {distributionDataRoot} from "./distribution-layout.js";
 
 type RecordValue = Record<string, unknown>;
 
@@ -55,7 +56,7 @@ async function boundedJson(path: string, maxBytes: number): Promise<unknown> {
 }
 
 async function loadIndexedPackage(directory: string): Promise<IndexedPackage> {
-  const root = resolve(directory);
+  const root = await distributionDataRoot(resolve(directory));
   const manifest = record(await boundedJson(join(root, "Package/manifest.json"), 4 * 1024 ** 2));
   const index = record(await boundedJson(join(root, "Package/content-index.json"), 128 * 1024 ** 2));
   if (manifest === undefined || index === undefined ||

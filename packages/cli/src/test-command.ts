@@ -116,10 +116,15 @@ async function resolvePlayer(options: TestCommandOptions, projectRoot: string): 
   const names = [
     ...(typeof distribution?.executableName === "string" ? [distribution.executableName] : []),
     "PrismatiXPlayerQA", "PrismatiXPlayer"];
-  for (const name of names) {
-    const path = join(packageDirectory, `${name}${suffix}`);
-    if (await regularFile(path)) return path;
-  }
+  // A macOS distribution keeps the Player in <Name>.app/Contents/MacOS.
+  const bundles = process.platform !== "darwin" ? [] :
+    (await readdir(packageDirectory).catch(() => [] as string[]))
+      .filter(entry => entry.endsWith(".app")).map(entry => join(packageDirectory, entry, "Contents", "MacOS"));
+  for (const directory of [packageDirectory, ...bundles])
+    for (const name of names) {
+      const path = join(directory, `${name}${suffix}`);
+      if (await regularFile(path)) return path;
+    }
   throw new Error(`No Player executable in ${packageDirectory}; pack the project with ` +
     "--player <build>/PrismatiXPlayerQA" + suffix + " or pass --player");
 }

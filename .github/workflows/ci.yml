@@ -77,6 +77,12 @@ jobs:
         with:
           build-dir: out/ci/sdk-clang
           prefix: out/ci/runtime-linux
+      - name: Pack the Starter sample and check the Linux layout (lib/, .desktop, icons, ldd)
+        if: matrix.sanitizers == 'OFF'
+        run: >-
+          node scripts/check-desktop-layout.mjs
+          --packager out/ci/runtime-linux/bin/PrismatiXPackager
+          --player out/ci/runtime-linux/bin/PrismatiXPlayer
       # The Web Player browser check packs the Starter sample with this runtime.
       - name: Archive the Linux runtime for web-player-browser
         if: matrix.sanitizers == 'OFF'
@@ -129,6 +135,10 @@ jobs:
               throw "Starter package is missing $path"
             }
           }
+          node scripts/check-desktop-layout.mjs `
+            --packager out/ci/sdk-msvc/PrismatiXEngine/PrismatiXPackager.exe `
+            --player out/ci/sdk-msvc/PrismatiXEngine/PrismatiXPlayer.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Windows flat and bundled layout check failed' }
       - uses: ./.github/actions/native-tests
         with:
           build-dir: out/ci/sdk-msvc
@@ -242,6 +252,11 @@ jobs:
         with:
           build-dir: out/ci/sdk-apple-clang
           prefix: out/ci/runtime-macos
+      - name: Pack the Starter sample and check the .app bundle (Info.plist, icns, codesign)
+        run: >-
+          node scripts/check-desktop-layout.mjs
+          --packager out/ci/runtime-macos/bin/PrismatiXPackager
+          --player out/ci/runtime-macos/bin/PrismatiXPlayer
       - name: Publish macOS GPU visual matrix
         if: always() && matrix.exclude-labels == ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

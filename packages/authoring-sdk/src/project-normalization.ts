@@ -63,15 +63,34 @@ export interface NormalizedProjectInput {
 }
 
 /**
- * How `prismatix pack` names the shipped game. `executableName` replaces
- * `PrismatiXPlayer` (the platform extension is kept); `icon` is a
- * project-relative `.ico` written into the Windows executable.
+ * How `prismatix pack` names and lays out the shipped game. `executableName`
+ * replaces `PrismatiXPlayer` (the platform extension is kept). `icon` is a
+ * project-relative `.ico` or square `.png` (256 px or larger recommended):
+ * the Windows executable's icon, the macOS `.icns` and the Linux icon theme
+ * sizes are made from it. `productName` (default: the project name),
+ * `companyName`, `copyright` and `version` (default: the project version)
+ * are the executable's version information (Explorer's Details tab) and the
+ * macOS Info.plist. `layout` "bundled" keeps only the executable at the top of
+ * a Windows distribution and moves the runtime and game data into
+ * `engineFolder` (default "Engine").
  */
 export interface ProjectDistribution {
   readonly executableName?: string;
   readonly icon?: string;
+  readonly productName?: string;
+  readonly companyName?: string;
+  readonly copyright?: string;
+  readonly version?: string;
+  readonly layout?: "flat" | "bundled";
+  readonly engineFolder?: string;
+  readonly macos?: ProjectMacDistribution;
   readonly android?: ProjectAndroidDistribution;
   readonly transcode?: ProjectTranscode;
+}
+
+/** macOS `.app` settings. `bundleIdentifier` defaults to com.example.<project id>. */
+export interface ProjectMacDistribution {
+  readonly bundleIdentifier?: string;
 }
 
 /**
@@ -120,6 +139,7 @@ export function projectDistributionError(value: unknown): string | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return "distribution must be an object";
   const {executableName, icon, output, compression, archiveShards, linkMedia, android, transcode,
+    productName, companyName, copyright, version, layout, engineFolder, macos,
     ...rest} = value as Record<string, unknown>;
   const extra = Object.keys(rest);
   if (extra.length > 0) return `distribution does not support ${extra.join(", ")}`;
@@ -130,8 +150,28 @@ export function projectDistributionError(value: unknown): string | undefined {
       /\.exe$/i.test(executableName)))
     return "distribution.executableName must be a portable file name of at most 64 bytes, without .exe";
   if (icon !== undefined && (typeof icon !== "string" || !isSafeResourcePath(icon) ||
-      icon.includes(":") || !/\.ico$/i.test(icon)))
-    return "distribution.icon must be a safe project-relative .ico path";
+      icon.includes(":") || !/\.(?:ico|png)$/i.test(icon)))
+    return "distribution.icon must be a safe project-relative .ico or .png path";
+  for (const [name, text] of Object.entries({productName, companyName, copyright, version}))
+    if (text !== undefined && (typeof text !== "string" || text.length === 0 ||
+        new TextEncoder().encode(text).length > 256 || /[\u0000-\u001f\u007f]/.test(text)))
+      return `distribution.${name} must be a single-line string of 1 to 256 bytes`;
+  if (layout !== undefined && layout !== "flat" && layout !== "bundled")
+    return "distribution.layout must be flat or bundled";
+  if (engineFolder !== undefined && (typeof engineFolder !== "string" ||
+      !/^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/.test(engineFolder) || engineFolder.endsWith(".") ||
+      reservedFileNames.test(engineFolder) ||
+      /^(?:(?:package|save|updates)(?:\..*)?|notices)$/i.test(engineFolder)))
+    return "distribution.engineFolder must be 1 to 64 letters, digits, '.', '_' or '-' and not Package, Save, Updates or Notices";
+  if (macos !== undefined) {
+    if (!plainObject(macos)) return "distribution.macos must be an object";
+    const {bundleIdentifier, ...macRest} = macos;
+    const macExtra = Object.keys(macRest);
+    if (macExtra.length > 0) return `distribution.macos does not support ${macExtra.join(", ")}`;
+    if (bundleIdentifier !== undefined && (typeof bundleIdentifier !== "string" ||
+        bundleIdentifier.length > 155 || !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(bundleIdentifier)))
+      return "distribution.macos.bundleIdentifier must be reverse-DNS, like com.example.game";
+  }
   // Defaults for build/pack/release when the command line does not say.
   if (output !== undefined && (typeof output !== "string" || output.length === 0 ||
       output.length > 1024 || /[\u0000-\u001f]/.test(output)))

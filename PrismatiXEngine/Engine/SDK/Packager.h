@@ -72,9 +72,26 @@ struct PackageRequest {
     bool retireCacheSourceAfterPromotion = false;
     std::filesystem::path playerExecutable;
     // Optional distribution branding: the packaged Player's file name without
-    // its extension, and a Windows .ico written into that executable.
+    // its extension, and an .ico or square .png icon for the executable
+    // (Windows), the .app (macOS, as .icns) and the .desktop entry (Linux).
     std::string executableName;
     std::filesystem::path icon;
+    // Shown in Explorer's Details tab, Info.plist and the .desktop entry.
+    // productName defaults to title; version is the authored version string.
+    std::string productName;
+    std::string companyName;
+    std::string copyright;
+    std::string version;
+    // Windows: "flat" keeps runtime libraries and game data beside the
+    // executable; "bundled" moves them into engineFolder (default "Engine").
+    std::string layout = "flat";
+    std::string engineFolder;
+    // Apply the host platform's shipping layout: a macOS .app bundle, or a
+    // Linux lib/ folder with a .desktop entry. Intermediate packs (Android,
+    // Web) leave it off and get the plain layout.
+    bool platformLayout = false;
+    // macOS CFBundleIdentifier; derived from gameId when empty.
+    std::string bundleIdentifier;
     std::string title;
     int width = 1280;
     int height = 720;
@@ -198,6 +215,13 @@ using PackageEventSink = std::function<void(const PackageEvent&)>;
 // filesystem paths, while input URIs are always normalized forward-slash
 // project-relative runtime paths.
 [[nodiscard]] PackageRequestParseResult ParsePackageRequest(std::string_view json);
+
+// The directory of a distribution that holds Package/manifest.json and the
+// archives: the distribution itself (flat), its engine folder (Windows
+// bundled, recognised by its <folder>/<folder>.manifest) or
+// <Name>.app/Contents/Resources (macOS). Returns `distribution` unchanged when
+// no single such directory exists.
+[[nodiscard]] std::filesystem::path DistributionDataRoot(const std::filesystem::path& distribution);
 
 // Serializes one protocol event. The CLI writes each returned object as one
 // stdout line and never mixes log text into stdout.

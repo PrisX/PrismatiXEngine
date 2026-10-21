@@ -93,6 +93,12 @@ bool WriteNewKeyFile(const std::filesystem::path& path,
 
 }  // namespace
 
+// Distributions may keep their data in an engine folder or a macOS .app;
+// relative paths stay relative so the absolute-path checks still apply.
+static std::filesystem::path DataRoot(const std::filesystem::path& distribution) {
+    return distribution.is_absolute() ? px::sdk::DistributionDataRoot(distribution) : distribution;
+}
+
 int RunMain(int argc, char** argv) {
     if (argc == 4 && std::string_view(argv[1]) == "--generate-overlay-key") {
         const auto privatePath = Utf8Path(argv[2]);
@@ -127,8 +133,8 @@ int RunMain(int argc, char** argv) {
          (argc == 9 && std::string_view(argv[5]) == "--signing-key" &&
           std::string_view(argv[7]) == "--optional-id")) &&
         std::string_view(argv[1]) == "--create-overlay") {
-        const auto base = Utf8Path(argv[2]);
-        const auto target = Utf8Path(argv[3]);
+        const auto base = DataRoot(Utf8Path(argv[2]));
+        const auto target = DataRoot(Utf8Path(argv[3]));
         const auto output = Utf8Path(argv[4]);
         const auto signingKey = argc >= 7 ? Utf8Path(argv[6])
                                           : std::filesystem::path{};
@@ -177,7 +183,7 @@ int RunMain(int argc, char** argv) {
     if ((argc == 4 ||
          (argc == 5 && std::string_view(argv[4]) == "--require-signature")) &&
         std::string_view(argv[1]) == "--verify-overlay") {
-        const std::filesystem::path distribution = Utf8Path(argv[2]);
+        const std::filesystem::path distribution = DataRoot(Utf8Path(argv[2]));
         const std::filesystem::path overlay = Utf8Path(argv[3]);
         if (!distribution.is_absolute() || !overlay.is_absolute()) {
             Emit(FailedEvent({}, "PXPKG1513",
@@ -210,7 +216,7 @@ int RunMain(int argc, char** argv) {
     }
     if (argc == 5 &&
         std::string_view(argv[1]) == "--verify-overlay-after-chain") {
-        const auto base = Utf8Path(argv[2]);
+        const auto base = DataRoot(Utf8Path(argv[2]));
         const auto updates = Utf8Path(argv[3]);
         const auto patch = Utf8Path(argv[4]);
         if (!base.is_absolute() || !updates.is_absolute() ||
@@ -265,7 +271,7 @@ int RunMain(int argc, char** argv) {
             });
     }
     if (argc == 3 && std::string_view(argv[1]) == "--verify-package") {
-        const std::filesystem::path distribution = Utf8Path(argv[2]);
+        const std::filesystem::path distribution = DataRoot(Utf8Path(argv[2]));
         if (!distribution.is_absolute()) {
             Emit(FailedEvent({}, "PXPKG1510", "Distribution path must be absolute"));
             return static_cast<int>(px::sdk::PackageExitCode::Failed);
@@ -355,7 +361,7 @@ int RunMain(int argc, char** argv) {
 
     try {
         if (overlayFromRequest || overlayFromChainRequest) {
-            const auto base = Utf8Path(argv[3]);
+            const auto base = DataRoot(Utf8Path(argv[3]));
             const auto updates = overlayFromChainRequest
                 ? Utf8Path(argv[4]) : std::filesystem::path{};
             const auto output = Utf8Path(argv[overlayFromChainRequest ? 5 : 4]);

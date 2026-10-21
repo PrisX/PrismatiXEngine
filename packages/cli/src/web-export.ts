@@ -9,6 +9,7 @@ import {fingerprintFile, publishDirectory} from "./output-safety.js";
 import {readWebShaderArtifact} from "./web-pdx.js";
 import {checkoutRoot} from "./runtime-discovery.js";
 import {convertWebShader, sdlGpuWgsl} from "./web-shader.js";
+import {distributionDataRoot} from "./distribution-layout.js";
 
 export const webTemplateRoot = fileURLToPath(new URL("../../templates/web", import.meta.url));
 const chunkSize = 1024 * 1024;
@@ -217,7 +218,8 @@ async function shaderTool(name: "spirv-cross" | "naga", variable: string, player
 export async function exportWeb(options: WebExportOptions) {
   const resolved = await resolveWebPlayer(options.playerDirectory, options.renderer ?? "webgl2");
   const player = resolved.root;
-  const source = resolve(options.distribution);
+  // A desktop distribution's game data may sit in an engine folder or a .app.
+  const source = await distributionDataRoot(resolve(options.distribution));
   const packageManifest = JSON.parse(await readFile(join(source, "Package", "manifest.json"), "utf8")) as
     {format: string; schemaRevision: number; gameId: string; title: string; packageFingerprint: string;
       archives: {file: string}[]; resolution: {width: number; height: number}; encryption?: {archiveKey?: string};

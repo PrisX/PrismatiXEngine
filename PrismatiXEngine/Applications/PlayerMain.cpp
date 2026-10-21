@@ -10,13 +10,25 @@
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_filesystem.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <string>
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <io.h>
+#endif
 
 namespace {
 // On desktop the package sits next to the executable. On Android
@@ -29,6 +41,32 @@ std::string PackageManifestPath(const std::filesystem::path& root) {
 #else
     return px::PathToUtf8(root / "Package/manifest.json");
 #endif
+}
+
+// The directory holding Package/manifest.json: the executable's own
+// directory (flat; on macOS SDL_GetBasePath() is already the .app's
+// Contents/Resources), or the engine folder the Packager recorded in the
+// executable's PRISMATIX_LAYOUT resource (Windows "bundled" layout, where the
+// runtime DLLs load from the same folder as a private assembly).
+std::filesystem::path PackageDataRoot(const std::filesystem::path& base) {
+#ifdef _WIN32
+    if (HRSRC found = FindResourceW(nullptr, L"PRISMATIX_LAYOUT", MAKEINTRESOURCEW(10))) {
+        const DWORD size = SizeofResource(nullptr, found);
+        HGLOBAL loaded = LoadResource(nullptr, found);
+        const auto* data = loaded ? static_cast<const char*>(LockResource(loaded)) : nullptr;
+        if (data && size > 0 && size < 4096) {
+            const auto layout = nlohmann::json::parse(std::string_view(data, size), nullptr, false);
+            const auto folder = layout.is_object() && layout.value("format", "") == "PrismatiXLayout"
+                ? layout.value("dataDirectory", "") : std::string{};
+            const bool portable = !folder.empty() && folder.size() <= 64 && folder.front() != '.' &&
+                std::ranges::all_of(folder, [](const unsigned char c) {
+                    return std::isalnum(c) != 0 || c == '.' || c == '_' || c == '-';
+                });
+            if (portable) return base / px::PathFromUtf8(folder);
+        }
+    }
+#endif
+    return base;
 }
 
 std::optional<std::string> PackagedGameId(const std::filesystem::path& root) {
@@ -114,7 +152,7 @@ int SetOptionalPack(int argc, char* argv[]) {
     }
     const char* base = SDL_GetBasePath();
     if (!base) return 1;
-    const auto packageRoot = px::PathFromUtf8(base);
+    const auto packageRoot = PackageDataRoot(px::PathFromUtf8(base));
     const auto gameId = PackagedGameId(packageRoot);
     if (!gameId) {
         std::cerr << "Optional packs require an adjacent packaged game\n";
@@ -152,9 +190,53 @@ int SetOptionalPack(int argc, char* argv[]) {
     std::cout << "Optional pack preference saved; restart Player to apply it\n";
     return 0;
 }
+
+#ifdef _WIN32
+// The shipped Player is a GUI (WIN32 subsystem) application, so a
+// double-clicked game opens no console window. Its log always goes to the log
+// file. Launched from a terminal, it attaches to that console so diagnostics
+// and `--inspect-save` output stay visible; `--console` opens a console of its
+// own when there is none to attach to. Redirected output (pipes, files: the
+// CLI, tests, CI) is left untouched, as is the console of a console build
+// (PrismatiXPlayerQA).
+void ConnectConsole(const bool requested) {
+    if (GetConsoleWindow() != nullptr) return;
+    const HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (output != nullptr && output != INVALID_HANDLE_VALUE && GetFileType(output) != FILE_TYPE_UNKNOWN)
+        return;
+    if (!AttachConsole(ATTACH_PARENT_PROCESS) && !(requested && AllocConsole())) return;
+    FILE* stream = nullptr;
+    freopen_s(&stream, "CONOUT$", "w", stdout);
+    freopen_s(&stream, "CONOUT$", "w", stderr);
+    freopen_s(&stream, "CONIN$", "r", stdin);
+    SetStdHandle(STD_OUTPUT_HANDLE, reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stdout))));
+    SetStdHandle(STD_ERROR_HANDLE, reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stderr))));
+    SetStdHandle(STD_INPUT_HANDLE, reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stdin))));
+    std::ios::sync_with_stdio(true);
+    std::cout.clear();
+    std::cerr.clear();
+    std::cin.clear();
+}
+#endif
 }
 
 int main(int argc, char* argv[]) {
+    // `--console` is a Player option, never a script path: remove it before
+    // the remaining arguments are interpreted.
+    std::vector<char*> arguments(argv, argv + argc);
+    const auto console = std::ranges::find_if(arguments, [](const char* argument) {
+        return argument != nullptr && std::string_view(argument) == "--console";
+    });
+    const bool consoleRequested = console != arguments.end();
+    if (consoleRequested) arguments.erase(console);
+    argc = static_cast<int>(arguments.size());
+    arguments.push_back(nullptr);
+    argv = arguments.data();
+#ifdef _WIN32
+    ConnectConsole(consoleRequested);
+#else
+    (void)consoleRequested;
+#endif
     if (argc > 1 && std::string_view(argv[1]) == "--inspect-save") return InspectSave(argc, argv);
     if (argc > 1 && std::string_view(argv[1]) == "--optional-pack")
         return SetOptionalPack(argc, argv);
@@ -164,8 +246,8 @@ int main(int argc, char* argv[]) {
     // exists; script arguments retain their original virtual asset paths.
     std::filesystem::path logDirectory = "logs";
     if (const char* base = SDL_GetBasePath()) {
-        const std::filesystem::path packageRoot(
-            std::u8string(base, base + std::char_traits<char>::length(base)));
+        const std::filesystem::path packageRoot = PackageDataRoot(std::filesystem::path(
+            std::u8string(base, base + std::char_traits<char>::length(base))));
         std::error_code error;
         if (px::io::PackageFileSource()->IsFile(PackageManifestPath(packageRoot))) {
 #if !defined(__ANDROID__)

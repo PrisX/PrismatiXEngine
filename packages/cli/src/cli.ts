@@ -35,6 +35,7 @@ import {packageContentKey, packageRetentionKey, refreshRuntimePackageIfMatching,
   retainPackageIfMatching, reusedArchiveInputs, runtimeOutputsMatch,
   runtimeReplacementFiles, writePackageProvenance} from "./package-retain.js";
 import {debugPackagerHint} from "./package-tool-hint.js";
+import {distributionDataRoot, finishMacAppBundle} from "./distribution-layout.js";
 import {distributionCoversLineage, distributionLineage, readReleaseLineage,
   recordReleaseLineage, releaseLineageFile, saveCompatibilityWarning} from "./release-lineage.js";
 import {addCharacter, addScene} from "./scaffold.js";
@@ -1958,11 +1959,19 @@ interface PackageBranding {
   readonly executableName?: string;
   readonly icon?: string;
   readonly iconSha256?: string;
+  readonly productName?: string;
+  readonly companyName?: string;
+  readonly copyright?: string;
+  readonly version?: string;
+  readonly layout?: "flat" | "bundled";
+  readonly engineFolder?: string;
+  readonly bundleIdentifier?: string;
 }
 
-// `distribution` in prismatix.json names the shipped executable and its icon.
-// It is read from the author manifest even when packing a prebuilt artifact:
-// branding is a distribution choice, not compiled content.
+// `distribution` in prismatix.json names the shipped executable, its icon,
+// version information and layout. It is read from the author manifest even
+// when packing a prebuilt artifact: branding is a distribution choice, not
+// compiled content.
 async function packageBranding(projectArgument: string | undefined): Promise<PackageBranding> {
   const location = await resolveProjectPath(projectArgument);
   if (!location.manifestExists || basename(location.projectPath) !== "prismatix.json") return {};
@@ -1972,16 +1981,34 @@ async function packageBranding(projectArgument: string | undefined): Promise<Pac
   if (error !== undefined)
     throw new PackagerFailure([diagnostic("PXCLI1221", error, location.projectPath)]);
   const distribution = raw.distribution as ProjectDistribution;
-  if (distribution.icon === undefined)
-    return distribution.executableName === undefined ? {} : {executableName: distribution.executableName};
+  const fields: PackageBranding = Object.fromEntries(Object.entries({
+    executableName: distribution.executableName, productName: distribution.productName,
+    companyName: distribution.companyName, copyright: distribution.copyright,
+    version: distribution.version, layout: distribution.layout,
+    engineFolder: distribution.layout === "bundled" ? distribution.engineFolder ?? "Engine" : undefined,
+    bundleIdentifier: distribution.macos?.bundleIdentifier,
+  }).filter(([, value]) => value !== undefined));
+  if (distribution.icon === undefined) return fields;
   const icon = projectFile(location.root, distribution.icon);
   const info = await lstat(icon).catch(() => undefined);
   if (info === undefined || !info.isFile() || info.size > 4 * 1024 * 1024)
     throw new PackagerFailure([diagnostic("PXCLI1221",
-      "distribution.icon must name a regular .ico file of at most 4 MiB", location.projectPath, distribution.icon)]);
-  const iconSha256 = createHash("sha256").update(await readFile(icon)).digest("hex");
-  return {...(distribution.executableName === undefined ? {} : {executableName: distribution.executableName}),
-    icon, iconSha256};
+      "distribution.icon must name a regular .ico or .png file of at most 4 MiB", location.projectPath, distribution.icon)]);
+  const bytes = await readFile(icon);
+  const size = pngSize(bytes);
+  if (size !== undefined && (size.width !== size.height || size.width < 256))
+    progress({severity: "warning", code: "PXCLI1225",
+      message: `Warning: distribution.icon is ${size.width}x${size.height}; ` +
+        "a square PNG of at least 256x256 gives sharp icons at every size"});
+  const iconSha256 = createHash("sha256").update(bytes).digest("hex");
+  return {...fields, icon, iconSha256};
+}
+
+/** The pixel size from a PNG's IHDR chunk, or undefined for anything else. */
+function pngSize(bytes: Buffer): {width: number; height: number} | undefined {
+  if (bytes.length < 24 || bytes.readUInt32BE(0) !== 0x89504e47 || bytes.toString("latin1", 12, 16) !== "IHDR")
+    return undefined;
+  return {width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20)};
 }
 
 // prismatix.json `distribution` may name the output folder, compression and
@@ -2005,6 +2032,8 @@ async function applyDistributionDefaults(options: Options): Promise<void> {
 async function packProject(options: Options, settings: {
   /** A local development pack (`run --dev`): never records release lineage in the project. */
   readonly development?: boolean;
+  /** A package another target converts (Android, Web): always the plain flat layout. */
+  readonly intermediate?: boolean;
 } = {}): Promise<{output: string; player: string;
   validatedOnly?: boolean; deferredMediaCount?: number; retained?: boolean}> {
   await applyDistributionDefaults(options);
@@ -2087,7 +2116,7 @@ async function packProject(options: Options, settings: {
     if (previousPackage !== undefined) {
       if (previousPackage === output || !(await lstat(previousPackage)).isDirectory())
         throw new Error("--previous-package must name a separate distribution directory");
-      const previousManifestPath = join(previousPackage, "Package", "manifest.json");
+      const previousManifestPath = join(await distributionDataRoot(previousPackage), "Package", "manifest.json");
       const previousManifestInfo = await lstat(previousManifestPath);
       if (!previousManifestInfo.isFile() || previousManifestInfo.size > 4 * 1024 * 1024)
         throw new Error("--previous-package manifest must be a bounded regular file");
@@ -2128,11 +2157,28 @@ async function packProject(options: Options, settings: {
     const branding = await packageBranding(options.positional[0]);
     const packagedPlayer = branding.executableName === undefined ? basename(player)
       : branding.executableName + extname(player);
+    // Shipped distributions use the platform's layout (a macOS .app, Linux
+    // lib/ + .desktop) and the author's Windows layout; run --dev and the
+    // packages Android and Web convert stay flat.
+    const plainLayout = settings.development === true || settings.intermediate === true;
+    const layout = plainLayout ? "flat" : branding.layout ?? "flat";
+    const platformLayout = !plainLayout;
+    // Version information defaults to the project's version.
+    const version = branding.version ??
+      (/^[^\u0000-\u001f\u007f]{1,256}$/u.test(project.version) ? project.version : undefined);
     const requestPlan = {
       format: "PrismatiXPackageRequest", schemaRevision: 1,
       gameId: project.id, playerExecutable: player, title: project.name,
       ...(branding.executableName === undefined ? {} : {executableName: branding.executableName}),
       ...(branding.icon === undefined ? {} : {icon: branding.icon}),
+      // The Packager names the product after the title unless told otherwise.
+      ...(branding.productName === undefined ? {} : {productName: branding.productName}),
+      ...(version === undefined ? {} : {version}),
+      ...(branding.companyName === undefined ? {} : {companyName: branding.companyName}),
+      ...(branding.copyright === undefined ? {} : {copyright: branding.copyright}),
+      ...(layout === "bundled" ? {layout, engineFolder: branding.engineFolder ?? "Engine"} : {}),
+      ...(platformLayout ? {platformLayout} : {}),
+      ...(branding.bundleIdentifier === undefined ? {} : {bundleIdentifier: branding.bundleIdentifier}),
       width: project.resolution.width, height: project.resolution.height,
       startScript, sourceMap,
       startRoute: project.entry.ui,
@@ -2184,13 +2230,19 @@ async function packProject(options: Options, settings: {
     // The icon's bytes, not only its path, decide whether a package is reusable.
     const keyedPlan = branding.iconSha256 === undefined ? requestPlan
       : {...requestPlan, iconSha256: branding.iconSha256};
-    const planKey = suppliedArtifact === undefined ? undefined :
+    // Retention keeps its provenance in Package/ at the distribution root, so
+    // it applies where the game data stays there: flat Windows and Linux.
+    const dataAtRoot = layout === "flat" && !(platformLayout && process.platform === "darwin");
+    const planKey = suppliedArtifact === undefined || !dataAtRoot ? undefined :
       await packageRetentionKey(packager, player, artifactRoot, keyedPlan);
     const contentKey = planKey === undefined ? undefined :
       await packageContentKey(packager, artifactRoot, keyedPlan);
-    // Refreshing the runtime in place copies the stock Player; a branded
-    // executable is renamed and patched by the native Packager instead.
-    const branded = branding.executableName !== undefined || branding.icon !== undefined;
+    // Refreshing the runtime in place copies the stock Player. The native
+    // Packager renames and brands the Windows executable (version information
+    // at least) and moves libraries for the platform layouts, so only a plain
+    // non-Windows package can be refreshed that way.
+    const branded = branding.executableName !== undefined || branding.icon !== undefined ||
+      process.platform === "win32" || platformLayout;
     const runtimeSources = contentKey === undefined || branded ? undefined :
       await runtimeReplacementFiles(player);
     const publication = {output, projectRoot: root,
@@ -2200,7 +2252,8 @@ async function packProject(options: Options, settings: {
             await packageRetentionKey(packager, player, artifactRoot, keyedPlan) !== planKey)
           throw new Error("Runtime tools changed while packaging; distribution was not published");
         if (previousPackage !== undefined && previousManifestBytes !== undefined &&
-            !(await readFile(join(previousPackage, "Package", "manifest.json"))).equals(previousManifestBytes))
+            !(await readFile(join(await distributionDataRoot(previousPackage), "Package", "manifest.json")))
+              .equals(previousManifestBytes))
           throw new Error("--previous-package manifest changed while packaging");
       }}),
       onProgress: (value: {phase: string; files: number; bytes: number; done: boolean}) => progress({
@@ -2256,6 +2309,7 @@ async function packProject(options: Options, settings: {
       }
     }
     let previousOutputInputs: readonly PublishedInput[] = [];
+    let packagedPlayerPath = packagedPlayer;
     const linkedOutputFiles = new Map<string, PublishedInput>();
     const packagePublication = {...publication,
       verifyExistingBeforeBuild: false, linkedOutputFiles};
@@ -2307,9 +2361,33 @@ async function packProject(options: Options, settings: {
         "Packager exited successfully without a completed event",
         options.positional[0])]);
     }
-    if (!scriptTool)
-      for (const [uri, input] of reusedArchiveInputs(events, previousOutputInputs))
-        linkedOutputFiles.set(uri, input);
+    // The Player's place in the laid-out distribution (inside a macOS .app,
+    // for example), as the Packager reports it.
+    const completed = events.find((event) => event.event === "completed");
+    if (typeof completed?.playerExecutable === "string") {
+      const laidOut = relative(staging, completed.playerExecutable);
+      if (laidOut.length > 0 && !laidOut.startsWith("..") && !isAbsolute(laidOut))
+        packagedPlayerPath = laidOut;
+    }
+    if (process.platform === "darwin" && !scriptTool) {
+      const app = /^(.+?\.app)\/Contents\/MacOS\//u.exec(packagedPlayerPath)?.[1];
+      if (app !== undefined) {
+        progress({severity: "information", code: "PXCLI1226",
+          message: `Signing ${app} ad hoc (codesign --sign -)`});
+        for (const warning of await finishMacAppBundle(join(staging, app), join(staging, packagedPlayerPath),
+          (command, args) => runProcess(command, args)))
+          progress({severity: "warning", code: "PXCLI1227", message: `Warning: ${warning}`});
+      }
+    }
+    if (!scriptTool) {
+      // Archives the Packager reused keep their identity only when the old
+      // and new distributions keep game data in the same folder.
+      const newData = relative(staging, await distributionDataRoot(staging)).split(sep).join("/");
+      const oldData = relative(output, await distributionDataRoot(output)).split(sep).join("/");
+      if (newData === oldData)
+        for (const [uri, input] of reusedArchiveInputs(events, previousOutputInputs, newData))
+          linkedOutputFiles.set(uri, input);
+    }
     if (planKey !== undefined) {
       if (contentKey !== undefined && runtimeSources !== undefined &&
           await runtimeOutputsMatch(staging, runtimeSources))
@@ -2319,7 +2397,7 @@ async function packProject(options: Options, settings: {
     }
     });
     await recordLineage();
-    return {output, player: join(output, packagedPlayer)};
+    return {output, player: join(output, packagedPlayerPath)};
   } finally {
     await rm(temp, {recursive: true, force: true});
   }
@@ -2489,7 +2567,7 @@ async function androidPackCommand(options: Options): Promise<number> {
     for (const name of ["target", "android-player", "gradle", "android-sdk"]) packOptions.values.delete(name);
     packOptions.flags.delete("debug");
     packOptions.values.set("output", packageDirectory);
-    const packed = await packProject(packOptions);
+    const packed = await packProject(packOptions, {intermediate: true});
     const manifest = object(await readJson(join(packed.output, "Package", "manifest.json")));
     const resolution = object(manifest?.resolution);
     if (typeof manifest?.gameId !== "string" || typeof manifest.title !== "string" ||
@@ -2564,7 +2642,8 @@ async function webPackCommand(options: Options): Promise<number> {
       const values = new Map(options.values);
       for (const name of ["target", "web-player", "web-renderer", "web-package", "ffmpeg"]) values.delete(name);
       values.set("output", join(temporary, "package"));
-      distribution = (await packProject({values, flags: new Set(options.flags), positional: [...options.positional]})).output;
+      distribution = (await packProject({values, flags: new Set(options.flags), positional: [...options.positional]},
+        {intermediate: true})).output;
     }
     const result = await exportWeb({projectRoot: location.root, distribution,
       playerDirectory, renderer, output,
@@ -3920,8 +3999,9 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
       if (!validated.valid || validated.value === undefined)
         throw new PackagerFailure(validated.diagnostics);
       const project = validated.value;
-      const baseManifestPath = join(baseRoot, "Package", "manifest.json");
-      const shardIndexPath = join(baseRoot, "Package", "archive-shards.json");
+      const baseData = await distributionDataRoot(baseRoot);
+      const baseManifestPath = join(baseData, "Package", "manifest.json");
+      const shardIndexPath = join(baseData, "Package", "archive-shards.json");
       for (const [path, limit] of [[baseManifestPath, 4 * 1024 * 1024],
         [shardIndexPath, 64 * 1024]] as const) {
         const info = await lstat(path);

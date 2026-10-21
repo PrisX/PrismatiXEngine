@@ -1,0 +1,1271 @@
+#include "Engine/SDK/PackageBranding.h"
+
+#include "Engine/Support/Utf8Path.h"
+
+#include <SDL3/SDL.h>
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <functional>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <utility>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+namespace px::sdk::branding {
+namespace {
+
+constexpr int kMaxIconSide = 4096;
+
+void PutU16(Bytes& out, const std::uint32_t value) {
+    out.push_back(static_cast<std::uint8_t>(value & 0xff));
+    out.push_back(static_cast<std::uint8_t>((value >> 8) & 0xff));
+}
+void PutU32(Bytes& out, const std::uint32_t value) {
+    PutU16(out, value & 0xffff);
+    PutU16(out, value >> 16);
+}
+void PutU32BE(Bytes& out, const std::uint32_t value) {
+    for (int shift = 24; shift >= 0; shift -= 8)
+        out.push_back(static_cast<std::uint8_t>((value >> shift) & 0xff));
+}
+void SetU16(Bytes& out, const std::size_t at, const std::uint32_t value) {
+    out[at] = static_cast<std::uint8_t>(value & 0xff);
+    out[at + 1] = static_cast<std::uint8_t>((value >> 8) & 0xff);
+}
+std::uint16_t U16(const Bytes& in, const std::size_t at) {
+    return static_cast<std::uint16_t>(in[at] | (in[at + 1] << 8));
+}
+std::uint32_t U32(const Bytes& in, const std::size_t at) {
+    return static_cast<std::uint32_t>(in[at]) | (static_cast<std::uint32_t>(in[at + 1]) << 8) |
+           (static_cast<std::uint32_t>(in[at + 2]) << 16) |
+           (static_cast<std::uint32_t>(in[at + 3]) << 24);
+}
+std::uint32_t U32BE(const Bytes& in, const std::size_t at) {
+    return (static_cast<std::uint32_t>(in[at]) << 24) | (static_cast<std::uint32_t>(in[at + 1]) << 16) |
+           (static_cast<std::uint32_t>(in[at + 2]) << 8) | static_cast<std::uint32_t>(in[at + 3]);
+}
+
+// UTF-8 to UTF-16; invalid sequences become U+FFFD.
+std::u16string Utf16(const std::string_view text) {
+    std::u16string result;
+    for (std::size_t index = 0; index < text.size();) {
+        const auto lead = static_cast<unsigned char>(text[index]);
+        std::uint32_t code = 0xfffd;
+        std::size_t length = 1;
+        if (lead < 0x80) code = lead;
+        else if ((lead >> 5) == 0x6) { code = lead & 0x1f; length = 2; }
+        else if ((lead >> 4) == 0xe) { code = lead & 0x0f; length = 3; }
+        else if ((lead >> 3) == 0x1e) { code = lead & 0x07; length = 4; }
+        if (length > 1) {
+            if (index + length > text.size()) { code = 0xfffd; length = 1; }
+            else {
+                for (std::size_t next = 1; next < length; ++next) {
+                    const auto byte = static_cast<unsigned char>(text[index + next]);
+                    if ((byte >> 6) != 0x2) { code = 0xfffd; length = 1; break; }
+                    code = (code << 6) | (byte & 0x3f);
+                }
+            }
+        }
+        index += length;
+        if (code >= 0x10000 && code <= 0x10ffff) {
+            code -= 0x10000;
+            result.push_back(static_cast<char16_t>(0xd800 + (code >> 10)));
+            result.push_back(static_cast<char16_t>(0xdc00 + (code & 0x3ff)));
+        } else {
+            result.push_back(static_cast<char16_t>(code > 0xffff ? 0xfffd : code));
+        }
+    }
+    return result;
+}
+
+std::string Utf8(const std::u16string_view text) {
+    std::string result;
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        std::uint32_t code = text[index];
+        if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.size() &&
+            text[index + 1] >= 0xdc00 && text[index + 1] <= 0xdfff) {
+            code = 0x10000 + ((code - 0xd800) << 10) + (text[index + 1] - 0xdc00);
+            ++index;
+        }
+        if (code < 0x80) result.push_back(static_cast<char>(code));
+        else if (code < 0x800) {
+            result.push_back(static_cast<char>(0xc0 | (code >> 6)));
+            result.push_back(static_cast<char>(0x80 | (code & 0x3f)));
+        } else if (code < 0x10000) {
+            result.push_back(static_cast<char>(0xe0 | (code >> 12)));
+            result.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3f)));
+            result.push_back(static_cast<char>(0x80 | (code & 0x3f)));
+        } else {
+            result.push_back(static_cast<char>(0xf0 | (code >> 18)));
+            result.push_back(static_cast<char>(0x80 | ((code >> 12) & 0x3f)));
+            result.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3f)));
+            result.push_back(static_cast<char>(0x80 | (code & 0x3f)));
+        }
+    }
+    return result;
+}
+
+std::string XmlEscape(const std::string_view text) {
+    std::string result;
+    for (const char c : text) {
+        switch (c) {
+            case '&': result += "&amp;"; break;
+            case '<': result += "&lt;"; break;
+            case '>': result += "&gt;"; break;
+            case '"': result += "&quot;"; break;
+            case '\'': result += "&apos;"; break;
+            default:
+                // XML 1.0 forbids most C0 controls even as references.
+                if (static_cast<unsigned char>(c) >= 0x20 || c == '\t' || c == '\n' || c == '\r')
+                    result.push_back(c);
+        }
+    }
+    return result;
+}
+
+// One resampling axis: for every destination index, source indices and
+// weights summing to 1. Area average when shrinking, bilinear otherwise.
+struct Tap { int index; float weight; };
+std::vector<std::vector<Tap>> AxisTaps(const int source, const int target) {
+    std::vector<std::vector<Tap>> taps(static_cast<std::size_t>(target));
+    const double scale = static_cast<double>(source) / target;
+    for (int index = 0; index < target; ++index) {
+        auto& list = taps[static_cast<std::size_t>(index)];
+        if (source > target) {
+            const double begin = index * scale, end = (index + 1) * scale;
+            for (int sample = static_cast<int>(std::floor(begin));
+                 sample < static_cast<int>(std::ceil(end)) && sample < source; ++sample) {
+                const double overlap = std::min(end, sample + 1.0) - std::max(begin, static_cast<double>(sample));
+                if (overlap > 0) list.push_back({sample, static_cast<float>(overlap / scale)});
+            }
+        } else {
+            const double center = std::clamp((index + 0.5) * scale - 0.5, 0.0, source - 1.0);
+            const int low = static_cast<int>(std::floor(center));
+            const int high = std::min(low + 1, source - 1);
+            const auto fraction = static_cast<float>(center - low);
+            list.push_back({low, 1.0f - fraction});
+            if (high != low && fraction > 0) list.push_back({high, fraction});
+        }
+    }
+    return taps;
+}
+
+RgbaImage SquareCanvas(const RgbaImage& image) {
+    if (image.width == image.height) return image;
+    const int side = std::max(image.width, image.height);
+    RgbaImage square{side, side, std::vector<std::uint8_t>(static_cast<std::size_t>(side) * side * 4, 0)};
+    const int left = (side - image.width) / 2, top = (side - image.height) / 2;
+    for (int y = 0; y < image.height; ++y)
+        std::memcpy(&square.pixels[(static_cast<std::size_t>(top + y) * side + left) * 4],
+                    &image.pixels[static_cast<std::size_t>(y) * image.width * 4],
+                    static_cast<std::size_t>(image.width) * 4);
+    return square;
+}
+
+Bytes DibFrame(const RgbaImage& image) {
+    const int size = image.width;
+    Bytes out;
+    PutU32(out, 40);
+    PutU32(out, static_cast<std::uint32_t>(size));
+    PutU32(out, static_cast<std::uint32_t>(size * 2));
+    PutU16(out, 1);
+    PutU16(out, 32);
+    PutU32(out, 0);
+    const std::uint32_t maskStride = static_cast<std::uint32_t>(((size + 31) / 32) * 4);
+    PutU32(out, static_cast<std::uint32_t>(size * size * 4) + maskStride * size);
+    for (int index = 0; index < 4; ++index) PutU32(out, 0);
+    for (int y = size - 1; y >= 0; --y) {
+        for (int x = 0; x < size; ++x) {
+            const auto* pixel = &image.pixels[(static_cast<std::size_t>(y) * size + x) * 4];
+            out.push_back(pixel[2]);
+            out.push_back(pixel[1]);
+            out.push_back(pixel[0]);
+            out.push_back(pixel[3]);
+        }
+    }
+    for (int y = size - 1; y >= 0; --y) {
+        Bytes row(maskStride, 0);
+        for (int x = 0; x < size; ++x)
+            if (image.pixels[(static_cast<std::size_t>(y) * size + x) * 4 + 3] == 0)
+                row[static_cast<std::size_t>(x / 8)] |= static_cast<std::uint8_t>(0x80 >> (x % 8));
+        out.insert(out.end(), row.begin(), row.end());
+    }
+    return out;
+}
+
+void Align4(Bytes& out) {
+    while (out.size() % 4 != 0) out.push_back(0);
+}
+
+void PutWide(Bytes& out, const std::u16string_view text) {
+    for (const char16_t c : text) PutU16(out, c);
+    PutU16(out, 0);
+}
+
+// One VS_VERSIONINFO-style block: wLength, wValueLength, wType, szKey,
+// padding, value, padding, children.
+void VersionBlock(Bytes& out, const std::u16string_view key, const std::uint16_t type,
+                  const Bytes& value, const std::uint16_t valueLength,
+                  const std::function<void(Bytes&)>& children = {}) {
+    Align4(out);
+    const std::size_t start = out.size();
+    PutU16(out, 0);
+    PutU16(out, valueLength);
+    PutU16(out, type);
+    PutWide(out, key);
+    Align4(out);
+    out.insert(out.end(), value.begin(), value.end());
+    if (children) children(out);
+    SetU16(out, start, static_cast<std::uint32_t>(out.size() - start));
+}
+
+std::vector<std::string> NumericParts(std::string_view version) {
+    if (!version.empty() && (version.front() == 'v' || version.front() == 'V')) version.remove_prefix(1);
+    std::vector<std::string> parts;
+    std::string current;
+    for (const char c : version) {
+        if (c >= '0' && c <= '9') { current.push_back(c); continue; }
+        if (c == '.' && !current.empty() && parts.size() < 3) {
+            parts.push_back(current);
+            current.clear();
+            continue;
+        }
+        break;
+    }
+    if (!current.empty() && parts.size() < 4) parts.push_back(current);
+    return parts;
+}
+
+std::uint16_t ClampPart(const std::string& part) {
+    if (part.size() > 5) return 65535;
+    return static_cast<std::uint16_t>(std::min<unsigned long>(std::stoul(part), 65535ul));
+}
+
+bool PortableAscii(const std::string_view text, const std::string_view extra) {
+    return std::ranges::all_of(text, [&](const char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+               extra.find(c) != std::string_view::npos;
+    });
+}
+
+// Desktop Entry string escaping.
+std::string DesktopEscape(const std::string_view text) {
+    std::string result;
+    for (const char c : text) {
+        switch (c) {
+            case '\\': result += "\\\\"; break;
+            case '\n': result += "\\n"; break;
+            case '\t': result += "\\t"; break;
+            case '\r': result += "\\r"; break;
+            default:
+                if (static_cast<unsigned char>(c) >= 0x20) result.push_back(c);
+        }
+    }
+    if (!result.empty() && result.front() == ' ') result = "\\s" + result.substr(1);
+    return result;
+}
+
+}  // namespace
+
+std::optional<RgbaImage> DecodePng(const Bytes& png, std::string& error) {
+    if (png.size() < 8 || std::memcmp(png.data(), "\x89PNG\r\n\x1a\n", 8) != 0) {
+        error = "not a PNG file";
+        return std::nullopt;
+    }
+    SDL_IOStream* stream = SDL_IOFromConstMem(png.data(), png.size());
+    SDL_Surface* decoded = stream ? SDL_LoadPNG_IO(stream, true) : nullptr;
+    if (!decoded) {
+        error = std::string("PNG could not be decoded: ") + SDL_GetError();
+        return std::nullopt;
+    }
+    std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> owner(decoded, SDL_DestroySurface);
+    if (decoded->w <= 0 || decoded->h <= 0 || decoded->w > kMaxIconSide || decoded->h > kMaxIconSide) {
+        error = "PNG must be between 1 and 4096 pixels on each side";
+        return std::nullopt;
+    }
+    SDL_Surface* converted = SDL_ConvertSurface(decoded, SDL_PIXELFORMAT_RGBA32);
+    if (!converted) {
+        error = std::string("PNG could not be converted to RGBA: ") + SDL_GetError();
+        return std::nullopt;
+    }
+    std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> rgba(converted, SDL_DestroySurface);
+    RgbaImage image{converted->w, converted->h,
+                    std::vector<std::uint8_t>(static_cast<std::size_t>(converted->w) * converted->h * 4)};
+    for (int y = 0; y < converted->h; ++y)
+        std::memcpy(&image.pixels[static_cast<std::size_t>(y) * converted->w * 4],
+                    static_cast<const std::uint8_t*>(converted->pixels) +
+                        static_cast<std::size_t>(y) * static_cast<std::size_t>(converted->pitch),
+                    static_cast<std::size_t>(converted->w) * 4);
+    return image;
+}
+
+Bytes EncodePng(const RgbaImage& image, std::string& error) {
+    std::vector<std::uint8_t> pixels = image.pixels;
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(image.width, image.height, SDL_PIXELFORMAT_RGBA32,
+                                                 pixels.data(), image.width * 4);
+    if (!surface) {
+        error = std::string("icon surface could not be created: ") + SDL_GetError();
+        return {};
+    }
+    std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> owner(surface, SDL_DestroySurface);
+    SDL_IOStream* stream = SDL_IOFromDynamicMem();
+    if (!stream || !SDL_SavePNG_IO(surface, stream, false)) {
+        error = std::string("PNG could not be encoded: ") + SDL_GetError();
+        if (stream) SDL_CloseIO(stream);
+        return {};
+    }
+    const Sint64 size = SDL_TellIO(stream);
+    const auto* data = static_cast<const std::uint8_t*>(SDL_GetPointerProperty(
+        SDL_GetIOProperties(stream), SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, nullptr));
+    Bytes result;
+    if (data && size > 0) result.assign(data, data + size);
+    SDL_CloseIO(stream);
+    if (result.empty()) error = "PNG encoder produced no data";
+    return result;
+}
+
+std::optional<RgbaImage> DecodeIcoLargest(const Bytes& ico, std::string& error) {
+    if (ico.size() < 6 || U16(ico, 0) != 0 || U16(ico, 2) != 1 || U16(ico, 4) == 0 ||
+        ico.size() < 6 + 16 * static_cast<std::size_t>(U16(ico, 4))) {
+        error = "icon is not a Windows .ico file";
+        return std::nullopt;
+    }
+    std::size_t best = 0;
+    int bestSide = -1;
+    for (std::size_t index = 0; index < U16(ico, 4); ++index) {
+        const std::size_t at = 6 + 16 * index;
+        const int side = ico[at] == 0 ? 256 : ico[at];
+        if (side > bestSide) { bestSide = side; best = at; }
+    }
+    const std::size_t size = U32(ico, best + 8), offset = U32(ico, best + 12);
+    if (size == 0 || offset > ico.size() || size > ico.size() - offset) {
+        error = "icon image entry lies outside the file";
+        return std::nullopt;
+    }
+    const Bytes frame(ico.begin() + static_cast<std::ptrdiff_t>(offset),
+                      ico.begin() + static_cast<std::ptrdiff_t>(offset + size));
+    if (frame.size() >= 8 && std::memcmp(frame.data(), "\x89PNG", 4) == 0) return DecodePng(frame, error);
+    if (frame.size() < 40 || U32(frame, 0) < 40 || U16(frame, 14) != 32 || U32(frame, 16) != 0) {
+        error = "the largest .ico frame is neither PNG nor a 32-bit bitmap; use a PNG icon";
+        return std::nullopt;
+    }
+    const int width = static_cast<int>(U32(frame, 4));
+    const int height = static_cast<int>(U32(frame, 8)) / 2;
+    const std::size_t pixelsAt = U32(frame, 0);
+    if (width <= 0 || height <= 0 || width > kMaxIconSide || height > kMaxIconSide ||
+        frame.size() < pixelsAt + static_cast<std::size_t>(width) * height * 4) {
+        error = "the largest .ico bitmap is truncated";
+        return std::nullopt;
+    }
+    RgbaImage image{width, height, std::vector<std::uint8_t>(static_cast<std::size_t>(width) * height * 4)};
+    bool anyAlpha = false;
+    for (int y = 0; y < height; ++y)
+        for (int x = 0; x < width; ++x) {
+            const auto* source = &frame[pixelsAt + (static_cast<std::size_t>(height - 1 - y) * width + x) * 4];
+            auto* target = &image.pixels[(static_cast<std::size_t>(y) * width + x) * 4];
+            target[0] = source[2];
+            target[1] = source[1];
+            target[2] = source[0];
+            target[3] = source[3];
+            anyAlpha = anyAlpha || source[3] != 0;
+        }
+    if (!anyAlpha)
+        for (std::size_t index = 3; index < image.pixels.size(); index += 4) image.pixels[index] = 255;
+    return image;
+}
+
+RgbaImage ResizeSquare(const RgbaImage& image, const int size) {
+    const RgbaImage square = SquareCanvas(image);
+    const int side = square.width;
+    if (side == size) return square;
+    // Premultiplied alpha, so transparent pixels do not bleed their colour.
+    std::vector<float> source(static_cast<std::size_t>(side) * side * 4);
+    for (std::size_t index = 0; index < source.size(); index += 4) {
+        const float alpha = square.pixels[index + 3] / 255.0f;
+        for (std::size_t channel = 0; channel < 3; ++channel)
+            source[index + channel] = square.pixels[index + channel] / 255.0f * alpha;
+        source[index + 3] = alpha;
+    }
+    const auto taps = AxisTaps(side, size);
+    std::vector<float> horizontal(static_cast<std::size_t>(side) * size * 4, 0.0f);
+    for (int y = 0; y < side; ++y)
+        for (int x = 0; x < size; ++x)
+            for (const auto& tap : taps[static_cast<std::size_t>(x)])
+                for (std::size_t channel = 0; channel < 4; ++channel)
+                    horizontal[(static_cast<std::size_t>(y) * size + x) * 4 + channel] +=
+                        tap.weight * source[(static_cast<std::size_t>(y) * side + tap.index) * 4 + channel];
+    RgbaImage result{size, size, std::vector<std::uint8_t>(static_cast<std::size_t>(size) * size * 4)};
+    for (int y = 0; y < size; ++y)
+        for (int x = 0; x < size; ++x) {
+            float pixel[4]{};
+            for (const auto& tap : taps[static_cast<std::size_t>(y)])
+                for (std::size_t channel = 0; channel < 4; ++channel)
+                    pixel[channel] += tap.weight *
+                        horizontal[(static_cast<std::size_t>(tap.index) * size + x) * 4 + channel];
+            const float alpha = std::clamp(pixel[3], 0.0f, 1.0f);
+            auto* target = &result.pixels[(static_cast<std::size_t>(y) * size + x) * 4];
+            for (std::size_t channel = 0; channel < 3; ++channel)
+                target[channel] = static_cast<std::uint8_t>(std::lround(
+                    std::clamp(alpha > 0 ? pixel[channel] / alpha : 0.0f, 0.0f, 1.0f) * 255.0f));
+            target[3] = static_cast<std::uint8_t>(std::lround(alpha * 255.0f));
+        }
+    return result;
+}
+
+Bytes BuildIco(const RgbaImage& source, std::string& error) {
+    static constexpr std::array<int, 7> sizes{16, 24, 32, 48, 64, 128, 256};
+    std::vector<Bytes> frames;
+    for (const int size : sizes) {
+        const RgbaImage image = ResizeSquare(source, size);
+        Bytes frame = size <= 48 ? DibFrame(image) : EncodePng(image, error);
+        if (frame.empty()) return {};
+        frames.push_back(std::move(frame));
+    }
+    Bytes out;
+    PutU16(out, 0);
+    PutU16(out, 1);
+    PutU16(out, static_cast<std::uint32_t>(sizes.size()));
+    std::uint32_t offset = static_cast<std::uint32_t>(6 + 16 * sizes.size());
+    for (std::size_t index = 0; index < sizes.size(); ++index) {
+        out.push_back(static_cast<std::uint8_t>(sizes[index] == 256 ? 0 : sizes[index]));
+        out.push_back(static_cast<std::uint8_t>(sizes[index] == 256 ? 0 : sizes[index]));
+        out.push_back(0);
+        out.push_back(0);
+        PutU16(out, 1);
+        PutU16(out, 32);
+        PutU32(out, static_cast<std::uint32_t>(frames[index].size()));
+        PutU32(out, offset);
+        offset += static_cast<std::uint32_t>(frames[index].size());
+    }
+    for (const auto& frame : frames) out.insert(out.end(), frame.begin(), frame.end());
+    return out;
+}
+
+Bytes BuildIcns(const RgbaImage& source, std::string& error) {
+    const int largest = std::max(source.width, source.height);
+    std::vector<std::pair<std::string_view, int>> members{
+        {"icp4", 16}, {"icp5", 32}, {"ic11", 32}, {"ic12", 64}, {"ic07", 128},
+        {"ic13", 256}, {"ic08", 256}};
+    if (largest >= 512) {
+        members.emplace_back("ic14", 512);
+        members.emplace_back("ic09", 512);
+    }
+    if (largest >= 1024) members.emplace_back("ic10", 1024);
+    std::vector<std::pair<int, Bytes>> encoded;
+    Bytes body;
+    for (const auto& [type, size] : members) {
+        auto cached = std::ranges::find(encoded, size, &std::pair<int, Bytes>::first);
+        if (cached == encoded.end()) {
+            Bytes png = EncodePng(ResizeSquare(source, size), error);
+            if (png.empty()) return {};
+            encoded.emplace_back(size, std::move(png));
+            cached = std::prev(encoded.end());
+        }
+        body.insert(body.end(), type.begin(), type.end());
+        PutU32BE(body, static_cast<std::uint32_t>(cached->second.size() + 8));
+        body.insert(body.end(), cached->second.begin(), cached->second.end());
+    }
+    Bytes out{'i', 'c', 'n', 's'};
+    PutU32BE(out, static_cast<std::uint32_t>(body.size() + 8));
+    out.insert(out.end(), body.begin(), body.end());
+    return out;
+}
+
+std::array<std::uint16_t, 4> NumericVersion(const std::string_view version) {
+    std::array<std::uint16_t, 4> result{};
+    const auto parts = NumericParts(version);
+    for (std::size_t index = 0; index < parts.size() && index < 4; ++index)
+        result[index] = ClampPart(parts[index]);
+    return result;
+}
+
+std::string ShortVersion(const std::string_view version) {
+    auto parts = NumericParts(version);
+    if (parts.size() > 3) parts.resize(3);
+    while (parts.size() < 2) parts.emplace_back("0");
+    std::string result;
+    for (const auto& part : parts) {
+        if (!result.empty()) result.push_back('.');
+        result += std::to_string(ClampPart(part));
+    }
+    return result;
+}
+
+Bytes BuildVersionResource(const VersionStrings& strings) {
+    const auto numeric = NumericVersion(strings.productVersion);
+    const std::uint32_t ms = (static_cast<std::uint32_t>(numeric[0]) << 16) | numeric[1];
+    const std::uint32_t ls = (static_cast<std::uint32_t>(numeric[2]) << 16) | numeric[3];
+    Bytes fixed;
+    PutU32(fixed, 0xFEEF04BD);  // dwSignature
+    PutU32(fixed, 0x00010000);  // dwStrucVersion
+    PutU32(fixed, ms);          // dwFileVersionMS
+    PutU32(fixed, ls);
+    PutU32(fixed, ms);          // dwProductVersionMS
+    PutU32(fixed, ls);
+    PutU32(fixed, 0x3F);        // dwFileFlagsMask
+    PutU32(fixed, 0);           // dwFileFlags
+    PutU32(fixed, 0x00040004);  // VOS_NT_WINDOWS32
+    PutU32(fixed, 1);           // VFT_APP
+    PutU32(fixed, 0);
+    PutU32(fixed, 0);
+    PutU32(fixed, 0);
+    const std::string fileVersion = std::to_string(numeric[0]) + '.' + std::to_string(numeric[1]) + '.' +
+                                    std::to_string(numeric[2]) + '.' + std::to_string(numeric[3]);
+    const std::vector<std::pair<std::u16string, std::string>> entries{
+        {u"CompanyName", strings.companyName},
+        {u"FileDescription", strings.fileDescription},
+        {u"FileVersion", fileVersion},
+        {u"InternalName", strings.internalName},
+        {u"LegalCopyright", strings.legalCopyright},
+        {u"OriginalFilename", strings.originalFilename},
+        {u"ProductName", strings.productName},
+        {u"ProductVersion", strings.productVersion.empty() ? fileVersion : strings.productVersion},
+    };
+    Bytes out;
+    VersionBlock(out, u"VS_VERSION_INFO", 0, fixed, static_cast<std::uint16_t>(fixed.size()), [&](Bytes& root) {
+        VersionBlock(root, u"StringFileInfo", 1, {}, 0, [&](Bytes& info) {
+            VersionBlock(info, u"040904B0", 1, {}, 0, [&](Bytes& table) {
+                for (const auto& [key, value] : entries) {
+                    if (value.empty()) continue;
+                    const std::u16string wide = Utf16(value);
+                    Bytes text;
+                    PutWide(text, wide);
+                    VersionBlock(table, key, 1, text, static_cast<std::uint16_t>(wide.size() + 1));
+                }
+            });
+        });
+        VersionBlock(root, u"VarFileInfo", 1, {}, 0, [&](Bytes& info) {
+            Bytes translation;
+            PutU16(translation, 0x0409);
+            PutU16(translation, 0x04B0);
+            VersionBlock(info, u"Translation", 0, translation, 4);
+        });
+    });
+    return out;
+}
+
+std::optional<ParsedVersionResource> ParseVersionResource(const Bytes& resource) {
+    ParsedVersionResource parsed;
+    // Returns the end of the block starting at `at`, or 0 on malformed input.
+    std::function<std::size_t(std::size_t, std::size_t, int)> block =
+        [&](std::size_t at, const std::size_t limit, const int depth) -> std::size_t {
+        if (at + 6 > limit || depth > 4) return 0;
+        const std::size_t length = U16(resource, at);
+        const std::size_t valueLength = U16(resource, at + 2);
+        const std::uint16_t type = U16(resource, at + 4);
+        const std::size_t end = at + length;
+        if (length < 6 || end > limit) return 0;
+        std::size_t cursor = at + 6;
+        std::u16string key;
+        while (cursor + 1 < end && U16(resource, cursor) != 0) {
+            key.push_back(static_cast<char16_t>(U16(resource, cursor)));
+            cursor += 2;
+        }
+        cursor += 2;
+        cursor = (cursor + 3) & ~std::size_t{3};
+        const std::size_t valueBytes = type == 1 ? valueLength * 2 : valueLength;
+        if (cursor + valueBytes > end && valueLength != 0) return 0;
+        if (depth == 0) {
+            if (key != u"VS_VERSION_INFO" || valueBytes < 52 || U32(resource, cursor) != 0xFEEF04BD) return 0;
+            const std::uint32_t ms = U32(resource, cursor + 8), ls = U32(resource, cursor + 12);
+            parsed.fileVersion = {static_cast<std::uint16_t>(ms >> 16), static_cast<std::uint16_t>(ms & 0xffff),
+                                  static_cast<std::uint16_t>(ls >> 16), static_cast<std::uint16_t>(ls & 0xffff)};
+        } else if (depth == 3 && type == 1) {
+            std::u16string value;
+            for (std::size_t index = 0; index + 1 < valueLength; ++index)
+                value.push_back(static_cast<char16_t>(U16(resource, cursor + index * 2)));
+            parsed.strings.emplace_back(Utf8(key), Utf8(value));
+        }
+        cursor += valueBytes;
+        while (true) {
+            cursor = (cursor + 3) & ~std::size_t{3};
+            if (cursor >= end) break;
+            const std::size_t next = block(cursor, end, depth + 1);
+            if (next == 0) return 0;
+            cursor = next;
+        }
+        return end;
+    };
+    if (resource.size() < 6 || block(0, resource.size(), 0) == 0) return std::nullopt;
+    return parsed;
+}
+
+std::string InfoPlist(const MacBundleInfo& info) {
+    const std::string version = ShortVersion(info.version);
+    std::string plist =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+        "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+        "<plist version=\"1.0\">\n<dict>\n";
+    const auto entry = [&](const std::string_view key, const std::string_view value) {
+        plist += "\t<key>" + std::string(key) + "</key>\n\t<string>" + XmlEscape(value) + "</string>\n";
+    };
+    entry("CFBundleDevelopmentRegion", "en");
+    entry("CFBundleDisplayName", info.bundleName);
+    entry("CFBundleExecutable", info.executable);
+    if (!info.iconFile.empty()) entry("CFBundleIconFile", info.iconFile);
+    entry("CFBundleIdentifier", info.identifier);
+    entry("CFBundleInfoDictionaryVersion", "6.0");
+    entry("CFBundleName", info.bundleName);
+    entry("CFBundlePackageType", "APPL");
+    entry("CFBundleShortVersionString", version);
+    entry("CFBundleVersion", version);
+    entry("LSApplicationCategoryType", "public.app-category.games");
+    entry("LSMinimumSystemVersion", info.minimumSystemVersion);
+    plist += "\t<key>NSHighResolutionCapable</key>\n\t<true/>\n";
+    if (!info.copyright.empty()) entry("NSHumanReadableCopyright", info.copyright);
+    entry("NSPrincipalClass", "NSApplication");
+    // SDL_GetBasePath() is Contents/Resources, where the game data lives.
+    entry("SDL_FILESYSTEM_BASE_DIR_TYPE", "resource");
+    plist += "</dict>\n</plist>\n";
+    return plist;
+}
+
+std::optional<std::string> MachOMinimumSystemVersion(const Bytes& executable) {
+    if (executable.size() < 32) return std::nullopt;
+    const std::uint32_t magicBE = U32BE(executable, 0);
+    if (magicBE == 0xCAFEBABE || magicBE == 0xCAFEBABF) {
+        const bool wide = magicBE == 0xCAFEBABF;
+        if (U32BE(executable, 4) == 0 || executable.size() < 8 + (wide ? 32u : 20u)) return std::nullopt;
+        const std::uint64_t offset = wide
+            ? (static_cast<std::uint64_t>(U32BE(executable, 16)) << 32) | U32BE(executable, 20)
+            : U32BE(executable, 16);
+        if (offset == 0 || offset >= executable.size()) return std::nullopt;
+        return MachOMinimumSystemVersion(Bytes(executable.begin() + static_cast<std::ptrdiff_t>(offset),
+                                               executable.end()));
+    }
+    const std::uint32_t magic = U32(executable, 0);
+    if (magic != 0xFEEDFACF && magic != 0xFEEDFACE) return std::nullopt;
+    const std::size_t header = magic == 0xFEEDFACF ? 32 : 28;
+    const std::uint32_t commands = U32(executable, 16);
+    std::size_t cursor = header;
+    const auto format = [](const std::uint32_t encoded) {
+        std::string text = std::to_string(encoded >> 16) + '.' + std::to_string((encoded >> 8) & 0xff);
+        if ((encoded & 0xff) != 0) text += '.' + std::to_string(encoded & 0xff);
+        return text;
+    };
+    for (std::uint32_t index = 0; index < commands && index < 4096; ++index) {
+        if (cursor + 8 > executable.size()) return std::nullopt;
+        const std::uint32_t command = U32(executable, cursor), size = U32(executable, cursor + 4);
+        if (size < 8) return std::nullopt;
+        if (command == 0x32 && cursor + 16 <= executable.size() && U32(executable, cursor + 8) == 1)
+            return format(U32(executable, cursor + 12));  // LC_BUILD_VERSION, PLATFORM_MACOS
+        if (command == 0x24 && cursor + 12 <= executable.size())
+            return format(U32(executable, cursor + 8));   // LC_VERSION_MIN_MACOSX
+        cursor += size;
+    }
+    return std::nullopt;
+}
+
+std::string DefaultBundleIdentifier(const std::string_view projectId) {
+    std::string id;
+    for (const char c : projectId)
+        id.push_back(PortableAscii(std::string_view(&c, 1), ".-") ? c : '-');
+    while (!id.empty() && id.front() == '.') id.erase(id.begin());
+    while (!id.empty() && id.back() == '.') id.pop_back();
+    if (id.empty()) id = "game";
+    return id.find('.') == std::string::npos ? "com.example." + id : id;
+}
+
+bool ValidBundleIdentifier(const std::string_view identifier) {
+    if (identifier.empty() || identifier.size() > 155 || !PortableAscii(identifier, ".-") ||
+        identifier.find('.') == std::string_view::npos)
+        return false;
+    std::size_t start = 0;
+    while (start <= identifier.size()) {
+        const auto end = identifier.find('.', start);
+        const auto part = identifier.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start);
+        if (part.empty()) return false;
+        if (end == std::string_view::npos) break;
+        start = end + 1;
+    }
+    return true;
+}
+
+std::string DesktopEntry(const DesktopEntryInfo& info) {
+    // Exec quoting (Desktop Entry spec): ", `, $ and \ are escaped inside quotes.
+    std::string exec = "\"";
+    for (const char c : info.executable) {
+        if (c == '"' || c == '`' || c == '$' || c == '\\') exec.push_back('\\');
+        exec.push_back(c);
+    }
+    exec += "\"";
+    std::string entry = "[Desktop Entry]\nType=Application\nVersion=1.0\n";
+    entry += "Name=" + DesktopEscape(info.name) + "\n";
+    if (!info.comment.empty()) entry += "Comment=" + DesktopEscape(info.comment) + "\n";
+    entry += "Exec=" + DesktopEscape(exec) + "\n";
+    if (!info.icon.empty()) entry += "Icon=" + DesktopEscape(info.icon) + "\n";
+    entry += "Terminal=false\nCategories=Game;\n";
+    return entry;
+}
+
+bool ValidEngineFolder(const std::string_view folder) {
+    if (folder.empty() || folder.size() > 64 || folder.front() == '.' || folder.front() == '-' ||
+        folder.back() == '.' || !PortableAscii(folder, "._-"))
+        return false;
+    std::string lower(folder);
+    std::ranges::transform(lower, lower.begin(), [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const std::string stem = lower.substr(0, lower.find('.'));
+    static constexpr std::array<std::string_view, 7> reserved{"con", "prn", "aux", "nul", "package", "save", "updates"};
+    if (std::ranges::find(reserved, stem) != reserved.end() || lower == "notices") return false;
+    if (stem.size() == 4 && (stem.starts_with("com") || stem.starts_with("lpt")) && stem[3] >= '1' && stem[3] <= '9')
+        return false;
+    return true;
+}
+
+std::string AssemblyManifest(const std::string_view folder, const std::string_view architecture,
+                             const std::vector<std::string>& files) {
+    std::string manifest =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\n"
+        "  <assemblyIdentity type=\"win32\" name=\"" + XmlEscape(folder) +
+        "\" version=\"1.0.0.0\" processorArchitecture=\"" + XmlEscape(architecture) + "\"/>\n";
+    for (const auto& file : files) manifest += "  <file name=\"" + XmlEscape(file) + "\"/>\n";
+    manifest += "</assembly>\n";
+    return manifest;
+}
+
+std::optional<std::string> AddAssemblyDependency(const std::string_view manifest, const std::string_view folder,
+                                                 const std::string_view architecture) {
+    const std::string dependency =
+        "  <dependency>\n    <dependentAssembly>\n"
+        "      <assemblyIdentity type=\"win32\" name=\"" + XmlEscape(folder) +
+        "\" version=\"1.0.0.0\" processorArchitecture=\"" + XmlEscape(architecture) + "\"/>\n"
+        "    </dependentAssembly>\n  </dependency>\n";
+    if (manifest.empty())
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+               "<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\n" +
+               dependency + "</assembly>\n";
+    // The root element may carry a namespace prefix (<asmv1:assembly>).
+    const auto close = manifest.rfind("assembly>");
+    if (close == std::string_view::npos) return std::nullopt;
+    const auto open = manifest.rfind("</", close);
+    if (open == std::string_view::npos || manifest.substr(open, close - open).find('>') != std::string_view::npos)
+        return std::nullopt;
+    std::string result(manifest.substr(0, open));
+    result += dependency;
+    result += manifest.substr(open);
+    return result;
+}
+
+std::optional<std::string> PeArchitecture(const Bytes& executable) {
+    if (executable.size() < 0x40 || executable[0] != 'M' || executable[1] != 'Z') return std::nullopt;
+    const std::size_t pe = U32(executable, 0x3C);
+    if (pe + 6 > executable.size() || std::memcmp(&executable[pe], "PE\0\0", 4) != 0) return std::nullopt;
+    switch (U16(executable, pe + 4)) {
+        case 0x8664: return "amd64";
+        case 0x014c: return "x86";
+        case 0xAA64: return "arm64";
+        default: return std::nullopt;
+    }
+}
+
+std::optional<std::uint16_t> PeSubsystem(const Bytes& executable) {
+    if (executable.size() < 0x40 || executable[0] != 'M' || executable[1] != 'Z') return std::nullopt;
+    const std::size_t pe = U32(executable, 0x3C);
+    if (pe + 24 + 70 > executable.size() || std::memcmp(&executable[pe], "PE\0\0", 4) != 0) return std::nullopt;
+    return U16(executable, pe + 24 + 68);
+}
+
+std::string LayoutResource(const std::string_view dataDirectory) {
+    return nlohmann::json{{"format", "PrismatiXLayout"}, {"schemaRevision", 1},
+                          {"dataDirectory", std::string(dataDirectory)}}.dump();
+}
+
+std::optional<std::string> LayoutDataDirectory(const std::string_view resource) {
+    const auto parsed = nlohmann::json::parse(resource, nullptr, false);
+    if (!parsed.is_object() || parsed.value("format", "") != "PrismatiXLayout") return std::nullopt;
+    const auto found = parsed.find("dataDirectory");
+    if (found == parsed.end() || !found->is_string() || !ValidEngineFolder(found->get<std::string>()))
+        return std::nullopt;
+    return found->get<std::string>();
+}
+
+#ifdef _WIN32
+namespace {
+struct ExistingResource {
+    LPCWSTR type;
+    std::wstring name;
+    WORD id;
+    WORD language;
+};
+
+std::vector<ExistingResource> EnumerateResources(HMODULE module, const std::vector<LPCWSTR>& types) {
+    struct Context { std::vector<ExistingResource>* out; LPCWSTR type; std::wstring name; WORD id; };
+    std::vector<ExistingResource> existing;
+    for (const LPCWSTR type : types) {
+        Context context{&existing, type, {}, 0};
+        EnumResourceNamesW(module, type,
+            [](HMODULE handle, LPCWSTR resourceType, LPWSTR name, LONG_PTR parameter) -> BOOL {
+                auto& owner = *reinterpret_cast<Context*>(parameter);
+                owner.name = IS_INTRESOURCE(name) ? std::wstring{} : std::wstring(name);
+                owner.id = IS_INTRESOURCE(name) ? static_cast<WORD>(reinterpret_cast<std::uintptr_t>(name)) : 0;
+                EnumResourceLanguagesW(handle, resourceType, name,
+                    [](HMODULE, LPCWSTR, LPCWSTR, WORD language, LONG_PTR inner) -> BOOL {
+                        auto& target = *reinterpret_cast<Context*>(inner);
+                        target.out->push_back({target.type, target.name, target.id, language});
+                        return TRUE;
+                    }, parameter);
+                return TRUE;
+            }, reinterpret_cast<LONG_PTR>(&context));
+    }
+    return existing;
+}
+}  // namespace
+
+bool WriteWindowsResources(const std::filesystem::path& executable, const WindowsResources& resources,
+                           std::string& error) {
+    const LPCWSTR kIcon = MAKEINTRESOURCEW(3);
+    const LPCWSTR kGroupIcon = MAKEINTRESOURCEW(14);
+    const LPCWSTR kVersion = MAKEINTRESOURCEW(16);
+    const LPCWSTR kManifest = MAKEINTRESOURCEW(24);
+    const LPCWSTR kRcData = MAKEINTRESOURCEW(10);
+    const WORD neutral = MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL);
+    const WORD english = MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US);
+
+    struct Image { std::size_t entry, offset, size; };
+    std::vector<Image> images;
+    const Bytes& ico = resources.ico;
+    if (!ico.empty()) {
+        if (ico.size() < 6 || U16(ico, 0) != 0 || U16(ico, 2) != 1 || U16(ico, 4) == 0 ||
+            U16(ico, 4) > 64 || ico.size() < 6 + 16 * static_cast<std::size_t>(U16(ico, 4))) {
+            error = "icon is not a Windows .ico file";
+            return false;
+        }
+        for (std::uint16_t index = 0; index < U16(ico, 4); ++index) {
+            const std::size_t at = 6 + 16 * static_cast<std::size_t>(index);
+            const std::size_t size = U32(ico, at + 8), offset = U32(ico, at + 12);
+            if (size == 0 || offset > ico.size() || size > ico.size() - offset) {
+                error = "icon image entry lies outside the file";
+                return false;
+            }
+            images.push_back({at, offset, size});
+        }
+    }
+
+    // Resources being replaced are removed first, so the written icon group
+    // is the executable's only one and there is a single version resource.
+    std::vector<LPCWSTR> replacedTypes;
+    if (!ico.empty()) { replacedTypes.push_back(kGroupIcon); replacedTypes.push_back(kIcon); }
+    if (!resources.version.empty()) replacedTypes.push_back(kVersion);
+    std::vector<ExistingResource> existing;
+    std::string manifest;
+    WORD manifestLanguage = english;
+    if (HMODULE module = LoadLibraryExW(executable.c_str(), nullptr,
+            LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE)) {
+        existing = EnumerateResources(module, replacedTypes);
+        if (!resources.engineFolder.empty()) {
+            for (const auto& item : EnumerateResources(module, {kManifest})) {
+                const LPCWSTR name = item.name.empty() ? MAKEINTRESOURCEW(item.id) : item.name.c_str();
+                if (item.id != 1) continue;
+                if (HRSRC found = FindResourceExW(module, kManifest, name, item.language)) {
+                    const DWORD size = SizeofResource(module, found);
+                    if (HGLOBAL loaded = LoadResource(module, found); loaded && size > 0)
+                        manifest.assign(static_cast<const char*>(LockResource(loaded)), size);
+                    manifestLanguage = item.language;
+                }
+                existing.push_back(item);
+            }
+        }
+        FreeLibrary(module);
+    } else {
+        error = "executable resources could not be read";
+        return false;
+    }
+    std::optional<std::string> mergedManifest;
+    if (!resources.engineFolder.empty()) {
+        // A UTF-8 byte order mark is legal before the XML declaration.
+        if (manifest.starts_with("\xEF\xBB\xBF")) manifest.erase(0, 3);
+        mergedManifest = AddAssemblyDependency(manifest, resources.engineFolder, resources.architecture);
+        if (!mergedManifest) {
+            error = "the Player's application manifest has no closing assembly element";
+            return false;
+        }
+    }
+
+    HANDLE update = BeginUpdateResourceW(executable.c_str(), FALSE);
+    if (!update) {
+        error = "executable resources could not be opened";
+        return false;
+    }
+    bool ok = true;
+    for (const auto& item : existing) {
+        const LPCWSTR name = item.name.empty() ? MAKEINTRESOURCEW(item.id) : item.name.c_str();
+        ok = ok && UpdateResourceW(update, item.type, name, item.language, nullptr, 0);
+    }
+    if (!ico.empty()) {
+        // GRPICONDIR followed by one 14-byte GRPICONDIRENTRY per RT_ICON image.
+        const auto count = static_cast<std::uint16_t>(images.size());
+        Bytes group{0, 0, 1, 0, static_cast<std::uint8_t>(count & 0xff), static_cast<std::uint8_t>(count >> 8)};
+        for (std::uint16_t index = 0; index < count && ok; ++index) {
+            const auto& image = images[index];
+            const WORD id = static_cast<WORD>(index + 1);
+            ok = UpdateResourceW(update, kIcon, MAKEINTRESOURCEW(id), neutral,
+                                 const_cast<std::uint8_t*>(ico.data() + image.offset),
+                                 static_cast<DWORD>(image.size));
+            group.insert(group.end(), ico.begin() + static_cast<std::ptrdiff_t>(image.entry),
+                         ico.begin() + static_cast<std::ptrdiff_t>(image.entry + 12));
+            group.push_back(static_cast<std::uint8_t>(id & 0xff));
+            group.push_back(static_cast<std::uint8_t>(id >> 8));
+        }
+        ok = ok && UpdateResourceW(update, kGroupIcon, MAKEINTRESOURCEW(1), neutral, group.data(),
+                                   static_cast<DWORD>(group.size()));
+    }
+    if (!resources.version.empty()) {
+        Bytes version = resources.version;
+        ok = ok && UpdateResourceW(update, kVersion, MAKEINTRESOURCEW(1), english, version.data(),
+                                   static_cast<DWORD>(version.size()));
+    }
+    if (mergedManifest) {
+        ok = ok && UpdateResourceW(update, kManifest, MAKEINTRESOURCEW(1), manifestLanguage,
+                                   mergedManifest->data(), static_cast<DWORD>(mergedManifest->size()));
+        std::string layout = LayoutResource(resources.engineFolder);
+        ok = ok && UpdateResourceW(update, kRcData, kLayoutResourceName, neutral, layout.data(),
+                                   static_cast<DWORD>(layout.size()));
+    }
+    if (!EndUpdateResourceW(update, ok ? FALSE : TRUE) || !ok) {
+        error = "executable resources could not be written";
+        return false;
+    }
+    return true;
+}
+#else
+bool WriteWindowsResources(const std::filesystem::path&, const WindowsResources&, std::string& error) {
+    error = "Windows executable resources can only be written on Windows";
+    return false;
+}
+#endif
+
+LayoutPlatform HostLayoutPlatform() {
+#if defined(_WIN32)
+    return LayoutPlatform::Windows;
+#elif defined(__APPLE__)
+    return LayoutPlatform::MacOS;
+#elif defined(__linux__) && !defined(__ANDROID__)
+    return LayoutPlatform::Linux;
+#else
+    return LayoutPlatform::Other;
+#endif
+}
+
+namespace {
+
+std::optional<Bytes> ReadFileBytes(const std::filesystem::path& path, const std::uintmax_t limit) {
+    std::error_code error;
+    const auto size = std::filesystem::file_size(path, error);
+    if (error || size > limit) return std::nullopt;
+    std::ifstream input(path, std::ios::binary);
+    Bytes bytes(static_cast<std::size_t>(size));
+    if (size > 0) input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size));
+    if (!input) return std::nullopt;
+    return bytes;
+}
+
+bool WriteFileBytes(const std::filesystem::path& path, const std::string_view bytes) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    return static_cast<bool>(output);
+}
+
+std::string Lowercase(std::string value) {
+    std::ranges::transform(value, value.begin(), [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool IsLibrary(const std::string& name, const LayoutPlatform platform) {
+    const std::string lower = Lowercase(name);
+    switch (platform) {
+        case LayoutPlatform::Windows: return lower.ends_with(".dll");
+        case LayoutPlatform::MacOS: return lower.ends_with(".dylib");
+        case LayoutPlatform::Linux: return lower.ends_with(".so") || lower.find(".so.") != std::string::npos;
+        default: return false;
+    }
+}
+
+std::string Stem(const std::string& file) {
+    const auto dot = file.rfind('.');
+    return dot == std::string::npos || dot == 0 ? file : file.substr(0, dot);
+}
+
+// The icon as RGBA for platforms that need raster sizes (macOS, Linux).
+std::optional<RgbaImage> IconImage(const std::filesystem::path& icon, std::string& error) {
+    const auto bytes = ReadFileBytes(icon, 4u * 1024u * 1024u);
+    if (!bytes) {
+        error = "icon could not be read";
+        return std::nullopt;
+    }
+    return Lowercase(px::PathToUtf8(icon.extension())) == ".png" ? DecodePng(*bytes, error) : DecodeIcoLargest(*bytes, error);
+}
+
+// Moves every entry of `staging` except `keep` into `target` (same volume).
+bool MoveEntries(const std::filesystem::path& staging, const std::filesystem::path& target,
+                 const std::vector<std::filesystem::path>& keep, std::string& error) {
+    std::error_code code;
+    std::filesystem::create_directories(target, code);
+    if (code) {
+        error = "layout folder could not be created: " + code.message();
+        return false;
+    }
+    std::vector<std::filesystem::path> entries;
+    for (std::filesystem::directory_iterator iterator(staging, code);
+         !code && iterator != std::filesystem::directory_iterator(); iterator.increment(code)) {
+        const auto path = iterator->path();
+        if (path == target || std::ranges::find(keep, path) != keep.end()) continue;
+        entries.push_back(path);
+    }
+    if (code) {
+        error = "staged distribution could not be listed: " + code.message();
+        return false;
+    }
+    for (const auto& path : entries) {
+        std::filesystem::rename(path, target / path.filename(), code);
+        if (code) {
+            error = "staged file could not be moved into the layout: " + code.message();
+            return false;
+        }
+    }
+    return true;
+}
+
+void MarkExecutable(const std::filesystem::path& path) {
+    std::error_code ignored;
+    std::filesystem::permissions(path,
+        std::filesystem::perms::owner_all | std::filesystem::perms::group_read |
+            std::filesystem::perms::group_exec | std::filesystem::perms::others_read |
+            std::filesystem::perms::others_exec,
+        std::filesystem::perm_options::replace, ignored);
+}
+
+bool ApplyWindowsLayout(const std::filesystem::path& staging, const LayoutRequest& request,
+                        LayoutOutcome& outcome, std::string& error) {
+    const auto player = staging / px::PathFromUtf8(request.playerFile);
+    const auto executable = ReadFileBytes(player, 1024ull * 1024ull * 1024ull);
+    const auto architecture = executable ? PeArchitecture(*executable) : std::nullopt;
+    if (!architecture) {
+        // Fixtures and script stand-ins are not PE images; a real branded
+        // or bundled distribution needs one.
+        if (!request.icon.empty() || !request.engineFolder.empty()) {
+            error = "the Player is not a PE executable of a known architecture";
+            return false;
+        }
+        outcome.notes.push_back("The Player is not a PE executable; version information skipped");
+        outcome.player = player;
+        return true;
+    }
+    WindowsResources resources;
+    if (!request.icon.empty()) {
+        if (Lowercase(px::PathToUtf8(request.icon.extension())) == ".png") {
+            const auto bytes = ReadFileBytes(request.icon, 4u * 1024u * 1024u);
+            std::string decodeError;
+            const auto image = bytes ? DecodePng(*bytes, decodeError) : std::nullopt;
+            if (!image) {
+                error = "icon " + (bytes ? decodeError : std::string("could not be read"));
+                return false;
+            }
+            resources.ico = BuildIco(*image, error);
+            if (resources.ico.empty()) return false;
+        } else {
+            const auto bytes = ReadFileBytes(request.icon, 4u * 1024u * 1024u);
+            if (!bytes) {
+                error = "icon could not be read";
+                return false;
+            }
+            resources.ico = *bytes;
+        }
+    }
+    resources.version = BuildVersionResource({
+        .productName = request.displayName,
+        .fileDescription = request.displayName,
+        .companyName = request.companyName,
+        .legalCopyright = request.copyright,
+        .productVersion = request.version,
+        .originalFilename = request.playerFile,
+        .internalName = Stem(request.playerFile)});
+    if (!request.engineFolder.empty()) {
+        resources.engineFolder = request.engineFolder;
+        resources.architecture = *architecture;
+        std::vector<std::string> libraries;
+        std::error_code code;
+        for (std::filesystem::directory_iterator iterator(staging, code);
+             !code && iterator != std::filesystem::directory_iterator(); iterator.increment(code)) {
+            const std::string name = px::PathToUtf8(iterator->path().filename());
+            if (iterator->is_regular_file() && IsLibrary(name, LayoutPlatform::Windows)) libraries.push_back(name);
+        }
+        std::ranges::sort(libraries);
+        const auto folder = staging / px::PathFromUtf8(request.engineFolder);
+        if (!MoveEntries(staging, folder, {player}, error)) return false;
+        if (!WriteFileBytes(folder / px::PathFromUtf8(request.engineFolder + ".manifest"),
+                            AssemblyManifest(request.engineFolder, *architecture, libraries))) {
+            error = "the engine folder's assembly manifest could not be written";
+            return false;
+        }
+        outcome.notes.push_back("Runtime libraries and game data are in " + request.engineFolder + "/");
+    }
+    if (!WriteWindowsResources(player, resources, error)) return false;
+    outcome.player = player;
+    return true;
+}
+
+bool ApplyMacLayout(const std::filesystem::path& staging, const LayoutRequest& request,
+                    LayoutOutcome& outcome, std::string& error) {
+    const auto contents = staging / px::PathFromUtf8(request.appName + ".app") / "Contents";
+    const auto macos = contents / "MacOS";
+    const auto frameworks = contents / "Frameworks";
+    const auto resourcesDirectory = contents / "Resources";
+    const auto player = staging / px::PathFromUtf8(request.playerFile);
+    std::error_code code;
+    for (const auto& directory : {macos, frameworks, resourcesDirectory}) {
+        std::filesystem::create_directories(directory, code);
+        if (code) {
+            error = "app bundle folder could not be created: " + code.message();
+            return false;
+        }
+    }
+    const auto bundleRoot = contents.parent_path();
+    std::vector<std::filesystem::path> libraries;
+    for (std::filesystem::directory_iterator iterator(staging, code);
+         !code && iterator != std::filesystem::directory_iterator(); iterator.increment(code))
+        if (iterator->is_regular_file() && IsLibrary(px::PathToUtf8(iterator->path().filename()), LayoutPlatform::MacOS))
+            libraries.push_back(iterator->path());
+    for (const auto& library : libraries) {
+        std::filesystem::rename(library, frameworks / library.filename(), code);
+        if (code) {
+            error = "runtime library could not be moved into Frameworks: " + code.message();
+            return false;
+        }
+    }
+    const auto bundledPlayer = macos / px::PathFromUtf8(request.playerFile);
+    std::filesystem::rename(player, bundledPlayer, code);
+    if (code) {
+        error = "the Player could not be moved into the app bundle: " + code.message();
+        return false;
+    }
+    MarkExecutable(bundledPlayer);
+    if (!MoveEntries(staging, resourcesDirectory, {bundleRoot}, error)) return false;
+    std::string iconFile;
+    if (!request.icon.empty()) {
+        std::string iconError;
+        const auto image = IconImage(request.icon, iconError);
+        const Bytes icns = image ? BuildIcns(*image, iconError) : Bytes{};
+        if (icns.empty()) {
+            error = "icon could not be converted to .icns: " + iconError;
+            return false;
+        }
+        iconFile = Stem(request.playerFile) + ".icns";
+        if (!WriteFileBytes(resourcesDirectory / px::PathFromUtf8(iconFile),
+                            std::string_view(reinterpret_cast<const char*>(icns.data()), icns.size()))) {
+            error = "the .icns icon could not be written";
+            return false;
+        }
+    }
+    const auto executable = ReadFileBytes(bundledPlayer, 1024ull * 1024ull * 1024ull);
+    const auto minimum = executable ? MachOMinimumSystemVersion(*executable) : std::nullopt;
+    if (!minimum) outcome.notes.push_back("The Player has no macOS deployment target; LSMinimumSystemVersion is 11.0");
+    const std::string plist = InfoPlist({
+        .bundleName = request.displayName,
+        .executable = request.playerFile,
+        .identifier = request.bundleIdentifier,
+        .version = request.version,
+        .iconFile = iconFile,
+        .minimumSystemVersion = minimum.value_or("11.0"),
+        .copyright = request.copyright});
+    if (!WriteFileBytes(contents / "Info.plist", plist) || !WriteFileBytes(contents / "PkgInfo", "APPL????")) {
+        error = "Info.plist could not be written";
+        return false;
+    }
+    std::filesystem::remove(frameworks, code);  // only when empty
+    outcome.player = bundledPlayer;
+    return true;
+}
+
+bool ApplyLinuxLayout(const std::filesystem::path& staging, const LayoutRequest& request,
+                      LayoutOutcome& outcome, std::string& error) {
+    const auto player = staging / px::PathFromUtf8(request.playerFile);
+    std::error_code code;
+    std::vector<std::filesystem::path> libraries;
+    for (std::filesystem::directory_iterator iterator(staging, code);
+         !code && iterator != std::filesystem::directory_iterator(); iterator.increment(code))
+        if (iterator->is_regular_file() && IsLibrary(px::PathToUtf8(iterator->path().filename()), LayoutPlatform::Linux))
+            libraries.push_back(iterator->path());
+    if (!libraries.empty()) {
+        std::filesystem::create_directories(staging / "lib", code);
+        for (const auto& library : libraries) {
+            if (!code) std::filesystem::rename(library, staging / "lib" / library.filename(), code);
+        }
+        if (code) {
+            error = "runtime libraries could not be moved into lib/: " + code.message();
+            return false;
+        }
+    }
+    MarkExecutable(player);
+    const std::string stem = Stem(request.playerFile);
+    if (!request.icon.empty()) {
+        std::string iconError;
+        const auto image = IconImage(request.icon, iconError);
+        if (!image) {
+            error = "icon could not be read for the Linux icon theme: " + iconError;
+            return false;
+        }
+        for (const int size : kLinuxIconSizes) {
+            const auto directory = staging / "icons/hicolor" /
+                (std::to_string(size) + "x" + std::to_string(size)) / "apps";
+            std::filesystem::create_directories(directory, code);
+            const Bytes png = code ? Bytes{} : EncodePng(ResizeSquare(*image, size), iconError);
+            if (png.empty() ||
+                !WriteFileBytes(directory / px::PathFromUtf8(stem + ".png"),
+                                std::string_view(reinterpret_cast<const char*>(png.data()), png.size()))) {
+                error = "Linux icon could not be written: " + iconError;
+                return false;
+            }
+        }
+    }
+    if (!WriteFileBytes(staging / px::PathFromUtf8(stem + ".desktop"),
+                        DesktopEntry({.name = request.displayName, .executable = request.playerFile,
+                                      .icon = request.icon.empty() ? std::string{} : stem}))) {
+        error = "the .desktop entry could not be written";
+        return false;
+    }
+    outcome.player = player;
+    return true;
+}
+
+}  // namespace
+
+std::filesystem::path LaidOutPlayer(const LayoutRequest& request) {
+    const auto file = px::PathFromUtf8(request.playerFile);
+    if (request.platform == LayoutPlatform::MacOS && request.platformLayout)
+        return px::PathFromUtf8(request.appName + ".app") / "Contents" / "MacOS" / file;
+    return file;
+}
+
+bool ApplyLayout(const std::filesystem::path& staging, const LayoutRequest& request, LayoutOutcome& outcome,
+                 std::string& error) {
+    if (request.platform != LayoutPlatform::Windows && !request.engineFolder.empty())
+        outcome.notes.push_back("layout \"bundled\" applies to Windows; this platform uses its own layout");
+    switch (request.platform) {
+        case LayoutPlatform::Windows: return ApplyWindowsLayout(staging, request, outcome, error);
+        case LayoutPlatform::MacOS:
+            if (request.platformLayout) return ApplyMacLayout(staging, request, outcome, error);
+            break;
+        case LayoutPlatform::Linux:
+            if (request.platformLayout) return ApplyLinuxLayout(staging, request, outcome, error);
+            break;
+        default: break;
+    }
+    if (!request.icon.empty()) outcome.notes.push_back("Executable icons need a platform layout here; icon ignored");
+    outcome.player = staging / px::PathFromUtf8(request.playerFile);
+    return true;
+}
+
+}  // namespace px::sdk::branding

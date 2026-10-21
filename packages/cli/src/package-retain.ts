@@ -15,14 +15,17 @@ const reusedArchiveMessage = /^Reused unchanged (Content(?:-\d{2})?\.pdx)$/u;
 /** Native Packager reports only archives it hard-linked from the old output.
  * Publication checks their file identity again before it reuses marker hashes. */
 export function reusedArchiveInputs(events: readonly Readonly<Record<string, unknown>>[],
-  previous: readonly PublishedInput[]): Map<string, PublishedInput> {
+  previous: readonly PublishedInput[], dataFolder = ""): Map<string, PublishedInput> {
   const byUri = new Map(previous.map(input => [input.uri, input]));
   const reused = new Map<string, PublishedInput>();
+  // Archives live in the distribution's data folder (an engine folder or a
+  // macOS .app's Resources) when it is not the root.
+  const prefix = dataFolder.length === 0 ? "" : `${dataFolder}/`;
   for (const event of events) {
     if (event.event !== "progress" || event.phase !== "archive-write" ||
         typeof event.message !== "string") continue;
     const archive = reusedArchiveMessage.exec(event.message)?.[1];
-    const input = archive === undefined ? undefined : byUri.get(archive);
+    const input = archive === undefined ? undefined : byUri.get(prefix + archive);
     if (input !== undefined) reused.set(input.uri, input);
   }
   return reused;

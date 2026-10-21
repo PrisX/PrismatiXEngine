@@ -2,6 +2,7 @@ import {spawn} from "node:child_process";
 import {stat} from "node:fs/promises";
 import {extname, join, resolve} from "node:path";
 import {discoverRuntimeTool, type RuntimeDiscoveryOptions} from "./runtime-discovery.js";
+import {distributionDataRoot} from "./distribution-layout.js";
 
 export interface SaveInspectionOptions {
   readonly path: string;
@@ -30,7 +31,8 @@ export async function resolvePackageManifest(path: string): Promise<string> {
   const info = await stat(target).catch(() => undefined);
   if (info === undefined) throw new Error(`--package ${path} does not exist`);
   if (info.isFile()) return target;
-  for (const candidate of [join(target, "Package", "manifest.json"), join(target, "manifest.json")]) {
+  const data = await distributionDataRoot(target);
+  for (const candidate of [join(data, "Package", "manifest.json"), join(target, "manifest.json")]) {
     if ((await stat(candidate).catch(() => undefined))?.isFile()) return candidate;
   }
   throw new Error(`--package ${path} has no Package/manifest.json or manifest.json; ` +

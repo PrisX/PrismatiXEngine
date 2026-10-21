@@ -1,5 +1,6 @@
 import {mkdir, readFile, rename, rm, stat, writeFile} from "node:fs/promises";
 import {join} from "node:path";
+import {distributionDataRoot} from "./distribution-layout.js";
 
 /** Save identity of the last distribution packed from a project. The Player
  * accepts a same-version save only when its package fingerprint is the current
@@ -88,7 +89,8 @@ export async function distributionLineage(distribution: string, gameId: string):
     Promise<ReleaseLineage | undefined> {
   let manifest: Record<string, unknown> | undefined;
   try {
-    const text = await boundedText(join(distribution, "Package", "manifest.json"), 4 * 1024 * 1024);
+    const text = await boundedText(join(await distributionDataRoot(distribution), "Package", "manifest.json"),
+      4 * 1024 * 1024);
     manifest = text === undefined ? undefined : record(JSON.parse(text) as unknown);
   } catch {
     return undefined;

@@ -153,7 +153,26 @@ test("distribution is an author-only manifest field", () => {
   assert.equal("distribution" in (normalized.value?.project ?? {}), false);
   for (const invalid of [{executableName: "a/b"}, {executableName: "game.exe"},
     {executableName: "CON"}, {executableName: " x"}, {icon: "../icon.ico"},
-    {icon: "Assets/icon.png"}, {title: "x"}, "hikari"]) {
+    {icon: "Assets/icon.jpg"}, {title: "x"}, "hikari"]) {
+    const result = normalizeProject({project: {name: "Brand", distribution: invalid}});
+    assert.deepEqual(result.diagnostics.map(({code}) => code), ["PXBUILD1065"], JSON.stringify(invalid));
+  }
+});
+
+test("distribution carries version information, a PNG icon, the layout and the macOS identity", () => {
+  const distribution = {executableName: "Hikari", icon: "Assets/Branding/icon.png",
+    productName: "光之軌跡", companyName: "Hikari Works", copyright: "© 2026 Hikari Works",
+    version: "1.2.0-rc.1", layout: "bundled", engineFolder: "Data",
+    macos: {bundleIdentifier: "jp.hikari-works.game"}};
+  const normalized = normalizeProject({project: {name: "Brand", distribution},
+    sourceFiles: {"Story/main.pxstory": "こんにちは。\n"}});
+  assert.equal(normalized.valid, true, JSON.stringify(normalized.diagnostics));
+  assert.deepEqual(normalized.value?.distribution, distribution);
+  for (const invalid of [{productName: ""}, {companyName: "two\nlines"}, {copyright: "x".repeat(257)},
+    {version: 1}, {layout: "tidy"}, {engineFolder: "My Engine"}, {engineFolder: "../Engine"},
+    {engineFolder: "Package"}, {engineFolder: "save.data"}, {engineFolder: ".hidden"},
+    {macos: {bundleIdentifier: "game"}}, {macos: {bundleIdentifier: "com.game_x"}},
+    {macos: {signingIdentity: "x"}}, {macos: "com.example.game"}]) {
     const result = normalizeProject({project: {name: "Brand", distribution: invalid}});
     assert.deepEqual(result.diagnostics.map(({code}) => code), ["PXBUILD1065"], JSON.stringify(invalid));
   }

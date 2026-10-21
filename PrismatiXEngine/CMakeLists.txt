@@ -102,6 +102,7 @@ target_link_libraries(PrismatiXRuntimeContracts PUBLIC
 if(NOT EMSCRIPTEN)
 add_library(PrismatiXSDK STATIC
     Engine/SDK/Packager.cpp
+    Engine/SDK/PackageBranding.cpp
     Engine/SDK/UiTypeRegistry.cpp
 )
 add_library(PrismatiX::SDK ALIAS PrismatiXSDK)
@@ -473,6 +474,14 @@ function(prismatix_add_player target qa_hooks)
             VERBATIM)
     else()
         add_executable(${target} ${_player_sources})
+        if(WIN32 AND NOT qa_hooks)
+            # A shipped game opens no console window: SDL_main provides
+            # WinMain. PlayerMain.cpp attaches to a launching terminal's
+            # console, and `--console` opens one (docs/shipping.md). The QA
+            # Player, Packager and PreviewHost stay console programs because
+            # tests and CI read their output.
+            set_target_properties(${target} PROPERTIES WIN32_EXECUTABLE TRUE)
+        endif()
     endif()
     target_link_libraries(${target} PRIVATE PrismatiXRuntime)
     target_compile_definitions(${target} PRIVATE PRISMATIX_QA_HOOKS=${qa_hooks})
@@ -628,6 +637,17 @@ if(UNIX)
     endif()
     set_target_properties(PrismatiXPackager PrismatiXPreviewHost PrismatiXPlayer
         PROPERTIES INSTALL_RPATH "${_PRISMATIX_RUNTIME_RPATH}")
+    # A packed game keeps its libraries in <Name>.app/Contents/Frameworks
+    # (macOS) or lib/ (Linux); the installed runtime keeps them beside the
+    # Player. DT_RPATH rather than DT_RUNPATH, so libraries in lib/ also find
+    # each other through the executable's search path.
+    if(APPLE)
+        set_property(TARGET PrismatiXPlayer APPEND PROPERTY INSTALL_RPATH
+            "@executable_path/../Frameworks")
+    else()
+        set_property(TARGET PrismatiXPlayer APPEND PROPERTY INSTALL_RPATH "$ORIGIN/lib")
+        target_link_options(PrismatiXPlayer PRIVATE "LINKER:--disable-new-dtags")
+    endif()
     install(TARGETS PrismatiXPackager PrismatiXPreviewHost PrismatiXPlayer
         RUNTIME_DEPENDENCY_SET PrismatiXRuntimeDependencies
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PrismatiXRuntime
@@ -928,6 +948,19 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
              COMMAND PrismatiXPackagerContractTests)
     set_tests_properties(PrismatiX.SDK.PackagerContract
                          PROPERTIES LABELS "sdk;contract;packager;gpu;native")
+
+    # Icons, version information and the per-platform distribution layouts.
+    add_executable(PrismatiXPackageBrandingTests Tests/PackageBrandingTests.cpp)
+    target_link_libraries(PrismatiXPackageBrandingTests PRIVATE PrismatiXPackagerSDK)
+    if(WIN32)
+        target_link_libraries(PrismatiXPackageBrandingTests PRIVATE version)
+    endif()
+    prismatix_configure_target(PrismatiXPackageBrandingTests)
+    add_test(NAME PrismatiX.SDK.PackageBranding
+             COMMAND PrismatiXPackageBrandingTests
+                     $<TARGET_FILE:PrismatiXPlayer> $<TARGET_FILE:PrismatiXPlayerQA>)
+    set_tests_properties(PrismatiX.SDK.PackageBranding
+                         PROPERTIES LABELS "sdk;contract;packager")
 
     # Invoked by scripts/release-journey.mjs after public CLI packaging
     # (PrismatiX.SDK.ReleaseJourney below). It has no CTest entry of its own:
