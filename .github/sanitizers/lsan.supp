@@ -10,3 +10,6 @@ leak:X11_VideoInit
 # libdxcompiler (DirectXShaderCompiler) never frees its default include
 # handler; it is reached only through the offline shader compiler.
 leak:CreateDefaultIncludeHandler
+# ... and the blobs it creates while compiling HLSL for the offline shader
+# compiler (SDL_shadercross -> libdxcompiler); the stack ends inside DXC.
+leak:TryCreateEmptyBlobUtf
