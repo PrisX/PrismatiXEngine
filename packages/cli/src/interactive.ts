@@ -134,8 +134,8 @@ export async function createWizard(given: {
       const manager = await select({
         message: say("用哪個套件管理器安裝工具？", "Install the project's tools with"),
         options: [
-          {value: "npm" as const, label: "npm", hint: given.detected === "npm" ? say("目前使用", "current") : undefined},
           {value: "pnpm" as const, label: "pnpm", hint: given.detected === "pnpm" ? say("目前使用", "current") : undefined},
+          {value: "npm" as const, label: "npm", hint: given.detected === "npm" ? say("目前使用", "current") : undefined},
         ],
         initialValue: given.detected,
       });

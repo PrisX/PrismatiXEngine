@@ -107,6 +107,10 @@ test("create detects the package manager that launched it", () => {
   assert.equal(detectPackageManager({npm_config_user_agent: "pnpm/10.6.5 npm/? node/v24.2.0 win32 x64"}), "pnpm");
   assert.equal(detectPackageManager({npm_config_user_agent: "npm/11.3.0 node/v24.2.0 win32 x64 workspaces/false"}), "npm");
   assert.equal(detectPackageManager({}), "npm");
+  // A global shim has no launcher: pnpm, the documented tool, when it is installed.
+  assert.equal(detectPackageManager({}, true), "pnpm");
+  assert.equal(detectPackageManager({npm_config_user_agent: "npm/11.3.0 node/v24.2.0 win32 x64"}, true), "npm");
+  assert.equal(detectPackageManager({npm_config_user_agent: "yarn/1.22.22 npm/? node/v24.2.0 win32 x64"}, true), "pnpm");
 });
 
 test("checkout tools link with file: for npm and link: for pnpm", async () => {

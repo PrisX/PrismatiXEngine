@@ -43,9 +43,24 @@ export interface StarterOptions {
 
 export type PackageManager = "npm" | "pnpm";
 
-/** The package manager that launched this process (`pnpm dlx`, `pnpm exec`, ...), else npm. */
-export function detectPackageManager(environment: NodeJS.ProcessEnv = process.env): PackageManager {
-  return (environment.npm_config_user_agent ?? "").startsWith("pnpm/") ? "pnpm" : "npm";
+/**
+ * The package manager that launched this process (`pnpm dlx`, `npx`, a
+ * package script...). A CLI started from its global shim has no launcher;
+ * then pnpm, the documented tool, when it is installed, else npm.
+ */
+export function detectPackageManager(environment: NodeJS.ProcessEnv = process.env,
+  pnpmAvailable = false): PackageManager {
+  const agent = environment.npm_config_user_agent ?? "";
+  if (agent.startsWith("pnpm/")) return "pnpm";
+  if (agent.startsWith("npm/")) return "npm";
+  return pnpmAvailable ? "pnpm" : "npm";
+}
+
+/** detectPackageManager, checking PATH for pnpm when no launcher says otherwise. */
+export async function defaultPackageManager(environment: NodeJS.ProcessEnv = process.env): Promise<PackageManager> {
+  const agent = environment.npm_config_user_agent ?? "";
+  if (agent.startsWith("pnpm/") || agent.startsWith("npm/")) return detectPackageManager(environment);
+  return detectPackageManager(environment, await pnpmInstalled());
 }
 
 const templateRoot = fileURLToPath(new URL("../../templates/minimal", import.meta.url));
@@ -285,7 +300,9 @@ export async function createStarter(targetArgument: string, options: StarterOpti
     // as a Studio layout with its generated TSX (player.splashes shows it).
     await writeFile(join(staging, splashStudio), `${JSON.stringify(splashStudioDocument(width, height), null, 2)}\n`, "utf8");
     await writeFile(join(staging, splashSource), splashTsx(width, height), "utf8");
-    const manager = options.packageManager ?? detectPackageManager();
+    // The test seam installs nothing, so it does not probe PATH for pnpm.
+    const manager = options.packageManager ??
+      (options.install === undefined ? await defaultPackageManager() : detectPackageManager());
     const command = options.install === undefined
       ? manager === "pnpm" ? await pnpmCommand() : await npmCommand() : [];
     const managerVersion = manager === "pnpm" && options.install === undefined

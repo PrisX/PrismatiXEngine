@@ -2,6 +2,13 @@
 
 `@prismatix/authoring-sdk` is the frontend-neutral TypeScript tooling layer for PrismatiX projects. It is used at authoring and build time; the shipped Player does not require Node.js.
 
+Projects created with `prismatix create` already depend on it, pinned to the
+same exact version as `@prismatix/cli`. To use it from your own tooling:
+
+```bash
+pnpm add -D @prismatix/authoring-sdk
+```
+
 The public entrypoint provides:
 
 - strict, bounded validation and deterministic serialization for the canonical PrismatiX JSON formats;

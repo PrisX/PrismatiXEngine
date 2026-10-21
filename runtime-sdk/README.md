@@ -4,6 +4,10 @@ TypeScript declarations and a thin ergonomic facade for PrismatiX JavaScript ext
 
 The shipped game still runs the native C++ Runtime with its embedded JavaScript engine. This package is authoring/build-time tooling only; it does not add Node.js or a browser runtime to the Player.
 
+Projects created with `prismatix create` already depend on it, pinned to the
+same exact version as `@prismatix/cli` (`pnpm add -D @prismatix/runtime` adds it
+to an older project).
+
 ```ts
 import {createPrismatiXContext, defineCommand} from "@prismatix/runtime";
 

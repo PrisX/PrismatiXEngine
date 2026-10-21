@@ -21,7 +21,7 @@ import {fingerprintFile, publishDirectory, publishedInputs, retainPublishedDirec
 import {glyphWarnings} from "./glyph-coverage.js";
 import {augmentArtifact} from "./artifact-augment.js";
 import {assessPackageDiskSpace, availableBytesForOutput, formatDiskBytes} from "./disk-space.js";
-import {createStarter, detectPackageManager, pnpmInstalled, type PackageManager} from "./starter.js";
+import {createStarter, defaultPackageManager, pnpmInstalled, type PackageManager} from "./starter.js";
 import {changeDirectory, cliVersion, createWizard, type CreateAnswers, projectMenu, runScript, say} from "./interactive.js";
 import * as tui from "./tui.js";
 import {canPrompt} from "./tui.js";
@@ -545,7 +545,7 @@ async function createCommand(options: Options): Promise<number> {
     if (template !== undefined && template !== "minimal" && template !== "adv")
       throw new Error("--template must be minimal or adv");
     if (wizard) {
-      const detected = options.values.has("package-manager") ? packageManagerOption(options) : detectPackageManager();
+      const detected = options.values.has("package-manager") ? packageManagerOption(options) : await defaultPackageManager();
       const asked = await createWizard({
         ...(options.values.has("name") ? {name: options.values.get("name")!} : {}),
         ...(options.values.has("locale") ? {locale: options.values.get("locale")!} : {}),
@@ -3555,7 +3555,7 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "prismatix create my-game [--name \"My Game\"] [--id my-game] [--locale zh-TW] [--width 1920 --height 1080]",
     "prismatix create my-game --template adv   (also editable HUD, Save, Load, Settings and Backlog TSX)",
     "prismatix create my-game --empty   (no sample character, backgrounds or story; works with either template)",
-    "prismatix create my-game --package-manager pnpm   (pnpm-lock.yaml; the default is the manager that ran the CLI, else npm)"],
+    "prismatix create my-game --package-manager pnpm   (pnpm-lock.yaml; the default is the manager that ran the CLI, else pnpm when it is installed, else npm)"],
   dev: ["Watch the project and replay it in Preview after every successful edit.",
     "prismatix dev [project] [--runtime <engine-build-or-install>]",
     "prismatix dev [project] --at chapter2:120 | --at chapter2:after_school | --at Story/zh-TW/chapter2.pxstory:120",

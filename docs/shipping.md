@@ -699,7 +699,7 @@ The global command delegates project commands to the exact local CLI pinned in t
 If you intentionally link a local Engine checkout with `file:` dependencies
 (`link:` in a pnpm project), run `pnpm run build` in that checkout after editing
 CLI or Authoring SDK source. A missing or stale pinned CLI names the restore
-command for the project's lock: `npm ci` or `pnpm install --frozen-lockfile`.
+command for the project's lock: `pnpm install --frozen-lockfile` or `npm ci`.
 Local source packages carry a content-based build stamp; an out-of-date `dist`
 now fails with `PXSDKBUILD1001` instead of silently running old compiler code.
 Registry packages contain no source tree and do not perform this local check.
@@ -1115,6 +1115,6 @@ node scripts/phase1-clean-install.mjs --mock --keep
 node scripts/phase1-clean-install.mjs --runtime /path/to/installed-runtime --keep
 ```
 
-Here `--runtime` supplies binaries for the candidate npm package; it is never passed to the simulated author CLI. The harness serves candidate packages through a loopback registry, installs into a temporary global prefix, creates the project, watches edit/error/repair, closes the registry, reopens offline, builds and launches Player. Failed workspaces are retained; `--keep` also retains success evidence. Mock proves orchestration only. Native acknowledgements and launch do not prove visual interaction, audio or glyph correctness.
+Here `--runtime` supplies binaries for the candidate npm package; it is never passed to the simulated author CLI. The harness serves candidate packages through a loopback registry, installs the CLI globally with pnpm (`--package-manager npm` tests the npm path instead) into a temporary prefix, creates the project with the same package manager, watches edit/error/repair, closes the registry, reopens offline, builds and launches Player. Failed workspaces are retained; `--keep` also retains success evidence. Mock proves orchestration only. Native acknowledgements and launch do not prove visual interaction, audio or glyph correctness.
 
 Windows x64, Linux x64 and macOS x64/arm64 are intended desktop targets. Each exact platform/architecture needs its own candidate evidence. WASM Preview is separate from full Web game distribution; mobile, console and full Web shipping are outside this desktop release.

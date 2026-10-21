@@ -45,7 +45,10 @@ export function resolveCli(root: string, nodePath: string, configuredPath?: stri
   }
   const local = join(root, "node_modules", "@prismatix", "cli", "dist", "src", "cli.js");
   if (existsSync(local)) return script(local, "the project's @prismatix/cli");
-  throw new CliNotFoundError("This project has no local @prismatix/cli. Run `npm install` in the project " +
+  // The restore command follows the project's lock; pnpm is the default.
+  const install = existsSync(join(root, "package-lock.json")) && !existsSync(join(root, "pnpm-lock.yaml"))
+    ? "npm install" : "pnpm install";
+  throw new CliNotFoundError(`This project has no local @prismatix/cli. Run \`${install}\` in the project ` +
     "folder, or set prismatix.cli.path to a PrismatiX CLI.");
 }
 

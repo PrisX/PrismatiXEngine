@@ -14,15 +14,19 @@ cover each part in full.
 
 ## Install and create a project
 
-Install Node.js (24 or later) and npm first. The CLI package carries the
-native Player and Packager for your platform; you do not need C++, CMake or an
-engine checkout.
+Install Node.js (22.15 or later; 24 is what the release is tested with) and
+pnpm first (`corepack enable pnpm`, or see https://pnpm.io/installation). The
+CLI package carries the native Player and Packager for your platform; you do not
+need C++, CMake or an engine checkout.
 
 ```bash
-npm install -g @prismatix/cli
+pnpm add -g @prismatix/cli
 prismatix create my-game
 prismatix dev my-game
 ```
+
+`pnpm dlx @prismatix/cli create my-game` creates a project without a global
+install.
 
 Run `prismatix create` without a folder to be asked for the title, folder,
 template, resolution, story language and package manager instead. `prismatix`
@@ -31,11 +35,12 @@ tests and adding characters or scenes; elsewhere it offers to create a game.
 Prompts appear only in a terminal; scripts, CI and `--json` never wait for
 input, and options you pass are not asked again.
 
-With pnpm, `pnpm add -g @prismatix/cli` (or `pnpm dlx @prismatix/cli create my-game`)
-works the same way. `create` installs the project's tools with the package
-manager that ran it, or with the one `--package-manager npm|pnpm` names.
+`create` installs the project's tools with the package manager that ran it
+(`pnpm dlx`, `npx`), else with pnpm when it is installed, else npm, or with the
+one `--package-manager pnpm|npm` names. npm works the same way:
+`npm install -g @prismatix/cli`, then `prismatix create my-game --package-manager npm`.
 
-`create` prepares a short Traditional Chinese story with original character/background pictures, two choices and endings, a title, default dialogue HUD and save/load routes. It copies Noto Sans TC and its license, prepares editor settings, installs exact project CLI/SDK versions and writes `package-lock.json` (npm) or `pnpm-lock.yaml` (pnpm, which also records its version in `packageManager`). No npm init, second SDK install, hand-written UUIDs or initialization command is needed. Initial preparation needs registry access; failures preserve existing author data.
+`create` prepares a short Traditional Chinese story with original character/background pictures, two choices and endings, a title, default dialogue HUD and save/load routes. It copies Noto Sans TC and its license, prepares editor settings, installs exact project CLI/SDK versions and writes `pnpm-lock.yaml` (pnpm, which also records its version in `packageManager`) or `package-lock.json` (npm). No `pnpm init`, second SDK install, hand-written UUIDs or initialization command is needed. Initial preparation needs registry access; failures preserve existing author data.
 
 All options are non-interactive:
 
@@ -194,4 +199,4 @@ The terminal shows readable diagnostics by default. Pass `--json` for stable NDJ
 
 Normal discovery uses the matching `runtime/<platform>-<architecture>/` bundle inside the CLI package. A missing or incompatible bundle is an installation/release problem. Do not install C++ build tools as an author workaround. Explicit `--runtime`, per-tool options and `PRISMATIX_*` overrides are developer diagnostics.
 
-For registry or proxy errors during create, fix npm's registry/proxy configuration and retry. Do not use sudo or disable security controls. A nonempty or read-only destination is rejected. After abrupt termination, inspect a leftover create lock before removing its empty lock directory and retrying.
+For registry or proxy errors during create, fix the registry/proxy configuration in `.npmrc` (pnpm and npm both read it) and retry. Do not use sudo or disable security controls. A nonempty or read-only destination is rejected. After abrupt termination, inspect a leftover create lock before removing its empty lock directory and retrying.

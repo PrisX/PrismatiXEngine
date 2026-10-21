@@ -23,7 +23,7 @@ executable line has a stable ID.
 ## From a new project to a release
 
 ```bash
-npm install -g @prismatix/cli                 # or: pnpm add -g @prismatix/cli
+pnpm add -g @prismatix/cli                    # needs Node.js 22.15+ and pnpm (corepack enable pnpm)
 prismatix create                              # asks for title, folder, template, resolution...
 prismatix create my-game --template adv       # or non-interactive: editable HUD, save/load, settings and backlog
 prismatix dev my-game                         # live Preview; --at chapter2:120 starts at a line or label
@@ -45,9 +45,11 @@ Each command explains itself with `prismatix <command> --help`. Others you will 
 | `create-patch`, `create-overlay` | Signed single-file updates for a shipped game |
 | `test` | Runs `tests/journeys/*.ts` against a QA pack (see below) |
 
-The `@prismatix/*` packages are release candidates and are not on the public npm
-registry yet. The [delivery contract](docs/releases/delivery-contract.md) lists the
-supported targets.
+`pnpm dlx @prismatix/cli create my-game` works without a global install. npm
+also works (`npm install -g @prismatix/cli`, `prismatix create --package-manager npm`).
+The [0.1.0 release notes](docs/releases/0.1.0.md) list the verified platforms and
+known limitations, and the [delivery contract](docs/releases/delivery-contract.md)
+the supported targets.
 
 ## Story at a glance
 
