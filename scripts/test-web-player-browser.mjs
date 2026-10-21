@@ -22,12 +22,21 @@ for (const candidate of candidates) if (candidate) {
   try { await access(candidate); executable = candidate; break; } catch {}
 }
 assert.ok(executable, "A Chrome/Chromium browser is required");
+const exported = JSON.parse(await readFile(join(root, "web-export.json"), "utf8"));
+const renderer = exported.renderer ?? "webgl2";
+console.log(`Web export: ${exported.title} (renderer ${renderer}, engine ${exported.engineVersion ?? "unknown"})`);
 const profile = await mkdtemp(join(tmpdir(), "px-web-player-"));
+const hardware = process.env.PRISMATIX_WEB_HARDWARE === "1";
+// Without a GPU, a WebGPU export runs on Dawn's SwiftShader fallback adapter,
+// which Chrome offers only with GPU acceleration off and without
+// --enable-unsafe-swiftshader (the WebGL route returns no adapter).
+const softwareWebGpu = !hardware && renderer === "webgpu";
 const browser = spawn(executable, ["--headless=new", "--no-sandbox", "--disable-dev-shm-usage",
-  "--no-first-run", "--no-default-browser-check",
-  "--enable-webgl", "--enable-unsafe-swiftshader", "--enable-unsafe-webgpu",
-  ...(process.env.PRISMATIX_WEB_HARDWARE === "1" ? ["--ignore-gpu-blocklist"] :
-    ["--use-gl=angle", "--use-angle=swiftshader", "--use-webgpu-adapter=swiftshader", "--enable-features=Vulkan", "--use-vulkan=swiftshader"]),
+  "--no-first-run", "--no-default-browser-check", "--enable-unsafe-webgpu",
+  ...(hardware ? ["--enable-webgl", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] :
+    softwareWebGpu ? ["--disable-gpu"] :
+    ["--enable-webgl", "--enable-unsafe-swiftshader", "--use-gl=angle", "--use-angle=swiftshader",
+      "--use-webgpu-adapter=swiftshader", "--enable-features=Vulkan", "--use-vulkan=swiftshader"]),
   "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"],
   {windowsHide: true, stdio: ["ignore", "pipe", "pipe"]});
 let log = "", socket, closeBrowser;
@@ -112,6 +121,12 @@ try {
   await writeFile(join(qaRoot, "browser-smoke.png"), Buffer.from(screenshot.data, "base64"));
   await writeFile(join(qaRoot, "browser-smoke.log"), messages.join("\n"));
   assert.equal(await evaluate("document.getElementById('welcome').hidden"), true);
+  assert.equal(await evaluate("document.title"), exported.title, "page title is not the game title");
+  const device = messages.find(text => /Graphics device created/u.test(text)) ?? "no graphics device line";
+  console.log(`Web: ${device}`);
+  // The WebGPU renderer must actually run on SDL's GPU renderer (WebGPU).
+  if (renderer === "webgpu")
+    assert.match(device, /driver=(?:gpu|webgpu)\b/u, "WebGPU export did not create an SDL_GPU renderer");
   if (process.env.PRISMATIX_WEB_TEST_PLATFORM === "1") {
     const layout = await evaluate("(()=>{const r=document.getElementById('canvas').getBoundingClientRect();return{width:r.width,height:r.height,viewportWidth:innerWidth,viewportHeight:innerHeight}})()");
     assert.ok(layout.width > 0 && layout.height > 0 && layout.width <= layout.viewportWidth + 1 && layout.height <= layout.viewportHeight + 1, "canvas does not fit the viewport");
@@ -123,6 +138,55 @@ try {
     await until(()=>evaluate("!document.fullscreenElement"),'browser fullscreen exit');
     await evaluate("document.getElementById('tools').open=false");
     console.log(`Web: ${mobile?'mobile emulation':'desktop'} layout and browser fullscreen passed`);
+  }
+  if (process.env.PRISMATIX_WEB_TEST_STORY === "1") {
+    // Title screen, start, first Story line, quick save, quick load: through
+    // the semantic controls the canvas publishes. Labels default to the
+    // Starter sample's; PRISMATIX_WEB_TEST_FIRST_LINE checks the first line.
+    const label = (name, fallback) => process.env[`PRISMATIX_WEB_TEST_${name}`] ?? fallback;
+    const visible = text => `[...document.querySelectorAll('#semantics [aria-label]')].find(e=>e.getAttribute('aria-label')===${JSON.stringify(text)}&&!e.closest('[hidden]'))`;
+    const activate = async text => {
+      await until(() => evaluate(`!!(${visible(text)})`), `control ${text}`);
+      assert.equal(await evaluate(`(()=>{const e=${visible(text)};if(e.getAttribute('aria-disabled')==='true')return false;e.click();return true})()`), true, `${text} is disabled`);
+    };
+    const capture = async name => {
+      const shot = await command("Page.captureScreenshot", {format: "png"});
+      await writeFile(join(qaRoot, `${name}.png`), Buffer.from(shot.data, "base64"));
+    };
+    const start = label("START_LABEL", "開始遊戲");
+    await until(() => evaluate(`!!(${visible(start)})`), "title screen", 120000);
+    await new Promise(resolve => setTimeout(resolve, 800));
+    await capture("story-title");
+    // A Story line is new text (not on the title screen) in a text or log
+    // element, such as the HUD's Dialogue; it settles once it is fully shown.
+    const titleTexts = await evaluate("[...document.querySelectorAll('#semantics [data-text]')].map(e=>e.dataset.text)");
+    await activate(start);
+    const firstLine = process.env.PRISMATIX_WEB_TEST_FIRST_LINE ?? "";
+    const readLine = () => evaluate(`(()=>{const title=new Set(${JSON.stringify(titleTexts)});
+      const e=[...document.querySelectorAll('#semantics [role=note],#semantics [role=log]')]
+        .find(e=>!e.closest('[hidden]')&&e.dataset.text.length>0&&!title.has(e.dataset.text)&&e.dataset.text.includes(${JSON.stringify(firstLine)}));
+      return e?.dataset.text??null})()`);
+    let line = await until(readLine, "first Story line", 120000);
+    for (let settled = 0; settled < 20; settled++) {
+      await new Promise(resolve => setTimeout(resolve, 600));
+      const next = await readLine();
+      if (next === line) break;
+      line = next ?? line;
+    }
+    console.log(`Web: first Story line "${line}"`);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    await capture("story-first-line");
+    const before = messages.length;
+    await activate(label("QUICK_SAVE", "Q.SAVE"));
+    await until(() => messages.slice(before).some(text => /Saved slot \d+/u.test(text)), "quick save");
+    await activate(label("QUICK_LOAD", "Q.LOAD"));
+    await until(() => messages.slice(before).some(text => /Loaded slot \d+/u.test(text)), "quick load");
+    await until(() => evaluate(`[...document.querySelectorAll('#semantics [data-text]')].some(e=>!e.closest('[hidden]')&&e.dataset.text===${JSON.stringify(line)})`),
+      "restored Story line after load");
+    await new Promise(resolve => setTimeout(resolve, 800));
+    await capture("story-loaded");
+    assert.ok(!messages.some(text => /PXPLAYER600[12]|PXPERSIST600[167]/u.test(text)), "save/load persistence failure");
+    console.log("Web: title, start, first line, quick save and quick load passed");
   }
   if (process.env.PRISMATIX_WEB_TEST_VIDEO === "1") {
     await evaluate(`(async()=>{
@@ -157,10 +221,10 @@ try {
     // Keep the engine movie alive for the independent decoder/seek checks.
     await evaluate("testVideo.control([...testVideo.items.keys()][0],'pause')");
   }
-  if (process.env.PRISMATIX_WEB_TEST_SAKURA === "1") {
+  if (process.env.PRISMATIX_WEB_TEST_PORTED_GAME === "1") {
     const visible = label => `Array.from(document.querySelectorAll('#semantics [aria-label]')).find(e=>e.getAttribute('aria-label')===${JSON.stringify(label)}&&!e.closest('[hidden]'))`;
     const activate = async label => {
-      await until(() => evaluate(`!!(${visible(label)})`), `Sakura control: ${label}`);
+      await until(() => evaluate(`!!(${visible(label)})`), `Ported game control: ${label}`);
       assert.equal(await evaluate(`(()=>{const e=${visible(label)};if(e.getAttribute('aria-disabled')==='true')return false;e.click();return true})()`), true);
       await new Promise(resolve=>setTimeout(resolve,250));
     };
@@ -169,15 +233,15 @@ try {
       await writeFile(join(qaRoot,`${name}.png`),Buffer.from(shot.data,"base64"));
     };
     await activate("設定");
-    await until(()=>evaluate(`!!(${visible("Return")})`),"Sakura settings");
+    await until(()=>evaluate(`!!(${visible("Return")})`),"Ported game settings");
     await activate("設定 3");
-    await until(()=>evaluate(`!!(${visible("マスター音量")})`),"Sakura volume slider");
+    await until(()=>evaluate(`!!(${visible("マスター音量")})`),"Ported game volume slider");
     await capture("settings");
     await evaluate(`(()=>{const e=${visible("マスター音量")};e.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));})()`);
     await activate("Return");
     await activate("はじめから");
-    console.log("Sakura: playing the authored opening before save/load checks");
-    await until(()=>evaluate(`(()=>{const e=${visible("本文")};return e&&e.dataset.text.length>10})()`),"Sakura opening dialogue",180000);
+    console.log("Ported game: playing the authored opening before save/load checks");
+    await until(()=>evaluate(`(()=>{const e=${visible("本文")};return e&&e.dataset.text.length>10})()`),"Ported game opening dialogue",180000);
     await capture("story");
     await evaluate("document.getElementById('canvas').focus()");
     for(const type of ["keyDown","keyUp"]){
@@ -186,15 +250,15 @@ try {
     }
     await activate("セーブデータ");
     await activate("はい");
-    await until(()=>messages.some(text=>/Saved slot 1\b/u.test(text)),"Sakura encrypted slot write");
+    await until(()=>messages.some(text=>/Saved slot 1\b/u.test(text)),"Ported game encrypted slot write");
     await capture("save");
     await activate("Title");await activate("はい");
     await activate("ロード");await activate("セーブデータ");await activate("はい");
-    await until(()=>messages.some(text=>/Loaded slot 1\b/u.test(text)),"Sakura encrypted slot load");
-    await until(()=>evaluate(`!!(${visible("本文")})`),"Sakura restored dialogue");
+    await until(()=>messages.some(text=>/Loaded slot 1\b/u.test(text)),"Ported game encrypted slot load");
+    await until(()=>evaluate(`!!(${visible("本文")})`),"Ported game restored dialogue");
     await capture("load");
-    assert.ok(!messages.some(text=>/PXPLAYER600[12]|PXPERSIST600[167]/u.test(text)),"Sakura persistence failure");
-    console.log("Sakura: settings, opening, save and load passed");
+    assert.ok(!messages.some(text=>/PXPLAYER600[12]|PXPERSIST600[167]/u.test(text)),"Ported game persistence failure");
+    console.log("Ported game: settings, opening, save and load passed");
   }
   if (process.env.PRISMATIX_WEB_TEST_EFFECTS === "1") {
     const result = await evaluate(`(async()=>{
@@ -203,7 +267,7 @@ try {
       const manifest=await(await fetch('./web-export.json')).json();
       const canvas=document.createElement('canvas');canvas.width=32;canvas.height=16;
       const gl=canvas.getContext('webgl2');
-      const effects=new WebEffects(manifest,new WebFiles(manifest,new URL('./',location.href)),new URL('./',location.href));await effects.initialize(gl);
+      const effects=new WebEffects(manifest,new WebFiles(manifest,new URL('./',location.href)),new URL('./',location.href));await effects.initialize(gl,{webgpu:true});
       const original=effects.backend;
       const texture=bytes=>{const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
         gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,32,16,0,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
@@ -243,10 +307,14 @@ try {
           if(id==='dream-node'&&pixels.slice(0,4).some(value=>value!==0))throw new Error(backend+' node scissor was ignored');
         }
       }
-      effects.destroy();return{preferred:original,passed:cases,custom:custom.map(([id])=>id)};
+      effects.destroy();
+      const standard=new WebEffects(manifest,new WebFiles(manifest,new URL('./',location.href)),new URL('./',location.href));
+      await standard.initialize(gl);const preferred=standard.backend;standard.destroy();
+      return{preferred,optIn:original,passed:cases,custom:custom.map(([id])=>id)};
     })()`);
     await writeFile(join(qaRoot, "effects-result.json"), JSON.stringify(result, null, 2));
     assert.ok(result.passed.includes("webgl2"));
+    assert.equal(result.preferred, "webgl2", "effects must prefer WebGL2 unless WebGPU effects are requested");
     if (process.env.PRISMATIX_WEB_REQUIRE_WEBGPU === "1") assert.ok(result.passed.includes("webgpu"), "WebGPU adapter unavailable");
   }
   if (process.env.PRISMATIX_WEB_TEST_VIDEO === "1") {
@@ -274,7 +342,7 @@ try {
     assert.ok(!messages.slice(messageStart).some(text=>/PXPERSIST600[167]/u.test(text)),'encrypted profile could not be imported');
     const visible=label=>`[...document.querySelectorAll('#semantics [aria-label]')].find(e=>e.getAttribute('aria-label')===${JSON.stringify(label)}&&!e.closest('[hidden]'))`;
     const activate=async label=>{
-      await until(()=>evaluate(`!!(${visible(label)})`),`imported Sakura control ${label}`);
+      await until(()=>evaluate(`!!(${visible(label)})`),`imported ported game control ${label}`);
       assert.equal(await evaluate(`(()=>{const e=${visible(label)};if(e.getAttribute('aria-disabled')==='true')return false;e.click();return true})()`),true);
       await new Promise(resolve=>setTimeout(resolve,400));
     };
@@ -285,13 +353,13 @@ try {
     const cg=await command('Page.captureScreenshot',{format:'png'});await writeFile(join(qaRoot,'gallery-cg.png'),Buffer.from(cg.data,'base64'));
     for(const type of ['mousePressed','mouseReleased'])await command('Input.dispatchMouseEvent',{type,x:640,y:360,button:'right',clickCount:1});
     await new Promise(resolve=>setTimeout(resolve,400));
-    await until(()=>evaluate(`!!(${visible('鑑賞')})||!!(${visible('BGM鑑賞')})`),'Sakura Extra return');
+    await until(()=>evaluate(`!!(${visible('鑑賞')})||!!(${visible('BGM鑑賞')})`),'Ported game extras return');
     if(!await evaluate(`!!(${visible('BGM鑑賞')})`))await activate('鑑賞');
     await activate('BGM鑑賞');await activate('bgm001');
     await until(()=>messages.slice(messageStart).some(text=>/music gallery selected path=.*bgm001/u.test(text)),'music gallery playback');
     await activate('stop');await activate('Scene');await activate('scene01');
     await until(()=>messages.slice(messageStart).some(text=>/Player started story entry label=scene01/u.test(text)),'scene replay');
-    console.log('Sakura: encrypted profile import, CG gallery, music and replay passed');
+    console.log('Ported game: encrypted profile import, CG gallery, music and replay passed');
   }
   if (process.env.PRISMATIX_WEB_TEST_SAVES === "1") {
     await evaluate(`(async()=>{const create=URL.createObjectURL;URL.createObjectURL=function(blob){globalThis.testSaveBlob=blob;return create.call(this,blob)};
