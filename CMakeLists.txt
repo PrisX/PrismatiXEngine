@@ -3,7 +3,12 @@ cmake_minimum_required (VERSION 3.21)
 
 if (POLICY CMP0141)
   cmake_policy(SET CMP0141 NEW)
-  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<IF:$<CONFIG:Debug>,EditAndContinue,$<$<CONFIG:RelWithDebInfo>:ProgramDatabase>>")
+  # A default, not a requirement: CI passes -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded
+  # (/Z7) so sccache can cache MSVC compiles, which it cannot with a shared
+  # PDB (/Zi). Local and release builds leave it unset and keep the PDBs.
+  if (NOT DEFINED CMAKE_MSVC_DEBUG_INFORMATION_FORMAT)
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<IF:$<CONFIG:Debug>,EditAndContinue,$<$<CONFIG:RelWithDebInfo>:ProgramDatabase>>")
+  endif()
 endif()
 
 project ("PrismatiXEngine" LANGUAGES C CXX)
