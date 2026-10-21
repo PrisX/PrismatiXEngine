@@ -2333,8 +2333,23 @@ int main() {
                      "encrypted Packager video remains seekable with bounded memory");
         const std::uint64_t residentAfter = PeakResidentBytes();
         constexpr std::uint64_t memoryBudget = 64ull * 1024ull * 1024ull;
+        // AddressSanitizer's quarantine of freed blocks and its redzones inflate
+        // peak RSS by hundreds of MiB regardless of what the Packager buffers
+        // (the unsanitized jobs, which run this same test, hold the budget), so
+        // the measurement is meaningless in a sanitized build.
+#if defined(__SANITIZE_ADDRESS__)
+        constexpr bool rssMeasurable = false;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+        constexpr bool rssMeasurable = false;
+#else
+        constexpr bool rssMeasurable = true;
+#endif
+#else
+        constexpr bool rssMeasurable = true;
+#endif
         suite.Expect(
-            residentBefore == 0 || residentAfter == 0 ||
+            !rssMeasurable || residentBefore == 0 || residentAfter == 0 ||
                 residentAfter <= residentBefore + memoryBudget,
             "stream Packager peak RSS stays within a fixed budget independent of input size",
             "before=" + std::to_string(residentBefore) +
