@@ -71,7 +71,9 @@ NSAccessibilityRole NativeRole(const std::string_view role) {
     if (role == "combobox") return NSAccessibilityComboBoxRole;
     if (role == "textbox") return NSAccessibilityTextFieldRole;
     if (role == "text") return NSAccessibilityStaticTextRole;
-    if (role == "heading") return NSAccessibilityHeadingRole;
+    // AppKit declares no constant for the heading role; AXHeading is the
+    // role string VoiceOver understands (kAXHeadingRole).
+    if (role == "heading") return @"AXHeading";
     if (role == "image") return NSAccessibilityImageRole;
     if (role == "progressbar") return NSAccessibilityProgressIndicatorRole;
     if (role == "list" || role == "listbox" || role == "log")
