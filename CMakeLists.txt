@@ -61,13 +61,15 @@ function(prismatix_configure_target target)
         if(PRISMATIX_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE -Werror)
         endif()
-        # Clang 24's Emscripten toolchain diagnoses intentionally partial C++20
-        # designated initializers more aggressively than the native compilers.
-        # Keep the diagnostic visible without making this safe default-
-        # initialization pattern release-blocking; all other warnings remain
-        # errors under PRISMATIX_WARNINGS_AS_ERRORS.
-        if(EMSCRIPTEN AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # Clang diagnoses intentionally partial C++20 designated initializers
+        # (Clang 18 as -Wmissing-field-initializers, Clang 19+ and Emscripten
+        # as -Wmissing-designated-field-initializers); GCC and MSVC accept them
+        # silently. Keep the diagnostic visible without making this safe
+        # default-initialization pattern release-blocking; all other warnings
+        # remain errors under PRISMATIX_WARNINGS_AS_ERRORS.
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
             target_compile_options(${target} PRIVATE
+                -Wno-error=missing-field-initializers
                 -Wno-error=missing-designated-field-initializers)
         endif()
     endif()
