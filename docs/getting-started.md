@@ -110,15 +110,16 @@ in [its README](../packages/vscode-pxstory/README.md).
 
 A name after `@` speaks; an empty line returns to narration. Labels are
 `*name`, each `- text -> label` line in a `[choice]` block is one choice, and
-`[jump finish]` continues at a label. The starter also shows a background and
-a character:
+`[jump finish]` continues at a label. The sample story also shows a background
+and two characters, 白音 (`shirone`) and 小春 (`koharu`):
 
 ```pxstory
-[bg room-dusk]
-[show guide smile left]
-@guide 這裡就是新的背景。
-[move guide position=right duration=400]
-[hide guide]
+[bg street]
+[show shirone normal left]
+[show koharu normal right]
+@白音 這裡就是新的背景。
+[move koharu position=center duration=400]
+[hide shirone]
 ```
 
 Variables need no setup beyond a declaration:
@@ -127,7 +128,7 @@ Variables need no setup beyond a declaration:
 [var affection=0]
 [set affection=1]
 [if affection > 0]
-小光記得這個約定。
+白音記得這個約定。
 [endif]
 ```
 

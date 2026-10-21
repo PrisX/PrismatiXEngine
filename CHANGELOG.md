@@ -12,6 +12,19 @@ The three packages always carry the same version and pin each other exactly.
 
 ## [Unreleased]
 
+### Changed
+
+- `prismatix create` (without `--empty`): the sample story is new. Two
+  characters, 白音 (`shirone`) and 小春 (`koharu`), meet on a street; it
+  shows show/hide/move, a background zoom, a choice between two routes and a
+  variable that picks the closing line. The template's earlier pictures are
+  removed. The street and both portraits are AI-generated images supplied by
+  the project owner for use in samples only; replace them before releasing a
+  game.
+- `Samples/Starter` now has the same two characters on its street, as
+  PrismatiX Studio's new projects do. `scripts/check-sample-provenance.mjs`
+  accepts the owner's `sample-only` pictures, for their exact bytes only.
+
 ## [0.1.0] - 2026-10-21
 
 First public release. See [docs/releases/0.1.0.md](docs/releases/0.1.0.md) for

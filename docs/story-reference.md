@@ -249,7 +249,7 @@ that character speaks. Give it in the `.pxcharacter` as `facePath` (lowered
 to a cataloged `faceAssetId`, like `assetPath`):
 
 ```json
-{"name": "微笑", "aliases": ["smile"], "assetPath": "Assets/hikari-smile.png",
+{"name": "微笑", "aliases": ["smile"], "assetPath": "Assets/Characters/guide/smile.png",
  "facePath": "Assets/Faces/guide-smile.png"}
 ```
 
@@ -427,15 +427,15 @@ Macros every scene repeats belong in shared macro files, listed in
 
 ## Characters, backgrounds and sound
 
-The starter registers `guide`, its `smile`, `happy`, `talk` and `surprised` expressions and three backgrounds. Reuse these without hand-writing another UUID:
+The sample story `prismatix create` makes registers two characters, `shirone` (白音) and `koharu` (小春), each with one expression, `normal`, and one background, `street`. Reuse these without hand-writing another UUID:
 
 ```pxstory
-[bg room-dusk]
-[show guide expression=smile position=left x=0 y=0 scale=0.8]
-@guide
+[bg street]
+[show shirone expression=normal position=left x=0 y=0 scale=0.5]
+@shirone
 這裡就是新的背景。
-[move guide position=right duration=400 wait=true]
-[hide guide]
+[move shirone position=right duration=400 wait=true]
+[hide shirone]
 ```
 
 A new background crossfades from the previous one over `duration` (400 ms
@@ -448,9 +448,9 @@ the background or independent stage layers. The same operation is available
 to runtime scripts as `Engine.ClearCharacters(false)` or through the typed
 runtime SDK as `ctx.stage.clearCharacters(false)`.
 
-`[bg room-dusk]` works because the starter's `prismatix.json` declares
-`"storyAssets": {"bg": ["Assets"]}`; `[bg Assets/room-dusk.jpg]` is the same
-operation.
+`[bg street]` works because the starter's `prismatix.json` declares
+`"storyAssets": {"bg": ["Assets"]}`; `[bg Assets/Backgrounds/street.jpg]` is the
+same operation.
 
 Characters and image layers are hidden with the same verb:
 
@@ -667,7 +667,7 @@ body, pose, position, offset, scale and turn on stage:
 
 ### Expressions and image files
 
-To add an expression, add a source image and an expression with `assetPath` in `Characters/guide.pxcharacter`, then select its alias with `expression=...`. The Authoring project compiler generates canonical character, expression, and asset UUIDs when omitted; no catalog entry is needed for that image. For example, `{"name":"Happy","aliases":["happy"],"assetPath":"Assets/guide-happy.png"}` is enough inside `expressions`. TypeScript generators can use the exported `CharacterSourceDocument` type; the stricter `CharacterDocument` type describes the published canonical file. Validate this shorthand with `compileProject` or `prismatix validate`, not the low-level `validateDocument("character")` canonical checker. The generated IDs follow the character file, the expression's first alias and its image path: keep those stable across save-compatible releases, or pin `id`/`assetId` explicitly before renaming; a file move is not automatically a save migration. Positions are `left`, `center`, `right` (also 1/2/3).
+To add an expression, add a source image and an expression with `assetPath` in the character's file (`Characters/shirone.pxcharacter` in the sample story), then select its alias with `expression=...`. The Authoring project compiler generates canonical character, expression, and asset UUIDs when omitted; no catalog entry is needed for that image. For example, `{"name":"Happy","aliases":["happy"],"assetPath":"Assets/Characters/shirone/happy.png"}` is enough inside `expressions`. TypeScript generators can use the exported `CharacterSourceDocument` type; the stricter `CharacterDocument` type describes the published canonical file. Validate this shorthand with `compileProject` or `prismatix validate`, not the low-level `validateDocument("character")` canonical checker. The generated IDs follow the character file, the expression's first alias and its image path: keep those stable across save-compatible releases, or pin `id`/`assetId` explicitly before renaming; a file move is not automatically a save migration. Positions are `left`, `center`, `right` (also 1/2/3).
 
 For a dynamically selected family of UI/media files, put the containing
 directory in the project's `resourceIncludes`, for example
@@ -755,7 +755,7 @@ creating:
 ```pxstory
 [set affection=1]
 [if affection > 0]
-小光記得這個約定。
+白音記得這個約定。
 [else]
 故事才剛開始。
 [endif]
