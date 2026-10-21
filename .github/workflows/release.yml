@@ -1,8 +1,9 @@
 name: Release
 
 # Pushing a tag vX.Y.Z (matching every package version) builds and tests the
-# native runtime on each release platform, assembles the three npm packages
-# with every platform runtime inside @prismatix/cli, re-runs the clean-install
+# native runtime on each release platform and the Web Player (both renderers,
+# on Linux), assembles the three npm packages with every platform runtime and
+# the Web Player inside @prismatix/cli, re-runs the clean-install
 # author journey from those exact tarballs on each platform, creates a draft
 # GitHub Release with the assets and SHA256SUMS, and then, after approval in
 # the `release` environment, publishes to npm and makes the release public.
@@ -151,9 +152,35 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # The experimental Web Player, both renderers, which the CLI carries in
+  # runtime/web so `prismatix pack --target web` needs no --web-player.
+  web-player:
+    name: Web Player (WebGL2 and WebGPU)
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-js
+        with:
+          cache-write: "false"
+      - uses: ./.github/actions/web-player-build
+        with:
+          package-root: out/release/web-player
+          # Restore-only: a release never writes a cache that CI builds trust.
+          cache-write: "false"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: web-player
+          path: out/release/web-player
+          if-no-files-found: error
+          retention-days: 7
+
   assemble:
     name: Assemble npm packages and release assets
-    needs: [version, javascript, native]
+    needs: [version, javascript, native, web-player]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -165,8 +192,12 @@ jobs:
           pattern: runtime-*
           path: out/runtime-archives
           merge-multiple: true
-      - name: Pack @prismatix/authoring-sdk, @prismatix/runtime and @prismatix/cli with every runtime
-        run: node scripts/assemble-release.mjs assemble --runtimes out/runtime-archives --out out/release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: web-player
+          path: out/web-player
+      - name: Pack @prismatix/authoring-sdk, @prismatix/runtime and @prismatix/cli with every runtime and the Web Player
+        run: node scripts/assemble-release.mjs assemble --runtimes out/runtime-archives --web-player out/web-player --out out/release
       - name: List the published tarball contents
         run: |
           for tarball in out/release/npm/*.tgz; do

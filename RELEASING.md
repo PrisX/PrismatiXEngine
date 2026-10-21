@@ -23,11 +23,15 @@ which does all of it. Nothing is published from a developer machine.
    build, CTest suite and runtime-bundle steps as the quality gate
    (`.github/actions/*`) in a Release build, then the clean-install author
    journey with pnpm and with npm, then the runtime archive.
+   **web-player**, on Linux: both Web Player renderers (WebGL2, WebGPU) with
+   the pinned Emscripten (`.github/actions/web-player-build`,
+   `scripts/build-wasm-player.mjs --no-host-tools`).
 4. **assemble**: `node scripts/assemble-release.mjs assemble` packs the three
    npm packages, the CLI with all four runtimes under
-   `runtime/<platform>-<arch>/`, checks each tarball's contents (LICENSE,
-   README, notices, every runtime's manifest and tools) and writes
-   `SHA256SUMS`.
+   `runtime/<platform>-<arch>/` and the Web Player under `runtime/web/`,
+   checks each tarball's contents (LICENSE, README, notices, every runtime's
+   manifest and tools, the Web Player's version and hashes), prints each
+   tarball's packed and unpacked size and writes `SHA256SUMS`.
 5. **acceptance**, on all four platforms: a clean global install from those
    exact tarballs (pnpm, then npm), create, dev, build and a packaged Player
    launch.
@@ -113,6 +117,7 @@ runtime component and pack with only your platform:
 pnpm install && pnpm run build
 cmake --install out/build/x64-release --prefix out/release/runtime --component PrismatiXRuntime
 node scripts/assemble-release.mjs archive-runtime --runtime out/release/runtime --out out/release/archives
-node scripts/assemble-release.mjs assemble --runtimes out/release/archives --out out/release/dist --allow-partial
+node scripts/build-wasm-player.mjs --no-host-tools --package-root out/release/web-player   # optional; see docs/web-export.md
+node scripts/assemble-release.mjs assemble --runtimes out/release/archives --web-player out/release/web-player --out out/release/dist --allow-partial
 node scripts/phase1-clean-install.mjs --candidates out/release/dist/npm   # clean global install of those tarballs
 ```

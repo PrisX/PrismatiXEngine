@@ -1,11 +1,14 @@
 // Stages and packs the three public npm packages exactly as they are
 // published: each package's `files` plus package.json, and for the CLI the
-// native runtime of every included platform under runtime/<platform>-<arch>/.
+// native runtime of every included platform under runtime/<platform>-<arch>/
+// and, when given, the Web Player (both renderers) under runtime/web/.
 // Used by the clean-install acceptance (one platform) and by release assembly
 // (every platform).
 
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
+import {createHash} from "node:crypto";
+import {createReadStream} from "node:fs";
 import {cp, mkdir, readFile, rm, stat} from "node:fs/promises";
 import {basename, dirname, extname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -92,12 +95,44 @@ export async function checkRuntimeBundle(runtimeRoot, platformId, version) {
   return manifest;
 }
 
+/** The Web Player renderers a release CLI carries in runtime/web. */
+export const webPlayerRenderers = ["webgl2", "webgpu"];
+
+/**
+ * Checks a Web Player package (scripts/build-wasm-player.mjs) belongs to this
+ * release: schema revision 2, this version, both renderers, every listed file
+ * matching its SHA-256 and no host tools (they are per-platform executables).
+ */
+export async function checkWebPlayer(directory, version) {
+  const manifest = await readJson(join(directory, "web-player.json"));
+  assert.equal(manifest.format, "PrismatiXWebPlayer");
+  assert.equal(manifest.schemaRevision, 2, "Web Player schema revision");
+  assert.equal(manifest.variant, "shipped");
+  assert.equal(manifest.engineVersion, version, `Web Player is ${manifest.engineVersion}, not ${version}`);
+  const hashed = {...manifest.artifacts};
+  for (const renderer of webPlayerRenderers) {
+    const entry = manifest.renderers?.[renderer];
+    assert.ok(entry, `Web Player has no ${renderer} renderer`);
+    for (const file of ["prismatix-player.mjs", "prismatix-player.wasm"])
+      assert.ok(entry.artifacts?.[`${entry.directory}/${file}`], `Web Player ${renderer} lists no ${file}`);
+    Object.assign(hashed, entry.artifacts);
+  }
+  for (const [path, expected] of Object.entries(hashed)) {
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(join(directory, ...path.split("/")))) hash.update(chunk);
+    assert.equal(hash.digest("hex"), expected, `Web Player checksum mismatch: ${path}`);
+  }
+  assert.ok(!(await exists(join(directory, "tools"))), "a release Web Player must not carry host tools (build it with --no-host-tools)");
+  return manifest;
+}
+
 /**
  * Stages each public package (package.json + its `files`), adds the given
- * runtimes ({platformId: directory}) to the CLI, and packs with `npm pack`.
- * Returns [{name, manifest, tarball}] in publish order.
+ * runtimes ({platformId: directory}) and, if given, the Web Player package
+ * to the CLI, and packs with `npm pack`.
+ * Returns [{name, manifest, tarball, files, size, unpackedSize}] in publish order.
  */
-export async function packPublicPackages(packDirectory, runtimes, environment = process.env) {
+export async function packPublicPackages(packDirectory, runtimes, environment = process.env, {webPlayer} = {}) {
   await mkdir(packDirectory, {recursive: true});
   const staging = join(packDirectory, "staging");
   await rm(staging, {recursive: true, force: true});
@@ -117,6 +152,7 @@ export async function packPublicPackages(packDirectory, runtimes, environment = 
       assert.ok(Object.keys(runtimes).length > 0, "the CLI package needs at least one runtime");
       for (const [platformId, directory] of Object.entries(runtimes))
         await cp(directory, join(stage, "runtime", platformId), {recursive: true});
+      if (webPlayer !== undefined) await cp(webPlayer, join(stage, "runtime", "web"), {recursive: true});
     }
     const [command, ...prefix] = npmInvocation();
     const packed = await runProcess(command, [...prefix, "pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory],
@@ -125,14 +161,15 @@ export async function packPublicPackages(packDirectory, runtimes, environment = 
     assert.ok(Array.isArray(report) && typeof report[0]?.filename === "string", `npm pack returned an unexpected report for ${name}`);
     const tarball = join(packDirectory, report[0].filename);
     assert.ok(await exists(tarball), `npm pack did not create ${tarball}`);
-    results.push({name, manifest, tarball, files: report[0].files.map((file) => file.path)});
+    results.push({name, manifest, tarball, files: report[0].files.map((file) => file.path),
+      size: report[0].size, unpackedSize: report[0].unpackedSize});
   }
   await rm(staging, {recursive: true, force: true});
   return results;
 }
 
 /** Asserts what each published tarball must contain; `files` are the paths npm pack reported. */
-export function checkPackedContents(name, files, runtimePlatformIds = []) {
+export function checkPackedContents(name, files, runtimePlatformIds = [], {webPlayer = false} = {}) {
   const has = (path) => files.includes(path);
   for (const required of ["package.json", "LICENSE", "README.md"])
     assert.ok(has(required), `${name} tarball is missing ${required}`);
@@ -151,6 +188,12 @@ export function checkPackedContents(name, files, runtimePlatformIds = []) {
       const suffix = releasePlatforms.find((item) => item.id === platformId)?.executableSuffix ?? "";
       for (const tool of ["PrismatiXPlayer", "PrismatiXPackager", "PrismatiXPreviewHost"])
         assert.ok(has(`runtime/${platformId}/bin/${tool}${suffix}`), `${name} tarball is missing runtime/${platformId}/bin/${tool}${suffix}`);
+    }
+    if (webPlayer) {
+      for (const relative of ["web-player.json", "web-shaders.json", "RuntimeSource.tar.gz", "FriBidiSource.tar.gz",
+        ...webPlayerRenderers.flatMap((renderer) => [`${renderer}/prismatix-player.mjs`, `${renderer}/prismatix-player.wasm`])])
+        assert.ok(has(`runtime/web/${relative}`), `${name} tarball is missing runtime/web/${relative}`);
+      assert.ok(!files.some((path) => path.startsWith("runtime/web/tools/")), `${name} tarball carries Web Player host tools`);
     }
   }
 }
