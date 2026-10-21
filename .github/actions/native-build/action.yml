@@ -193,15 +193,17 @@ runs:
           "-DPRISMATIX_ENABLE_SANITIZERS=${{ inputs.sanitizers }}" `
           -DPRISMATIX_WARNINGS_AS_ERRORS=ON
         if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
+    # Ninja -k 0 keeps compiling after a failure, so one run reports every
+    # broken translation unit (and ccache keeps the ones that did build).
     - name: Compile the Runtime, SDK, Player and test surface
       if: runner.os != 'Windows'
       shell: bash
-      run: cmake --build "${{ inputs.build-dir }}" --parallel
+      run: cmake --build "${{ inputs.build-dir }}" --parallel -- -k 0
     - name: Compile the Runtime, SDK, Player and test surface
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        cmake --build "${{ inputs.build-dir }}" --parallel
+        cmake --build "${{ inputs.build-dir }}" --parallel -- -k 0
         if ($LASTEXITCODE -ne 0) { throw "CMake build failed" }
     # Saved after a failed compile too: ccache keeps every object that did
     # build, so the next push only recompiles what changed.
