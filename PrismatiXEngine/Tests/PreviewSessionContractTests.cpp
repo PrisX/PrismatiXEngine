@@ -566,7 +566,8 @@ int main() {
         WriteSilentWav(directory.path / "loop.wav", 250);
         px::io::VFS vfs;
         vfs.MountDirectory(directory.path.string());
-        suite.Require(SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy"),
+        suite.Require(SDL_SetHintWithPriority(SDL_HINT_AUDIO_DRIVER, "dummy",
+                                          SDL_HINT_OVERRIDE),
                       "dummy audio backend is selected before mixer init");
         px::audio::AudioEngine audio(vfs);
         suite.Require(audio.Init(), "device-backed test mixer initializes");

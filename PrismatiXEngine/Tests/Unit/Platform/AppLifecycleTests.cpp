@@ -200,7 +200,8 @@ int main() {
         WriteSilentWav(directory.path / "click.wav", 30);
         px::io::VFS vfs;
         vfs.MountDirectory(px::PathToUtf8(directory.path));
-        suite.Require(SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy"),
+        suite.Require(SDL_SetHintWithPriority(SDL_HINT_AUDIO_DRIVER, "dummy",
+                                          SDL_HINT_OVERRIDE),
                       "dummy audio backend");
         px::audio::AudioEngine audio(vfs);
         suite.Require(audio.Init(), "mixer initializes");
