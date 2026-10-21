@@ -77,6 +77,7 @@ runs:
     # run-vcpkg sets VCPKG_BINARY_SOURCES to the removed x-gha backend; point
     # vcpkg at a workspace directory that actions/cache can persist instead.
     - name: Use a persistent vcpkg binary cache
+      id: vcpkg-dir
       shell: bash
       run: |
         workspace="${GITHUB_WORKSPACE//\\//}"
@@ -86,6 +87,9 @@ runs:
           echo "VCPKG_DEFAULT_BINARY_CACHE=$dir"
           echo "VCPKG_BINARY_SOURCES=clear;files,$dir,readwrite"
         } >> "$GITHUB_ENV"
+        # ImageVersion is a runner environment variable, not an `env` context
+        # value, so hand it to the cache keys as a step output.
+        echo "image=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
     # The key names everything that decides which ports are built (vcpkg
     # inputs, overlay ports and triplets, the vcpkg baseline) plus the runner
     # image. The restore key falls back to the newest older entry for this OS,
@@ -96,7 +100,7 @@ runs:
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
       with:
         path: out/ci/vcpkg-binary-cache
-        key: vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-${{ env.ImageVersion }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}
+        key: vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-${{ steps.vcpkg-dir.outputs.image }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}
         restore-keys: |
           vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-
     - name: Resolve dependencies
@@ -120,7 +124,7 @@ runs:
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
       with:
         path: out/ci/vcpkg-binary-cache
-        key: vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-${{ env.ImageVersion }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}
+        key: vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-${{ steps.vcpkg-dir.outputs.image }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}
     - name: Prepare the compiler cache
       id: ccache-setup
       if: runner.os != 'Windows' && inputs.cache-write == 'true'
