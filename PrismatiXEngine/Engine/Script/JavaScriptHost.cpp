@@ -3809,7 +3809,8 @@ public:
         const auto kind = JS_IsString(kindValue) ? String(kindValue) : std::nullopt;
         JS_FreeValue(context, kindValue);
         if (!kind || (*kind != "timer" && *kind != "animation" &&
-                      *kind != "screen-effect" && *kind != "video")) {
+                      *kind != "screen-effect" && *kind != "video" &&
+                      *kind != "audio")) {
             JS_FreeValue(context, yielded);
             Error(source, "JavaScript generator yielded an unknown wait token");
             return StepResult::Failed;

@@ -1110,6 +1110,24 @@ void TestPhaseThreePublicRuntimeSurfaces(px::test::Suite& suite) {
                      px::ui::ActionExecutionState::Failed,
                  "an evicted or nonexistent audio handle must fail rather than falsely complete");
 
+    // Generators yield the same await tokens as async callbacks, audio included.
+    suite.Require(host.RunString(R"js(
+        Engine.RegisterAction("phase3.generator-audio-wait", function* () {
+          yield Engine.AwaitAudio(999999);
+          throw new Error("invalid audio token resumed as a success");
+        });
+    )js", "phase-three-generator-audio-wait"),
+                  "generator audio wait fixture should register");
+    px::ui::ActionInvocation generatorAudioWait;
+    generatorAudioWait.action = "phase3.generator-audio-wait";
+    const auto generatorWait = host.StartAction(generatorAudioWait);
+    suite.Require(generatorWait.status && generatorWait.pending,
+                  "a generator may yield an audio await token as a persistent boundary");
+    host.Update(0.0f);
+    suite.Expect(host.ActionState(generatorWait.handle) ==
+                     px::ui::ActionExecutionState::Failed,
+                 "a yielded nonexistent audio handle must fail rather than falsely complete");
+
     const auto retained = host.CaptureExtensionState();
     suite.Require(retained && retained.Value().size() == 1 &&
                       retained.Value().front().providerId ==
