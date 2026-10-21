@@ -17,6 +17,13 @@ inputs:
       "ON" when the build uses AddressSanitizer/LeakSanitizer (Linux only):
       libraries SDL loads at run time then stay mapped, see below.
     default: "OFF"
+  exclude-labels:
+    description: >-
+      CTest label regex of tests this runner cannot run, passed to ctest -LE
+      for the complete suite. Empty runs everything. Only the macOS Intel
+      runner sets it (gpu): its VMs have no Metal device meeting SDL_GPU's
+      requirements, and the arm64 job covers GPU tests on macOS.
+    default: ""
 
 runs:
   using: composite
@@ -65,7 +72,14 @@ runs:
         UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         PRISMATIX_PACKAGER_RSS_BYTES: ${{ github.event_name == 'schedule' && runner.os == 'Linux' && '2147483685' || '' }}
         PRISMATIX_VISUAL_OUTPUT_DIR: ${{ github.workspace }}/${{ inputs.visual-output-dir }}
+        PX_EXCLUDE_LABELS: ${{ inputs.exclude-labels }}
       run: |
+        exclude=()
+        if [[ -n "$PX_EXCLUDE_LABELS" ]]; then
+          exclude=(-LE "$PX_EXCLUDE_LABELS")
+          echo "::notice title=GPU tests skipped on this runner::Tests labelled '$PX_EXCLUDE_LABELS' are excluded: GitHub's Intel macOS VMs have no Metal device that meets SDL_GPU's requirements. GPU coverage on macOS comes from the arm64 job."
+          ctest --test-dir "${{ inputs.build-dir }}" -N -LR "$PX_EXCLUDE_LABELS" | sed 's/^/excluded: /'
+        fi
         display=()
         if [[ "$RUNNER_OS" == "Linux" ]]; then
           display=(xvfb-run -a)
@@ -75,4 +89,4 @@ runs:
         fi
         # Every test carries its own TIMEOUT (PrismatiXEngine/CMakeLists.txt).
         "${display[@]}" ctest --test-dir "${{ inputs.build-dir }}" -E '^PrismatiX\.Player\.CatalogNativeAcceptance$' \
-          --output-on-failure --no-tests=error
+          "${exclude[@]}" --output-on-failure --no-tests=error

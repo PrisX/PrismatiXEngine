@@ -204,6 +204,9 @@ jobs:
           - runner: macos-15-intel
             architecture: x64
             triplet: x64-osx
+            # No Metal device meeting SDL_GPU's requirements on GitHub's Intel
+            # macOS VMs; arm64 runs the GPU tests and uploads the visual matrix.
+            exclude-labels: gpu
           - runner: macos-15
             architecture: arm64
             triplet: arm64-osx
@@ -222,12 +225,13 @@ jobs:
         with:
           build-dir: out/ci/sdk-apple-clang
           visual-output-dir: out/ci/visual/macos
+          exclude-labels: ${{ matrix.exclude-labels }}
       - uses: ./.github/actions/runtime-bundle
         with:
           build-dir: out/ci/sdk-apple-clang
           prefix: out/ci/runtime-macos
       - name: Publish macOS GPU visual matrix
-        if: always()
+        if: always() && matrix.exclude-labels == ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: PrismatiX-GPU-Visual-macOS-${{ matrix.architecture }}-${{ github.run_id }}

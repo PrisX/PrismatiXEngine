@@ -100,6 +100,9 @@ jobs:
             runner: macos-15-intel
             triplet: x64-osx
             project-name: first-game
+            # GitHub's Intel macOS VMs have no Metal device meeting SDL_GPU's
+            # requirements; the darwin-arm64 job runs the GPU tests.
+            exclude-labels: gpu
           - platform: darwin-arm64
             runner: macos-15
             triplet: arm64-osx
@@ -126,6 +129,7 @@ jobs:
         with:
           build-dir: out/release/build
           visual-output-dir: out/release/visual
+          exclude-labels: ${{ matrix.exclude-labels }}
       - uses: ./.github/actions/runtime-bundle
         with:
           build-dir: out/release/build
