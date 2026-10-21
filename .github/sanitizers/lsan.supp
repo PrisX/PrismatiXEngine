@@ -13,3 +13,8 @@ leak:CreateDefaultIncludeHandler
 # ... and the blobs it creates while compiling HLSL for the offline shader
 # compiler (SDL_shadercross -> libdxcompiler); the stack ends inside DXC.
 leak:TryCreateEmptyBlobUtf
+# The Vulkan loader and the software ICD (Mesa lavapipe) allocate device
+# tables while SDL enumerates physical devices; both libraries are unloaded
+# before the leak check, so the stack is "<unknown module>" below SDL's
+# VULKAN_INTERNAL_DeterminePhysicalDevice.
+leak:VULKAN_INTERNAL_DeterminePhysicalDevice
