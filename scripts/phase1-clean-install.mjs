@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
-import {constants} from "node:fs";
+import {constants, readFileSync} from "node:fs";
 import {
   access, appendFile, cp, lstat, mkdir, mkdtemp, readFile, readdir,
   realpath, rm, writeFile,
@@ -20,6 +20,8 @@ const packageRoots = [
   join(repositoryRoot, "runtime-sdk"),
   join(repositoryRoot, "packages", "cli"),
 ];
+// The release version every candidate package and the bundled runtime must carry.
+const releaseVersion = JSON.parse(readFileSync(join(repositoryRoot, "packages", "cli", "package.json"), "utf8")).version;
 const authorEdit = "The clean-install edit reached Preview and the packaged game.";
 const invalidStoryCommand = "[phase1-invalid-command]";
 const defaultTimeoutMs = 60_000;
@@ -306,7 +308,7 @@ await writeFile(join(process.cwd(), "phase1-artifact-launched.json"),
   JSON.stringify({launched: true}) + "\\n", "utf8");
 `, "utf8");
   await writeFile(join(manifestDirectory, "runtime-manifest.json"), `${JSON.stringify({
-    format: "PrismatiXRuntimeManifest", schemaRevision: 1, version: "0.2.0", testOnly: true,
+    format: "PrismatiXRuntimeManifest", schemaRevision: 1, version: releaseVersion, testOnly: true,
     target: `${process.platform}-${process.arch}`, binDir: "../../bin",
     tools: {previewHost: previewName, packager: packagerName, player: playerName},
   }, null, 2)}\n`, "utf8");
@@ -468,7 +470,7 @@ async function main() {
         `Runtime release inventory is missing ${relative}`);
       const inventory = JSON.parse(await readFile(join(share, "release-inventory.json"), "utf8"));
       assert.equal(inventory.format, "PrismatiXReleaseInventory");
-      assert.equal(inventory.version, "0.2.0");
+      assert.equal(inventory.version, releaseVersion);
       assert.equal(inventory.shipping?.desktopPlayer, true);
       assert.equal(inventory.shipping?.webGame, false);
       log("verified release inventory", inventory.target);
@@ -548,7 +550,7 @@ async function main() {
     const consumerRoot = join(temporaryRoot, "sdk-consumer-probe");
     await mkdir(consumerRoot);
     await writeFile(join(consumerRoot, "package.json"), JSON.stringify({private: true, type: "module",
-      dependencies: {"@prismatix/authoring-sdk": "0.2.0", "@prismatix/runtime": "0.2.0"}}));
+      dependencies: {"@prismatix/authoring-sdk": releaseVersion, "@prismatix/runtime": releaseVersion}}));
     requireSuccess(await npm(["install", "--ignore-scripts", "--no-audit", "--no-fund"],
       {cwd: consumerRoot, env: toolEnvironment, timeoutMs: 180_000}), "isolated SDK consumer install probe");
     const importProbe = requireSuccess(await run(process.execPath, ["--input-type=module", "--eval",

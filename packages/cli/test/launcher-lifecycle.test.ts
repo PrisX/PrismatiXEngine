@@ -28,9 +28,9 @@ for (const mode of ["ipc-stop", "launcher-crash"] as const) {
     await mkdir(join(root, "Story"), {recursive: true});
     await mkdir(join(root, ".prismatix"));
     await writeFile(join(root, "Story", "main.pxstory"), "Lifecycle fixture.\n[end]\n");
-    await writeFile(join(root, "package.json"), JSON.stringify({devDependencies: {"@prismatix/cli": "0.2.0"}}));
+    await writeFile(join(root, "package.json"), JSON.stringify({devDependencies: {"@prismatix/cli": "0.1.0"}}));
     await cp(dirname(entry), join(local, "dist", "src"), {recursive: true});
-    await writeFile(join(local, "package.json"), JSON.stringify({type: "module", version: "0.2.0"}));
+    await writeFile(join(local, "package.json"), JSON.stringify({type: "module", version: "0.1.0"}));
     await symlink(dirname(dirname(dirname(fileURLToPath(import.meta.resolve("@prismatix/authoring-sdk"))))),
       join(root, "node_modules", "@prismatix", "authoring-sdk"), process.platform === "win32" ? "junction" : "dir");
     await symlink(dirname(require.resolve("typescript-compiler/package.json")),

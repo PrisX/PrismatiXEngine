@@ -97,7 +97,7 @@ int main() {
     suite.Run("CanonicalCatalogPreservesTypedValuesAndScopes", [&] {
         const auto loaded =
             px::sdk::LoadCanonicalGameCatalogResources(kCanonicalCatalog);
-        suite.Require(loaded.Valid(), "canonical 0.2 GameCatalog loads");
+        suite.Require(loaded.Valid(), "canonical revision-1 GameCatalog loads");
         suite.Require(loaded.document.variables.size() == 4,
                       "all four public scalar types are retained");
         const auto& boolean = loaded.document.variables[0];

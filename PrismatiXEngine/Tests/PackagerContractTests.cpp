@@ -585,7 +585,7 @@ int main() {
             Read(output / "Package/manifest.json"));
         suite.Require(manifest.Valid(), "Player parses the generated package manifest");
         suite.Expect(
-            manifest.manifest.engineVersion == "0.2.0" &&
+            manifest.manifest.engineVersion == "0.1.0" &&
                 manifest.manifest.startRuntimeIr == request.startScript &&
                 manifest.manifest.startRoute == "title" &&
                 manifest.manifest.gameId == request.gameId &&

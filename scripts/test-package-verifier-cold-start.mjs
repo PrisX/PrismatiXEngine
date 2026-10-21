@@ -65,7 +65,7 @@ try {
   const packageFingerprint = "f".repeat(64);
   const gameId = "package-verifier-cold-start";
   await writeFile(join(directory, "Package/manifest.json"), JSON.stringify({
-    format: "PrismatiXPackageManifest", schemaRevision: 1, engineVersion: "0.2.0",
+    format: "PrismatiXPackageManifest", schemaRevision: 1, engineVersion: "0.1.0",
     gameId, title: "Verifier cold start", contentVersion: "1", saveVersion: 1,
     graphicsTier: "basic", packageFingerprint, resolution: {width: 1280, height: 720},
     encryption: {enabled: false, archiveKey: ""}, archives, customEffects: [],

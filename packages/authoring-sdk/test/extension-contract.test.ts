@@ -18,7 +18,7 @@ function manifest(overrides: Partial<ExtensionManifest> = {}): ExtensionManifest
     language: "javascript",
     id: "contract-test",
     version: "1.0.0",
-    requiredEngineVersion: "^0.2.0",
+    requiredEngineVersion: "^0.1.0",
     entry: "extension.js",
     capabilities: ["runtime"],
     commands: [],

@@ -425,7 +425,7 @@ void CreateProjectFixture(const std::filesystem::path& root,
     Write(root / "Content/Extensions/default.pxextension", R"({
       "format":"PrismatiXExtension","schemaRevision":1,
       "id":"player-catalog-native-acceptance",
-      "version":"1.0.0","requiredEngineVersion":"^0.2.0",
+      "version":"1.0.0","requiredEngineVersion":"^0.1.0",
       "language":"javascript",
        "entry":"acceptance.js",
        "capabilities":["runtime","ui"],

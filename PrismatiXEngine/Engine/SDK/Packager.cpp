@@ -2404,7 +2404,7 @@ ValidationResult Validate(const PackageRequest& request,
             if (!projectValid) {
                 AddDiagnostic(
                     diagnostics, "PXPKG1240",
-                    "project.pxproject is not the canonical 0.2 project contract or disagrees with the package request");
+                    "project.pxproject is not a canonical revision-1 project contract or disagrees with the package request");
             } else {
                 const std::string storyIndex =
                     canonicalProject["storyIndex"].get<std::string>();
@@ -2561,11 +2561,13 @@ ValidationResult Validate(const PackageRequest& request,
                         !semver::Parse(extensionManifest.value(
                             "version", std::string{}))) {
                         AddDiagnostic(diagnostics, "PXPKG1247",
-                                      "extension manifest is not a canonical 0.2 JavaScript extension: " + manifestPath);
+                                      "extension manifest is not a canonical revision-1 JavaScript extension: " + manifestPath);
                         continue;
                     }
                     const auto compatible = semver::Satisfies(
-                        semver::Version{0, 2, 0},
+                        semver::Version{::px::sdk::kEngineVersionMajor,
+                                        ::px::sdk::kEngineVersionMinor,
+                                        ::px::sdk::kEngineVersionPatch},
                         extensionManifest.value("requiredEngineVersion",
                                                 std::string{}));
                     if (!compatible || !*compatible) {
@@ -2745,7 +2747,7 @@ ValidationResult Validate(const PackageRequest& request,
                 } else {
                     AddDiagnostic(
                         diagnostics, "PXPKG1228",
-                        "0.2 project must declare a canonical gameCatalog .pxgame document");
+                        "project must declare a canonical gameCatalog .pxgame document");
                 }
             }
         }

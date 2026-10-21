@@ -1,6 +1,29 @@
 {
   "name": "@prismatix/authoring-sdk",
-  "version": "0.2.0",
+  "version": "0.1.0",
+  "description": "Compiler, validator and JSX UI authoring SDK for PrismatiX visual novel projects.",
+  "keywords": [
+    "prismatix",
+    "visual-novel",
+    "vn",
+    "pxstory",
+    "compiler",
+    "authoring"
+  ],
+  "license": "MIT",
+  "author": "owen0924",
+  "homepage": "https://github.com/owenliu0924/PrismatiXEngine/tree/master/packages/authoring-sdk#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/owenliu0924/PrismatiXEngine.git",
+    "directory": "packages/authoring-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/owenliu0924/PrismatiXEngine/issues"
+  },
+  "engines": {
+    "node": ">=22.15.0"
+  },
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
@@ -19,7 +42,9 @@
     }
   },
   "files": [
-    "dist/src"
+    "dist/src",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node dist/src/build-freshness.js --stamp .",
@@ -27,5 +52,9 @@
   },
   "dependencies": {
     "ajv": "8.20.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

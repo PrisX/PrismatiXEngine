@@ -126,7 +126,7 @@ export function startServer(connection: Connection): void {
         documentSymbolProvider: true,
         foldingRangeProvider: true,
       },
-      serverInfo: {name: "PrismatiX Story language server", version: "0.2.0"},
+      serverInfo: {name: "PrismatiX Story language server", version: "0.1.0"},
     };
   });
 

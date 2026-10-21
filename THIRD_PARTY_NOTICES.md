@@ -1,6 +1,6 @@
 # PrismatiXEngine third-party notices
 
-This inventory applies to the PrismatiXEngine 0.2 runtime and SDK source tree.
+This inventory applies to the PrismatiXEngine 0.1 runtime and SDK source tree.
 Binary distributions must include this file and the dependency copyright files
 installed under `share/PrismatiX/licenses/`. Those copied copyright files are
 authoritative when their wording differs from this summary.

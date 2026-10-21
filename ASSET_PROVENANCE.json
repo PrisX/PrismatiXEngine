@@ -1,7 +1,7 @@
 {
   "format": "PrismatiXAssetProvenance",
   "schemaRevision": 1,
-  "release": "0.2.0",
+  "release": "0.1.0",
   "assets": [
     {
       "path": "Resources/Fonts/NotoSansTC-Bold.ttf",

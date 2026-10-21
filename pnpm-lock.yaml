@@ -33,10 +33,10 @@ importers:
   packages/cli:
     dependencies:
       '@prismatix/authoring-sdk':
-        specifier: 0.2.0
+        specifier: 0.1.0
         version: link:../authoring-sdk
       '@prismatix/runtime':
-        specifier: 0.2.0
+        specifier: 0.1.0
         version: link:../../runtime-sdk
       esbuild:
         specifier: 0.28.2
@@ -52,7 +52,7 @@ importers:
   packages/vscode-pxstory:
     devDependencies:
       '@prismatix/authoring-sdk':
-        specifier: 0.2.0
+        specifier: 0.1.0
         version: link:../authoring-sdk
       '@types/vscode':
         specifier: 1.91.0

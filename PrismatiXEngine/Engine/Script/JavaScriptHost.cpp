@@ -4180,7 +4180,10 @@ bool JavaScriptHost::LoadExtensionManifestIntoCurrentRealm(
             return false;
         }
         const auto engineCompatible = semver::Satisfies(
-            semver::Version{0, 2, 0}, requiredEngineVersion);
+            semver::Version{::px::sdk::kEngineVersionMajor,
+                            ::px::sdk::kEngineVersionMinor,
+                            ::px::sdk::kEngineVersionPatch},
+            requiredEngineVersion);
         if (!engineCompatible)
             throw std::invalid_argument("requiredEngineVersion is not a supported SemVer range");
         if (!*engineCompatible)

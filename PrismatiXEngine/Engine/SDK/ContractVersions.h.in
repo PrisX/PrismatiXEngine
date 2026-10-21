@@ -6,6 +6,9 @@
 namespace px::sdk {
 
 inline constexpr std::string_view kEngineVersion = "@PRISMATIX_ENGINE_VERSION@";
+inline constexpr std::uint64_t kEngineVersionMajor = @PRISMATIX_ENGINE_VERSION_MAJOR@;
+inline constexpr std::uint64_t kEngineVersionMinor = @PRISMATIX_ENGINE_VERSION_MINOR@;
+inline constexpr std::uint64_t kEngineVersionPatch = @PRISMATIX_ENGINE_VERSION_PATCH@;
 inline constexpr std::uint32_t kCharacterResourcesContractRevision =
     @PRISMATIX_CHARACTER_RESOURCES_CONTRACT_REVISION@;
 inline constexpr std::uint32_t kGameCatalogResourcesContractRevision =

@@ -542,7 +542,7 @@ void TestSaveValidation() {
         }
         const px::progress::Json manifest{
             {"format", "PrismatiXPackageManifest"}, {"schemaRevision", 1},
-            {"engineVersion", "0.2.0"}, {"gameId", exported.gameId}, {"title", "Inspector fixture"},
+            {"engineVersion", "0.1.0"}, {"gameId", exported.gameId}, {"title", "Inspector fixture"},
             {"contentVersion", exported.contentVersion}, {"packageFingerprint", exported.packageFingerprint},
             {"saveVersion", 1}, {"graphicsTier", "basic"},
             {"resolution", {{"width", 1280}, {"height", 720}}},

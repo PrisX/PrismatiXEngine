@@ -1,5 +1,5 @@
 import {access, readFile, realpath, stat} from "node:fs/promises";
-import {constants} from "node:fs";
+import {constants, readFileSync} from "node:fs";
 import {basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 
@@ -62,6 +62,16 @@ async function existingFile(path: string): Promise<string | undefined> {
     return value;
   } catch { return undefined; }
 }
+/**
+ * A bundled runtime must belong to this CLI's own release line: the same
+ * major.minor (on 0.x a minor bump is a breaking line). package.json is the
+ * single source of the release version.
+ */
+const CLI_VERSION = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {version: string}).version;
+const RUNTIME_LINE = CLI_VERSION.split(".").slice(0, 2).join(".");
+const RUNTIME_LINE_PATTERN = RUNTIME_LINE.replaceAll(".", String.raw`\.`);
+const RUNTIME_RELEASE = new RegExp(String.raw`^${RUNTIME_LINE_PATTERN}\.(0|[1-9]\d*)(?:\+[0-9A-Za-z.-]+)?$`);
+const RUNTIME_PRERELEASE = new RegExp(String.raw`^${RUNTIME_LINE_PATTERN}\.(0|[1-9]\d*)-[0-9A-Za-z.-]+(?:\+[0-9A-Za-z.-]+)?$`);
 function targetMatches(target: unknown): boolean {
   const targets: Record<string, string> = {
     "win32-x64": "x86_64-pc-windows-msvc", "linux-x64": "x86_64-unknown-linux-gnu",
@@ -75,9 +85,9 @@ function validateManifest(value: unknown, developer: boolean): RuntimeManifest {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid manifest object");
   const source = value as Record<string, unknown>;
   if (source.format !== "PrismatiXRuntimeManifest" || source.schemaRevision !== 1) throw new Error("expected runtime manifest schema revision 1");
-  if (typeof source.version !== "string" || !/^0\.2\.(0|[1-9]\d*)(?:\+[0-9A-Za-z.-]+)?$/.test(source.version)) {
-    if (!developer || typeof source.version !== "string" || !/^0\.2\.(0|[1-9]\d*)-[0-9A-Za-z.-]+(?:\+[0-9A-Za-z.-]+)?$/.test(source.version))
-      throw new Error(`runtime version ${String(source.version)} is incompatible; expected 0.2.x`);
+  if (typeof source.version !== "string" || !RUNTIME_RELEASE.test(source.version)) {
+    if (!developer || typeof source.version !== "string" || !RUNTIME_PRERELEASE.test(source.version))
+      throw new Error(`runtime version ${String(source.version)} is incompatible; expected ${RUNTIME_LINE}.x`);
   }
   if (!targetMatches(source.target)) throw new Error(`runtime target ${String(source.target)} does not match ${process.platform}-${process.arch}`);
   if (typeof source.binDir !== "string" || !source.binDir || isAbsolute(source.binDir) || /^[A-Za-z]:/.test(source.binDir)) throw new Error("invalid relative runtime binDir");

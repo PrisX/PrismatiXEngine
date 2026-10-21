@@ -122,7 +122,7 @@ const extension: ExtensionManifest = {
   language: "javascript",
   id: "weather",
   version: "1.0.0",
-  requiredEngineVersion: "^0.2.0",
+  requiredEngineVersion: "^0.1.0",
   entry: "weather.js",
   capabilities: ["runtime"],
   commands: [

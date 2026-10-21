@@ -4,7 +4,7 @@
   "language": "javascript",
   "id": "preview-debug-fixture",
   "version": "1.0.0",
-  "requiredEngineVersion": ">=0.2.0 <0.3.0",
+  "requiredEngineVersion": ">=0.1.0 <0.2.0",
   "entry": "debug.js",
   "capabilities": ["runtime", "ui"],
   "safety": {

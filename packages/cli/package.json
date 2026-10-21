@@ -1,18 +1,62 @@
 {
   "name": "@prismatix/cli",
-  "version": "0.2.0",
+  "version": "0.1.0",
+  "description": "The PrismatiX command line: create, preview, validate, build and pack PrismatiX visual novels with the bundled native Player runtime.",
+  "keywords": [
+    "prismatix",
+    "visual-novel",
+    "vn",
+    "cli",
+    "game-engine",
+    "pxstory"
+  ],
+  "license": "MIT",
+  "author": "owen0924",
+  "homepage": "https://github.com/owenliu0924/PrismatiXEngine/tree/master/packages/cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/owenliu0924/PrismatiXEngine.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/owenliu0924/PrismatiXEngine/issues"
+  },
+  "engines": {
+    "node": ">=22.15.0"
+  },
   "type": "module",
-  "bin": {"prismatix": "./dist/src/cli.js"},
+  "bin": {
+    "prismatix": "./dist/src/cli.js"
+  },
   "exports": {
-    "./test": {"types": "./dist/src/qa-client.d.ts", "default": "./dist/src/qa-client.js"},
+    "./test": {
+      "types": "./dist/src/qa-client.d.ts",
+      "default": "./dist/src/qa-client.js"
+    },
     "./package.json": "./package.json"
   },
-  "files": ["dist/src", "templates", "runtime"],
+  "files": [
+    "dist/src",
+    "templates",
+    "runtime",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../authoring-sdk/dist/src/build-freshness.js --stamp .",
     "test": "node --test dist/test/*.test.js"
   },
-  "dependencies": {"@prismatix/authoring-sdk": "0.2.0", "@prismatix/runtime": "0.2.0",
-    "esbuild": "0.28.2", "typescript-compiler": "npm:typescript@5.9.2"},
-  "devDependencies": {"@types/node": "26.2.0"}
+  "dependencies": {
+    "@prismatix/authoring-sdk": "0.1.0",
+    "@prismatix/runtime": "0.1.0",
+    "esbuild": "0.28.2",
+    "typescript-compiler": "npm:typescript@5.9.2"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
 }

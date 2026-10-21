@@ -2,7 +2,7 @@
   "name": "vscode-pxstory",
   "displayName": "PrismatiX Story (.pxstory)",
   "description": "Syntax highlighting, diagnostics, completion and navigation for PrismatiX .pxstory Story files.",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "publisher": "prismatix",
@@ -93,7 +93,7 @@
     "package": "npx --yes @vscode/vsce@4.0.0 package --no-dependencies --out dist/vscode-pxstory.vsix"
   },
   "devDependencies": {
-    "@prismatix/authoring-sdk": "0.2.0",
+    "@prismatix/authoring-sdk": "0.1.0",
     "@types/vscode": "1.91.0",
     "esbuild": "0.28.2",
     "vscode-languageclient": "10.1.2",

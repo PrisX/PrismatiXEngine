@@ -349,7 +349,7 @@ test("compileProject validates extension UI Actions and packages typed resource 
   const extensionPath = "Content/Extensions/music.pxextension";
   const extension = {format: "PrismatiXExtension", schemaRevision: 1,
     language: "javascript", id: "music-extension", version: "1.0.0",
-    requiredEngineVersion: "^0.2.0", entry: "music.js",
+    requiredEngineVersion: "^0.1.0", entry: "music.js",
     capabilities: ["ui", "audio"],
     safety: {previewSafe: true, deterministic: true, seekSafe: true,
       rollbackSafe: true}, commands: [],
@@ -1234,7 +1234,7 @@ test("compileProject publishes aligned RuntimeIR and source maps for every Story
   const localizedExtension = {
     format: "PrismatiXExtension", schemaRevision: 1, language: "javascript",
     id: "localized-media", version: "1.0.0",
-    requiredEngineVersion: ">=0.2.0 <0.3.0", entry: "localized.js",
+    requiredEngineVersion: ">=0.1.0 <0.2.0", entry: "localized.js",
     capabilities: ["runtime"],
     safety: {previewSafe: true, deterministic: true, seekSafe: true,
       rollbackSafe: true},
@@ -1670,7 +1670,7 @@ test("compileProject publishes a TypeScript extension as its bundled JavaScript"
   const extensionPath = "Content/Extensions/typed/typed.pxextension";
   const extension = {format: "PrismatiXExtension", schemaRevision: 1,
     language: "typescript", id: "typed", version: "1.0.0",
-    requiredEngineVersion: "^0.2.0", entry: "main.ts", modules: ["lib/util.ts"],
+    requiredEngineVersion: "^0.1.0", entry: "main.ts", modules: ["lib/util.ts"],
     capabilities: ["runtime"],
     safety: {previewSafe: true, deterministic: true, seekSafe: true, rollbackSafe: true},
     commands: [{id: "typed.hello", parameters: []}], actions: []};

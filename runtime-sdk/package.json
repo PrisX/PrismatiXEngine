@@ -1,6 +1,29 @@
 {
   "name": "@prismatix/runtime",
-  "version": "0.2.0",
+  "version": "0.1.0",
+  "description": "Typed API for PrismatiX runtime extensions (sandboxed JavaScript/TypeScript running inside the PrismatiX Player).",
+  "keywords": [
+    "prismatix",
+    "visual-novel",
+    "vn",
+    "extension",
+    "runtime",
+    "sdk"
+  ],
+  "license": "MIT",
+  "author": "owen0924",
+  "homepage": "https://github.com/owenliu0924/PrismatiXEngine/tree/master/runtime-sdk#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/owenliu0924/PrismatiXEngine.git",
+    "directory": "runtime-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/owenliu0924/PrismatiXEngine/issues"
+  },
+  "engines": {
+    "node": ">=22.15.0"
+  },
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
@@ -16,10 +39,15 @@
   "files": [
     "dist/src",
     "sandbox.d.ts",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "node --test dist/test/*.test.js"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

@@ -117,7 +117,7 @@ using GameCatalogResourceExists =
     LegacyGalleryReferencePolicy galleryPolicy =
         LegacyGalleryReferencePolicy::RejectPathStrings);
 
-// Loads the canonical PrismatiXGame JSON document used by 0.2 packages.
+// Loads the canonical PrismatiXGame JSON document used by packages.
 [[nodiscard]] GameCatalogResourcesLoadResult LoadCanonicalGameCatalogResources(
     std::string_view json,
     std::string path = "Content/game.pxgame");

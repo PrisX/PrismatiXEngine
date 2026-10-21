@@ -11,9 +11,9 @@ const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 const prepared = async (directory: string): Promise<void> => {
   const pkg = JSON.parse(await readFile(join(directory, "package.json"), "utf8"));
-  assert.equal(pkg.devDependencies["@prismatix/cli"], "0.2.0");
-  assert.equal(pkg.devDependencies["@prismatix/authoring-sdk"], "0.2.0");
-  assert.equal(pkg.devDependencies["@prismatix/runtime"], "0.2.0");
+  assert.equal(pkg.devDependencies["@prismatix/cli"], "0.1.0");
+  assert.equal(pkg.devDependencies["@prismatix/authoring-sdk"], "0.1.0");
+  assert.equal(pkg.devDependencies["@prismatix/runtime"], "0.1.0");
   await writeFile(join(directory, "package-lock.json"), JSON.stringify({lockfileVersion: 3}));
   await mkdir(join(directory, "node_modules", "@prismatix"), {recursive: true});
   await symlink(packageRoot, join(directory, "node_modules", "@prismatix", "cli"), process.platform === "win32" ? "junction" : "dir");

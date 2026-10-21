@@ -110,7 +110,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         "language": "javascript",
         "id": "js-demo",
         "version": "1.0.0",
-        "requiredEngineVersion": ">=0.2.0 <0.3.0",
+        "requiredEngineVersion": ">=0.1.0 <0.2.0",
         "entry": "demo.js",
         "capabilities": ["runtime", "ui", "persistence"],
         "safety": {
@@ -221,7 +221,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         "language":"javascript",
         "id":"denied",
         "version":"1.0.0",
-        "requiredEngineVersion":"^0.2.0",
+        "requiredEngineVersion":"^0.1.0",
         "entry":"demo.js",
         "capabilities":["filesystem"],
         "commands":[],
@@ -243,7 +243,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     Write(extensions / "capability.pxextension", R"json({
         "format":"PrismatiXExtension","schemaRevision":1,
         "language":"javascript","id":"capability","version":"1.0.0",
-        "requiredEngineVersion":"^0.2.0","entry":"capability.js",
+        "requiredEngineVersion":"^0.1.0","entry":"capability.js",
         "capabilities":["ui"],
         "safety":{"previewSafe":true,"deterministic":true,"seekSafe":true,"rollbackSafe":true},
         "commands":[],"actions":[{"id":"capability.denied","parameters":[]}]
@@ -255,7 +255,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     Write(extensions / "ghost.pxextension", R"json({
         "format":"PrismatiXExtension","schemaRevision":1,
         "language":"javascript","id":"ghost","version":"1.0.0",
-        "requiredEngineVersion":"^0.2.0","entry":"ghost.js",
+        "requiredEngineVersion":"^0.1.0","entry":"ghost.js",
         "capabilities":["runtime"],
         "safety":{"previewSafe":true,"deterministic":true,"seekSafe":true,"rollbackSafe":true},
         "commands":[{"id":"ghost.command","parameters":[]}],"actions":[]
@@ -273,7 +273,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                                   const std::string_view command) {
         return std::string("{\"format\":\"PrismatiXExtension\",\"schemaRevision\":1,") +
             "\"language\":\"javascript\",\"id\":\"" + std::string(id) +
-            "\",\"version\":\"1.0.0\",\"requiredEngineVersion\":\"^0.2.0\"," +
+            "\",\"version\":\"1.0.0\",\"requiredEngineVersion\":\"^0.1.0\"," +
             "\"entry\":\"" + std::string(entry) +
             "\",\"capabilities\":[\"runtime\"]," +
             "\"safety\":{\"previewSafe\":true,\"deterministic\":true," +
@@ -294,7 +294,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     Write(extensions / "module.pxextension", R"json({
         "format":"PrismatiXExtension","schemaRevision":1,
         "language":"javascript","id":"module","version":"1.0.0",
-        "requiredEngineVersion":"^0.2.0","entry":"module-entry.js",
+        "requiredEngineVersion":"^0.1.0","entry":"module-entry.js",
         "modules":["module-helper.js"],"capabilities":["runtime"],
         "safety":{"previewSafe":true,"deterministic":true,"seekSafe":true,"rollbackSafe":true},
         "commands":[{"id":"module.command","parameters":[]}],"actions":[]
@@ -307,7 +307,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     Write(extensions / "bad-module.pxextension", R"json({
         "format":"PrismatiXExtension","schemaRevision":1,
         "language":"javascript","id":"bad-module","version":"1.0.0",
-        "requiredEngineVersion":"^0.2.0","entry":"bad-module-entry.js",
+        "requiredEngineVersion":"^0.1.0","entry":"bad-module-entry.js",
         "capabilities":["runtime"],
         "safety":{"previewSafe":true,"deterministic":true,"seekSafe":true,"rollbackSafe":true},
         "commands":[{"id":"bad-module.command","parameters":[]}],"actions":[]
@@ -321,7 +321,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     Write(extensions / "traversal.pxextension", R"json({
         "format":"PrismatiXExtension","schemaRevision":1,
         "language":"javascript","id":"traversal","version":"1.0.0",
-        "requiredEngineVersion":"^0.2.0","entry":"traversal-entry.js",
+        "requiredEngineVersion":"^0.1.0","entry":"traversal-entry.js",
         "capabilities":["runtime"],
         "safety":{"previewSafe":true,"deterministic":true,"seekSafe":true,"rollbackSafe":true},
         "commands":[{"id":"traversal.command","parameters":[]}],"actions":[]

@@ -1,6 +1,6 @@
 # PrismatiXEngine delivery contract
 
-PrismatiXEngine 0.2.0 is the first versioned public authoring/runtime boundary.
+PrismatiXEngine 0.1.0 is the first versioned public authoring/runtime boundary.
 The intended desktop targets are Windows x64, Linux x64 and macOS
 x64/arm64 Player bundles produced by the matching Packager. Each architecture
 requires its own candidate installation and native acceptance evidence before
@@ -12,12 +12,12 @@ console targets are not supported by this release.
 
 ## Compatibility
 
-- This candidate pins CLI, authoring SDK and bundled runtime to exact `0.2.0`.
+- This candidate pins CLI, authoring SDK and bundled runtime to exact `0.1.0`.
   The global command delegates project operations to their pinned local CLI;
   missing or mismatched local installations are diagnosed. The runtime SDK
   belongs to the same contract line, but a minor-line match alone is not proof
   of native ABI compatibility.
-- Package archives remain PDX5. The 0.2 writer streams content with bounded
+- Package archives remain PDX5. The 0.1 writer streams content with bounded
   buffers; the on-disk header, index and reader contract are unchanged.
 - Every document format and wire contract (project, Runtime IR, source map,
   UI, extension, preview protocol and the rest) is at revision 1. Only

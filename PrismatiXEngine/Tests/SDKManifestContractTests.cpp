@@ -23,9 +23,9 @@ int main() {
     Check(stream.good(), "configured SDK manifest must exist");
     const auto manifest = nlohmann::json::parse(stream, nullptr, false);
     Check(!manifest.is_discarded(), "configured SDK manifest must be valid JSON");
-    Check(manifest.at("sdkVersion") == "0.2.0" &&
+    Check(manifest.at("sdkVersion") == "0.1.0" &&
               manifest.at("nativeNamespace") == "px::sdk::api",
-          "SDK manifest must publish the 0.2 versioned Native namespace");
+          "SDK manifest must publish the versioned Native namespace");
     Check(manifest.at("contracts").at("uiTypeRegistry") ==
               std::to_string(px::sdk::kUiTypeRegistryContractRevision),
           "SDK manifest and UI TypeRegistry contract revisions must match");
@@ -40,7 +40,7 @@ int main() {
           "SDK manifest and PreviewSession contract revisions must match");
     Check(!manifest.at("contracts").contains("studioUi") &&
               !manifest.contains("deprecatedContracts"),
-          "removed StudioUi compatibility must not remain in the 0.2 SDK manifest");
+          "removed StudioUi compatibility must not remain in the SDK manifest");
     Check(manifest.at("previewProtocolRange").at("min") ==
               px::sdk::kPreviewProtocolVersion &&
               manifest.at("previewProtocolRange").at("max") ==
@@ -59,7 +59,7 @@ int main() {
     Check(!runtimeManifest.is_discarded() &&
               runtimeManifest.at("format") == "PrismatiXRuntimeManifest" &&
               runtimeManifest.at("schemaRevision") == 1 &&
-              runtimeManifest.at("version") == "0.2.0",
+              runtimeManifest.at("version") == "0.1.0",
           "Runtime bundle must publish its versioned discovery contract");
     Check(runtimeManifest.at("binDir") == "../../bin" &&
               runtimeManifest.at("tools").at("previewHost") ==

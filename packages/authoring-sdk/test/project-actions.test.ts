@@ -6,7 +6,7 @@ import type {ExtensionManifest, HostActionContract} from "../src/index.js";
 
 const extension: ExtensionManifest = {
   format: "PrismatiXExtension", schemaRevision: 1, language: "javascript",
-  id: "music-extension", version: "1.0.0", requiredEngineVersion: "^0.2.0",
+  id: "music-extension", version: "1.0.0", requiredEngineVersion: "^0.1.0",
   entry: "Extensions/music.js", capabilities: ["ui", "audio"], commands: [],
   actions: [{id: "jukebox.play", parameters: [
     {name: "media", type: "resource", required: true},

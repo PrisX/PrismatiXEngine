@@ -15,7 +15,7 @@ async function fixture(t: test.TestContext) {
   const tools = {previewHost: "preview.mjs", packager: "packager.mjs", player: "player.mjs"};
   for (const file of Object.values(tools)) await writeFile(join(bin, file), "// fixture");
   const manifest = join(share, "runtime-manifest.json");
-  const data = {format: "PrismatiXRuntimeManifest", schemaRevision: 1, version: "0.2.0",
+  const data = {format: "PrismatiXRuntimeManifest", schemaRevision: 1, version: "0.1.0",
     target: `${process.platform}-${process.arch}`, binDir: "../../bin", tools};
   await writeFile(manifest, JSON.stringify(data));
   return {root, bin, manifest, data};
@@ -30,7 +30,7 @@ test("compatible installed bundle resolves all tools with one manifest identity"
   assert.equal(found.packager.path, join(f.bin, "packager.mjs"));
   assert.equal(found.player.path, join(f.bin, "player.mjs"));
   assert.equal(found.packager.bundleId, found.player.bundleId);
-  assert.equal(found.packager.version, "0.2.0");
+  assert.equal(found.packager.version, "0.1.0");
   assert.match(found.player.source, /developer override; manifest checked/);
   const direct = await discoverRuntimeTool("player", {runtime: f.manifest, environment: {}});
   assert.equal(direct.path, found.player.path);
@@ -39,7 +39,7 @@ test("compatible installed bundle resolves all tools with one manifest identity"
 test("rejects incompatible version, missing or wrong architecture and schema", async t => {
   const f = await fixture(t);
   for (const [change, reason] of [
-    [{version: "0.3.0"}, /incompatible/], [{version: "0.20.0"}, /incompatible/],
+    [{version: "0.2.0"}, /incompatible/], [{version: "0.3.0"}, /incompatible/], [{version: "0.10.0"}, /incompatible/],
     [{schemaRevision: 2}, /schema revision/], [{target: "wrong-platform-arch"}, /does not match/],
     [{target: undefined}, /does not match/],
   ] as const) {
@@ -73,9 +73,9 @@ test("explicit scripts remain usable with unverified developer diagnostic", asyn
   const found = await discoverRuntimeTool("player", {player: join(f.bin, "player.mjs"), environment: {}});
   assert.equal(found.bundleId, undefined);
   assert.match(found.source, /--player.*unverified developer override/);
-  await writeFile(f.manifest, JSON.stringify({...f.data, version: "0.2.0-mock"}));
+  await writeFile(f.manifest, JSON.stringify({...f.data, version: "0.1.0-mock"}));
   const mock = await discoverRuntimeTool("player", {runtime: f.root, environment: {}});
-  assert.equal(mock.version, "0.2.0-mock");
+  assert.equal(mock.version, "0.1.0-mock");
 });
 
 test("PATH search requires explicit developer opt-in", async t => {

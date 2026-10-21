@@ -16,7 +16,7 @@ export interface ArtemisImportOptions {
   readonly project: string;
   /** Defaults to `<project>/artemis-import.json` when that file exists. */
   readonly config?: string;
-  /** Spell every command with named arguments (the pre-0.2 importer output). */
+  /** Spell every command with named arguments (the earlier importer output). */
   readonly longForms?: boolean;
   readonly log?: (message: string) => void;
 }

@@ -164,7 +164,7 @@ int main() {
         R"({"format":"PrismatiXUiTypeRegistry","schemaRevision":1,"contract":"uiTypeRegistry","contractRevision":1,"contractHash":"0f2044c10f8697034577b1b09a1baa87efecda10901c912b7a4e05a91fff542d","controls":[{"id":"button","runtimeType":"Button","displayName":"Button","description":"","category":"Input","iconId":"ui.button","canHaveChildren":false,"acceptedResourceKinds":[],"properties":[],"signals":[]}]})";
     const auto revisionOne = px::sdk::ParseUiTypeRegistry(revisionOneFixture);
     Check(!revisionOne.Valid(),
-          "revision-1 UI TypeRegistry manifests must be migrated before 0.2 consumption");
+          "revision-1 UI TypeRegistry manifests must be migrated before consumption");
 
     auto tampered = first.Value();
     const auto display = tampered.find("\"Button\"");

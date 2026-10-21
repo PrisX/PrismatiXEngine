@@ -231,7 +231,7 @@ bool RelocalizeRuntimeState(
                                            variables);
     }
     for (auto& entry : state.backlog) {
-        if (entry.operationId.empty()) continue;  // pre-0.2.0 development save
+        if (entry.operationId.empty()) continue;  // pre-release development save
         const vn::Command* command = FindOperation(*candidate,
                                                    entry.operationId);
         if (!command) return false;

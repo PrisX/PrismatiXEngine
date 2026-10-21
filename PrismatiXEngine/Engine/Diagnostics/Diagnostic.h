@@ -30,7 +30,7 @@ struct Diagnostic {
     Source source{};
     std::string operationId{};
     std::string quickFix{};
-    // Canonical 0.2 diagnostic identity. Legacy Source fields remain for
+    // Canonical diagnostic identity. Legacy Source fields remain for
     // object/property diagnostics; every transport serializes these fields.
     std::string documentId{};
     std::string sourceId{};

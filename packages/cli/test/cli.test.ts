@@ -395,7 +395,7 @@ test("runtime discovery accepts an installed prefix manifest and reports attempt
   const manifest = join(prefix, "share", "PrismatiX", "runtime-manifest.json");
   await write(join(bin, process.platform === "win32" ? "PrismatiXPreviewHost.exe" : "PrismatiXPreviewHost"), "fixture");
   await write(manifest, JSON.stringify({format: "PrismatiXRuntimeManifest", schemaRevision: 1,
-    version: "0.2.0", target: `${process.platform}-${process.arch}`, binDir: "../../bin", tools: {
+    version: "0.1.0", target: `${process.platform}-${process.arch}`, binDir: "../../bin", tools: {
       previewHost: process.platform === "win32" ? "PrismatiXPreviewHost.exe" : "PrismatiXPreviewHost",
     }}));
   const discovered = await discoverRuntimeTool("previewHost", {runtime: prefix, environment: {}});
@@ -2185,7 +2185,7 @@ test("build publishes every declared extension ES module", async () => {
   await write(value.project, JSON.stringify(project));
   await write(join(value.root, "Content/Extensions/module.pxextension"), JSON.stringify({
     format: "PrismatiXExtension", schemaRevision: 1, language: "javascript",
-    id: "module", version: "1.0.0", requiredEngineVersion: "^0.2.0",
+    id: "module", version: "1.0.0", requiredEngineVersion: "^0.1.0",
     entry: "entry.js", modules: ["lib/helper.js"], capabilities: ["runtime"],
     commands: [], actions: [],
   }));
@@ -2205,7 +2205,7 @@ test("inspect-save cannot accept a JS-hashed envelope without the authoritative 
   const root = await mkdtemp(join(tmpdir(), "prismatix-save-inspect-"));
   const path = join(root, "save.pxsav");
   const envelope: Record<string, unknown> = {
-    format: "PrismatiXSave", schemaRevision: 1, engineVersion: "0.2.0",
+    format: "PrismatiXSave", schemaRevision: 1, engineVersion: "0.1.0",
     gameId: "cli-sample", packageFingerprint: "a".repeat(64),
     contentVersion: "chapter-1", saveVersion: 1,
     anchor: {runtimeDocumentId: "main", sourceId: "line", operationId: "operation"},
