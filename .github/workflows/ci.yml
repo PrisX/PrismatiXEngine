@@ -77,6 +77,18 @@ jobs:
         with:
           build-dir: out/ci/sdk-clang
           prefix: out/ci/runtime-linux
+      # The Web Player browser check packs the Starter sample with this runtime.
+      - name: Archive the Linux runtime for web-player-browser
+        if: matrix.sanitizers == 'OFF'
+        run: tar -czf out/ci/runtime-linux.tar.gz -C out/ci/runtime-linux .
+      - name: Publish the Linux runtime for web-player-browser
+        if: matrix.sanitizers == 'OFF'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: PrismatiX-Runtime-Linux-${{ github.run_id }}
+          path: out/ci/runtime-linux.tar.gz
+          if-no-files-found: error
+          retention-days: 3
       - name: Publish Linux GPU visual matrix
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -282,3 +294,86 @@ jobs:
           echo "module=$module"
           echo "wasm=$wasm"
           echo "contract=$contract"
+
+  # The shipping Web Player, both renderers, built on Linux with the pinned
+  # Emscripten (the same pin as emscripten-preview). See docs/web-export.md.
+  web-player:
+    name: Web Player (WebGL2 and WebGPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-js
+      - uses: ./.github/actions/web-player-build
+        with:
+          package-root: out/ci/web-player
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: PrismatiX-Web-Player-${{ github.sha }}
+          path: out/ci/web-player
+          if-no-files-found: error
+          retention-days: 14
+
+  # Exports Samples/Starter with each renderer through the CLI (Linux runtime
+  # from linux-clang-sanitizer) and plays it in headless Chrome: load, title,
+  # start, first line, quick save/load and a save export/import round trip.
+  # The runner has no GPU, so Chrome draws with SwiftShader. WebGPU on
+  # SwiftShader in headless Linux Chrome is not guaranteed, so that check is
+  # best-effort: a failure is reported but does not fail the job.
+  web-player-browser:
+    name: Web Player in headless Chrome (Starter, both renderers)
+    needs: [web-player, linux-clang-sanitizer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: ./.github/actions/setup-js
+      - name: Install Linux libraries for the native Packager
+        run: bash .github/scripts/install-linux-dependencies.sh
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: PrismatiX-Web-Player-${{ github.sha }}
+          path: out/ci/web-player
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: PrismatiX-Runtime-Linux-${{ github.run_id }}
+          path: out/ci/runtime-archive
+      - name: Export Samples/Starter with each renderer
+        run: |
+          mkdir -p out/ci/runtime-linux
+          tar -xzf out/ci/runtime-archive/runtime-linux.tar.gz -C out/ci/runtime-linux
+          node scripts/stage-starter-sample.mjs out/ci/web-starter
+          for renderer in webgl2 webgpu; do
+            node packages/cli/dist/src/cli.js pack out/ci/web-starter --target web \
+              --web-renderer "$renderer" --web-player out/ci/web-player \
+              --runtime out/ci/runtime-linux --output "out/ci/web-starter/dist/web-$renderer"
+            test -s "out/ci/web-starter/dist/web-$renderer/prismatix-player.wasm"
+            grep -q "\"renderer\":\"$renderer\"" "out/ci/web-starter/dist/web-$renderer/web-export.json"
+          done
+          cmp -s out/ci/web-starter/dist/web-webgl2/prismatix-player.wasm out/ci/web-player/webgl2/prismatix-player.wasm
+          cmp -s out/ci/web-starter/dist/web-webgpu/prismatix-player.wasm out/ci/web-player/webgpu/prismatix-player.wasm
+      - name: WebGL2 export in headless Chrome
+        env:
+          PRISMATIX_WEB_TEST_STORY: "1"
+          PRISMATIX_WEB_TEST_SAVES: "1"
+        run: node scripts/test-web-player-browser.mjs out/ci/web-starter/dist/web-webgl2 "$(command -v google-chrome)"
+      - name: WebGPU export in headless Chrome (best-effort, SwiftShader)
+        continue-on-error: true
+        env:
+          PRISMATIX_WEB_TEST_STORY: "1"
+          PRISMATIX_WEB_TEST_SAVES: "1"
+        run: |
+          if ! node scripts/test-web-player-browser.mjs out/ci/web-starter/dist/web-webgpu "$(command -v google-chrome)"; then
+            echo "::warning::WebGPU browser check failed (best-effort on SwiftShader); see the web-player-qa artifact"
+            exit 1
+          fi
+      - name: Publish browser screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: PrismatiX-Web-Player-QA-${{ github.run_id }}
+          path: out/ci/web-starter/dist/*-qa
+          if-no-files-found: warn
+          retention-days: 14

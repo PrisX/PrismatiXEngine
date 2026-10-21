@@ -1,0 +1,139 @@
+name: Build the shipping Web Player
+description: >-
+  Builds both Web Player renderers (WebGL2 and the experimental WebGPU) with
+  the pinned Emscripten SDK on Linux and packages them with
+  scripts/build-wasm-player.mjs. Expects the JavaScript workspace to be set
+  up and built (./.github/actions/setup-js).
+
+  The host shader tools come from their own small vcpkg manifest (only
+  sdl3-shadercross, which brings SPIRV-Cross), generated from the repository's
+  vcpkg-configuration.json so the baseline and overlay ports stay the same as
+  the native build's. Three caches keep the job fast: that manifest's vcpkg
+  binary cache, the naga-cli install and Emscripten's cache directory (system
+  libraries built for these flags and the downloaded emdawnwebgpu port). The
+  C++ compile itself is not cached.
+
+  With cache-write "false" (the release workflow) every cache is restore-only.
+
+inputs:
+  package-root:
+    description: Where the Web Player package goes, relative to the workspace.
+    required: true
+  build-root:
+    description: Short directory for the two Emscripten build trees, relative to the workspace.
+    default: out/ci/web
+  emscripten-version:
+    description: Emscripten SDK version (keep equal to the emscripten-preview job's pin).
+    default: "6.0.5"
+  naga-version:
+    description: naga-cli version (scripts/build-wasm-player.mjs requires 27.0.0).
+    default: "27.0.0"
+  cache-write:
+    description: '"true" to save the caches; "false" to only restore them.'
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install build and host tool dependencies
+      shell: bash
+      run: bash .github/scripts/install-linux-dependencies.sh && sudo apt-get install --yes --no-install-recommends ninja-build
+    - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
+    - name: Install the pinned Emscripten SDK
+      shell: bash
+      env:
+        PX_EMSCRIPTEN: ${{ inputs.emscripten-version }}
+      run: |
+        git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+        "$RUNNER_TEMP/emsdk/emsdk" install "$PX_EMSCRIPTEN"
+        "$RUNNER_TEMP/emsdk/emsdk" activate "$PX_EMSCRIPTEN"
+        echo "PX_EMSDK=$RUNNER_TEMP/emsdk" >> "$GITHUB_ENV"
+        echo "EM_CACHE=$GITHUB_WORKSPACE/out/ci/emscripten-cache" >> "$GITHUB_ENV"
+    - name: Restore the Emscripten cache
+      id: em-cache
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      with:
+        path: out/ci/emscripten-cache
+        key: emscripten-cache-${{ runner.os }}-${{ inputs.emscripten-version }}-${{ hashFiles('cmake/PrismatiXWasmDependencies.cmake', 'PrismatiXEngine/CMakeLists.txt', 'CMakeLists.txt') }}
+        restore-keys: |
+          emscripten-cache-${{ runner.os }}-${{ inputs.emscripten-version }}-
+    - name: Restore naga-cli
+      id: naga-cache
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      with:
+        path: out/tools/naga
+        key: naga-cli-${{ runner.os }}-${{ inputs.naga-version }}
+    - name: Install naga-cli
+      if: steps.naga-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: cargo install naga-cli --version "${{ inputs.naga-version }}" --locked --root out/tools/naga
+    - name: Save naga-cli
+      if: inputs.cache-write == 'true' && steps.naga-cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      with:
+        path: out/tools/naga
+        key: naga-cli-${{ runner.os }}-${{ inputs.naga-version }}
+    - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+      with:
+        vcpkgDirectory: ${{ runner.temp }}/vcpkg
+    - name: Write the host shader tool manifest
+      shell: bash
+      run: |
+        node --input-type=module -e '
+          import {mkdirSync, readFileSync, writeFileSync} from "node:fs";
+          import {resolve} from "node:path";
+          const dir = "out/ci/web-tools";
+          mkdirSync(dir, {recursive: true});
+          const config = JSON.parse(readFileSync("vcpkg-configuration.json", "utf8"));
+          config["overlay-ports"] = config["overlay-ports"].map(path => resolve(path));
+          writeFileSync(`${dir}/vcpkg-configuration.json`, JSON.stringify(config, null, 2));
+          writeFileSync(`${dir}/vcpkg.json`, JSON.stringify({name: "prismatix-web-tools", version: "0.0.0",
+            dependencies: [{name: "sdl3-shadercross", host: true}]}, null, 2));'
+        workspace="${GITHUB_WORKSPACE//\\//}"
+        mkdir -p "$workspace/out/ci/vcpkg-web-tools-cache"
+        {
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$workspace/out/ci/vcpkg-web-tools-cache"
+          echo "VCPKG_BINARY_SOURCES=clear;files,$workspace/out/ci/vcpkg-web-tools-cache,readwrite"
+        } >> "$GITHUB_ENV"
+    - name: Restore the host shader tool binary cache
+      id: tools-cache
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      with:
+        path: out/ci/vcpkg-web-tools-cache
+        key: vcpkg-web-tools-${{ runner.os }}-${{ hashFiles('vcpkg-configuration.json', 'vcpkg/**') }}
+        restore-keys: |
+          vcpkg-web-tools-${{ runner.os }}-
+    - name: Install sdl3-shadercross and SPIRV-Cross
+      shell: bash
+      run: >-
+        "$VCPKG_ROOT/vcpkg" install --triplet x64-linux --host-triplet x64-linux
+        --x-manifest-root=out/ci/web-tools --x-install-root=out/ci/web-tools/installed
+    - name: Save the host shader tool binary cache
+      if: always() && inputs.cache-write == 'true' && steps.tools-cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      with:
+        path: out/ci/vcpkg-web-tools-cache
+        key: vcpkg-web-tools-${{ runner.os }}-${{ hashFiles('vcpkg-configuration.json', 'vcpkg/**') }}
+    - name: Build and package both renderers
+      shell: bash
+      env:
+        PX_PACKAGE_ROOT: ${{ inputs.package-root }}
+        PX_BUILD_ROOT: ${{ inputs.build-root }}
+      run: |
+        source "$PX_EMSDK/emsdk_env.sh"
+        emcc --version | head -n 1
+        node scripts/build-wasm-player.mjs \
+          --package-root "$PX_PACKAGE_ROOT" \
+          --build-dir-webgl2 "$PX_BUILD_ROOT/webgl2" --build-dir-webgpu "$PX_BUILD_ROOT/webgpu" \
+          --vcpkg-installed out/ci/web-tools/installed --triplet x64-linux \
+          --naga out/tools/naga/bin/naga --no-host-tools --jobs "$(nproc)"
+        ls -l "$PX_PACKAGE_ROOT" "$PX_PACKAGE_ROOT"/webgl2 "$PX_PACKAGE_ROOT"/webgpu
+    - name: Save the Emscripten cache
+      if: always() && inputs.cache-write == 'true' && steps.em-cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      with:
+        path: out/ci/emscripten-cache
+        key: emscripten-cache-${{ runner.os }}-${{ inputs.emscripten-version }}-${{ hashFiles('cmake/PrismatiXWasmDependencies.cmake', 'PrismatiXEngine/CMakeLists.txt', 'CMakeLists.txt') }}
