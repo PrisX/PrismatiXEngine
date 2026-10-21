@@ -562,7 +562,9 @@ async function main() {
         {cwd: installRoot, env: toolEnvironment, timeoutMs: 300_000}), "pnpm add --global @prismatix/cli (isolated candidate registry)");
       const globalRoot = requireSuccess(await pnpm(["root", "--global"], {cwd: installRoot, env: toolEnvironment}), "pnpm root --global");
       installedPackages = join(globalRoot.stdout.trim(), "@prismatix");
-      assert.ok(await exists(join(pnpmHome, process.platform === "win32" ? "prismatix.cmd" : "prismatix")),
+      // Older pnpm links global commands into PNPM_HOME, newer pnpm into PNPM_HOME/bin.
+      const shim = process.platform === "win32" ? "prismatix.cmd" : "prismatix";
+      assert.ok(await exists(join(pnpmHome, shim)) || await exists(join(pnpmHome, "bin", shim)),
         "pnpm did not create the global command shim");
     } else {
       requireSuccess(await npm(["install", "-g", "@prismatix/cli", "--ignore-scripts", "--no-audit", "--no-fund"],
