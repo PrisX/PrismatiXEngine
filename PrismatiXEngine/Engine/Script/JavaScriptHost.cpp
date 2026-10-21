@@ -3037,6 +3037,8 @@ public:
                     case KeyRebindStatus::UnknownAction: break;
                     case KeyRebindStatus::InvalidScancode:
                         status = "invalid-scancode"; break;
+                    case KeyRebindStatus::MissingBinding:
+                        status = "missing-binding"; break;
                     case KeyRebindStatus::Conflict: status = "conflict"; break;
                     case KeyRebindStatus::LimitReached:
                         status = "limit-reached"; break;

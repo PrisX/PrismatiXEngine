@@ -445,7 +445,7 @@ export type LogicalInputAction =
 
 export type InputActionId = LogicalInputAction | (string & {});
 export interface KeyRebindResult {
-  readonly status: "applied" | "unknown-action" | "invalid-scancode" | "conflict" | "limit-reached";
+  readonly status: "applied" | "unknown-action" | "invalid-scancode" | "missing-binding" | "conflict" | "limit-reached";
   readonly conflicts: readonly string[];
 }
 export type InputEventType =
