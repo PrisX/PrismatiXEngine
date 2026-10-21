@@ -226,10 +226,17 @@ const emptyStory: Record<string, string> = {
 async function emptyStarter(root: string, locale: string): Promise<void> {
   for (const entry of await readdir(join(root, "Assets"))) await rm(join(root, "Assets", entry), {force: true});
   await rm(join(root, "Characters"), {recursive: true, force: true});
-  await rm(join(root, "ASSET_PROVENANCE.md"), {force: true});
+  // The font and the startup screen's logo stay, and so does what the
+  // provenance says about them; the pictures' sections go with the pictures.
+  const provenancePath = join(root, "ASSET_PROVENANCE.md");
+  const sections = (await readFile(provenancePath, "utf8")).split(/\r?\n(?=## )/u);
+  const kept = sections.filter((section) => /^## (Font|PrismatiX logo)\r?\n/u.test(section));
+  if (kept.length !== 2) throw new Error("Starter template provenance lost its Font or PrismatiX logo section");
+  const text = kept.map((section) => section.replace(/\r\n/gu, "\n").trimEnd()).join("\n\n");
+  await writeFile(provenancePath, `# Starter asset provenance\n\n${text}\n`, "utf8");
   const manifestPath = join(root, "prismatix.json");
   const manifest = (await readFile(manifestPath, "utf8")).split("\n")
-    .filter((line) => !/"kind":"(background|provenance)"|^\s*"characters":/u.test(line)).join("\n")
+    .filter((line) => !/"kind":"background"|^\s*"characters":/u.test(line)).join("\n")
     .replace(/,(\s*\n\s*[\]}])/gu, "$1");
   JSON.parse(manifest);
   await writeFile(manifestPath, manifest, "utf8");
@@ -243,7 +250,9 @@ async function emptyStarter(root: string, locale: string): Promise<void> {
   const readmePath = join(root, "README.md");
   await writeFile(readmePath, (await readFile(readmePath, "utf8")).replace(
     "This short Traditional Chinese story includes a guide, a background, two choices and two endings.",
-    "The project starts empty: a title screen and a one-line story to write over."), "utf8");
+    "The project starts empty: a title screen and a one-line story to write over.").replace(
+    "The starter's backgrounds and character were generated for PrismatiX with the Anima model and may be kept or replaced; `ASSET_PROVENANCE.md` records how.",
+    "`ASSET_PROVENANCE.md` records where the font and the startup screen's logo come from; add a section for each picture or sound you add."), "utf8");
 }
 
 /** Prepare everything in a sibling directory and publish only after the install succeeds. */

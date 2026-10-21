@@ -224,8 +224,13 @@ test("create --empty starts without the sample character, backgrounds or story",
     assert.equal(validated.status, 0, validated.stderr);
     const manifest = JSON.parse(await readFile(project, "utf8")) as {characters?: unknown; assets: Array<{kind: string}>};
     assert.equal(manifest.characters, undefined);
-    assert.deepEqual(manifest.assets.map((asset) => asset.kind), ["font", "license", "license"]);
+    assert.deepEqual(manifest.assets.map((asset) => asset.kind), ["font", "license", "license", "provenance"]);
     assert.deepEqual(await readdir(join(root, "Assets")), []);
+    // The provenance still covers the font and the logo, and only them.
+    const provenance = await readFile(join(root, "ASSET_PROVENANCE.md"), "utf8");
+    assert.match(provenance, /^## Font$[\s\S]*NotoSansTC-Bold\.ttf[\s\S]*^## PrismatiX logo$/mu);
+    assert.doesNotMatch(provenance, /hikari|room-dusk|Anima/u);
+    assert.doesNotMatch(await readFile(join(root, "README.md"), "utf8"), /backgrounds and character were generated/u);
     // An empty project still opens with the PrismatiX startup screen.
     assert.deepEqual((await readdir(join(root, "Content/UI/PrismatiX"))).sort(),
       ["NOTICE.md", "PrismatiXEngine_Logo.png"]);
