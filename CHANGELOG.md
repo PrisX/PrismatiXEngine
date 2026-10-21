@@ -34,13 +34,22 @@ supported platforms, verification status and known limitations.
 
 - `@prismatix/cli`: `create` (interactive or scripted, minimal and ADV
   templates, pnpm or npm), `dev` live Preview with edit/error/repair, `validate`,
-  `build`, `pack` (desktop; `--target web` with a separately built WASM Player;
-  `--target android`, experimental), `release`, `add character`/`add scene`,
+  `build`, `pack` (desktop; `--target web`, experimental, with
+  `--web-renderer webgl2|webgpu`; `--target android`, experimental), `release`,
+  `add character`/`add scene`,
   `extension create`, `eject ui`, `import artemis`, `ids --sync`, signed
   `create-patch`/`create-overlay`, and `test` journeys against a QA Player.
   The package bundles the native Player, Packager and Preview Host for
   Windows x64, Linux x64, macOS x64 and macOS arm64 under
-  `runtime/<platform>-<arch>/`.
+  `runtime/<platform>-<arch>/`, and the experimental Web Player (WebGL2 and
+  WebGPU renderers, one version with the CLI) under `runtime/web/`, so
+  `pack --target web` needs no separately built Player.
+- Web Player (experimental): the C++ Player in WebAssembly with a WebGL2
+  renderer (SDL 3.4.10; effects on WebGL 2) or a WebGPU renderer (SDL's GPU
+  renderer and the desktop compositor on one WebGPU device, built from the
+  unmerged SDL WebGPU backend of libsdl-org/SDL#16020 pinned to one commit).
+  `scripts/build-wasm-player.mjs` builds both on Windows, Linux and macOS;
+  CI builds them on Linux and plays the Starter sample in headless Chrome.
 - `@prismatix/authoring-sdk`: `.pxstory` parsing with source spans and
   recovery, project compilation to Runtime IR and source maps, stable save
   identities, validation of every canonical document (revision 1), a React-free
