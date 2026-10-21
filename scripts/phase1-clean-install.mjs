@@ -196,10 +196,12 @@ async function assertSelfContainedTree(root, forbiddenRoots, label) {
   const rootRealPath = await realpath(root);
   for (const path of await listFiles(root)) {
     const info = await lstat(path);
-    assert.ok(!info.isSymbolicLink(), `${label} contains a symbolic link: ${path}`);
+    // npm links dependency executables into node_modules/.bin on POSIX; such a
+    // link is fine while its target stays inside the tree (the check below).
     const resolved = await realpath(path);
     assert.ok(normalized(resolved).startsWith(`${normalized(rootRealPath)}/`),
       `${label} escapes its root: ${path} -> ${resolved}`);
+    if (info.isSymbolicLink()) continue;
     if (info.size > 2 * 1024 * 1024) continue;
     const extension = extname(path).toLowerCase();
     if (!["", ".cjs", ".cmd", ".d.ts", ".js", ".json", ".md", ".mjs", ".pxindex",
