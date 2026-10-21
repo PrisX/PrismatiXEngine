@@ -13,6 +13,7 @@ const prepared = async (directory: string): Promise<void> => {
   const pkg = JSON.parse(await readFile(join(directory, "package.json"), "utf8"));
   assert.equal(pkg.devDependencies["@prismatix/cli"], "0.2.0");
   assert.equal(pkg.devDependencies["@prismatix/authoring-sdk"], "0.2.0");
+  assert.equal(pkg.devDependencies["@prismatix/runtime"], "0.2.0");
   await writeFile(join(directory, "package-lock.json"), JSON.stringify({lockfileVersion: 3}));
   await mkdir(join(directory, "node_modules", "@prismatix"), {recursive: true});
   await symlink(packageRoot, join(directory, "node_modules", "@prismatix", "cli"), process.platform === "win32" ? "junction" : "dir");
@@ -119,10 +120,11 @@ test("checkout tools link with file: for npm and link: for pnpm", async () => {
         }});
     }
     const checkout = (name: string) => resolve(packageRoot, "..", name).split("\\").join("/");
+    const runtime = resolve(packageRoot, "..", "..", "runtime-sdk").split("\\").join("/");
     assert.deepEqual(pins.npm, {"@prismatix/cli": `file:${checkout("cli")}`,
-      "@prismatix/authoring-sdk": `file:${checkout("authoring-sdk")}`});
+      "@prismatix/authoring-sdk": `file:${checkout("authoring-sdk")}`, "@prismatix/runtime": `file:${runtime}`});
     assert.deepEqual(pins.pnpm, {"@prismatix/cli": `link:${checkout("cli")}`,
-      "@prismatix/authoring-sdk": `link:${checkout("authoring-sdk")}`});
+      "@prismatix/authoring-sdk": `link:${checkout("authoring-sdk")}`, "@prismatix/runtime": `link:${runtime}`});
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 

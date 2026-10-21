@@ -181,6 +181,8 @@ async function pinTools(packagePath: string, id: string, source: "registry" | "c
   manager: PackageManager, managerVersion: string | undefined): Promise<void> {
   const cliRoot = fileURLToPath(new URL("../../", import.meta.url));
   const sdkRoot = join(cliRoot, "..", "authoring-sdk");
+  // TypeScript extensions import @prismatix/runtime; editors resolve it here.
+  const runtimeRoot = join(cliRoot, "..", "..", "runtime-sdk");
   const own = JSON.parse(await readFile(join(cliRoot, "package.json"), "utf8")) as {version: string};
   const isCheckout = source === "checkout" || (source === undefined &&
     await lstat(join(cliRoot, "src")).then(() => true, () => false) &&
@@ -189,8 +191,11 @@ async function pinTools(packagePath: string, id: string, source: "registry" | "c
   const project = JSON.parse(await readFile(packagePath, "utf8")) as Record<string, unknown>;
   project.name = id.toLowerCase().replace(/[^a-z0-9._-]+/gu, "-");
   project.devDependencies = isCheckout
-    ? {"@prismatix/cli": link(cliRoot), "@prismatix/authoring-sdk": link(sdkRoot)}
-    : {"@prismatix/cli": own.version, "@prismatix/authoring-sdk": own.version};
+    ? {"@prismatix/cli": link(cliRoot), "@prismatix/authoring-sdk": link(sdkRoot),
+      ...(await lstat(join(runtimeRoot, "package.json")).then(() => true, () => false)
+        ? {"@prismatix/runtime": link(runtimeRoot)} : {})}
+    : {"@prismatix/cli": own.version, "@prismatix/authoring-sdk": own.version,
+      "@prismatix/runtime": own.version};
   if (manager === "pnpm" && managerVersion !== undefined && /^\d+\.\d+\.\d+$/u.test(managerVersion))
     project.packageManager = `pnpm@${managerVersion}`;
   await writeFile(packagePath, `${JSON.stringify(project, null, 2)}\n`, "utf8");
