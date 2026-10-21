@@ -187,9 +187,17 @@ PerformancePreviewPlan PerformancePreviewSequence::Sample(
                                                    track.fallback)});
         }
     }
-    for (auto& node : plan.nodes) {
-        for (const auto& track : numericTracks) {
-            if (track.targetId != node.id) continue;
+    // One pass over the tracks with the nodes indexed by id: scanning every
+    // track for every node cost nodes x tracks string compares per frame
+    // (256 x 2,048 in the dense Preview budget test, over a second for 600
+    // frames). Tracks still apply to a node in track order.
+    std::unordered_multimap<std::string_view, PerformancePreviewNode*> nodesById;
+    nodesById.reserve(plan.nodes.size());
+    for (auto& node : plan.nodes) nodesById.emplace(node.id, &node);
+    for (const auto& track : numericTracks) {
+        const auto [first, last] = nodesById.equal_range(track.targetId);
+        for (auto match = first; match != last; ++match) {
+            auto& node = *match->second;
             if (track.property == "x")
                 node.x = static_cast<float>(SampleTrack(track, plan.seekTime, node.x));
             else if (track.property == "y")
