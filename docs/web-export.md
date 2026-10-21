@@ -11,7 +11,7 @@ selected as a shipping Player.
 ## Build the runtime
 
 The packaging script currently runs on Windows. Install Node.js 24+, CMake,
-Ninja, Emscripten (tested with 4.0.12), Rust/Cargo and FFmpeg with libx264/AAC.
+Ninja, Emscripten (CI pins 6.0.5), Rust/Cargo and FFmpeg with libx264/AAC.
 The native x64 release build supplies the host SDL shadercross and SPIRV-Cross
 tools; see [shipping](shipping.md) for the native build. Activate Emscripten
 in the PowerShell session before building:
@@ -139,10 +139,10 @@ it does not substitute for a physical phone test.
 
 Acceptance in this checkout includes native Windows regression, the separate
 WASM Preview build, CLI/transport tests, browser effect pixel checks and
-actual Player video, save import/export and update journeys. Sakura's complete
-export includes all three movies; its opening, settings, save/load, imported
-CG gallery, music, replay, full offline download and offline movie seeking have
-been exercised in Chrome; Edge also passes the effect/video/save/update/offline
+actual Player video, save import/export and update journeys. A full-length
+game's export, including three movies, has been exercised in Chrome: its opening, settings, save/load, imported
+CG gallery, music, replay, full offline download and offline movie seeking.
+Edge also passes the effect/video/save/update/offline
 fixture and fullscreen/background/foreground journeys. Firefox, Safari and physical Android/iPhone
 validation still require those browsers/devices. Android emulation in Chrome
 passes canvas touch activation, viewport/fullscreen, media lifecycle and save
@@ -150,6 +150,6 @@ backup/import checks. This environment has no
 Android SDK/NDK installation usable for a new Android build; Windows lifecycle,
 touch, graphics and persistence regression tests do not replace device testing.
 
-Web export preserves the current author's content and screens. Sakura remains
-an in-progress game port: this export does not establish parity with every
-route or visual detail in the original game.
+Web export preserves the current author's content and screens. A game ported
+from another engine remains a port in progress: this export does not establish
+parity with every route or visual detail in the original game.
