@@ -173,6 +173,15 @@
             }
         },
         {
+            "name": "wasm-player-webgpu",
+            "displayName": "Emscripten Web Player (WebGPU renderer, experimental)",
+            "inherits": "wasm-player",
+            "binaryDir": "${sourceDir}/out/build/wasm-player-webgpu",
+            "cacheVariables": {
+                "PRISMATIX_WEB_RENDERER": "webgpu"
+            }
+        },
+        {
             "name": "wasm-preview",
             "displayName": "Emscripten Studio Preview",
             "generator": "Ninja",
@@ -228,6 +237,12 @@
         {
             "name": "wasm-player",
             "configurePreset": "wasm-player",
+            "inheritConfigureEnvironment": true,
+            "targets": ["PrismatiXPlayerWeb"]
+        },
+        {
+            "name": "wasm-player-webgpu",
+            "configurePreset": "wasm-player-webgpu",
             "inheritConfigureEnvironment": true,
             "targets": ["PrismatiXPlayerWeb"]
         },

@@ -1,5 +1,5 @@
-#if defined(PRISMATIX_WEB_PLAYER)
 #include "Engine/Platform/Web/WebEffects.h"
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
 #include <SDL3/SDL.h>
 #include <emscripten/emscripten.h>
 #include <string>

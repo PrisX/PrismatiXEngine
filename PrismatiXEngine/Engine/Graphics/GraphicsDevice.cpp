@@ -1,4 +1,5 @@
 #include "Engine/Graphics/GraphicsDevice.h"
+#include "Engine/Graphics/WebBackend.h"
 
 #include "Engine/Support/Logger.h"
 
@@ -12,27 +13,31 @@ bool GraphicsDevice::Create(SDL_Window* window,
                             const GraphicsTier requiredTier) {
     Destroy();
     if (!window) return false;
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     // Request WebGL 2 directly instead of SDL first probing a GLES 2 context.
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 #endif
     if (requiredTier == GraphicsTier::GpuEffects) {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
         m_renderer = SDL_CreateRenderer(window, "opengles2");
         if (!m_renderer) return false;
         m_tier = GraphicsTier::GpuEffects;
         m_driver = "web-effects";
         PX_LOG_INFO("Graphics device created tier=gpu-effects driver={}", m_driver);
         return true;
-#elif defined(__EMSCRIPTEN__)
+#elif defined(PRISMATIX_NO_SDL_GPU)
         PX_LOG_ERROR("SDL_GPU effects tier is unavailable in WASM Preview");
         return false;
+#else
+#if defined(PRISMATIX_WEB_WEBGPU)
+        constexpr SDL_GPUShaderFormat formats = SDL_GPU_SHADERFORMAT_WGSL;
 #else
         constexpr SDL_GPUShaderFormat formats =
             SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL |
             SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_METALLIB;
+#endif
         m_gpu = SDL_CreateGPUDevice(formats, false, nullptr);
         if (!m_gpu) {
             PX_LOG_ERROR("SDL_CreateGPUDevice failed: {}", SDL_GetError());
@@ -52,7 +57,14 @@ bool GraphicsDevice::Create(SDL_Window* window,
         return true;
 #endif
     }
+#if defined(PRISMATIX_WEB_WEBGPU)
+    // The WebGPU Web Player draws every tier through SDL's GPU renderer, so
+    // a basic game also renders (and uploads video) on WebGPU, never on the
+    // GLES2 renderer that the SDL fork still builds.
+    m_renderer = SDL_CreateRenderer(window, "gpu");
+#else
     m_renderer = SDL_CreateRenderer(window, nullptr);
+#endif
     if (!m_renderer) {
         PX_LOG_ERROR("SDL_CreateRenderer failed: {}", SDL_GetError());
         return false;

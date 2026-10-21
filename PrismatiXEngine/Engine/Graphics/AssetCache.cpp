@@ -27,7 +27,7 @@ namespace px::graphics {
 
 namespace {
 SDL_Texture* UploadSurface(SDL_Renderer* renderer, SDL_Surface* surface) {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     return CreateWebTextureFromSurface(renderer, surface);
 #else
     // An opaque image (RGB PNG, JPEG, most WebP) would become an RGBX/BGRX

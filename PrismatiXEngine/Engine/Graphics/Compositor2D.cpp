@@ -1,12 +1,16 @@
 #include "Engine/Graphics/Compositor2D.h"
 
 #include "Engine/Graphics/BuiltInShaders.h"
+#include "Engine/Graphics/WebBackend.h"
 #include "Engine/IO/Crypto.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Support/Logger.h"
 #include "Engine/Platform/Web/WebEffects.h"
 
 #include <SDL3/SDL.h>
+#if defined(PRISMATIX_WEB_WEBGPU)
+#include <emscripten/emscripten.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -16,7 +20,15 @@
 namespace px::graphics {
 
 namespace {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_WEBGPU)
+EM_ASYNC_JS(char*, WebGpuEffectSource, (const char* id, const char* fingerprint), {
+    try {
+        return stringToNewUTF8(await Module.prismatix.effects.sdlGpuSource(
+            UTF8ToString(id), UTF8ToString(fingerprint)));
+    } catch (error) { Module.prismatix.error(error); return 0; }
+});
+#endif
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
 constexpr auto kTargetFormat = SDL_PIXELFORMAT_RGBA32;
 #else
 constexpr auto kTargetFormat = SDL_PIXELFORMAT_RGBA8888;
@@ -62,10 +74,10 @@ Compositor2D::~Compositor2D() {
 }
 
 bool Compositor2D::CreateGpuState() {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     m_renderState = reinterpret_cast<SDL_GPURenderState*>(1);
     return InitializeWebEffects();
-#elif defined(__EMSCRIPTEN__)
+#elif defined(PRISMATIX_NO_SDL_GPU)
     return false;
 #else
     SDL_GPUDevice* device = SDL_GetGPURendererDevice(m_renderer);
@@ -138,11 +150,11 @@ bool Compositor2D::CreateGpuState() {
 }
 
 void Compositor2D::DestroyGpuState() {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     DestroyWebEffects();
     m_customEffects.clear();
     m_renderState = nullptr;
-#elif !defined(__EMSCRIPTEN__)
+#elif !defined(PRISMATIX_NO_SDL_GPU)
     SDL_GPUDevice* device = SDL_GetGPURendererDevice(m_renderer);
     for (auto& [_, effect] : m_customEffects) {
         for (auto& [__, state] : effect.transitionStates)
@@ -169,7 +181,7 @@ void Compositor2D::DestroyGpuState() {
 
 bool Compositor2D::LoadCustomEffects(
     const std::vector<CustomEffectDescriptor>& effects, const io::VFS& vfs) {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     (void)vfs;
     std::unordered_map<std::string, CustomEffectState> candidate;
     for (const auto& descriptor : effects) {
@@ -187,7 +199,7 @@ bool Compositor2D::LoadCustomEffects(
     }
     m_customEffects = std::move(candidate);
     return true;
-#elif defined(__EMSCRIPTEN__)
+#elif defined(PRISMATIX_NO_SDL_GPU)
     (void)vfs;
     return effects.empty();
 #else
@@ -233,6 +245,24 @@ bool Compositor2D::LoadCustomEffects(
             descriptor.artifacts.size() > 3 ||
             candidate.contains(descriptor.id))
             return rejectCandidate();
+#if defined(PRISMATIX_WEB_WEBGPU)
+        // The Web export ships each effect as Naga WGSL next to the archive;
+        // the page checks the SPIR-V fingerprint and rebinds it for SDL_GPU.
+        (void)vfs;
+        const auto spirv = std::ranges::find(
+            descriptor.artifacts, "spirv", &CustomEffectArtifactDescriptor::format);
+        if (spirv == descriptor.artifacts.end() || (supported & SDL_GPU_SHADERFORMAT_WGSL) == 0)
+            return rejectCandidate();
+        char* source = WebGpuEffectSource(descriptor.id.c_str(), spirv->fingerprint.c_str());
+        if (!source) return rejectCandidate();
+        const std::string wgsl(source);
+        std::free(source);
+        SDL_GPUShaderCreateInfo shaderInfo{};
+        shaderInfo.code = reinterpret_cast<const std::uint8_t*>(wgsl.data());
+        shaderInfo.code_size = wgsl.size();
+        shaderInfo.entrypoint = "main";
+        shaderInfo.format = SDL_GPU_SHADERFORMAT_WGSL;
+#else
         const CustomEffectArtifactDescriptor* selected = nullptr;
         SDL_GPUShaderFormat selectedFormat = SDL_GPU_SHADERFORMAT_INVALID;
         const auto select = [&](const std::string_view name,
@@ -267,6 +297,7 @@ bool Compositor2D::LoadCustomEffects(
                                     ? "main0"
                                     : "main";
         shaderInfo.format = selectedFormat;
+#endif
         shaderInfo.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
         shaderInfo.num_samplers = descriptor.samplerCount;
         shaderInfo.num_uniform_buffers = descriptor.uniformBufferCount;
@@ -417,7 +448,7 @@ bool Compositor2D::EnsureTarget() {
     }
     SDL_SetTextureBlendMode(m_intermediate, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(m_intermediate, SDL_SCALEMODE_LINEAR);
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     m_webOutput = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA32,
         SDL_TEXTUREACCESS_TARGET, m_width, m_height);
     if (!m_webOutput) { DestroyTarget(); m_enabled = false; return false; }
@@ -427,7 +458,7 @@ bool Compositor2D::EnsureTarget() {
 }
 
 void Compositor2D::DestroyTarget() {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     if (m_webOutput) SDL_DestroyTexture(m_webOutput);
     m_webOutput = nullptr;
 #endif
@@ -435,7 +466,7 @@ void Compositor2D::DestroyTarget() {
     m_stage = nullptr;
     if (m_intermediate) SDL_DestroyTexture(m_intermediate);
     m_intermediate = nullptr;
-#if !defined(__EMSCRIPTEN__)
+#if !defined(PRISMATIX_NO_SDL_GPU)
     if (m_transitionIncoming) {
         InvalidateCustomTransitionTargets();
         SDL_DestroyTexture(m_transitionIncoming);
@@ -479,7 +510,7 @@ void Compositor2D::EndStage(const StagePostEffects& effects) {
     const auto custom = m_customEffects.find(effects.customEffect);
     if (custom == m_customEffects.end() ||
         custom->second.descriptor.targetLayer != "stage") {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
         if (uniforms.blur == 0 && uniforms.vignette == 0 &&
             uniforms.colorGrade == 0 && uniforms.grayscale == 0) {
             const SDL_FRect destination{0, 0, static_cast<float>(m_width), static_cast<float>(m_height)};
@@ -522,7 +553,7 @@ bool Compositor2D::BeginNodeEffect(
     const std::string_view id, const float progress, const float randomSeed,
     const std::array<std::array<float, 4>, 8>& parameters,
     const std::array<float, 4>& viewport) {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     const auto found = m_customEffects.find(std::string(id));
     if (found == m_customEffects.end() || found->second.descriptor.targetLayer != "node") return false;
     CustomUniforms uniforms{};
@@ -537,7 +568,7 @@ bool Compositor2D::BeginNodeEffect(
     std::memcpy(m_webNodeUniforms.data(), &uniforms, sizeof(uniforms));
     m_webNodeEffect = static_cast<int>(reinterpret_cast<std::uintptr_t>(found->second.state));
     return true;
-#elif defined(__EMSCRIPTEN__)
+#elif defined(PRISMATIX_NO_SDL_GPU)
     (void)id; (void)progress; (void)randomSeed; (void)parameters; (void)viewport;
     return false;
 #else
@@ -553,9 +584,9 @@ bool Compositor2D::BeginNodeEffect(
 }
 
 void Compositor2D::EndNodeEffect() {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     m_webNodeEffect = 0;
-#elif !defined(__EMSCRIPTEN__)
+#elif !defined(PRISMATIX_NO_SDL_GPU)
     (void)SDL_SetGPURenderState(m_renderer, nullptr);
 #endif
 }
@@ -564,7 +595,7 @@ bool Compositor2D::ApplyCustomTransition(
     const std::string_view id, SDL_Texture* outgoing, SDL_Texture* incoming,
     const float progress, const float randomSeed,
     const std::array<std::array<float, 4>, 8>& parameters) {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     const auto found = m_customEffects.find(std::string(id));
     if (found == m_customEffects.end() || found->second.descriptor.targetLayer != "transition" || !EnsureTarget()) return false;
     CustomUniforms uniforms{};
@@ -580,7 +611,7 @@ bool Compositor2D::ApplyCustomTransition(
                         outgoing, incoming, m_webOutput, &uniforms, sizeof(uniforms))) return false;
     const SDL_FRect destination{0, 0, static_cast<float>(m_width), static_cast<float>(m_height)};
     return SDL_RenderTexture(m_renderer, m_webOutput, nullptr, &destination);
-#elif defined(__EMSCRIPTEN__)
+#elif defined(PRISMATIX_NO_SDL_GPU)
     (void)id; (void)outgoing; (void)incoming; (void)progress;
     (void)randomSeed; (void)parameters;
     return false;
@@ -656,7 +687,7 @@ bool Compositor2D::ApplyCustomTransition(
 }
 
 bool Compositor2D::RuleMaskSupported() const {
-#if defined(__EMSCRIPTEN__)
+#if defined(PRISMATIX_NO_SDL_GPU)
     return false;
 #else
     return m_enabled && m_ruleShader && m_ruleSampler;
@@ -665,7 +696,7 @@ bool Compositor2D::RuleMaskSupported() const {
 
 bool Compositor2D::BeginRuleMask(SDL_Texture* rule, const float threshold,
                                  const float vague) {
-#if defined(__EMSCRIPTEN__)
+#if defined(PRISMATIX_NO_SDL_GPU)
     (void)rule; (void)threshold; (void)vague;
     return false;
 #else
@@ -699,13 +730,13 @@ bool Compositor2D::BeginRuleMask(SDL_Texture* rule, const float threshold,
 }
 
 void Compositor2D::EndRuleMask() {
-#if !defined(__EMSCRIPTEN__)
+#if !defined(PRISMATIX_NO_SDL_GPU)
     (void)SDL_SetGPURenderState(m_renderer, nullptr);
 #endif
 }
 
 void Compositor2D::ReleaseRuleMask() {
-#if !defined(__EMSCRIPTEN__)
+#if !defined(PRISMATIX_NO_SDL_GPU)
     if (m_ruleState) SDL_DestroyGPURenderState(m_ruleState);
     m_ruleState = nullptr;
     m_ruleStateTexture = nullptr;
@@ -713,7 +744,7 @@ void Compositor2D::ReleaseRuleMask() {
 }
 
 void Compositor2D::InvalidateCustomTransitionTargets() {
-#if !defined(__EMSCRIPTEN__)
+#if !defined(PRISMATIX_NO_SDL_GPU)
     for (auto& [_, effect] : m_customEffects) {
         for (auto& [__, state] : effect.transitionStates)
             if (state) SDL_DestroyGPURenderState(state);
@@ -727,7 +758,7 @@ bool Compositor2D::ApplyRenderState(SDL_GPURenderState* state,
                                     const void* uniforms,
                                     const std::uint32_t uniformBytes) {
     if (!state || !source || !uniforms || uniformBytes == 0) return false;
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     if (!ApplyWebEffect(m_renderer, static_cast<int>(reinterpret_cast<std::uintptr_t>(state)),
                         source, nullptr, m_webOutput, uniforms, uniformBytes)) return false;
     if (!SDL_SetRenderTarget(m_renderer, target)) return false;
@@ -770,7 +801,7 @@ bool Compositor2D::ApplyRenderState(SDL_GPURenderState* state,
 #endif
 }
 
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
 bool Compositor2D::DrawWebGeometry(SDL_Texture* texture, const SDL_Vertex* vertices,
                                   const int count, const int* indices, const int indexCount) {
     if (!m_webNodeEffect) return false;

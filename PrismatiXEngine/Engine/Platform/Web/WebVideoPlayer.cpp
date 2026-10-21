@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 #include <emscripten/emscripten.h>
 #include <algorithm>
+#include <cstdint>
 #include <vector>
 
 namespace px::video {
@@ -21,6 +22,22 @@ EM_JS(double, VideoValue, (int handle, const char* key), {
 EM_JS(char*, VideoError, (int handle), {
     return stringToNewUTF8(Module.prismatix.video.error(handle));
 });
+#if defined(PRISMATIX_WEB_WEBGPU)
+// WebGPU renderer stopgap: SDL_GPU exposes no WGPUTexture for an SDL_Texture,
+// so each frame goes through a 2D canvas into SDL_UpdateTexture (a CPU copy,
+// about half the WebGL2 frame rate for 1080p video). Zero-copy needs
+// copyExternalImageToTexture on the backend's own texture; see
+// docs/web-export.md (WebGPU status).
+std::vector<std::uint8_t> webGpuFrame;
+EM_JS(void, ReadVideo, (int handle, void* pixels, int width, int height), {
+    const video = Module.prismatix.video.element(handle);
+    const canvas = Module.prismatix.videoCanvas ??= new OffscreenCanvas(width, height);
+    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+    const context = canvas.getContext("2d", {willReadFrequently: true});
+    context.drawImage(video, 0, 0, width, height);
+    HEAPU8.set(context.getImageData(0, 0, width, height).data, pixels);
+});
+#else
 EM_JS(void, UploadVideo, (int handle, int texture), {
     const video = Module.prismatix.video.element(handle);
     const previous = GLctx.getParameter(GLctx.TEXTURE_BINDING_2D);
@@ -31,6 +48,7 @@ EM_JS(void, UploadVideo, (int handle, int texture), {
     GLctx.pixelStorei(GLctx.UNPACK_FLIP_Y_WEBGL, flip);
     GLctx.bindTexture(GLctx.TEXTURE_2D, previous);
 });
+#endif
 } // namespace
 
 VideoPlayer::VideoPlayer(SDL_Renderer* renderer, io::VFS& vfs)
@@ -115,12 +133,19 @@ void VideoPlayer::Update(float) {
             graphics::TextureBackend::SdlRenderer, texture, width, height);
         m_width = width; m_height = height;
     }
+#if defined(PRISMATIX_WEB_WEBGPU)
+    webGpuFrame.resize(static_cast<std::size_t>(width) * height * 4);
+    ReadVideo(m_browserHandle, webGpuFrame.data(), width, height);
+    SDL_UpdateTexture(static_cast<SDL_Texture*>(
+        m_texture.Native(graphics::TextureBackend::SdlRenderer)), nullptr, webGpuFrame.data(), width * 4);
+#else
     SDL_FlushRenderer(m_renderer);
     const auto texture = static_cast<int>(SDL_GetNumberProperty(
         SDL_GetTextureProperties(static_cast<SDL_Texture*>(
             m_texture.Native(graphics::TextureBackend::SdlRenderer))),
         SDL_PROP_TEXTURE_OPENGLES2_TEXTURE_NUMBER, 0));
     if (texture) UploadVideo(m_browserHandle, texture);
+#endif
 }
 void VideoPlayer::Render(const int width, const int height) {
     if (!m_texture || m_width <= 0 || m_height <= 0) return;

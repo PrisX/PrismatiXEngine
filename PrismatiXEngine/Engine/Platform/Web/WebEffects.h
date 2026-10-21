@@ -1,5 +1,6 @@
 #pragma once
-#if defined(PRISMATIX_WEB_PLAYER)
+#include "Engine/Graphics/WebBackend.h"
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
 #include <cstdint>
 #include <string_view>
 struct SDL_Renderer;

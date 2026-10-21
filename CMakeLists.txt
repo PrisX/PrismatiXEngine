@@ -54,6 +54,18 @@ endif()
 if(PRISMATIX_BUILD_WASM_PREVIEW AND PRISMATIX_BUILD_WASM_PLAYER)
     message(FATAL_ERROR "WASM Player and Preview use separate platform compositions; configure them in separate build directories.")
 endif()
+# The Web Player's renderer (docs/web-export.md). webgl2 builds SDL's WebGL2
+# renderer from the engine's SDL pin; webgpu builds the pinned SDL fork with an
+# SDL_GPU WebGPU backend. Only the Web Player reads this; desktop, Android and
+# the WASM Preview always use their own SDL.
+set(PRISMATIX_WEB_RENDERER "webgl2" CACHE STRING "Web Player renderer: webgl2 or webgpu")
+set_property(CACHE PRISMATIX_WEB_RENDERER PROPERTY STRINGS webgl2 webgpu)
+if(NOT PRISMATIX_WEB_RENDERER MATCHES "^(webgl2|webgpu)$")
+    message(FATAL_ERROR "PRISMATIX_WEB_RENDERER must be webgl2 or webgpu, not '${PRISMATIX_WEB_RENDERER}'")
+endif()
+if(PRISMATIX_WEB_RENDERER STREQUAL "webgpu" AND NOT PRISMATIX_BUILD_WASM_PLAYER)
+    message(FATAL_ERROR "PRISMATIX_WEB_RENDERER=webgpu only applies to the Web Player (PRISMATIX_BUILD_WASM_PLAYER)")
+endif()
 
 function(prismatix_configure_target target)
     if(MSVC)

@@ -760,6 +760,26 @@ endif()
 if(PRISMATIX_BUILD_WASM_PLAYER)
     option(PRISMATIX_WEB_DIAGNOSTICS "Keep Web Player function names and runtime assertions" OFF)
     target_compile_definitions(PrismatiXRuntimeCore PRIVATE PRISMATIX_WEB_PLAYER=1)
+    if(PRISMATIX_WEB_RENDERER STREQUAL "webgpu")
+        # The WebGPU renderer runs the desktop Compositor2D path on SDL_GPU. Its
+        # built-in compositor and rule shaders are the Naga WGSL of the native
+        # SPIR-V, rebound for SDL_GPU's WebGPU backend. They are generated and
+        # checked by scripts/build-wasm-player.mjs.
+        set(PRISMATIX_WEBGPU_SHADER_CPP "${CMAKE_CURRENT_BINARY_DIR}/generated/BuiltInWebGpuShaders.generated.cpp")
+        file(READ "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Builtin/webgpu/compositor.frag.wgsl" PRISMATIX_WGSL_COMPOSITOR)
+        file(READ "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Builtin/webgpu/rule.frag.wgsl" PRISMATIX_WGSL_RULE)
+        file(CONFIGURE OUTPUT "${PRISMATIX_WEBGPU_SHADER_CPP}" CONTENT [=[
+namespace px::graphics {
+extern const char kBuiltInCompositorWgsl[] = R"PXWGSL(@PRISMATIX_WGSL_COMPOSITOR@)PXWGSL";
+extern const char kBuiltInRuleWgsl[] = R"PXWGSL(@PRISMATIX_WGSL_RULE@)PXWGSL";
+}
+]=] @ONLY)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Builtin/webgpu/compositor.frag.wgsl"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Builtin/webgpu/rule.frag.wgsl")
+        target_sources(PrismatiXRuntimeCore PRIVATE "${PRISMATIX_WEBGPU_SHADER_CPP}")
+        target_compile_definitions(PrismatiXRuntimeCore PRIVATE PRISMATIX_WEB_WEBGPU=1)
+    endif()
     file(GLOB_RECURSE PRISMATIX_WEB_PLATFORM_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Engine/IO/*.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/Engine/Platform/*.cpp")
@@ -788,6 +808,11 @@ if(PRISMATIX_BUILD_WASM_PLAYER)
         Applications/Player/PlayerSettings.cpp
         Applications/Player/QaIpc.cpp)
     target_compile_definitions(PrismatiXPlayerWeb PRIVATE PRISMATIX_WEB_PLAYER=1 PRISMATIX_QA_HOOKS=0)
+    if(PRISMATIX_WEB_RENDERER STREQUAL "webgpu")
+        foreach(web_target PrismatiXRuntimePlatformWeb PrismatiXPlayerWeb)
+            target_compile_definitions(${web_target} PRIVATE PRISMATIX_WEB_WEBGPU=1)
+        endforeach()
+    endif()
     target_link_libraries(PrismatiXPlayerWeb PRIVATE PrismatiXRuntimePlatformWeb)
     prismatix_configure_target(PrismatiXPlayerWeb)
     # The shipping Player catches malformed resources and persistence errors.
@@ -810,6 +835,11 @@ if(PRISMATIX_BUILD_WASM_PLAYER)
     if(PRISMATIX_WEB_DIAGNOSTICS)
         target_link_options(PrismatiXPlayerWeb PRIVATE "--profiling-funcs" "-sASSERTIONS=1")
     endif()
+    # Both renderers suspend through Asyncify: frame waits, remote reads and,
+    # on WebGPU, the backend's adapter/device requests, fences and swapchain
+    # acquires. JSPI would need wasm exceptions and wasm setjmp/longjmp in
+    # every dependency and is missing from Safari (docs/web-export.md).
+    message(STATUS "PrismatiX Web Player: renderer=${PRISMATIX_WEB_RENDERER} SDL=${PRISMATIX_WEB_SDL_COMMIT}")
 endif()
 
 if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)

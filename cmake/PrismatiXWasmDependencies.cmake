@@ -10,13 +10,47 @@ set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
 set(SDL_TESTS OFF CACHE BOOL "" FORCE)
 set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+if(PRISMATIX_WEB_RENDERER STREQUAL "webgpu")
+    # SDL has no official WebGPU backend yet. The WebGPU Web Player uses the
+    # unmerged libsdl-org/SDL#16020 (SDL 3.5.0-dev), pinned to one commit of
+    # its source repository. Its CMake enables SDL_GPU, the GPU 2D renderer
+    # and Emscripten's emdawnwebgpu port. Nothing else builds this SDL.
+    set(PRISMATIX_WEB_SDL_REPOSITORY "https://github.com/TheeStickmahn/SDL_wgpu.git")
+    set(PRISMATIX_WEB_SDL_COMMIT "09026288bffe2bf9d7451255b766256a34bd8963")
+    # emdawnwebgpu is a "remote" port: Emscripten downloads the version its
+    # tools/ports/emdawnwebgpu.py names and checks its SHA-512. Emscripten
+    # 6.0.5 (the CI pin) names this one; refuse a different Dawn silently
+    # arriving with another Emscripten.
+    set(PRISMATIX_WEB_EMDAWNWEBGPU "v20260423.175430")
+    if(EMSCRIPTEN_ROOT_PATH)
+        set(prismatix_emscripten_root "${EMSCRIPTEN_ROOT_PATH}")
+    else()
+        get_filename_component(prismatix_emscripten_root "${CMAKE_C_COMPILER}" DIRECTORY)
+    endif()
+    file(STRINGS "${prismatix_emscripten_root}/tools/ports/emdawnwebgpu.py" prismatix_emdawn_version
+        REGEX "^_VERSION = ")
+    if(NOT prismatix_emdawn_version MATCHES "'${PRISMATIX_WEB_EMDAWNWEBGPU}'")
+        message(FATAL_ERROR
+            "The WebGPU Web Player is pinned to emdawnwebgpu ${PRISMATIX_WEB_EMDAWNWEBGPU} "
+            "(Emscripten 6.0.5); this Emscripten has ${prismatix_emdawn_version}.")
+    endif()
+    set(SDL_GPU ON CACHE BOOL "" FORCE)
+    set(SDL_RENDER_GPU ON CACHE BOOL "" FORCE)
+    set(SDL_WEBGPU ON CACHE BOOL "" FORCE)
+else()
+    set(PRISMATIX_WEB_SDL_REPOSITORY "https://github.com/libsdl-org/SDL.git")
+    set(PRISMATIX_WEB_SDL_COMMIT "8e37db5e797b6167f3a00d697d816a684bd259c7")
+endif()
 FetchContent_Declare(
     SDL3
-    GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG        8e37db5e797b6167f3a00d697d816a684bd259c7
+    GIT_REPOSITORY ${PRISMATIX_WEB_SDL_REPOSITORY}
+    GIT_TAG        ${PRISMATIX_WEB_SDL_COMMIT}
     GIT_SHALLOW    FALSE
 )
 FetchContent_MakeAvailable(SDL3)
+if(PRISMATIX_WEB_RENDERER STREQUAL "webgpu" AND NOT EXISTS "${sdl3_SOURCE_DIR}/src/gpu/webgpu")
+    message(FATAL_ERROR "${sdl3_SOURCE_DIR} has no SDL_GPU WebGPU backend (src/gpu/webgpu)")
+endif()
 
 # Preview currently needs deterministic PNG/JPEG loading and PNG capture. Keep
 # the browser bundle free of heavyweight native image codecs.

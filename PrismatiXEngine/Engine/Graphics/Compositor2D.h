@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Engine/Graphics/WebBackend.h"
+
 #include "Engine/Graphics/CustomEffect.h"
 
 #include <array>
@@ -61,7 +63,7 @@ public:
         const std::array<std::array<float, 4>, 8>& parameters,
         const std::array<float, 4>& viewport);
     void EndNodeEffect();
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     bool DrawWebGeometry(SDL_Texture* texture, const SDL_Vertex* vertices,
                          int count, const int* indices, int indexCount);
 #endif
@@ -94,7 +96,7 @@ private:
     SDL_Texture* m_stage = nullptr;
     SDL_Texture* m_intermediate = nullptr;
     SDL_Texture* m_previousTarget = nullptr;
-#if !defined(__EMSCRIPTEN__)
+#if !defined(PRISMATIX_NO_SDL_GPU)
     // The incoming frame of a custom transition, copied into a format the
     // GPU renderer keeps as its own GPU texture so the shader can sample it.
     SDL_Texture* m_transitionIncoming = nullptr;
@@ -119,7 +121,7 @@ private:
     bool m_enabled = false;
     bool m_required = false;
     bool m_recording = false;
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     SDL_Texture* m_webOutput = nullptr;
     int m_webNodeEffect = 0;
     std::array<float, 40> m_webNodeUniforms{};

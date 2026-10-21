@@ -20,7 +20,7 @@
 namespace px::graphics {
 
 namespace {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
 constexpr auto kTargetFormat = SDL_PIXELFORMAT_RGBA32;
 #else
 constexpr auto kTargetFormat = SDL_PIXELFORMAT_RGBA8888;
@@ -104,7 +104,7 @@ std::string MakeKey(const std::string& text, const std::string& font, int size, 
 
 bool Renderer2D::RenderGeometry(SDL_Texture* texture, const SDL_Vertex* vertices,
                                 const int count, const int* indices, const int indexCount) {
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     if (m_compositor.DrawWebGeometry(texture, vertices, count, indices, indexCount)) return true;
 #endif
     return SDL_RenderGeometry(m_renderer, texture, vertices, count, indices, indexCount);
@@ -1069,7 +1069,7 @@ void Renderer2D::DrawTextureRegion(const TextureHandle texture,
 
 void Renderer2D::BlitUntransformed(SDL_Texture* texture) {
     if (!m_renderer || !texture) return;
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     const SDL_FColor white{1, 1, 1, 1};
     const float width = static_cast<float>(m_logicalW), height = static_cast<float>(m_logicalH);
     const SDL_Vertex vertices[4]{{{0, 0}, white, {0, 0}}, {{width, 0}, white, {1, 0}},
@@ -1417,7 +1417,7 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
     TTF_SetFontWrapAlignment(font,TTF_HORIZONTAL_ALIGN_LEFT);
     if(!surface){WarnTextOnce("rasterizing failed",SDL_GetError());return nullptr;}
     CachedText entry;
-#if defined(PRISMATIX_WEB_PLAYER)
+#if defined(PRISMATIX_WEB_GL_EFFECTS)
     entry.texture=CreateWebTextureFromSurface(m_renderer,surface);
 #else
     entry.texture=SDL_CreateTextureFromSurface(m_renderer,surface);
