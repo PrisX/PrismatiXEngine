@@ -988,7 +988,15 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "entry": {
-        "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+        "allOf": [
+          {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+          },
+          {
+            "pattern": "\\.(?:js|ts)$",
+            "type": "string"
+          }
+        ]
       },
       "format": {
         "const": "PrismatiXExtension"
@@ -997,7 +1005,10 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
       },
       "language": {
-        "const": "javascript"
+        "enum": [
+          "javascript",
+          "typescript"
+        ]
       },
       "modules": {
         "items": {
@@ -1006,7 +1017,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
               "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
             },
             {
-              "pattern": "\\.js$",
+              "pattern": "\\.(?:js|ts)$",
               "type": "string"
             }
           ]
@@ -4990,7 +5001,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "character.schema.json": "2b93da553f2247c29d20e3365b313f29185a30d7ada1375be92004e6eb8f771b",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
   "effect.schema.json": "8707b1b1d75154000786f797b06561643a5f9881df968708a0994546e3f782bd",
-  "extension.schema.json": "f644ab7d736add644057cc1a199db6dd042901802c8ba91c8e7cebfde5bfda5b",
+  "extension.schema.json": "62e1a93e20d9514aad911352665057ab9774ca48c4d9a8f23ae18f5bfeb88aee",
   "game.schema.json": "a2614c48076fc5e7554934e446f37319c556adb9f13a28f24c8592813f0dfd23",
   "locale.schema.json": "391e4abe7616d74554af376e2ae3563961215b1631cdd04faf5034016aaff774",
   "motion.schema.json": "6cc663c16bc82c6d966609bb2410bb2873ae43a16d5da3611234bec041d54268",

@@ -28,6 +28,7 @@ import {
 import {compileStoryProject, type StoryIndexDocument, type StoryProjectCompilationCache,
   type StoryProjectProgress, mappedSpan} from "./story-project.js";
 import {ENGINE_VERSION} from "./version.js";
+import {bundledExtensionManifest, extensionUsesTypeScript} from "./extension-typescript.js";
 import type {
   AuthoringDiagnostic,
   CharacterDocument,
@@ -174,6 +175,11 @@ export interface CompileProjectInput {
   readonly untranslatedLocales?: "error" | "default-locale";
   /** Reuse unchanged Story compilation across repeated project builds. */
   readonly storyCompilationCache?: StoryProjectCompilationCache;
+  /**
+   * Bundled JavaScript of TypeScript extensions, keyed by manifest path. The
+   * PrismatiX CLI produces it; a TypeScript extension without one is an error.
+   */
+  readonly extensionBuilds?: Readonly<Record<string, ExtensionBuild>>;
   /** Completed Story scenes across all locales; callbacks are synchronous. */
   readonly onStoryProgress?: (event: StoryProjectProgress & {
     readonly globalCurrent: number; readonly globalTotal: number;
@@ -203,10 +209,23 @@ export interface BuildArtifact {
   readonly dependencies: readonly ProjectDependency[];
 }
 
+export interface ExtensionBuild {
+  /** The JavaScript entry the Player loads, relative to the manifest (`extensionBundleEntry`). */
+  readonly entry: string;
+  /** One ES module holding the entry and everything it imports. */
+  readonly code: string;
+}
+
 export interface ProjectCompileResult {
   readonly artifact?: BuildArtifact;
   readonly diagnostics: readonly AuthoringDiagnostic[];
   readonly valid: boolean;
+}
+
+/** A path relative to an extension manifest, as a project path. */
+function extensionFilePath(manifestPath: string, relativePath: string): string {
+  const slash = manifestPath.lastIndexOf("/");
+  return `${slash < 0 ? "" : manifestPath.slice(0, slash + 1)}${relativePath}`;
 }
 
 function issue(code: string, message: string, path?: string, details?: string): AuthoringDiagnostic {
@@ -717,6 +736,15 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
           path, "/requiredEngineVersion", extension.requiredEngineVersion,
           extension.requiredEngineVersion));
       else extensions.push(extension);
+      if (extensionUsesTypeScript(extension)) {
+        const build = input.extensionBuilds?.[path];
+        if (build === undefined)
+          diagnostics.push(locatedIssue("PXBUILD1130",
+            "TypeScript extension has no bundled JavaScript; build it with the PrismatiX CLI",
+            path, "/entry", extension.entry, extension.entry));
+        else if (!/\.js$/iu.test(build.entry) || !isSafeResourcePath(extensionFilePath(path, build.entry)))
+          diagnostics.push(issue("PXBUILD1131", "Bundled extension entry must be a safe .js path", path, build.entry));
+      }
     }
   }
   const extensionActionIds = new Set<string>();
@@ -1581,7 +1609,10 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   const dependencyCollection = collectProjectDependencies({
     assets: resourceAssets,
     references: dependencyReferences,
-    extensions: [...extensionDocuments].map(([manifestPath, extension]) => ({
+    // A bundled TypeScript extension publishes generated JavaScript, not its sources.
+    extensions: [...extensionDocuments].filter(([manifestPath, extension]) =>
+      !(extensionUsesTypeScript(extension) && input.extensionBuilds?.[manifestPath] !== undefined))
+      .map(([manifestPath, extension]) => ({
       manifestPath,
       entry: extension.entry,
       ...(extension.modules === undefined ? {} : {modules: extension.modules}),
@@ -1662,7 +1693,21 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   }
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) return {diagnostics, valid: false};
   for (const descriptor of project.characters ?? []) files[descriptor.source] = serialized(documents[descriptor.source]);
-  for (const path of project.extensions) files[path] = serialized(documents[path]);
+  for (const path of project.extensions) {
+    const extension = extensionDocuments.get(path);
+    const build = input.extensionBuilds?.[path];
+    if (extension === undefined || build === undefined || !extensionUsesTypeScript(extension)) {
+      files[path] = serialized(documents[path]);
+      continue;
+    }
+    const bundlePath = extensionFilePath(path, build.entry);
+    if (files[bundlePath] !== undefined || dependencyCollection.dependencies.some((dependency) =>
+      dependency.logicalPath.toLocaleLowerCase("en-US") === bundlePath.toLocaleLowerCase("en-US")))
+      diagnostics.push(issue("PXBUILD1132", "Bundled extension script collides with another artifact file",
+        path, bundlePath));
+    files[path] = canonicalJson(bundledExtensionManifest(extension, build.entry));
+    files[bundlePath] = build.code;
+  }
   for (const [path, value] of saveMigrationDocuments) files[path] = canonicalJson(value);
   for (const path of Object.values(project.uiEntryPoints)) files[path] = serialized(documents[path]);
   for (const [path, value] of uiComponentDocuments) files[path] = canonicalJson(value);

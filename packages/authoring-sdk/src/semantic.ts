@@ -1,6 +1,7 @@
 import type {AuthoringDiagnostic} from "./types.js";
 import {playerActionNamespaces, playerActions} from "./player-actions.js";
 import {isSafeResourcePath} from "./resources.js";
+import {isTypeScriptExtensionSource} from "./extension-typescript.js";
 import {nativeJsonValueValid, nativeUiValueType} from "./ui-value.js";
 import {jsonPointerSpans} from "./json-source-spans.js";
 
@@ -719,6 +720,16 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
       const commands = objects(root.commands);
       const actions = objects(root.actions);
       const inheritedSafety = hasCompleteSafety(root.safety);
+      const sources = [root.entry, ...(Array.isArray(root.modules) ? root.modules : [])]
+        .filter((value): value is string => typeof value === "string");
+      for (const source of sources) if (/\.d\.ts$/iu.test(source))
+        diagnostics.push(issue("PXSDKSEM1124", "A TypeScript declaration file cannot be an extension entry or module", path, source));
+      // A JavaScript entry runs as is; it cannot import a module the build
+      // would have to compile. A TypeScript entry is bundled with every import.
+      if (typeof root.entry === "string" && /\.js$/iu.test(root.entry)) {
+        for (const source of sources) if (isTypeScriptExtensionSource(source))
+          diagnostics.push(issue("PXSDKSEM1125", "TypeScript modules require a TypeScript extension entry", path, source));
+      }
       for (const id of duplicates([...commands, ...actions].map((item) => item.id))) diagnostics.push(issue("PXSDKSEM1107", "Extension command and Action ids must be unique", path, id));
       for (const declaration of [...commands, ...actions]) {
         const parameters = objects(declaration.parameters);

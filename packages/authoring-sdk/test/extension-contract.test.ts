@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {validateDocument} from "../src/index.js";
+import {extensionBundleEntry, extensionTypeDeclarations, extensionUsesTypeScript, validateDocument} from "../src/index.js";
 import type {ExtensionManifest} from "../src/index.js";
 
 const safety = {
@@ -100,4 +100,64 @@ test("extension Action manifest rejects contracts the native catalog cannot regi
   for (const code of ["PXSDKSEM1114", "PXSDKSEM1115", "PXSDKSEM1116",
     "PXSDKSEM1117", "PXSDKSEM1118"])
     assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === code), code);
+});
+
+test("extension entry and modules may be TypeScript, not declarations or TSX", () => {
+  const typescript = validateDocument<ExtensionManifest>("extension", manifest({
+    language: "typescript", entry: "main.ts", modules: ["lib/util.ts", "lib/legacy.js"],
+  }), "Extensions/test.pxextension");
+  assert.equal(typescript.valid, true, JSON.stringify(typescript.diagnostics));
+  const declaration = validateDocument<ExtensionManifest>("extension", manifest({entry: "types.d.ts"}),
+    "Extensions/test.pxextension");
+  assert.ok(declaration.diagnostics.some((diagnostic) => diagnostic.code === "PXSDKSEM1124"));
+  const tsx = validateDocument<ExtensionManifest>("extension", manifest({entry: "main.tsx"}),
+    "Extensions/test.pxextension");
+  assert.equal(tsx.valid, false);
+  // A JavaScript entry runs unbundled, so it cannot import TypeScript.
+  const mixed = validateDocument<ExtensionManifest>("extension", manifest({modules: ["lib/util.ts"]}),
+    "Extensions/test.pxextension");
+  assert.ok(mixed.diagnostics.some((diagnostic) => diagnostic.code === "PXSDKSEM1125"));
+});
+
+test("extension type declarations follow the manifest", () => {
+  const text = extensionTypeDeclarations(manifest({
+    id: "typed", capabilities: ["runtime", "ui"], safety,
+    commands: [{id: "game.raise", await: true, rollback: "reversible", displayName: "Raise */ it",
+      parameters: [
+        {name: "amount", type: "integer", required: true, range: {minimum: 0, maximum: 9}},
+        {name: "mood", type: "string", enum: ["calm", "angry"], default: "calm"},
+        {name: "note", type: "string"},
+        {name: "art", type: "resource"},
+      ]}],
+    actions: [{id: "game.open", reentry: "ignoreWhileRunning", parameters: [
+      {name: "at", type: "vec2", required: true}, {name: "tint", type: "color"}]}],
+  }), "Content/Extensions/typed/typed.pxextension");
+  assert.match(text, /import type \{Color, Rect, ResourceValue, RuntimeValue, Vec2Value\} from "@prismatix\/runtime";/u);
+  assert.match(text, /readonly id: "typed";/u);
+  assert.match(text, /readonly capabilities: "runtime" \| "ui";/u);
+  assert.match(text, /"game\.raise": \{\n {6}readonly args: \{\n/u);
+  assert.match(text, /readonly "amount": number;/u);
+  assert.match(text, /readonly "mood": "calm" \| "angry";/u);
+  assert.match(text, /readonly "note"\?: string;/u);
+  assert.match(text, /readonly "art"\?: ResourceValue;/u);
+  assert.match(text, /readonly await: true;\n {6}readonly rollback: "reversible";/u);
+  assert.match(text, /readonly "at": Vec2Value;/u);
+  assert.match(text, /readonly "tint"\?: Color;/u);
+  assert.match(text, /readonly reentry: "ignoreWhileRunning";/u);
+  assert.ok(text.includes(String.raw`Raise *\/ it`), "a description cannot end the comment");
+  assert.equal(text, extensionTypeDeclarations(manifest({
+    id: "typed", capabilities: ["runtime", "ui"], safety,
+    commands: [{id: "game.raise", await: true, rollback: "reversible", displayName: "Raise */ it",
+      parameters: [
+        {name: "amount", type: "integer", required: true, range: {minimum: 0, maximum: 9}},
+        {name: "mood", type: "string", enum: ["calm", "angry"], default: "calm"},
+        {name: "note", type: "string"},
+        {name: "art", type: "resource"},
+      ]}],
+    actions: [{id: "game.open", reentry: "ignoreWhileRunning", parameters: [
+      {name: "at", type: "vec2", required: true}, {name: "tint", type: "color"}]}],
+  }), "Content/Extensions/typed/typed.pxextension"), "generation is deterministic");
+  assert.equal(extensionBundleEntry("src/main.ts"), "src/main.js");
+  assert.equal(extensionUsesTypeScript({entry: "main.js", modules: ["a.ts"]}), true);
+  assert.equal(extensionUsesTypeScript({entry: "main.js"}), false);
 });

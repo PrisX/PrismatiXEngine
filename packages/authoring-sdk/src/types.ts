@@ -157,10 +157,12 @@ export interface ExtensionAction {
 export interface ExtensionManifest {
   readonly format: "PrismatiXExtension";
   readonly schemaRevision: 1;
-  readonly language: "javascript";
+  /** TypeScript sources are bundled to JavaScript by the PrismatiX CLI. */
+  readonly language: "javascript" | "typescript";
   readonly id: string;
   readonly version: string;
   readonly requiredEngineVersion: string;
+  /** A .js entry, or a .ts entry that the CLI bundles (with its imports) into one .js module. */
   readonly entry: string;
   /** ES modules that the entry is allowed to import, relative to this manifest. */
   readonly modules?: readonly string[];

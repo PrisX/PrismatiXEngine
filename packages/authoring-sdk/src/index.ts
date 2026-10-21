@@ -7,6 +7,7 @@ export {assertLocalBuildFresh, localSourceFingerprint, writeLocalBuildStamp} fro
 export * from "./bounded-utf8.js";
 export * from "./canonical-json.js";
 export * from "./contracts.js";
+export * from "./extension-typescript.js";
 export * from "./input-keys.js";
 export * from "./import-resources.js";
 export * from "./localization.js";

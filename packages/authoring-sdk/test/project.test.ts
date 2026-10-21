@@ -1665,3 +1665,35 @@ test("extension engine ranges compare against the running engine version", () =>
   assert.equal(satisfiesEngineVersion("soon"), undefined);
   assert.equal(satisfiesEngineVersion("*", "not-a-version"), undefined);
 });
+
+test("compileProject publishes a TypeScript extension as its bundled JavaScript", () => {
+  const extensionPath = "Content/Extensions/typed/typed.pxextension";
+  const extension = {format: "PrismatiXExtension", schemaRevision: 1,
+    language: "typescript", id: "typed", version: "1.0.0",
+    requiredEngineVersion: "^0.2.0", entry: "main.ts", modules: ["lib/util.ts"],
+    capabilities: ["runtime"],
+    safety: {previewSafe: true, deterministic: true, seekSafe: true, rollbackSafe: true},
+    commands: [{id: "typed.hello", parameters: []}], actions: []};
+  const compile = (extensionBuilds?: Record<string, {entry: string; code: string}>) => compileProject({
+    project: {...project, extensions: [extensionPath]},
+    documents: {"Story/story.pxindex": storyIndex, "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": ui, [extensionPath]: extension},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 1, locale: "zh-TW", strings: {}}},
+    ...(extensionBuilds === undefined ? {} : {extensionBuilds}),
+  });
+  const unbuilt = compile();
+  assert.equal(unbuilt.valid, false);
+  assert.ok(unbuilt.diagnostics.some((item) => item.code === "PXBUILD1130"));
+  const built = compile({[extensionPath]: {entry: "main.js", code: "Engine.RegisterCommand(\"typed.hello\", () => {});\n"}});
+  assert.equal(built.valid, true, JSON.stringify(built.diagnostics));
+  const runtimeManifest = JSON.parse(built.artifact!.files[extensionPath]!) as Record<string, unknown>;
+  assert.equal(runtimeManifest.entry, "main.js");
+  assert.equal(runtimeManifest.language, "javascript");
+  assert.equal(runtimeManifest.modules, undefined);
+  assert.match(built.artifact!.files["Content/Extensions/typed/main.js"]!, /typed\.hello/u);
+  assert.ok(!built.artifact!.dependencies.some((dependency) => dependency.kind === "extension"),
+    JSON.stringify(built.artifact!.dependencies));
+  const unsafe = compile({[extensionPath]: {entry: "../escape.js", code: ""}});
+  assert.ok(unsafe.diagnostics.some((item) => item.code === "PXBUILD1131"));
+});
