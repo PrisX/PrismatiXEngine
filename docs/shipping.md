@@ -113,20 +113,23 @@ icon file, rebuilds the package.
 
 ### Distribution layout
 
-On Windows the default `"layout": "flat"` keeps the runtime DLLs, notices and
-game data (`Content.pdx`, `Package/`) beside the executable, as before.
-`"layout": "bundled"` keeps only the executable at the top of the folder and
-moves everything else into `engineFolder` (default `Engine`):
-
-```json
-"distribution": {"executableName": "Hikari", "layout": "bundled", "engineFolder": "Engine"}
-```
+On Windows a distribution keeps only the executable at the top of its folder
+and moves the runtime DLLs, notices and game data (`Content.pdx`, `Package/`)
+into an engine folder, `Engine` unless `engineFolder` names another. This is
+the default, `"layout": "bundled"`:
 
 ```text
 Hikari.exe
 Engine/
   Engine.manifest   SDL3.dll  avcodec-62.dll  ...
   Content.pdx  Package/  Notices/
+```
+
+`"layout": "flat"` keeps everything beside the executable instead, as a single
+folder of files:
+
+```json
+"distribution": {"executableName": "Hikari", "layout": "flat"}
 ```
 
 The engine folder is a Windows *private side-by-side assembly*:
@@ -140,7 +143,9 @@ the flat layout. The executable records the folder name, finds its game data
 there and uses the same per-user save and log folders. `engineFolder` takes
 1 to 64 letters, digits, `.`, `_` and `-` (it is also the assembly name) and
 cannot be `Package`, `Save`, `Updates` or `Notices`. Rename the folder only by
-repacking: the name is written into the executable.
+repacking: the name is written into the executable. Besides the executable,
+the top level holds only the CLI's `.prismatix-output.json` ownership marker,
+which lets later packs replace the folder safely.
 
 macOS and Linux have their own conventions and ignore `layout`:
 
@@ -465,10 +470,10 @@ The public key is a lowercase, uncompressed SEC1 P-256 point in
 private key outside the project and distribution, restrict access to it, and
 back it up securely. `overlay-keygen` refuses to overwrite either output.
 
-After verification, install the PDX as `v1/Package/updates/patch.pdx` (in
-the engine folder, `v1/Engine/Package/updates/`, for the Windows bundled
-layout, and in `Contents/Resources/Package/updates/` of a macOS `.app`) and
-restart Player. Place later patches in the same updates directory; Player
+After verification, install the PDX in the distribution's `Package/updates/`
+folder: `v1/Engine/Package/updates/patch.pdx` in the default Windows layout,
+`v1/Package/updates/patch.pdx` in the flat layout and on Linux, and
+`Contents/Resources/Package/updates/` of a macOS `.app`. Then restart Player. Place later patches in the same updates directory; Player
 discovers their dependency order from
 the signed base and target documents. The Player checks the pinned publisher key, signature, exact
 base manifest and index bytes, target metadata, and every changed resource

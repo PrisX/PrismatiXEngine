@@ -81,6 +81,18 @@ async function exists(path) {
   catch { return false; }
 }
 
+// Where a packed game keeps its data: beside the executable (flat, Linux),
+// in the Windows engine folder (default "bundled" layout) or in a macOS
+// .app's Contents/Resources.
+async function packageDataRoot(output) {
+  if (await exists(join(output, "Package", "manifest.json"))) return output;
+  for (const entry of await readdir(output)) {
+    const candidate = entry.endsWith(".app") ? join(output, entry, "Contents", "Resources") : join(output, entry);
+    if (await exists(join(candidate, "Package", "manifest.json"))) return candidate;
+  }
+  return output;
+}
+
 function commandText(command, args) {
   return [command, ...args].map((value) => /\s/u.test(value) ? JSON.stringify(value) : value).join(" ");
 }
@@ -768,11 +780,12 @@ async function main() {
       [repositoryRoot, runtimeBundle, configuration.runtime ?? ""].filter(Boolean),
       "Packaged game");
     if (!configuration.mock) {
+      const notices = join(await packageDataRoot(packageOutput), "Notices");
       for (const relative of [
         "LICENSE", "THIRD_PARTY_NOTICES.md", "ASSET_PROVENANCE.json",
         "release-inventory.json", join("licenses", "fonts", "OFL-1.1.txt"),
         join("docs", "releases", "delivery-contract.md"),
-      ]) assert.ok(await exists(join(packageOutput, "Notices", relative)),
+      ]) assert.ok(await exists(join(notices, relative)),
         `Packaged Player notice inventory is missing ${relative}`);
     }
     await launchArtifact(player, packageOutput, toolEnvironment, configuration.mock);

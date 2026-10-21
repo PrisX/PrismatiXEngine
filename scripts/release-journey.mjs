@@ -23,7 +23,7 @@
 import assert from "node:assert/strict";
 import {spawnSync} from "node:child_process";
 import {createHash} from "node:crypto";
-import {copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile} from "node:fs/promises";
+import {copyFile, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {basename, dirname, join, relative, resolve, sep} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -326,6 +326,19 @@ async function verifyAuthorArtifacts(v1, v2, sources) {
 }
 
 const args = options(process.argv.slice(2));
+const isFile = async (path) => (await lstat(path).catch(() => undefined))?.isFile() === true;
+// Where a packed game keeps its data: beside the executable (flat, Linux),
+// in the Windows engine folder (default "bundled" layout) or in a macOS
+// .app's Contents/Resources.
+async function packageDataRoot(output) {
+  if (await isFile(join(output, "Package", "manifest.json"))) return output;
+  for (const entry of await readdir(output)) {
+    const candidate = entry.endsWith(".app") ? join(output, entry, "Contents", "Resources") : join(output, entry);
+    if (await isFile(join(candidate, "Package", "manifest.json"))) return candidate;
+  }
+  return output;
+}
+
 const cli = resolve(args.get("cli") ?? join(repositoryRoot, "packages/cli/dist/src/cli.js"));
 const explicitOutput = args.get("output");
 const workRoot = explicitOutput === undefined
@@ -357,16 +370,19 @@ try {
     const releaseV2 = join(workRoot, "package-v2");
     runCli(cli, ["pack", join(v1Source, "project.pxproject"), "--packager", resolve(packager),
       "--player", resolve(player), "--compression", "fast", "--output", releaseV1]);
-    run(resolve(verifier), ["write-v1", releaseV1]);
-    const saveV1 = join(releaseV1, "Save");
+    // The verifier works on the game data, wherever the layout puts it.
+    const dataV1 = await packageDataRoot(releaseV1);
+    run(resolve(verifier), ["write-v1", dataV1]);
+    const saveV1 = join(dataV1, "Save");
     const originalSaves = new Map(await Promise.all((await walk(saveV1)).map(async (path) =>
       [relative(saveV1, path), createHash("sha256").update(await readFile(path)).digest("hex")])));
     runCli(cli, ["pack", join(v2Source, "project.pxproject"), "--packager", resolve(packager),
       "--player", resolve(player), "--compression", "fast", "--output", releaseV2]);
     // This copy is limited to the isolated journey fixture. Never build over a
     // played distribution: its saves are player-owned, not compiler output.
-    await cp(saveV1, join(releaseV2, "Save"), {recursive: true, errorOnExist: true, force: false});
-    run(resolve(verifier), ["verify-v2", releaseV2]);
+    const dataV2 = await packageDataRoot(releaseV2);
+    await cp(saveV1, join(dataV2, "Save"), {recursive: true, errorOnExist: true, force: false});
+    run(resolve(verifier), ["verify-v2", dataV2]);
     for (const [path, digest] of originalSaves)
       assert.equal(createHash("sha256").update(await readFile(join(saveV1, path))).digest("hex"), digest,
         "V2 migration must leave the original V1 fixture saves unchanged");

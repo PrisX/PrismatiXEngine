@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Packs Samples/Starter with branding (a PNG icon, product name, version) and
 // checks this platform's distribution layout (docs/shipping.md, Distribution
-// layout): the Windows flat and bundled layouts, the macOS .app bundle
+// layout): the Windows default bundled layout and the flat one, the macOS .app bundle
 // (Info.plist, .icns, Frameworks, ad-hoc signature) or the Linux lib/ folder,
 // .desktop entry and icon theme sizes (with ldd finding every library).
 //
@@ -58,9 +58,10 @@ const branding = {executableName: "StarterGame", icon: "icon.png", productName: 
   macos: {bundleIdentifier: "dev.prismatix.ci-starter"}};
 
 if (process.platform === "win32") {
-  const flat = await pack(branding, join(work, "flat"));
+  // The default layout is "bundled" (engine folder "Engine"); "flat" is opt-in.
+  const flat = await pack({...branding, layout: "flat"}, join(work, "flat"));
   await expectFiles(flat, ["StarterGame.exe", "Content.pdx", "Package/manifest.json", "SDL3.dll"]);
-  const bundled = await pack({...branding, layout: "bundled"}, join(work, "bundled"));
+  const bundled = await pack(branding, join(work, "bundled"));
   // .prismatix-output.json is the CLI's output ownership marker.
   assert.deepEqual((await readdir(bundled)).filter(entry => !entry.startsWith(".")).sort(),
     ["Engine", "StarterGame.exe"]);

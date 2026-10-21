@@ -1985,7 +1985,7 @@ async function packageBranding(projectArgument: string | undefined): Promise<Pac
     executableName: distribution.executableName, productName: distribution.productName,
     companyName: distribution.companyName, copyright: distribution.copyright,
     version: distribution.version, layout: distribution.layout,
-    engineFolder: distribution.layout === "bundled" ? distribution.engineFolder ?? "Engine" : undefined,
+    engineFolder: distribution.layout === "flat" ? undefined : distribution.engineFolder,
     bundleIdentifier: distribution.macos?.bundleIdentifier,
   }).filter(([, value]) => value !== undefined));
   if (distribution.icon === undefined) return fields;
@@ -2161,7 +2161,9 @@ async function packProject(options: Options, settings: {
     // lib/ + .desktop) and the author's Windows layout; run --dev and the
     // packages Android and Web convert stay flat.
     const plainLayout = settings.development === true || settings.intermediate === true;
-    const layout = plainLayout ? "flat" : branding.layout ?? "flat";
+    // Windows distributions keep only the executable at the top level unless
+    // the author asks for "flat"; other platforms have their own layouts.
+    const layout = plainLayout || process.platform !== "win32" ? "flat" : branding.layout ?? "bundled";
     const platformLayout = !plainLayout;
     // Version information defaults to the project's version.
     const version = branding.version ??
@@ -2230,10 +2232,7 @@ async function packProject(options: Options, settings: {
     // The icon's bytes, not only its path, decide whether a package is reusable.
     const keyedPlan = branding.iconSha256 === undefined ? requestPlan
       : {...requestPlan, iconSha256: branding.iconSha256};
-    // Retention keeps its provenance in Package/ at the distribution root, so
-    // it applies where the game data stays there: flat Windows and Linux.
-    const dataAtRoot = layout === "flat" && !(platformLayout && process.platform === "darwin");
-    const planKey = suppliedArtifact === undefined || !dataAtRoot ? undefined :
+    const planKey = suppliedArtifact === undefined ? undefined :
       await packageRetentionKey(packager, player, artifactRoot, keyedPlan);
     const contentKey = planKey === undefined ? undefined :
       await packageContentKey(packager, artifactRoot, keyedPlan);

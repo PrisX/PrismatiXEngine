@@ -70,9 +70,10 @@ export interface NormalizedProjectInput {
  * sizes are made from it. `productName` (default: the project name),
  * `companyName`, `copyright` and `version` (default: the project version)
  * are the executable's version information (Explorer's Details tab) and the
- * macOS Info.plist. `layout` "bundled" keeps only the executable at the top of
- * a Windows distribution and moves the runtime and game data into
- * `engineFolder` (default "Engine").
+ * macOS Info.plist. On Windows the default `layout`, "bundled", keeps only
+ * the executable at the top of the distribution and moves the runtime and
+ * game data into `engineFolder` (default "Engine"); "flat" keeps them beside
+ * the executable.
  */
 export interface ProjectDistribution {
   readonly executableName?: string;

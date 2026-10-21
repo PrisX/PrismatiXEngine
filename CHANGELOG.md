@@ -72,9 +72,10 @@ supported platforms, verification status and known limitations.
   the Windows version information (Explorer's Details tab) and the macOS
   `Info.plist`. macOS packs a `.app` bundle (`distribution.macos.bundleIdentifier`,
   ad-hoc signed when packed on a Mac); Linux ships `lib/` and a `.desktop`
-  entry. `"layout": "bundled"` keeps only the executable at the top of a
-  Windows distribution, with the runtime and game data in an engine folder
-  that Windows loads as a private assembly; `"flat"` stays the default.
+  entry. A Windows distribution keeps only the executable at the top level,
+  with the runtime and game data in an `Engine` folder that Windows loads as a
+  private assembly (`"layout": "bundled"`, the default); `"layout": "flat"`
+  keeps everything beside the executable.
 - The shipped Windows Player is a GUI program, so a game opens no console
   window. Started from a terminal it prints to that console, and `--console`
   opens one; the log file is unchanged. `PrismatiXPlayerQA` stays a console

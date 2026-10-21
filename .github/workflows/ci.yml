@@ -127,8 +127,9 @@ jobs:
             --output out/ci/cli-starter
           if ($LASTEXITCODE -ne 0) { throw 'CLI to native Packager journey failed' }
           foreach ($path in @(
-            'out/ci/cli-starter/Content.pdx',
-            'out/ci/cli-starter/Package/manifest.json',
+            'out/ci/cli-starter/Engine/Content.pdx',
+            'out/ci/cli-starter/Engine/Package/manifest.json',
+            'out/ci/cli-starter/Engine/Engine.manifest',
             'out/ci/cli-starter/PrismatiXPlayer.exe'
           )) {
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -138,7 +139,7 @@ jobs:
           node scripts/check-desktop-layout.mjs `
             --packager out/ci/sdk-msvc/PrismatiXEngine/PrismatiXPackager.exe `
             --player out/ci/sdk-msvc/PrismatiXEngine/PrismatiXPlayer.exe
-          if ($LASTEXITCODE -ne 0) { throw 'Windows flat and bundled layout check failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Windows default (bundled) and flat layout check failed' }
       - uses: ./.github/actions/native-tests
         with:
           build-dir: out/ci/sdk-msvc

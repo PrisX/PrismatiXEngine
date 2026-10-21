@@ -4,6 +4,7 @@ import {basename, dirname, extname, join, relative, resolve} from "node:path";
 import {fingerprintFile, maxOutputMarkerBytes, outputOwnershipMarker,
   publishDirectory, publishedInputs, retainPublishedDirectoryIfMatching, verifiedPublishedInputs,
   type PublicationOptions, type PublishedInput} from "./output-safety.js";
+import {distributionDataRoot} from "./distribution-layout.js";
 
 export const packageProvenanceUri = "Package/cli-package-provenance.json";
 const provenanceFormat = "PrismatiXPackageRetention/1";
@@ -204,7 +205,9 @@ type PackageProvenance = {
 };
 
 async function existingProvenance(output: string): Promise<PackageProvenance | undefined> {
-  const path = join(output, ...packageProvenanceUri.split("/"));
+  // Beside the package manifest: in the engine folder or a .app when the
+  // distribution uses one.
+  const path = join(await distributionDataRoot(output), ...packageProvenanceUri.split("/"));
   let info;
   try { info = await lstat(path); }
   catch (error) {
@@ -392,7 +395,7 @@ export async function writePackageProvenance(staging: string,
     throw new Error("Invalid package runtime outputs");
   if ((contentFingerprint === undefined) !== (runtimeOutputs === undefined))
     throw new Error("Package content key and runtime outputs must be recorded together");
-  await writeFile(join(staging, ...packageProvenanceUri.split("/")),
+  await writeFile(join(await distributionDataRoot(staging), ...packageProvenanceUri.split("/")),
     `${JSON.stringify(contentFingerprint === undefined
       ? {format: provenanceFormat, planFingerprint}
       : {format: runtimeProvenanceFormat, planFingerprint,
