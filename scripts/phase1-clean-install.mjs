@@ -561,7 +561,15 @@ async function main() {
       requireSuccess(await pnpm(["add", "--global", "@prismatix/cli", "--ignore-scripts"],
         {cwd: installRoot, env: toolEnvironment, timeoutMs: 300_000}), "pnpm add --global @prismatix/cli (isolated candidate registry)");
       const globalRoot = requireSuccess(await pnpm(["root", "--global"], {cwd: installRoot, env: toolEnvironment}), "pnpm root --global");
-      installedPackages = join(globalRoot.stdout.trim(), "@prismatix");
+      // pnpm 10 reports the global node_modules itself; newer pnpm reports the
+      // global directory whose isolated installs each have their own node_modules.
+      const reportedRoot = globalRoot.stdout.trim();
+      const layouts = [join(reportedRoot, "@prismatix")];
+      for (const entry of await readdir(reportedRoot, {withFileTypes: true}).catch(() => []))
+        if (entry.isDirectory()) layouts.push(join(reportedRoot, entry.name, "node_modules", "@prismatix"));
+      installedPackages = layouts[0];
+      for (const layout of layouts)
+        if (await exists(join(layout, "cli", "dist", "src", "cli.js"))) { installedPackages = layout; break; }
       // Older pnpm links global commands into PNPM_HOME, newer pnpm into PNPM_HOME/bin.
       const shim = process.platform === "win32" ? "prismatix.cmd" : "prismatix";
       assert.ok(await exists(join(pnpmHome, shim)) || await exists(join(pnpmHome, "bin", shim)),
