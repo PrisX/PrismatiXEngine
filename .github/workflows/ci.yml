@@ -72,6 +72,7 @@ jobs:
         with:
           build-dir: out/ci/sdk-clang
           visual-output-dir: out/ci/visual/linux
+          sanitizers: ${{ matrix.sanitizers }}
       - uses: ./.github/actions/runtime-bundle
         with:
           build-dir: out/ci/sdk-clang

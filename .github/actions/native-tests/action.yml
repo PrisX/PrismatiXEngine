@@ -11,15 +11,37 @@ inputs:
   visual-output-dir:
     description: Where the GPU visual matrix writes its images, relative to the workspace.
     required: true
+  sanitizers:
+    description: >-
+      "ON" when the build uses AddressSanitizer/LeakSanitizer (Linux only):
+      libraries SDL loads at run time then stay mapped, see below.
+    default: "OFF"
 
 runs:
   using: composite
   steps:
+    # SDL, the Vulkan loader and Mesa dlopen their drivers and dlclose them
+    # again. LeakSanitizer then loses those libraries' globals as roots and
+    # reports their live allocations as leaks with "<unknown module>" frames,
+    # which no suppression can name. A dlclose that does nothing keeps them
+    # mapped, so such allocations stay reachable and real leaks keep their
+    # symbolized frames. Only the test processes are preloaded.
+    - name: Keep dlopen'd libraries mapped for LeakSanitizer
+      id: keep-mapped
+      if: runner.os == 'Linux' && inputs.sanitizers == 'ON'
+      shell: bash
+      run: |
+        dir="$RUNNER_TEMP/keep-mapped"
+        mkdir -p "$dir"
+        echo 'int dlclose(void *handle) { (void)handle; return 0; }' > "$dir/keep-mapped.c"
+        cc -shared -fPIC -o "$dir/libkeepmapped.so" "$dir/keep-mapped.c"
+        echo "library=$dir/libkeepmapped.so" >> "$GITHUB_OUTPUT"
     - name: Verify and execute the packaged Player journey
       shell: bash
       env:
         ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
         LSAN_OPTIONS: suppressions=${{ github.workspace }}/.github/sanitizers/lsan.supp:print_suppressions=0
+        LD_PRELOAD: ${{ steps.keep-mapped.outputs.library }}
         UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       run: |
         display=()
@@ -36,6 +58,7 @@ runs:
       env:
         ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
         LSAN_OPTIONS: suppressions=${{ github.workspace }}/.github/sanitizers/lsan.supp:print_suppressions=0
+        LD_PRELOAD: ${{ steps.keep-mapped.outputs.library }}
         UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         PRISMATIX_PACKAGER_RSS_BYTES: ${{ github.event_name == 'schedule' && runner.os == 'Linux' && '2147483685' || '' }}
         PRISMATIX_VISUAL_OUTPUT_DIR: ${{ github.workspace }}/${{ inputs.visual-output-dir }}
