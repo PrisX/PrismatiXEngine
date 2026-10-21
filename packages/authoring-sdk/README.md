@@ -95,7 +95,7 @@ rules.
 
 End a prose line with `\` to continue the same advance on the next source
 line. Imported text can instead use
-`[say speaker="稟" text="一行目\\n二行目"]` for one dialogue
+`[say speaker="湊" text="一行目\\n二行目"]` for one dialogue
 operation with an in-box line break, or `[narrate text="一行目\\n二行目"]`
 for narration. The quoted `text` is a JSON string, so `\\n` becomes a newline
 in the Runtime operation. `say` may also include `character=alias` when the
@@ -383,11 +383,11 @@ the center anchor while sitting close together, while another scene can keep one
 the center and one at the side.
 
 ```pxstory
-[show character=illya position=center x=-150 y=180 scale=0.82]
-[show character=miyu position=center x=150 y=180 scale=0.82]
+[show character=guide position=center x=-150 y=180 scale=0.82]
+[show character=friend position=center x=150 y=180 scale=0.82]
 
 ; Move an existing actor to the right anchor and adjust the close-up smoothly.
-[move character=miyu position=right x=-80 y=140 scale=0.9 duration=450ms ease=easeInOut wait=true]
+[move character=friend position=right x=-80 y=140 scale=0.9 duration=450ms ease=easeInOut wait=true]
 ```
 
 `x`, `y`, and `scale` remain fully author-controlled. Positive `y` moves a bottom-anchored
@@ -397,10 +397,10 @@ For a multilingual Story, keep one stable character alias and optionally give
 its `.pxcharacter` document localized speaker names:
 
 ```json
-{"displayName":"村雨","displayNames":{"ja-JP":"ムラサメ","en-US":"Murasame"},"aliases":["murasame"]}
+{"displayName":"小光","displayNames":{"ja-JP":"ヒカリ","en-US":"Hikari"},"aliases":["hikari"]}
 ```
 
-The other required character fields are omitted from this excerpt. `@murasame`
+The other required character fields are omitted from this excerpt. `@hikari`
 then emits the locale's `speaker` text while retaining the same `character` ID
 and save/seen operation IDs. Missing locales use `displayName`. The project
 compiler allows translated speaker text but still rejects changes to actor
@@ -411,10 +411,10 @@ For a displayed speaker with no character resource, quote the name after `@`,
 or write any non-identifier name directly:
 
 ```pxstory
-@"村雨"
-早安，主人。
+@"小光"
+早安，今天也一起加油吧。
 
-@村雨「早安，主人。」
+@小光「早安，今天也一起加油吧。」
 ```
 
 `@name text` speaks one line and returns to narration. `@alias[smile left
@@ -425,7 +425,7 @@ for these forms and the `storyAssets` short-name roots used by
 
 This emits a `dialogue` operation with separate `speaker` and `text` fields and
 an empty character identity. Each locale may translate the quoted speaker.
-Unlike `@murasame`, it does not select a portrait, voice directory, or other
+Unlike `@hikari`, it does not select a portrait, voice directory, or other
 character-catalog resource. Existing narration cannot be converted to dialogue
 in a shipped game without reviewing save/seen identity migration.
 

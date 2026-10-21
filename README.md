@@ -88,7 +88,7 @@ The `actions.*` builders are typed against the Player's action table, so a
 misspelled action or a wrong argument fails `validate`. Screen states that depend
 on what the player has cleared are rules in `prismatix.json`
 (`player.profileUiData`), not code. `distribution.transcode` stores PNG as WebP
-and Ogg as Opus in builds, which cut Sakura no Uta's media from 7.6 to 2.1 GiB.
+and Ogg as Opus in builds, which can make a game's media several times smaller.
 
 ## Guides
 

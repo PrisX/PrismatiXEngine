@@ -1,8 +1,7 @@
 # Engine review, October 2026
 
-Findings from building a second game with the SDK (`Projects/Unnamable-Regret`,
-chapter 1 of an original script with a custom UI), next to the Sakura no Uta
-port. Each item is in the commit history; the larger ones that were left open
+Findings from building a game with the SDK (`Projects/Unnamable-Regret`,
+chapter 1 of an original script with a custom UI). Each item is in the commit history; the larger ones that were left open
 at first moved from "Open, larger items" to the list below as they were done.
 
 ## Fixed while building

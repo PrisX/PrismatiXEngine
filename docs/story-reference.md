@@ -75,11 +75,11 @@ Every short form below compiles to the same operations as its long form, so
 save identities and the Runtime IR do not depend on which spelling you use.
 
 ```pxstory
-@直哉「うっぷ……少し食い過ぎたか……」
+@湊「ふう……少し歩きすぎたか……」
 @guide 今天想去哪裡呢？
 @guide[smile left voice=g0042] 一起去吧！
-あれめんどくさいんだよなぁ。\
-他で返せたら、そっちでチャラにしたいものだ。
+今日は朝から雨が降っていた。\
+傘を忘れたと気づいたのは、駅に着いてからだった。
 [show guide smile right]
 [bg street rule=083r duration=1000ms vague=40]
 [bgm bgm004]
@@ -88,10 +88,10 @@ save identities and the Runtime IR do not depend on which spelling you use.
 - `@name text` speaks one line and returns to narration; `@name` on its own
   line still starts a block that ends at the next empty line. Text may follow
   the name directly when it opens with `「`, `『`, `（`, `(` or `“`.
-- A name that is not an identifier (`@直哉`) is a display name: it speaks as
+- A name that is not an identifier (`@湊`) is a display name: it speaks as
   the registered character whose `displayName` it is, otherwise as a plain
-  label like `@"直哉"`. Character commands (`[show 直哉 ...]`,
-  `[act 直哉 nod]`, `[hide 直哉]`) accept the same display names. A quoted
+  label like `@"湊"`. Character commands (`[show 湊 ...]`,
+  `[act 湊 nod]`, `[hide 湊]`) accept the same display names. A quoted
   `@"..."` is always a plain label.
 - `@alias[...]` options apply to that line only: a bare word is an expression
   alias or a position (`left`/`center`/`right`), and `voice=` plays with the
@@ -151,7 +151,7 @@ Dialogue and narration text may change font, size and colour mid-line, next
 to `[ruby=...]` and `[br]`:
 
 ```pxstory
-@直哉「[size=150%]ぎゃあああ[/size]」
+@湊「[size=150%]ぎゃあああ[/size]」
 [b]Stop[/b], she said, [color=#C04040]quietly[/color].
 [font=Assets/Fonts/hand.otf][i]a note in the margin[/i][/font]
 @guide [size=75%]（小声で）[/size][ruby=きおく]記憶[/ruby]がない。
@@ -176,7 +176,7 @@ styles. A line may open with a text tag and still be prose.
 Three more tags only time the typewriter:
 
 ```pxstory
-@直哉「待って[w 500ms]……[speed 50%]ゆっくり[/speed]、[nowait]一気に！[/nowait]」
+@湊「待って[w 500ms]……[speed 50%]ゆっくり[/speed]、[nowait]一気に！[/nowait]」
 [w 1s]間を置いてから話す。
 ```
 
@@ -286,7 +286,7 @@ message window and discards the page.
 ```pxstory
 [nvl]
 桜の季節が、また巡ってきた。
-@直哉 「……ああ」
+@湊 「……ああ」
 [nvl.clear]
 新しい頁。
 [adv]
@@ -356,8 +356,8 @@ something new):
 @%who [size=%volume]%line[/size]
 [endmacro]
 
-[scream 直哉 「ぎゃああああ」]
-[scream who=藍 line=「うるさい！」 volume=200%]
+[scream 湊 「ぎゃああああ」]
+[scream who=雫 line=「うるさい！」 volume=200%]
 ```
 
 - `[macro name ...]` lists parameters: a bare word is required, `name=value`
@@ -640,15 +640,15 @@ has the right `targetLayer` (`PXBUILD1026`):
 When a character's expressions are role-tagged `.pxportrait` descriptors
 (see [layered portraits](#layered-portraits)), each expression is a body
 (`base` layers) plus a face (`expression` layers), and an alias such as
-`z1e0700_e0022` names both. `[face]` changes only the face and keeps the
+`body01_e0022` names both. `[face]` changes only the face and keeps the
 body, pose, position, offset, scale and turn on stage:
 
 ```pxstory
-[show 藍 z1e0700_e0022 center]
-@藍「……」
-[face 藍 e0023]
-@藍「えへへ」
-[face 藍 z1e0000_e0001]
+[show 雫 body01_e0022 center]
+@雫「……」
+[face 雫 e0023]
+@雫「えへへ」
+[face 雫 body00_e0001]
 ```
 
 - The face is the file name, without extension, of the expression layer
@@ -662,7 +662,7 @@ body, pose, position, offset, scale and turn on stage:
   expression shows is `PXSTORY1262`; `[face]` without a character and a face
   is `PXSTORY1260`. At run time a body with no such face, or a character not
   on stage, leaves the image unchanged and logs warning `PXVN6102`.
-- The message-window face option `@藍[face=...]` is a different feature: it
+- The message-window face option `@雫[face=...]` is a different feature: it
   picks the face image shown inside the message window for one line.
 
 ### Expressions and image files
@@ -721,7 +721,7 @@ Declare a variable in Story with `[var]`; no JSON is needed:
 ```pxstory
 [var affection=0]
 [var met_aoi=false scope=profile]
-[var nickname="直哉"]
+[var nickname="湊"]
 [var ratio=0 type=number]
 ```
 
@@ -766,8 +766,8 @@ Use `session` for story state that belongs to a checkpoint; use `profile` intent
 ### Asking for a name: `[input]`
 
 ```pxstory
-[var hero="直哉" type=string scope=profile]
-[input var=hero prompt="名前を入力してください" default=直哉 max=8]
+[var hero="湊" type=string scope=profile]
+[input var=hero prompt="名前を入力してください" default=湊 max=8]
 @hero 俺は{hero}だ。
 ```
 

@@ -789,15 +789,15 @@ against it with `synchronizeAlignedStoryIdentityMap` or
 label IDs that a fresh generation would change. New importers should assign
 explicit IDs to labels too.
 
-The Senren port's SCN/PSB decoder and original-command translation remain
-project-specific. Its SCN adapter now uses `buildImportedStorySource` per
-scene and keeps the existing sidecar reconciliation. Its project index and
-media resolution still use port-specific code. The SDK already provides the
-general index assembler and an ambiguity-reporting media resolver; replacing
-the port's older code is project migration work because its existing edited
-sidecars must remain stable and its media fallback chooses among original
-assets using game-specific rules. The SDK does not need those rules to support
-other importers. This does not make the SDK a general KAG or PSB input decoder.
+A decoder for another engine's script format and the translation of its
+commands stay in the importing project. Such an adapter can call
+`buildImportedStorySource` per scene and keep its existing sidecar
+reconciliation. The SDK provides a general index assembler and an
+ambiguity-reporting media resolver; moving an older importer onto them is
+project migration work, because its existing edited sidecars must remain
+stable and its media fallback may choose among source assets with
+game-specific rules. The SDK does not need those rules to support other
+importers, and it is not a general KAG or PSB input decoder.
 
 ## Resolving assets while importing Story
 

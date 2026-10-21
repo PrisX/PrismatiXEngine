@@ -3,7 +3,7 @@ import type {AuthoringDiagnostic, GameDocument, GameVariable, JsonPrimitive, Sou
 
 /**
  * Story variable declarations: `[var affection=0]`, `[var met_aoi=false
- * scope=profile]`, `[var name="直哉" type=string]`. A declaration emits no
+ * scope=profile]`, `[var name="湊" type=string]`. A declaration emits no
  * operation; the build merges every declaration into the compiled game
  * catalog, exactly as if it had been written in the `.pxgame` file.
  */

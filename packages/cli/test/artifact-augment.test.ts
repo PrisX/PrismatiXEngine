@@ -30,7 +30,7 @@ async function fixture(t: test.TestContext) {
 test("augment atomically adds and replaces owned artifact files without modifying the source", async t => {
   const f = await fixture(t);
   const manifest = {format: "PrismatiXArtifactAugmentation", schemaRevision: 1,
-    owner: "senren-ui", files: [
+    owner: "custom-ui", files: [
       {source: "Assets/new.png", target: "Assets/new.png", mode: "add"},
       {source: "Assets/replacement.png", target: "Assets/existing.png", mode: "replace",
         expectedFingerprint: f.original.fingerprint},
@@ -46,15 +46,15 @@ test("augment atomically adds and replaces owned artifact files without modifyin
       sawOldOutputDuringPublication = true;
     }
   }});
-  assert.deepEqual([result.added, result.replaced, result.owner], [1, 1, "senren-ui"]);
+  assert.deepEqual([result.added, result.replaced, result.owner], [1, 1, "custom-ui"]);
   assert.equal(sawOldOutputDuringPublication, true);
   assert.equal(sawCloneProgress, true);
   assert.equal(await readFile(join(f.artifactRoot, "Assets", "existing.png"), "utf8"),
     "replacement image");
   assert.equal(await readFile(join(f.artifactRoot, "Assets", "new.png"), "utf8"), "new image");
   const owners = JSON.parse(await readFile(join(f.artifactRoot, augmentationOwnershipPath), "utf8"));
-  assert.equal(owners.owners["Assets/existing.png"], "senren-ui");
-  assert.equal(owners.owners["Assets/new.png"], "senren-ui");
+  assert.equal(owners.owners["Assets/existing.png"], "custom-ui");
+  assert.equal(owners.owners["Assets/new.png"], "custom-ui");
   assert.equal((await publishedInputs(f.artifactRoot)).some(item =>
     item.uri === augmentationOwnershipPath), true);
   await publishDirectory({output: f.artifactRoot, projectRoot: f.projectRoot,

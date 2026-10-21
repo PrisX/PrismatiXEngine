@@ -478,7 +478,7 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
     }
     if (trimmed.startsWith("@")) {
       // `@alias` starts a speaker block; `@alias text` speaks exactly one
-      // line. Quoted and non-identifier names (`@"A B"`, `@直哉`) are
+      // line. Quoted and non-identifier names (`@"A B"`, `@湊`) are
       // display names rather than character aliases.
       const body = prose.slice(1);
       let cursor = body.length - body.trimStart().length;
@@ -688,7 +688,7 @@ function characterIndex(characters: readonly CharacterDocument[]): Map<string, C
     result.set(character.id, character);
     for (const alias of character.aliases) result.set(alias, character);
   }
-  // Display names (`[show 直哉 ...]`, `@直哉`) resolve when exactly one
+  // Display names (`[show 湊 ...]`, `@湊`) resolve when exactly one
   // character uses them and they do not shadow an id or alias.
   const byDisplay = new Map<string, CharacterDocument[]>();
   for (const character of characters)

@@ -37,9 +37,9 @@ jumps into other scenes are checked against their current labels. Errors
 carry the SDK's codes (`PXSTORY1305`, `PXSTORY1161`, …) and exact source
 spans; a Story resource whose file is missing is reported as `PXBUILD1044`.
 After a save, every scene of the project is compiled in the background, so a
-renamed label also marks the jumps to it in closed files. On the 352-scene
-*Sakura no Uta* port an edit re-checks in about 40 ms and the whole-project
-check takes about 3 s on a worker thread.
+renamed label also marks the jumps to it in closed files. In a 352-scene
+project an edit re-checks in about 40 ms and the whole-project check takes
+about 3 s on a worker thread.
 
 **Completion.**
 
