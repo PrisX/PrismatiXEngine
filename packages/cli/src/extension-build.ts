@@ -16,7 +16,8 @@ import {dirname, isAbsolute, join, relative, resolve, sep} from "node:path";
 import {fileURLToPath} from "node:url";
 
 import type {Message, Plugin} from "esbuild";
-import * as ts from "typescript-compiler";
+import type * as TS from "typescript-compiler";
+import {ts} from "./typescript.js";
 
 import {
   canonicalJson,
@@ -200,23 +201,23 @@ async function writeCache(root: string, manifestPath: string, entry: CacheEntry)
 }
 
 /** Globals the sandbox removes; using them fails at run time, not at type-check time. */
-function sandboxFindings(program: ts.Program, root: string, files: readonly ts.SourceFile[]): AuthoringDiagnostic[] {
+function sandboxFindings(program: TS.Program, root: string, files: readonly TS.SourceFile[]): AuthoringDiagnostic[] {
   const checker = program.getTypeChecker();
   const findings: AuthoringDiagnostic[] = [];
-  const fromLibrary = (node: ts.Node): boolean => {
+  const fromLibrary = (node: TS.Node): boolean => {
     const symbol = checker.getSymbolAtLocation(node);
     return symbol?.declarations?.some((declaration) =>
       program.isSourceFileDefaultLibrary(declaration.getSourceFile())) === true;
   };
   for (const source of files) {
     const path = within(root, resolve(source.fileName)) ?? source.fileName;
-    const report = (node: ts.Node, what: string, instead: string): void => {
+    const report = (node: TS.Node, what: string, instead: string): void => {
       findings.push({severity: "warning", code: "PXCLIEXT2002",
         message: `${what} is not available in the Player's extension sandbox`, path,
         span: span(source.text, path, node.getStart(source), node.getWidth(source)),
         hint: instead} as AuthoringDiagnostic);
     };
-    const visit = (node: ts.Node): void => {
+    const visit = (node: TS.Node): void => {
       if (ts.isIdentifier(node) && ["Date", "eval", "Function"].includes(node.text) &&
           !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) &&
           !ts.isTypeReferenceNode(node.parent) && fromLibrary(node))
@@ -256,23 +257,23 @@ function engineCapability(name: string): string {
 }
 
 /** Host calls whose capability the manifest does not declare: the Player refuses them. */
-function capabilityFindings(program: ts.Program, root: string, files: readonly ts.SourceFile[],
+function capabilityFindings(program: TS.Program, root: string, files: readonly TS.SourceFile[],
   capabilities: ReadonlySet<string>, manifestName: string): AuthoringDiagnostic[] {
   const checker = program.getTypeChecker();
   const findings: AuthoringDiagnostic[] = [];
-  const typeName = (node: ts.Node): string | undefined => {
+  const typeName = (node: TS.Node): string | undefined => {
     const type = checker.getTypeAtLocation(node);
     return (type.aliasSymbol ?? type.getSymbol())?.getName();
   };
   for (const source of files) {
     const path = within(root, resolve(source.fileName)) ?? source.fileName;
-    const report = (node: ts.Node, what: string, capability: string): void => {
+    const report = (node: TS.Node, what: string, capability: string): void => {
       findings.push({severity: "warning", code: "PXCLIEXT2004",
         message: `${what} needs the "${capability}" capability, which ${manifestName} does not declare`, path,
         span: span(source.text, path, node.getStart(source), node.getWidth(source)),
         hint: `Add "${capability}" to "capabilities" in ${manifestName}; the Player refuses the call otherwise.`} as AuthoringDiagnostic);
     };
-    const visit = (node: ts.Node): void => {
+    const visit = (node: TS.Node): void => {
       if (ts.isPropertyAccessExpression(node)) {
         const owner = typeName(node.expression);
         const name = node.name.text;
@@ -305,7 +306,7 @@ function capabilityFindings(program: ts.Program, root: string, files: readonly t
 
 function typeCheck(root: string, entryPath: string, declarationsPath: string,
   declarations: string, capabilities: ReadonlySet<string>, manifestName: string): AuthoringDiagnostic[] {
-  const options: ts.CompilerOptions = {
+  const options: TS.CompilerOptions = {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler,

@@ -9,7 +9,8 @@ import {
 import {tmpdir} from "node:os";
 import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
-import * as ts from "typescript-compiler";
+import type * as TS from "typescript-compiler";
+import {ts} from "./typescript.js";
 
 import {
   checkoutRuntimeFile, discoverQaPlayer, discoverRuntimeTool, discoverRuntimeBundle, RuntimeDiscoveryFailure, runtimeDiscoveryHint,
@@ -285,10 +286,10 @@ function jsxNodeSpan(root: string, texts: ReadonlyMap<string, string>,
   return sourceSpan(text, path, {start, end: start + 1});
 }
 
-type JsxOpening = ts.JsxOpeningElement | ts.JsxSelfClosingElement;
+type JsxOpening = TS.JsxOpeningElement | TS.JsxSelfClosingElement;
 interface ParsedJsxSource {
   readonly text: string;
-  readonly ast: ts.SourceFile;
+  readonly ast: TS.SourceFile;
   readonly openings: ReadonlyMap<number, JsxOpening>;
 }
 
@@ -309,15 +310,15 @@ function jsxFieldPaths(field: readonly string[]): readonly (readonly string[])[]
   return [field];
 }
 
-function jsxPropertyName(value: ts.PropertyName, ast: ts.SourceFile): string {
+function jsxPropertyName(value: TS.PropertyName, ast: TS.SourceFile): string {
   return ts.isIdentifier(value) || ts.isStringLiteral(value) ||
     ts.isNumericLiteral(value) ? value.text : value.getText(ast);
 }
 
-function jsxObjectProperty(value: ts.Expression, name: string,
-  ast: ts.SourceFile): ts.Expression | undefined {
+function jsxObjectProperty(value: TS.Expression, name: string,
+  ast: TS.SourceFile): TS.Expression | undefined {
   if (!ts.isObjectLiteralExpression(value)) return undefined;
-  let found: ts.Expression | undefined;
+  let found: TS.Expression | undefined;
   for (const property of value.properties) {
     if (ts.isSpreadAssignment(property)) {
       found = undefined;
@@ -331,8 +332,8 @@ function jsxObjectProperty(value: ts.Expression, name: string,
 }
 
 function jsxAttributeValue(opening: JsxOpening, path: readonly string[],
-  ast: ts.SourceFile): ts.Node | undefined {
-  let found: ts.Node | undefined;
+  ast: TS.SourceFile): TS.Node | undefined {
+  let found: TS.Node | undefined;
   for (const attribute of opening.attributes.properties) {
     if (ts.isJsxSpreadAttribute(attribute)) {
       // An inline object literal has the same overwrite order as JSX props.
@@ -343,8 +344,8 @@ function jsxAttributeValue(opening: JsxOpening, path: readonly string[],
     if (attribute.name.getText(ast) === path[0]) found = attribute.initializer;
   }
   if (found === undefined) return undefined;
-  let value: ts.Expression | undefined = ts.isJsxExpression(found)
-    ? found.expression : found as ts.Expression;
+  let value: TS.Expression | undefined = ts.isJsxExpression(found)
+    ? found.expression : found as TS.Expression;
   for (const segment of path.slice(1)) {
     if (value === undefined) return undefined;
     value = jsxObjectProperty(value, segment, ast);
@@ -363,7 +364,7 @@ function jsxPropertySpan(root: string, texts: ReadonlyMap<string, string>,
     const ast = ts.createSourceFile(absolute, text, ts.ScriptTarget.ES2023, true,
       /\.tsx$/iu.test(absolute) ? ts.ScriptKind.TSX : ts.ScriptKind.JSX);
     const openings = new Map<number, JsxOpening>();
-    const visit = (value: ts.Node): void => {
+    const visit = (value: TS.Node): void => {
       if (ts.isJsxOpeningElement(value) || ts.isJsxSelfClosingElement(value))
         openings.set(value.getStart(ast), value);
       ts.forEachChild(value, visit);
@@ -681,7 +682,7 @@ function projectSourcePath(root: string, path: string): string | undefined {
     ? undefined : value;
 }
 
-function typescriptDiagnostics(values: readonly ts.Diagnostic[], root: string,
+function typescriptDiagnostics(values: readonly TS.Diagnostic[], root: string,
   entryPath: string, entryText: string): AuthoringDiagnostic[] {
   return values.filter((value) => value.category === ts.DiagnosticCategory.Error)
     .map((value) => {
@@ -699,7 +700,7 @@ function typescriptDiagnostics(values: readonly ts.Diagnostic[], root: string,
     });
 }
 
-function jsxCompilerOptions(): ts.CompilerOptions {
+function jsxCompilerOptions(): TS.CompilerOptions {
   return {
     target: ts.ScriptTarget.ES2023,
     module: ts.ModuleKind.ESNext,
@@ -718,10 +719,10 @@ function jsxCompilerOptions(): ts.CompilerOptions {
 }
 
 interface JsxProgram {
-  readonly program: ts.Program;
-  readonly options: ts.CompilerOptions;
-  readonly host: ts.CompilerHost;
-  readonly sourceFiles: readonly ts.SourceFile[];
+  readonly program: TS.Program;
+  readonly options: TS.CompilerOptions;
+  readonly host: TS.CompilerHost;
+  readonly sourceFiles: readonly TS.SourceFile[];
 }
 
 function createJsxProgram(root: string, sourcePath: string): JsxProgram {
@@ -3433,7 +3434,7 @@ async function uiProject(options: Options): Promise<{readonly root: string; read
 /** Full extents of the JSX elements that produced each canonical node. */
 function jsxElementSpans(root: string, texts: ReadonlyMap<string, string>,
   starts: ReadonlyMap<number, SourceSpan>): Map<number, SourceSpan> {
-  const elements = new Map<string, {text: string; byStart: Map<number, ts.Node>}>();
+  const elements = new Map<string, {text: string; byStart: Map<number, TS.Node>}>();
   const result = new Map<number, SourceSpan>();
   for (const [index, start] of starts) {
     const absolute = projectFile(root, start.path);
@@ -3443,8 +3444,8 @@ function jsxElementSpans(root: string, texts: ReadonlyMap<string, string>,
       if (text === undefined) continue;
       const ast = ts.createSourceFile(absolute, text, ts.ScriptTarget.ES2023, true,
         /\.tsx$/iu.test(absolute) ? ts.ScriptKind.TSX : ts.ScriptKind.JSX);
-      const byStart = new Map<number, ts.Node>();
-      const visit = (value: ts.Node): void => {
+      const byStart = new Map<number, TS.Node>();
+      const visit = (value: TS.Node): void => {
         if (ts.isJsxElement(value) || ts.isJsxSelfClosingElement(value)) byStart.set(value.getStart(ast), value);
         ts.forEachChild(value, visit);
       };
