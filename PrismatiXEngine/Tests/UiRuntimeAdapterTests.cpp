@@ -1659,7 +1659,7 @@ int main() {
     Check(portraitNode != portraitDocument.nodes.end(), "portrait test image node must exist");
     portraitNode->assetId.reset();
     portraitNode->runtimeProperties["path"] = std::string{"Content/Portrait/logo.pxportrait"};
-    constexpr auto portraitSource = R"({
+    static constexpr auto portraitSource = R"({
       "format":"PrismatiXLayeredPortrait","schemaRevision":1,
       "width":320,"height":120,"layers":[
         {"path":"Assets/base.png","width":320,"height":120,"role":"base"},
@@ -1712,7 +1712,7 @@ int main() {
     motionNode->runtimeType = "MotionRect";
     motionNode->assetId.reset();
     motionNode->runtimeProperties["path"] = std::string{"Content/Motion/logo.pxmotion"};
-    constexpr auto motionSource = R"({
+    static constexpr auto motionSource = R"({
       "format":"PrismatiXMotion","schemaRevision":1,"id":"logo",
       "canvas":{"width":320,"height":120},"duration":1,"loop":false,
       "layers":[{"id":"body","image":"Assets/body.png","width":100,"height":100}],
@@ -1758,7 +1758,7 @@ int main() {
     motion->Update(0.5f);
     Check(firedMotionMarkers.size() == 3,
           "clearing the UI-context audio service detaches an existing MotionRect");
-    constexpr auto loopingSource = R"({
+    static constexpr auto loopingSource = R"({
       "format":"PrismatiXMotion","schemaRevision":1,"id":"looping",
       "canvas":{"width":100,"height":100},"duration":1,"loop":true,
       "layers":[{"id":"body","image":"Assets/body.png","width":100,"height":100}],
