@@ -1,42 +1,27 @@
 # Starter asset provenance
 
-The starter's pictures were generated for PrismatiX with Anima Base 1.0
-(CircleStone Labs, https://huggingface.co/circlestone-labs/Anima) in ComfyUI.
-The Anima license restricts the model weights to non-commercial use but places
-no restriction on generated images, which may be used commercially. The
-pictures are distributed with the PrismatiX repository; keep them in your game
-or replace them.
+## Background
 
-Common settings: Qwen3 0.6B text encoder, Qwen-Image VAE, er_sde sampler with
-the simple scheduler, 30 steps, CFG 4, negative prompt "worst quality, low
-quality, score_1, score_2, score_3, artist name, signature, watermark, blurry,
-jpeg artifacts, chromatic aberration".
+`Assets/Backgrounds/street.jpg` (written in the Story as `[bg street]`, and
+behind the title screen) is a sunny city street with a large tree, a
+1920x1080 JPEG without metadata (SHA-256
+`4c134ca7dda9cd5b2e386cf3e0574f9ba648aa21dece660cd78c65688ce90116`).
 
-## Character
+AI-generated image supplied by the project owner (Owen Liu) for use in samples
+only. Replace it before releasing a game.
 
-`Assets/hikari-smile.png` is a 1024x1536 generation (seed 33) with the
-anima-highres-aesthetic-boost LoRA at 0.7. The prompt mixes the artist tags
-@tiv, @kobuichi and @karory, so no single artist's style is copied, and
-describes a full-body standing high school girl (light brown medium hair, hair
-ribbon, beige cardigan, navy pleated skirt) on a white background.
+## Characters
 
-`Assets/hikari-happy.png`, `Assets/hikari-talk.png` and
-`Assets/hikari-surprised.png` repaint only the face of that image (an elliptical
-mask, denoise 0.8, seed 1) with expression tags; every pixel outside the face is
-identical, so expressions swap without the body shifting. All four share one
-BiRefNet_toonout matte, were cleared of the white fringe and scaled to 700
-pixels high.
+Each character is one full-body portrait (832x1472 RGBA PNG, transparent
+background, no metadata), its `normal` expression:
 
-## Backgrounds
+- `Assets/Characters/shirone/normal.png`: `shirone` (白音). SHA-256
+  `7fdf790ad270134cc32bf6be23cf06117f01f2076636d06c0eb79e42f27b77d7`.
+- `Assets/Characters/koharu/normal.png`: `koharu` (小春). SHA-256
+  `3b8c6b014f3304fcf40220eb3ab78af965f66608d5414f91956912be07644655`.
 
-All three use the artist tag @y y (ysk ygc), were generated at 1536x864 and
-scaled to 1920x1080.
-
-- `Assets/room-dusk.jpg`: a girl's bedroom at sunset, seed 5151.
-- `Assets/room-night.jpg`: the dusk room tinted dark blue, then repainted at
-  denoise 0.55 with a night prompt, so the layout matches.
-- `Assets/hill-dusk.jpg`: a hilltop over a town at dusk, seed 303, for the
-  title screen.
+Each is an AI-generated image supplied by the project owner (Owen Liu) for use
+in samples only. Replace it before releasing a game.
 
 ## Font
 

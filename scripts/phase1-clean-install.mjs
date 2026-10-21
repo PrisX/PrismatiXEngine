@@ -453,7 +453,7 @@ async function watchAuthorJourney(cli, project, story, environment, evidenceRoot
     await waitFor(() => commits().length >= 1, "initial persistent preview");
     const baseline = await readFile(story, "utf8");
     // Replace a live dialogue before [end], rather than appending unreachable text.
-    const edited = baseline.replace("你好，我是小光。這是你的第一個故事。", authorEdit);
+    const edited = baseline.replace("啊，你來了。我是白音，在這附近的宅邸做女僕。", authorEdit);
     assert.notEqual(edited, baseline, "starter dialogue anchor changed; update the journey fixture");
     await writeFile(story, edited, "utf8");
     await waitFor(() => commits().length >= 2, "live dialogue rebuild");

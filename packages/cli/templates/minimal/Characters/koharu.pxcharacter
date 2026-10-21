@@ -1,0 +1,13 @@
+{
+  "format": "PrismatiXCharacter",
+  "schemaRevision": 1,
+  "revision": 1,
+  "displayName": "小春",
+  "aliases": ["koharu"],
+  "nameColor": "#E09A7A",
+  "stage": {"scale":{{CHARACTER_SCALE}}},
+  "defaultExpressionId": "normal",
+  "expressions": [
+    {"name":"normal","aliases":["default"],"assetPath":"Assets/Characters/koharu/normal.png","thumbnailAssetId":null}
+  ]
+}

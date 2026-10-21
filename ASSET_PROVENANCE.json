@@ -44,6 +44,27 @@
       "origin": "Downloaded from the internet; original source unknown",
       "license": "unknown",
       "redistribution": "repository test fixture only; not shipped in any package or runtime bundle"
+    },
+    {
+      "path": "packages/cli/templates/minimal/Assets/Backgrounds/street.jpg",
+      "sha256": "4c134ca7dda9cd5b2e386cf3e0574f9ba648aa21dece660cd78c65688ce90116",
+      "origin": "Supplied by the project owner (Owen Liu): the street background of the CLI's sample story, also PrismatiX Studio's new-project background. AI-generated image supplied by the project owner (Owen Liu) for use in samples only. Replace it before releasing a game.",
+      "license": "sample-only",
+      "redistribution": "cli-sample-template-and-samples-only"
+    },
+    {
+      "path": "packages/cli/templates/minimal/Assets/Characters/shirone/normal.png",
+      "sha256": "7fdf790ad270134cc32bf6be23cf06117f01f2076636d06c0eb79e42f27b77d7",
+      "origin": "Supplied by the project owner (Owen Liu): the portrait of 白音 (Shirone) in the CLI's sample story, also in PrismatiX Studio's new-project cast. AI-generated image supplied by the project owner (Owen Liu) for use in samples only. Replace it before releasing a game.",
+      "license": "sample-only",
+      "redistribution": "cli-sample-template-and-samples-only"
+    },
+    {
+      "path": "packages/cli/templates/minimal/Assets/Characters/koharu/normal.png",
+      "sha256": "3b8c6b014f3304fcf40220eb3ab78af965f66608d5414f91956912be07644655",
+      "origin": "Supplied by the project owner (Owen Liu): the portrait of 小春 (Koharu) in the CLI's sample story, also in PrismatiX Studio's new-project cast. AI-generated image supplied by the project owner (Owen Liu) for use in samples only. Replace it before releasing a game.",
+      "license": "sample-only",
+      "redistribution": "cli-sample-template-and-samples-only"
     }
   ],
   "policy": {

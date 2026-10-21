@@ -1,27 +1,54 @@
 ; Edit dialogue, save, and watch Preview update. The SDK keeps stable save IDs beside this file.
+[var bread=false]
+
 *start
-[bg room-dusk]
-[show guide smile center]
-@guide
-你好，我是小光。這是你的第一個故事。
-窗外的天空正在變色。今天想去哪裡呢？
+[bg street duration=1s]
+午後的大街。行道樹的影子，一路鋪到路口。
+[show shirone normal left]
+@白音
+啊，你來了。我是白音，在這附近的宅邸做女僕。
+今天要出門採買。小春說她也要來，可是……
+
+[show koharu normal right]
+@小春 對、對不起，我來晚了！
+@白音 這麼熱的天，還圍著圍巾？
+@小春 這、這條是我最喜歡的嘛……
+@白音 好吧。那麼，先去哪裡？
 
 [choice]
-- 一起看看星星 -> stars
-- 留在這裡說故事 -> story
+- 去轉角的麵包店 -> bakery
+- 在樹蔭下歇一會兒 -> shade
 [endchoice]
 
-*stars
-[bg room-night duration=800ms]
-@guide[happy] 天黑了。我們把燈關掉，等第一顆星亮起。
-@guide 明天也一起來吧！
+*bakery
+[set bread=true]
+[hide shirone]
+[move koharu position=center duration=600ms]
+[bg street zoom=1.2 anchor=960,620 duration=2s]
+@小春
+這邊這邊！轉角那家的奶油麵包，下午三點出爐。
+每次經過，我都會停下來聞一下……
+
+[show shirone normal left]
+@白音 小春，那是要帶回宅邸的份喔。
+@小春[act=hop] 我、我知道啦！
 [jump finish]
 
-*story
-@guide[talk] 那就從「很久很久以前」開始。
-@guide[surprised] 啊，等等！我還沒想好主角的名字。
-@guide 下一句，就交給你來寫吧。
+*shade
+[bg street zoom=1.25 anchor=1360,560 duration=2s]
+[move shirone position=center duration=600ms]
+@白音 也好。採買不急，先喘口氣吧。
+@小春[act=nod] ……嗯。其實我走得有點累了。
 
 *finish
+[bg street zoom=1 duration=1s]
+[if bread]
+@白音 麵包還熱著。回去的路上，就讓小春拿吧。
+[else]
+@小春 下次……換我帶你去轉角的麵包店。
+[endif]
+
+[hide all]
+走著走著，太陽慢慢斜了。
 你可以用對話框右上角的 SAVE／LOAD 保存或讀取進度，再試另一個選項。
 [end]

@@ -226,7 +226,8 @@ const emptyStory: Record<string, string> = {
 
 /** Removes the sample art and story from a copied template (`create --empty`). */
 async function emptyStarter(root: string, locale: string): Promise<void> {
-  for (const entry of await readdir(join(root, "Assets"))) await rm(join(root, "Assets", entry), {force: true});
+  for (const entry of await readdir(join(root, "Assets")))
+    await rm(join(root, "Assets", entry), {recursive: true, force: true});
   await rm(join(root, "Characters"), {recursive: true, force: true});
   // The font and the startup screen's logo stay, and so does what the
   // provenance says about them; the pictures' sections go with the pictures.
@@ -237,8 +238,9 @@ async function emptyStarter(root: string, locale: string): Promise<void> {
   const text = kept.map((section) => section.replace(/\r\n/gu, "\n").trimEnd()).join("\n\n");
   await writeFile(provenancePath, `# Starter asset provenance\n\n${text}\n`, "utf8");
   const manifestPath = join(root, "prismatix.json");
-  const manifest = (await readFile(manifestPath, "utf8")).split("\n")
-    .filter((line) => !/"kind":"background"|^\s*"characters":/u.test(line)).join("\n")
+  const manifest = (await readFile(manifestPath, "utf8"))
+    .replace(/^[ \t]*"characters": \[[^\]]*\],?\r?\n/mu, "").split("\n")
+    .filter((line) => !/"kind":"background"/u.test(line)).join("\n")
     .replace(/,(\s*\n\s*[\]}])/gu, "$1");
   JSON.parse(manifest);
   await writeFile(manifestPath, manifest, "utf8");
@@ -251,9 +253,9 @@ async function emptyStarter(root: string, locale: string): Promise<void> {
   await writeFile(join(root, "Story", "main.pxstory"), emptyStory[language] ?? emptyStory.en!, "utf8");
   const readmePath = join(root, "README.md");
   await writeFile(readmePath, (await readFile(readmePath, "utf8")).replace(
-    "This short Traditional Chinese story includes a guide, a background, two choices and two endings.",
+    "This short Traditional Chinese story puts two characters, 白音 and 小春, on a street: they step on stage, move and leave, the view zooms in, a choice splits the walk into two routes, and a variable picks the closing line.",
     "The project starts empty: a title screen and a one-line story to write over.").replace(
-    "The starter's backgrounds and character were generated for PrismatiX with the Anima model and may be kept or replaced; `ASSET_PROVENANCE.md` records how.",
+    "The street and the two characters are AI-generated images supplied by the project owner (Owen Liu) for use in samples only. Replace them before releasing a game; `ASSET_PROVENANCE.md` lists them.",
     "`ASSET_PROVENANCE.md` records where the font and the startup screen's logo come from; add a section for each picture or sound you add."), "utf8");
 }
 
@@ -273,6 +275,9 @@ export async function createStarter(targetArgument: string, options: StarterOpti
   const replacements: Record<string, string> = {
     "{{PROJECT_ID}}": jsonText(id), "{{PROJECT_NAME}}": jsonText(name),
     "{{LOCALE}}": jsonText(locale), "{{WIDTH}}": String(width), "{{HEIGHT}}": String(height),
+    // The starter characters' portraits are 1472 pixels high; like the
+    // Studio's, they stand on the bottom edge at about 95% of the screen height.
+    "{{CHARACTER_SCALE}}": String(Math.max(0.01, Math.round(height * 0.95 / 1472 * 100) / 100)),
   };
   for (const token of ["SCENE_ID", "ROOT_ID", "TITLE_ID", "START_ID", "LOAD_ID"])
     replacements[`{{${token}}}`] = randomUUID();

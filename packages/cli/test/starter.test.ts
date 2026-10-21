@@ -28,7 +28,8 @@ test("starter prepares a compilable branch story and preserves binary font/image
     const manifest = JSON.parse(await readFile(result.project, "utf8"));
     assert.equal(manifest.name, 'My "story"');
     assert.equal(manifest.defaultLocale, "zh-TW");
-    for (const file of ["Content/Fonts/NotoSansTC-Bold.ttf", "Assets/room-dusk.jpg", "Assets/hikari-smile.png"]) {
+    for (const file of ["Content/Fonts/NotoSansTC-Bold.ttf", "Assets/Backgrounds/street.jpg",
+      "Assets/Characters/shirone/normal.png", "Assets/Characters/koharu/normal.png"]) {
       const actual = await readFile(join(target, file));
       const expected = await readFile(join(packageRoot, "templates/minimal", file));
       assert.deepEqual(actual, expected);
@@ -44,13 +45,16 @@ test("starter prepares a compilable branch story and preserves binary font/image
     assert.doesNotMatch(story, /\[id\s/u);
     // The starter shows the shortest forms: storyAssets names, a choice
     // block and positional jump targets.
-    assert.match(story, /\[bg room-dusk\]/u);
-    assert.match(story, /\[choice\]\r?\n- 一起看看星星 -> stars\r?\n/u);
+    assert.match(story, /\[bg street duration=1s\]/u);
+    assert.match(story, /\[choice\]\r?\n- 去轉角的麵包店 -> bakery\r?\n/u);
     assert.match(story, /\[jump finish\]/u);
+    // Its two characters have one expression each, and the story names no other.
+    assert.match(story, /\[show shirone normal left\][\s\S]*\[show koharu normal right\]/u);
+    assert.doesNotMatch(story, /\[show \w+ (?!normal )\w+ /u);
     assert.equal(identities.format, "PrismatiXStoryIdentityMap");
     assert.ok(identities.entries.length > 5);
-    await writeFile(storyPath, story.replace("你好，我是小光。這是你的第一個故事。",
-      "你好，我是小光。故事從這裡開始。"), "utf8");
+    await writeFile(storyPath, story.replace("啊，你來了。我是白音，在這附近的宅邸做女僕。",
+      "啊，你來了。我是白音。故事從這裡開始。"), "utf8");
     const revised = spawnSync(process.execPath,
       [join(packageRoot, "dist/src/cli.js"), "validate", target], {encoding: "utf8"});
     assert.equal(revised.status, 0, revised.stdout + revised.stderr);

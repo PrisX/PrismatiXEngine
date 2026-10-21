@@ -80,14 +80,15 @@ async function engineInventory() {
 // How --write describes a file it has no earlier entry for.
 const starterOrigin = "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs";
 function describe(path, sha256, engine) {
+  // Before engine copies: the CLI's sample template carries the same pictures.
+  if (sampleOnly.has(sha256))
+    return {origin: `Supplied by the project owner (Owen Liu): ${sampleOnly.get(sha256)}`,
+      license: "sample-only", status: "sample-only", note: sampleOnlyNote};
   const copied = engine.get(sha256);
   if (copied !== undefined)
     return {origin: `Copy of the engine's ${copied.path} (${copied.origin})`, license: copied.license, copyOf: copied.path};
   if (path === "Content/Fonts/OFL-1.1.txt")
     return {origin: "SIL Open Font License 1.1 text, as in the engine's Resources/Fonts/OFL-1.1.txt", license: "OFL-1.1"};
-  if (sampleOnly.has(sha256))
-    return {origin: `Supplied by the project owner (Owen Liu): ${sampleOnly.get(sha256)}`,
-      license: "sample-only", status: "sample-only", note: sampleOnlyNote};
   if (!binary.test(path)) return {origin: starterOrigin, license: "MIT"};
   throw new Error(`${path}: no known origin; add it to ${inventoryName} by hand`);
 }

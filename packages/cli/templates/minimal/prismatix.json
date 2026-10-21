@@ -6,15 +6,16 @@
   "uiEntryPoints": {"splash": "Content/UI/Splash.tsx", "title": "Content/UI/Title.tsx"},
   "storyAssets": {"bg": ["Assets"]},
   "assets": [
-    {"id":"10000000-0000-4000-8000-000000000001","name":"Room at dusk","kind":"background","source":"Assets/room-dusk.jpg"},
-    {"id":"10000000-0000-4000-8000-000000000002","name":"Room at night","kind":"background","source":"Assets/room-night.jpg"},
-    {"id":"10000000-0000-4000-8000-000000000003","name":"Hilltop at dusk","kind":"background","source":"Assets/hill-dusk.jpg"},
+    {"id":"10000000-0000-4000-8000-000000000004","name":"Street","kind":"background","source":"Assets/Backgrounds/street.jpg"},
     {"id":"30000000-0000-4000-8000-000000000001","name":"Noto Sans TC","kind":"font","source":"Content/Fonts/NotoSansTC-Bold.ttf"},
     {"id":"40000000-0000-4000-8000-000000000001","name":"Font license","kind":"license","source":"Content/Fonts/OFL-1.1.txt"},
     {"id":"40000000-0000-4000-8000-000000000002","name":"PrismatiX logo notice","kind":"license","source":"Content/UI/PrismatiX/NOTICE.md"},
     {"id":"50000000-0000-4000-8000-000000000001","name":"Starter provenance","kind":"provenance","source":"ASSET_PROVENANCE.md"}
   ],
-  "characters": [{"alias":"guide","displayName":"小光","source":"Characters/guide.pxcharacter"}],
+  "characters": [
+    {"alias":"shirone","displayName":"白音","source":"Characters/shirone.pxcharacter"},
+    {"alias":"koharu","displayName":"小春","source":"Characters/koharu.pxcharacter"}
+  ],
   "settings": {
     "player.splashes": [{"scene": "Content/UI/Splash.tsx", "minimumDuration": 2.8, "skippable": true, "skipAllowedAfter": 0.4}]
   }
