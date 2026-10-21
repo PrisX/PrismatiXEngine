@@ -1,5 +1,7 @@
 #include "Engine/Core/JobSystem.h"
 
+#include <SDL3/SDL_thread.h>
+
 #include <algorithm>
 
 namespace px::jobs {
@@ -96,6 +98,12 @@ void JobSystem::Enqueue(std::function<void()> task) {
 }
 
 void JobSystem::WorkerLoop() {
+    // SDL keeps a per-thread error buffer (SDL_SetError) that it frees only for
+    // threads it created. A job that decodes an image or touches any SDL API
+    // may have allocated one, so release it before this thread exits.
+    struct ReleaseSdlThreadState {
+        ~ReleaseSdlThreadState() { SDL_CleanupTLS(); }
+    } releaseSdlThreadState;
     for (;;) {
         std::function<void()> task;
         {
