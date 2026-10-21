@@ -62,7 +62,7 @@ Do these once, before the first tag.
    `NPM_TOKEN` secret here.
 5. **After the first release**, for each of `@prismatix/authoring-sdk`,
    `@prismatix/runtime` and `@prismatix/cli` on npmjs.com: Settings, Trusted
-   Publisher, GitHub Actions, with organization or user `owenliu0924`,
+   Publisher, GitHub Actions, with organization or user `PrisX`,
    repository `PrismatiXEngine`, workflow filename `release.yml` and
    environment `release`. Then delete the `NPM_TOKEN` secret and revoke the
    token; set each package's publishing access to "Require two-factor

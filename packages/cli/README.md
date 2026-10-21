@@ -1,7 +1,7 @@
 # @prismatix/cli
 
 The `prismatix` command creates, previews, validates, builds and packs
-[PrismatiX](https://github.com/owenliu0924/PrismatiXEngine) visual novels. The
+[PrismatiX](https://github.com/PrisX/PrismatiXEngine) visual novels. The
 package carries the native PrismatiX Player, Packager and Preview Host for each
 supported desktop platform under `runtime/<platform>-<architecture>/`, so you do
 not need C++ tools or an engine checkout. Players of the finished game do not
@@ -65,11 +65,11 @@ its release notes.
 
 ## Documentation
 
-- [Getting started](https://github.com/owenliu0924/PrismatiXEngine/blob/master/docs/getting-started.md)
-- [Story reference](https://github.com/owenliu0924/PrismatiXEngine/blob/master/docs/story-reference.md)
-- [UI reference](https://github.com/owenliu0924/PrismatiXEngine/blob/master/docs/ui-reference.md)
-- [Shipping a game](https://github.com/owenliu0924/PrismatiXEngine/blob/master/docs/shipping.md)
-- [Release notes](https://github.com/owenliu0924/PrismatiXEngine/tree/master/docs/releases)
+- [Getting started](https://github.com/PrisX/PrismatiXEngine/blob/master/docs/getting-started.md)
+- [Story reference](https://github.com/PrisX/PrismatiXEngine/blob/master/docs/story-reference.md)
+- [UI reference](https://github.com/PrisX/PrismatiXEngine/blob/master/docs/ui-reference.md)
+- [Shipping a game](https://github.com/PrisX/PrismatiXEngine/blob/master/docs/shipping.md)
+- [Release notes](https://github.com/PrisX/PrismatiXEngine/tree/master/docs/releases)
 
 ## License
 

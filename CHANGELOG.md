@@ -66,5 +66,5 @@ supported platforms, verification status and known limitations.
   node; dense timelines (2,048 tracks on 256 nodes) sample about 25 times
   faster.
 
-[Unreleased]: https://github.com/owenliu0924/PrismatiXEngine/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/owenliu0924/PrismatiXEngine/releases/tag/v0.1.0
+[Unreleased]: https://github.com/PrisX/PrismatiXEngine/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/PrisX/PrismatiXEngine/releases/tag/v0.1.0

@@ -52,7 +52,7 @@ await writeFile(join(destination,'Notices/WEB-RUNTIME.txt'),
   'It uses the source-built browser dependencies recorded in CMakeCache.txt.\n'+
   'Build and relink from the accompanying PrismatiXEngine source and scripts/build-wasm-player.ps1.\n'+
   'FriBidi 1.0.16 source: https://github.com/fribidi/fribidi/releases/tag/v1.0.16\n'+
-  'PrismatiXEngine source: https://github.com/owenliu0924/PrismatiXEngine\n'+
+  'PrismatiXEngine source: https://github.com/PrisX/PrismatiXEngine\n'+
   'Naga and SPIRV-Cross are export-time host tools, not browser runtime modules.\n');
 files.push('Notices/WEB-RUNTIME.txt');
 // The tool installation has its own notices. Include every Cargo registry

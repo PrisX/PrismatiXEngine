@@ -12,14 +12,14 @@
   ],
   "license": "MIT",
   "author": "owen0924",
-  "homepage": "https://github.com/owenliu0924/PrismatiXEngine/tree/master/packages/cli#readme",
+  "homepage": "https://github.com/PrisX/PrismatiXEngine/tree/master/packages/cli#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/owenliu0924/PrismatiXEngine.git",
+    "url": "git+https://github.com/PrisX/PrismatiXEngine.git",
     "directory": "packages/cli"
   },
   "bugs": {
-    "url": "https://github.com/owenliu0924/PrismatiXEngine/issues"
+    "url": "https://github.com/PrisX/PrismatiXEngine/issues"
   },
   "engines": {
     "node": ">=22.15.0"
