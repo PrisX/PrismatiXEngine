@@ -72,7 +72,7 @@ try {
   await active.activate(initial,'SAVE');
   const save=await active.route('save');
   await delay(180); assert.equal((await active.request('capture')).uiRoute,'save','save modal survives frames');
-  await active.activate(save,'Preview checkpoint 1'); await active.route('hud');
+  await active.activate(save,'#1  Preview checkpoint 1'); await active.route('hud');
   await active.request('advance'); await active.request('advance');
   await delay(80);
   let changed=await active.request('capture');
@@ -81,7 +81,7 @@ try {
   await active.activate(changed,'LOAD');
   const load=await active.route('load');
   await delay(180);assert.equal((await active.request('capture')).uiRoute,'load','load modal survives frames');
-  await active.activate(load,'Preview checkpoint 1');
+  await active.activate(load,'#1  Preview checkpoint 1');
   const restored=await active.route('hud');
   assert.equal(restored.sourceId,initial.sourceId,'load restores saved story source');
   const rebuilt = JSON.parse(await readFile(join(root,'preview-controls.pxir'),'utf8'));
@@ -91,7 +91,7 @@ try {
   await active.request('play');
   await active.activate(await active.route('hud'),'LOAD');
   const rebuiltLoad = await active.route('load');
-  const rebuiltSlots = rebuiltLoad.uiControls.filter(c=>c.text?.startsWith('Preview checkpoint'));
+  const rebuiltSlots = rebuiltLoad.uiControls.filter(c=>c.text?.includes('Preview checkpoint'));
   assert.equal(rebuiltSlots.length,4);
   assert.ok(rebuiltSlots.every(c=>!c.enabled),'structural rebuild clears Preview slots');
   await active.request('shutdown',{documentId:'',revision:0});active.child.stdin.end();
@@ -99,7 +99,7 @@ try {
   const title2=await active.request('capture');await active.activate(title2,'開始遊戲');
   await active.activate(await active.route('hud'),'LOAD');
   const empty=await active.route('load');
-  const slots=empty.uiControls.filter(c=>c.text?.startsWith('Preview checkpoint'));
+  const slots=empty.uiControls.filter(c=>c.text?.includes('Preview checkpoint'));
   assert.equal(slots.length,4);assert.ok(slots.every(c=>!c.enabled),'new Host has no persistent Preview slots');
   await active.request('shutdown',{documentId:'',revision:0});active.child.stdin.end();
   console.log(`PASS native Title / Start / HUD / Save / Load / session-only checkpoints. Evidence: ${root}`);
