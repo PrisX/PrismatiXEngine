@@ -1,0 +1,121 @@
+name: Build the native Runtime, SDK, Player and tests
+description: >-
+  Installs the platform build dependencies, resolves vcpkg.json with the
+  pinned vcpkg, configures a Ninja build with tests and warnings as errors,
+  and compiles it. Used by the quality gate and the release workflow so both
+  build the same way.
+
+inputs:
+  triplet:
+    description: vcpkg target triplet (x64-linux, x64-windows, x64-osx, arm64-osx).
+    required: true
+  build-dir:
+    description: CMake binary directory, relative to the workspace.
+    required: true
+  build-type:
+    description: CMAKE_BUILD_TYPE.
+    default: RelWithDebInfo
+  c-compiler:
+    description: CMAKE_C_COMPILER (empty for the platform default).
+    default: ""
+  cxx-compiler:
+    description: CMAKE_CXX_COMPILER (empty for the platform default).
+    default: ""
+  sanitizers:
+    description: PRISMATIX_ENABLE_SANITIZERS (ON or OFF).
+    default: "OFF"
+  vcpkg-install-root:
+    description: Where vcpkg installs the dependencies, relative to the workspace.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install Linux build and display dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: bash .github/scripts/install-linux-dependencies.sh
+    - name: Install macOS build tools
+      if: runner.os == 'macOS'
+      shell: bash
+      run: brew install autoconf automake libtool nasm pkg-config
+    - name: Check the runner architecture matches the triplet
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        actual="$(uname -m)"
+        case "${{ inputs.triplet }}:$actual" in
+          arm64-osx:arm64|x64-osx:x86_64) ;;
+          *) echo "::error::triplet ${{ inputs.triplet }} does not match runner architecture $actual"; exit 1 ;;
+        esac
+    - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+      if: runner.os == 'Windows'
+      with:
+        arch: x64
+    - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
+    - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+      with:
+        vcpkgDirectory: ${{ runner.temp }}/vcpkg
+    - name: Resolve dependencies
+      if: runner.os != 'Windows'
+      shell: bash
+      run: >-
+        "$VCPKG_ROOT/vcpkg" install --triplet "${{ inputs.triplet }}"
+        --x-install-root="${{ github.workspace }}/${{ inputs.vcpkg-install-root }}"
+    - name: Resolve dependencies
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $installRoot = Join-Path $env:GITHUB_WORKSPACE "${{ inputs.vcpkg-install-root }}"
+        & "$env:VCPKG_ROOT/vcpkg.exe" install --triplet "${{ inputs.triplet }}" "--x-install-root=$installRoot"
+        if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency resolution failed" }
+    - name: Configure
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        PX_C_COMPILER: ${{ inputs.c-compiler }}
+        PX_CXX_COMPILER: ${{ inputs.cxx-compiler }}
+      run: |
+        compilers=()
+        [[ -n "$PX_C_COMPILER" ]] && compilers+=("-DCMAKE_C_COMPILER=$PX_C_COMPILER")
+        [[ -n "$PX_CXX_COMPILER" ]] && compilers+=("-DCMAKE_CXX_COMPILER=$PX_CXX_COMPILER")
+        cmake -S . -B "${{ inputs.build-dir }}" -G Ninja \
+          -DCMAKE_BUILD_TYPE="${{ inputs.build-type }}" \
+          "${compilers[@]}" \
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+          -DVCPKG_TARGET_TRIPLET="${{ inputs.triplet }}" \
+          -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/${{ inputs.vcpkg-install-root }}" \
+          -DBUILD_TESTING=ON \
+          -DPRISMATIX_ENABLE_SANITIZERS="${{ inputs.sanitizers }}" \
+          -DPRISMATIX_WARNINGS_AS_ERRORS=ON
+    # PowerShell on Windows: Git Bash puts its own link.exe ahead of MSVC's.
+    - name: Configure
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        PX_C_COMPILER: ${{ inputs.c-compiler }}
+        PX_CXX_COMPILER: ${{ inputs.cxx-compiler }}
+      run: |
+        $compilers = @()
+        if ($env:PX_C_COMPILER) { $compilers += "-DCMAKE_C_COMPILER=$env:PX_C_COMPILER" }
+        if ($env:PX_CXX_COMPILER) { $compilers += "-DCMAKE_CXX_COMPILER=$env:PX_CXX_COMPILER" }
+        cmake -S . -B "${{ inputs.build-dir }}" -G Ninja `
+          "-DCMAKE_BUILD_TYPE=${{ inputs.build-type }}" `
+          @compilers `
+          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+          "-DVCPKG_TARGET_TRIPLET=${{ inputs.triplet }}" `
+          "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE/${{ inputs.vcpkg-install-root }}" `
+          -DBUILD_TESTING=ON `
+          "-DPRISMATIX_ENABLE_SANITIZERS=${{ inputs.sanitizers }}" `
+          -DPRISMATIX_WARNINGS_AS_ERRORS=ON
+        if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
+    - name: Compile the Runtime, SDK, Player and test surface
+      if: runner.os != 'Windows'
+      shell: bash
+      run: cmake --build "${{ inputs.build-dir }}" --parallel
+    - name: Compile the Runtime, SDK, Player and test surface
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        cmake --build "${{ inputs.build-dir }}" --parallel
+        if ($LASTEXITCODE -ne 0) { throw "CMake build failed" }

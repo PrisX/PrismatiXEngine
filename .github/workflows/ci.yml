@@ -13,21 +13,25 @@ concurrency:
   group: quality-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CTEST_OUTPUT_ON_FAILURE: "1"
 
+# Everything here runs on GitHub-hosted standard runners, which are free for
+# public repositories. The build, test and runtime-bundle steps live in
+# .github/actions so the release workflow runs exactly the same gates.
 jobs:
   authoring-sdk:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      - uses: ./.github/actions/setup-js
         with:
-          node-version: "24.14.0"
-      # pnpm at the version package.json pins, through Node's Corepack.
-      - run: corepack enable pnpm
-      - name: Install pinned Authoring SDK dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts
+          build: "false"
+      - name: Check release version consistency
+        run: node scripts/verify-release-version.mjs
       - name: Check schemas, generated contracts, TypeScript, and golden tests
         run: pnpm run check
 
@@ -54,65 +58,27 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      - uses: ./.github/actions/setup-js
+      - uses: ./.github/actions/native-build
         with:
-          node-version: "24.14.0"
-      # pnpm at the version package.json pins, through Node's Corepack.
-      - run: corepack enable pnpm
-      - name: Build installable author tooling
-        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm run build
-      - run: bash .github/scripts/install-linux-dependencies.sh
-      - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
-      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+          triplet: x64-linux
+          build-dir: out/ci/sdk-clang
+          build-type: ${{ matrix.configuration }}
+          c-compiler: clang
+          cxx-compiler: clang++
+          sanitizers: ${{ matrix.sanitizers }}
+          vcpkg-install-root: out/ci/vcpkg/clang
+      - uses: ./.github/actions/native-tests
         with:
-          vcpkgDirectory: ${{ runner.temp }}/vcpkg
-      - name: Resolve dependencies
-        run: >-
-          "$VCPKG_ROOT/vcpkg" install --triplet x64-linux
-          --x-install-root="${{ github.workspace }}/out/ci/vcpkg/clang"
-      - name: Configure complete sanitizer desktop build
-        run: |
-          cmake -S . -B out/ci/sdk-clang -G Ninja \
-            -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} \
-            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=x64-linux \
-            -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/clang" \
-            -DBUILD_TESTING=ON \
-            -DPRISMATIX_ENABLE_SANITIZERS=${{ matrix.sanitizers }} \
-            -DPRISMATIX_WARNINGS_AS_ERRORS=ON
-      - name: Compile complete Runtime, SDK, Player, and test surface
-        run: cmake --build out/ci/sdk-clang --parallel
-      - name: Verify and execute the packaged Player journey
-        env:
-          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
-          SDL_AUDIO_DRIVER: dummy
-          SDL_VIDEO_DRIVER: x11
-          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: |
-          ctest --test-dir out/ci/sdk-clang -N -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' | tee out/ci/sdk-clang/player-e2e-list.txt
-          grep -Fq 'PrismatiX.Player.CatalogNativeAcceptance' out/ci/sdk-clang/player-e2e-list.txt
-          xvfb-run -a ctest --test-dir out/ci/sdk-clang -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 180 --no-tests=error
-      - name: Execute the complete Linux test suite
-        env:
-          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
-          PRISMATIX_PACKAGER_RSS_BYTES: ${{ github.event_name == 'schedule' && '2147483685' || '' }}
-          PRISMATIX_VISUAL_OUTPUT_DIR: ${{ github.workspace }}/out/ci/visual/linux
-          SDL_AUDIO_DRIVER: dummy
-          SDL_VIDEO_DRIVER: x11
-          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: xvfb-run -a ctest --test-dir out/ci/sdk-clang -E '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 240 --no-tests=error
-      - name: Verify clean Linux runtime bundle and packaged Player
-        env:
-          SDL_AUDIO_DRIVER: dummy
-          SDL_VIDEO_DRIVER: x11
-        run: |
-          cmake --install out/ci/sdk-clang --prefix out/ci/runtime-linux --component PrismatiXRuntime
-          xvfb-run -a env PRISMATIX_PHASE1_RUNTIME="${{ github.workspace }}/out/ci/runtime-linux" \
-            pnpm run phase1:acceptance
+          build-dir: out/ci/sdk-clang
+          visual-output-dir: out/ci/visual/linux
+      - uses: ./.github/actions/runtime-bundle
+        with:
+          build-dir: out/ci/sdk-clang
+          prefix: out/ci/runtime-linux
       - name: Publish Linux GPU visual matrix
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: PrismatiX-GPU-Visual-Linux-${{ matrix.configuration }}-${{ github.run_id }}
           path: out/ci/visual/linux
@@ -125,38 +91,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      - uses: ./.github/actions/setup-js
+      - uses: ./.github/actions/native-build
         with:
-          node-version: "24.14.0"
-      # pnpm at the version package.json pins, through Node's Corepack.
-      - run: corepack enable pnpm
-      - name: Build installable Authoring SDK
-        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm run build
-      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
-        with:
-          arch: x64
-      - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
-      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
-        with:
-          vcpkgDirectory: ${{ runner.temp }}/vcpkg
-      - name: Resolve dependencies
-        shell: pwsh
-        run: |
-          $installRoot = Join-Path $env:GITHUB_WORKSPACE "out/ci/vcpkg/msvc"
-          & "$env:VCPKG_ROOT/vcpkg.exe" install --triplet x64-windows "--x-install-root=$installRoot"
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency resolution failed" }
-      - name: Configure complete MSVC desktop build
-        shell: pwsh
-        run: |
-          cmake -S . -B out/ci/sdk-msvc -G Ninja `
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo `
-            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows `
-            "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE/out/ci/vcpkg/msvc" `
-            -DBUILD_TESTING=ON `
-            -DPRISMATIX_WARNINGS_AS_ERRORS=ON
-      - name: Compile complete Runtime, SDK, Player, and test surface
-        run: cmake --build out/ci/sdk-msvc --parallel
+          triplet: x64-windows
+          build-dir: out/ci/sdk-msvc
+          vcpkg-install-root: out/ci/vcpkg/msvc
       - name: Execute CLI to native Packager commercial journey
         shell: pwsh
         run: |
@@ -175,23 +115,13 @@ jobs:
               throw "CLI commercial package is missing $path"
             }
           }
-      - name: Verify and execute the packaged Player journey
-        shell: pwsh
-        run: |
-          $listing = ctest --test-dir out/ci/sdk-msvc -N -R '^PrismatiX\.Player\.CatalogNativeAcceptance$'
-          $listing | Set-Content -LiteralPath out/ci/sdk-msvc/player-e2e-list.txt
-          if (($listing -join "`n") -notmatch 'PrismatiX\.Player\.CatalogNativeAcceptance') { throw 'Packaged Player E2E is absent from CTest' }
-          ctest --test-dir out/ci/sdk-msvc -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 240 --no-tests=error
-          if ($LASTEXITCODE -ne 0) { throw 'Packaged Player E2E failed' }
-      - name: Execute the complete Windows test suite
-        shell: pwsh
-        run: |
-          $env:PRISMATIX_VISUAL_OUTPUT_DIR = Join-Path $env:GITHUB_WORKSPACE 'out/ci/visual/windows'
-          ctest --test-dir out/ci/sdk-msvc -E '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 240 --no-tests=error
-          if ($LASTEXITCODE -ne 0) { throw 'Complete Windows test suite failed' }
+      - uses: ./.github/actions/native-tests
+        with:
+          build-dir: out/ci/sdk-msvc
+          visual-output-dir: out/ci/visual/windows
       - name: Publish Windows GPU visual matrix
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: PrismatiX-GPU-Visual-Windows-${{ github.run_id }}
           path: out/ci/visual/windows
@@ -246,16 +176,18 @@ jobs:
               $manifest.manifestSha256 -notmatch '^[0-9a-f]{64}$') {
             throw "Finalized SDK manifest identity is invalid"
           }
-      - name: Verify clean Windows runtime bundle and packaged Player
+      - uses: ./.github/actions/runtime-bundle
+        with:
+          build-dir: out/ci/sdk-msvc
+          prefix: out/ci/runtime-windows
+          project-name: "繁中 專案 測試"
+      - name: Native Preview UI gate
         shell: pwsh
         run: |
-          $env:PRISMATIX_PHASE1_RUNTIME = Join-Path $env:GITHUB_WORKSPACE 'out/ci/sdk-package'
-          pnpm run phase1:acceptance --project-name "繁中 專案 測試"
-          if ($LASTEXITCODE -ne 0) { throw 'Clean Windows runtime gate failed' }
           node scripts/preview-ui-regression.mjs out/ci/sdk-package/bin/PrismatiXPreviewHost.exe
           if ($LASTEXITCODE -ne 0) { throw 'Native Preview UI gate failed' }
       - name: Publish pinned Windows SDK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: PrismatiXSDK-Windows-x64-${{ github.sha }}
           path: out/ci/sdk-package
@@ -278,54 +210,23 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      - uses: ./.github/actions/setup-js
+      - uses: ./.github/actions/native-build
         with:
-          node-version: "24.14.0"
-      # pnpm at the version package.json pins, through Node's Corepack.
-      - run: corepack enable pnpm
-      - name: Build installable author tooling
-        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm run build
-      - run: brew install autoconf automake libtool nasm pkg-config
-      - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
-      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+          triplet: ${{ matrix.triplet }}
+          build-dir: out/ci/sdk-apple-clang
+          vcpkg-install-root: out/ci/vcpkg/apple-clang
+      - uses: ./.github/actions/native-tests
         with:
-          vcpkgDirectory: ${{ runner.temp }}/vcpkg
-      - name: Resolve dependencies
-        run: |
-          triplet="${{ matrix.triplet }}"
-          expected="${{ matrix.architecture }}"
-          actual="$(uname -m)"
-          [[ "$actual" == "arm64" && "$expected" == "arm64" || "$actual" == "x86_64" && "$expected" == "x64" ]]
-          echo "VCPKG_TARGET_TRIPLET=$triplet" >> "$GITHUB_ENV"
-          "$VCPKG_ROOT/vcpkg" install --triplet "$triplet" \
-            --x-install-root="${{ github.workspace }}/out/ci/vcpkg/apple-clang"
-      - name: Configure complete Apple Clang desktop build
-        run: |
-          cmake -S . -B out/ci/sdk-apple-clang -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET="$VCPKG_TARGET_TRIPLET" \
-            -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/apple-clang" \
-            -DBUILD_TESTING=ON \
-            -DPRISMATIX_WARNINGS_AS_ERRORS=ON
-      - name: Compile complete Runtime, SDK, Player, and test surface
-        run: cmake --build out/ci/sdk-apple-clang --parallel
-      - name: Verify and execute the packaged Player journey
-        run: |
-          ctest --test-dir out/ci/sdk-apple-clang -N -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' | tee out/ci/sdk-apple-clang/player-e2e-list.txt
-          grep -Fq 'PrismatiX.Player.CatalogNativeAcceptance' out/ci/sdk-apple-clang/player-e2e-list.txt
-          ctest --test-dir out/ci/sdk-apple-clang -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 300 --no-tests=error
-      - name: Execute the complete macOS test suite
-        env:
-          PRISMATIX_VISUAL_OUTPUT_DIR: ${{ github.workspace }}/out/ci/visual/macos
-        run: ctest --test-dir out/ci/sdk-apple-clang -E '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 300 --no-tests=error
-      - name: Verify clean macOS runtime bundle and packaged Player
-        run: |
-          cmake --install out/ci/sdk-apple-clang --prefix out/ci/runtime-macos --component PrismatiXRuntime
-          PRISMATIX_PHASE1_RUNTIME="${{ github.workspace }}/out/ci/runtime-macos" pnpm run phase1:acceptance
+          build-dir: out/ci/sdk-apple-clang
+          visual-output-dir: out/ci/visual/macos
+      - uses: ./.github/actions/runtime-bundle
+        with:
+          build-dir: out/ci/sdk-apple-clang
+          prefix: out/ci/runtime-macos
       - name: Publish macOS GPU visual matrix
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: PrismatiX-GPU-Visual-macOS-${{ matrix.architecture }}-${{ github.run_id }}
           path: out/ci/visual/macos

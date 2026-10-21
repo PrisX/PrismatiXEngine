@@ -1,0 +1,310 @@
+name: Release
+
+# Pushing a tag vX.Y.Z (matching every package version) builds and tests the
+# native runtime on each release platform, assembles the three npm packages
+# with every platform runtime inside @prismatix/cli, re-runs the clean-install
+# author journey from those exact tarballs on each platform, creates a draft
+# GitHub Release with the assets and SHA256SUMS, and then, after approval in
+# the `release` environment, publishes to npm and makes the release public.
+#
+# Running it by hand (workflow_dispatch) is always a dry run: everything up to
+# and including `npm publish --dry-run`, with no GitHub Release and no publish.
+# See RELEASING.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CTEST_OUTPUT_ON_FAILURE: "1"
+
+jobs:
+  version:
+    name: Check the release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "24.14.0"
+      - id: version
+        name: Tag, package versions, CMake, changelog and release notes agree
+        run: |
+          version="$(node -p "require('./packages/cli/package.json').version")"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            node scripts/verify-release-version.mjs --tag "$GITHUB_REF_NAME"
+            # Only commits already on master are released.
+            git fetch --no-tags origin master
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/master || {
+              echo "::error::tag $GITHUB_REF_NAME is not on master"; exit 1; }
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            node scripts/verify-release-version.mjs
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  javascript:
+    name: TypeScript packages, contracts and mock journey
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: ./.github/actions/setup-js
+        with:
+          build: "false"
+      - name: Check schemas, generated contracts, TypeScript, and every package test
+        run: pnpm run check
+
+  native:
+    name: Native runtime (${{ matrix.platform }})
+    needs: version
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: win32-x64
+            runner: windows-latest
+            triplet: x64-windows
+            project-name: "繁中 專案 測試"
+          - platform: linux-x64
+            runner: ubuntu-latest
+            triplet: x64-linux
+            c-compiler: clang
+            cxx-compiler: clang++
+            project-name: first-game
+          - platform: darwin-x64
+            runner: macos-15-intel
+            triplet: x64-osx
+            project-name: first-game
+          - platform: darwin-arm64
+            runner: macos-15
+            triplet: arm64-osx
+            project-name: first-game
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-js
+      - uses: ./.github/actions/native-build
+        with:
+          triplet: ${{ matrix.triplet }}
+          build-dir: out/release/build
+          build-type: Release
+          c-compiler: ${{ matrix.c-compiler }}
+          cxx-compiler: ${{ matrix.cxx-compiler }}
+          vcpkg-install-root: out/release/vcpkg
+      - uses: ./.github/actions/native-tests
+        with:
+          build-dir: out/release/build
+          visual-output-dir: out/release/visual
+      - uses: ./.github/actions/runtime-bundle
+        with:
+          build-dir: out/release/build
+          prefix: out/release/runtime
+          project-name: ${{ matrix.project-name }}
+          archive-dir: out/release/runtime-archive
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: runtime-${{ matrix.platform }}
+          path: out/release/runtime-archive
+          if-no-files-found: error
+          retention-days: 7
+      - name: Publish GPU visual matrix
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: visual-${{ matrix.platform }}
+          path: out/release/visual
+          if-no-files-found: ignore
+          retention-days: 7
+
+  assemble:
+    name: Assemble npm packages and release assets
+    needs: [version, javascript, native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: ./.github/actions/setup-js
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: runtime-*
+          path: out/runtime-archives
+          merge-multiple: true
+      - name: Pack @prismatix/authoring-sdk, @prismatix/runtime and @prismatix/cli with every runtime
+        run: node scripts/assemble-release.mjs assemble --runtimes out/runtime-archives --out out/release
+      - name: List the published tarball contents
+        run: |
+          for tarball in out/release/npm/*.tgz; do
+            echo "== $tarball"
+            tar -tzf "$tarball" | grep -v '^package/runtime/.*/share/PrismatiX/licenses/' | sort
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release
+          path: out/release
+          if-no-files-found: error
+          retention-days: 30
+
+  acceptance:
+    name: Clean install from the release tarballs (${{ matrix.platform }})
+    needs: assemble
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: win32-x64
+            runner: windows-latest
+          - platform: linux-x64
+            runner: ubuntu-latest
+          - platform: darwin-x64
+            runner: macos-15-intel
+          - platform: darwin-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: ./.github/actions/setup-js
+        with:
+          build: "false"
+      - name: Install Linux display and audio libraries for the Player launch
+        if: runner.os == 'Linux'
+        run: bash .github/scripts/install-linux-dependencies.sh
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release
+          path: out/release
+      - name: Global install, create, dev, build and packaged Player launch (pnpm, then npm)
+        shell: bash
+        run: |
+          display=()
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            display=(xvfb-run -a)
+            export SDL_AUDIO_DRIVER=dummy SDL_VIDEO_DRIVER=x11
+          fi
+          for manager in pnpm npm; do
+            "${display[@]}" node scripts/phase1-clean-install.mjs --candidates out/release/npm --package-manager "$manager"
+          done
+
+  npm-dry-run:
+    name: npm publish --dry-run
+    needs: [version, acceptance]
+    if: needs.version.outputs.publish != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "24.14.0"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release
+          path: out/release
+      - name: Dry-run every publish in dependency order
+        run: |
+          for name in authoring-sdk runtime cli; do
+            npm publish "out/release/npm/prismatix-$name-${{ needs.version.outputs.version }}.tgz" \
+              --dry-run --access public --tag latest
+          done
+
+  github-release:
+    name: Draft the GitHub Release
+    needs: [version, acceptance]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release
+          path: out/release
+      - name: Create the draft release with notes, assets and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          {
+            cat "docs/releases/$VERSION.md"
+            printf '\n---\n\nBuilt, tested and packaged by [release workflow run %s](%s/%s/actions/runs/%s).\n' \
+              "$GITHUB_RUN_ID" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          } > "$RUNNER_TEMP/release-notes.md"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --clobber \
+              out/release/npm/*.tgz out/release/runtime/*.tar.gz out/release/SHA256SUMS
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "PrismatiX $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" \
+              out/release/npm/*.tgz out/release/runtime/*.tar.gz out/release/SHA256SUMS
+          fi
+
+  npm-publish:
+    name: Publish to npm and release
+    needs: [version, github-release]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    # Configure required reviewers on this environment to approve each publish.
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "24.14.0"
+      - name: npm with trusted publishing (11.5.1 or later)
+        run: |
+          current="$(npm --version)"
+          if [[ "$(printf '%s\n' "11.5.1" "$current" | sort -V | head -n1)" != "11.5.1" ]]; then
+            npm install --global npm@11.6.2
+          fi
+          npm --version
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release
+          path: out/release
+      - name: Verify the assets against SHA256SUMS
+        working-directory: out/release
+        run: |
+          mkdir -p flat
+          cp npm/*.tgz runtime/*.tar.gz flat/
+          (cd flat && sha256sum --check ../SHA256SUMS)
+      - name: Publish in dependency order with provenance
+        env:
+          # Trusted publishing (OIDC) needs no secret. NPM_TOKEN is only the
+          # fallback for a package that has no trusted publisher yet, such as
+          # its very first publish.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          if [[ -n "$NPM_TOKEN" ]]; then
+            npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"
+          fi
+          for name in authoring-sdk runtime cli; do
+            if npm view "@prismatix/$name@$VERSION" version >/dev/null 2>&1; then
+              echo "@prismatix/$name@$VERSION is already published; skipping"
+              continue
+            fi
+            npm publish "out/release/npm/prismatix-$name-$VERSION.tgz" --access public --provenance --tag latest
+          done
+      - name: Make the GitHub Release public
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest

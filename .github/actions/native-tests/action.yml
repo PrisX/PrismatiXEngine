@@ -1,0 +1,48 @@
+name: Run the native test suite
+description: >-
+  Runs the packaged Player journey (PrismatiX.Player.CatalogNativeAcceptance)
+  first, after checking it is registered, then every other CTest test. On
+  Linux the tests run under Xvfb with the dummy audio driver.
+
+inputs:
+  build-dir:
+    description: CMake binary directory, relative to the workspace.
+    required: true
+  visual-output-dir:
+    description: Where the GPU visual matrix writes its images, relative to the workspace.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Verify and execute the packaged Player journey
+      shell: bash
+      env:
+        ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      run: |
+        display=()
+        if [[ "$RUNNER_OS" == "Linux" ]]; then
+          display=(xvfb-run -a)
+          export SDL_AUDIO_DRIVER=dummy SDL_VIDEO_DRIVER=x11
+        fi
+        ctest --test-dir "${{ inputs.build-dir }}" -N -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' | tee "${{ inputs.build-dir }}/player-e2e-list.txt"
+        grep -Fq 'PrismatiX.Player.CatalogNativeAcceptance' "${{ inputs.build-dir }}/player-e2e-list.txt"
+        "${display[@]}" ctest --test-dir "${{ inputs.build-dir }}" -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' \
+          --output-on-failure --no-tests=error
+    - name: Execute the complete test suite
+      shell: bash
+      env:
+        ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        PRISMATIX_PACKAGER_RSS_BYTES: ${{ github.event_name == 'schedule' && runner.os == 'Linux' && '2147483685' || '' }}
+        PRISMATIX_VISUAL_OUTPUT_DIR: ${{ github.workspace }}/${{ inputs.visual-output-dir }}
+      run: |
+        display=()
+        if [[ "$RUNNER_OS" == "Linux" ]]; then
+          display=(xvfb-run -a)
+          export SDL_AUDIO_DRIVER=dummy SDL_VIDEO_DRIVER=x11
+        fi
+        # Every test carries its own TIMEOUT (PrismatiXEngine/CMakeLists.txt).
+        "${display[@]}" ctest --test-dir "${{ inputs.build-dir }}" -E '^PrismatiX\.Player\.CatalogNativeAcceptance$' \
+          --output-on-failure --no-tests=error

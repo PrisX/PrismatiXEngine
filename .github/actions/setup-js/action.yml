@@ -1,0 +1,31 @@
+name: Set up the JavaScript workspace
+description: >-
+  Node.js at the version CI pins, pnpm at the version package.json pins
+  (through Corepack), the locked workspace dependencies and, unless disabled,
+  the built TypeScript packages.
+
+inputs:
+  node-version:
+    description: Node.js version.
+    default: "24.14.0"
+  build:
+    description: Run `pnpm run build` (contracts check and every TypeScript package).
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      with:
+        node-version: ${{ inputs.node-version }}
+    # pnpm at the version package.json pins, through Node's Corepack.
+    - name: Enable pnpm
+      shell: bash
+      run: corepack enable pnpm
+    - name: Install locked workspace dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile --ignore-scripts
+    - name: Build installable author tooling
+      if: inputs.build == 'true'
+      shell: bash
+      run: pnpm run build

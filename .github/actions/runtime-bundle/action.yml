@@ -1,0 +1,50 @@
+name: Install and accept the runtime bundle
+description: >-
+  Installs the PrismatiXRuntime component into a fresh prefix and runs the
+  clean-install author journey against it (delivery contract gates 2 and 3):
+  candidate packages with that runtime bundled, a global install, create,
+  dev/edit/error/repair, offline reopen/build and a packaged Player launch.
+  The journey runs with pnpm (the documented path) and with npm. With
+  archive-dir set it also writes the runtime archive the release attaches.
+
+inputs:
+  build-dir:
+    description: CMake binary directory, relative to the workspace.
+    required: true
+  prefix:
+    description: Fresh install prefix for the runtime bundle, relative to the workspace.
+    required: true
+  project-name:
+    description: Directory name of the acceptance project (exercises non-ASCII paths).
+    default: first-game
+  archive-dir:
+    description: When set, write prismatix-native-runtime-<version>-<platform>-<arch>.tar.gz here.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install the PrismatiXRuntime component into a fresh prefix
+      shell: bash
+      run: |
+        rm -rf "${{ inputs.prefix }}"
+        cmake --install "${{ inputs.build-dir }}" --prefix "${{ inputs.prefix }}" --component PrismatiXRuntime
+    - name: Clean-install author journey (pnpm, then npm)
+      shell: bash
+      env:
+        PRISMATIX_PHASE1_RUNTIME: ${{ github.workspace }}/${{ inputs.prefix }}
+        PX_PROJECT_NAME: ${{ inputs.project-name }}
+      run: |
+        display=()
+        if [[ "$RUNNER_OS" == "Linux" ]]; then
+          display=(xvfb-run -a)
+          export SDL_AUDIO_DRIVER=dummy SDL_VIDEO_DRIVER=x11
+        fi
+        for manager in pnpm npm; do
+          "${display[@]}" node scripts/phase1-clean-install.mjs \
+            --package-manager "$manager" --project-name "$PX_PROJECT_NAME"
+        done
+    - name: Archive the runtime bundle
+      if: inputs.archive-dir != ''
+      shell: bash
+      run: node scripts/assemble-release.mjs archive-runtime --runtime "${{ inputs.prefix }}" --out "${{ inputs.archive-dir }}"

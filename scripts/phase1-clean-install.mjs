@@ -2,24 +2,20 @@
 
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
-import {constants, readFileSync} from "node:fs";
+import {constants, readFileSync, statSync} from "node:fs";
 import {
   access, appendFile, cp, lstat, mkdir, mkdtemp, readFile, readdir,
   realpath, rm, writeFile,
 } from "node:fs/promises";
-import {tmpdir} from "node:os";
+import {homedir, tmpdir} from "node:os";
 import {
   basename, delimiter, dirname, extname, isAbsolute, join, resolve,
 } from "node:path";
 import {fileURLToPath} from "node:url";
 import {startCandidateRegistry} from "./candidate-registry.mjs";
+import {checkPackedContents, packPublicPackages, publicPackages} from "./release-packages.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const packageRoots = [
-  join(repositoryRoot, "packages", "authoring-sdk"),
-  join(repositoryRoot, "runtime-sdk"),
-  join(repositoryRoot, "packages", "cli"),
-];
 // The release version every candidate package and the bundled runtime must carry.
 const releaseVersion = JSON.parse(readFileSync(join(repositoryRoot, "packages", "cli", "package.json"), "utf8")).version;
 const authorEdit = "The clean-install edit reached Preview and the packaged game.";
@@ -27,7 +23,8 @@ const invalidStoryCommand = "[phase1-invalid-command]";
 const defaultTimeoutMs = 60_000;
 
 function parseArguments(values) {
-  const result = {mock: false, keep: false, runtime: process.env.PRISMATIX_PHASE1_RUNTIME, projectName: "first-game"};
+  const result = {mock: false, keep: false, runtime: process.env.PRISMATIX_PHASE1_RUNTIME, projectName: "first-game",
+    packageManager: "pnpm"};
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--mock") result.mock = true;
@@ -36,16 +33,24 @@ function parseArguments(values) {
     else if (value.startsWith("--runtime=")) result.runtime = value.slice("--runtime=".length);
     else if (value === "--project-name") result.projectName = values[++index];
     else if (value.startsWith("--project-name=")) result.projectName = value.slice("--project-name=".length);
+    else if (value === "--candidates") result.candidates = values[++index];
+    else if (value.startsWith("--candidates=")) result.candidates = value.slice("--candidates=".length);
+    else if (value === "--package-manager") result.packageManager = values[++index];
+    else if (value.startsWith("--package-manager=")) result.packageManager = value.slice("--package-manager=".length);
     else throw new Error(`Unknown argument: ${value}`);
   }
   if (typeof result.projectName !== "string" || result.projectName.length === 0 ||
       result.projectName === "." || result.projectName === ".." || /[\\/<>:"|?*\u0000-\u001f]/u.test(result.projectName)) {
     throw new Error("--project-name must be one nonempty portable directory name");
   }
-  if (!result.mock && (result.runtime === undefined || result.runtime.length === 0)) {
+  if (result.packageManager !== "pnpm" && result.packageManager !== "npm")
+    throw new Error("--package-manager must be pnpm (the documented author path) or npm");
+  if (result.candidates !== undefined && result.mock)
+    throw new Error("--candidates tests assembled release tarballs and cannot be combined with --mock");
+  if (!result.mock && result.candidates === undefined && (result.runtime === undefined || result.runtime.length === 0)) {
     throw new Error(
-      "The real Phase 1 gate requires --runtime <installed-prefix> or " +
-      "PRISMATIX_PHASE1_RUNTIME. Use --mock only for the fast packaging/workflow gate.",
+      "The real Phase 1 gate requires --runtime <installed-prefix>, PRISMATIX_PHASE1_RUNTIME " +
+      "or --candidates <assembled release tarballs>. Use --mock only for the fast packaging/workflow gate.",
     );
   }
   return result;
@@ -141,6 +146,37 @@ function npmInvocation() {
   return {command: process.execPath, prefix: [candidates[0]]};
 }
 
+function existsSyncSafe(path) {
+  try { return statSync(path).isFile(); } catch { return false; }
+}
+
+/** The pnpm an author has on PATH, run without a shell, and the directory holding it. */
+function pnpmInvocation() {
+  const windows = process.platform === "win32";
+  const pathDirectories = (process.env.PATH ?? process.env.Path ?? "").split(delimiter).filter(Boolean);
+  const directory = pathDirectories.find((candidate) => windows
+    ? existsSyncSafe(join(candidate, "pnpm.exe")) || existsSyncSafe(join(candidate, "pnpm.cmd"))
+    : existsSyncSafe(join(candidate, "pnpm")));
+  assert.ok(directory !== undefined,
+    "pnpm is not on PATH; install pnpm or run `corepack enable pnpm`, or pass --package-manager npm");
+  // Under `pnpm run`, npm_execpath is the running pnpm's JavaScript entry.
+  const launcher = process.env.npm_execpath;
+  if (launcher !== undefined && /^pnpm(\.c?js)?$/u.test(basename(launcher)) && existsSyncSafe(launcher))
+    return extname(launcher) === "" ? {command: launcher, prefix: [], directory}
+      : {command: process.execPath, prefix: [launcher], directory};
+  if (!windows) return {command: join(directory, "pnpm"), prefix: [], directory};
+  if (existsSyncSafe(join(directory, "pnpm.exe"))) return {command: join(directory, "pnpm.exe"), prefix: [], directory};
+  for (const script of [join(directory, "node_modules", "pnpm", "bin", "pnpm.cjs"),
+    join(directory, "node_modules", "corepack", "dist", "pnpm.js")])
+    if (existsSyncSafe(script)) return {command: process.execPath, prefix: [script], directory};
+  throw new Error(`Found a pnpm shim in ${directory} but not its JavaScript entry`);
+}
+
+async function pnpm(args, options = {}) {
+  const invocation = pnpmInvocation();
+  return run(invocation.command, [...invocation.prefix, ...args], options);
+}
+
 async function npm(args, options = {}) {
   const invocation = npmInvocation();
   return run(invocation.command, [...invocation.prefix, ...args], options);
@@ -179,30 +215,29 @@ async function assertSelfContainedTree(root, forbiddenRoots, label) {
   }
 }
 
-async function packWorkspacePackages(packDirectory, environment, runtimeRoot) {
+/** Unpacks one file of a published tarball (bsdtar on Windows, so drive letters are not hosts). */
+async function extractTarball(tarball, destination, members = []) {
+  await mkdir(destination, {recursive: true});
+  const tar = process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
+  requireSuccess(await run(tar, ["-xzf", tarball, "-C", destination, ...members], {timeoutMs: 300_000}), `extract ${tarball}`);
+}
+
+/** Uses already assembled release tarballs (assemble-release.mjs) instead of packing the checkout. */
+async function prebuiltCandidates(directory, packDirectory) {
   await mkdir(packDirectory, {recursive: true});
-  const tarballs = [];
-  for (const packageRoot of packageRoots) {
-    const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
-    const staging = join(packDirectory, "staging", basename(packageRoot));
-    await mkdir(staging, {recursive: true});
-    await cp(join(packageRoot, "package.json"), join(staging, "package.json"));
-    for (const path of manifest.files ?? ["dist"]) {
-      if (await exists(join(packageRoot, path))) await cp(join(packageRoot, path), join(staging, path), {recursive: true});
-    }
-    if (manifest.name === "@prismatix/cli")
-      await cp(runtimeRoot, join(staging, "runtime", `${process.platform}-${process.arch}`), {recursive: true});
-    const packed = requireSuccess(await npm([
-      "pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory,
-    ], {cwd: staging, env: environment, timeoutMs: 180_000}), `npm pack ${packageRoot}`);
-    const report = JSON.parse(packed.stdout);
-    assert.ok(Array.isArray(report) && typeof report[0]?.filename === "string",
-      `npm pack returned an unexpected report for ${packageRoot}`);
-    const tarball = join(packDirectory, report[0].filename);
-    assert.ok(await exists(tarball), `npm pack did not create ${tarball}`);
-    tarballs.push({manifest, tarball});
+  const candidates = [];
+  for (const {name} of publicPackages) {
+    const filename = `${name.slice(1).replace("/", "-")}-${releaseVersion}.tgz`;
+    const tarball = join(packDirectory, filename);
+    await cp(join(directory, filename), tarball);
+    const unpacked = join(packDirectory, "unpacked", basename(filename, ".tgz"));
+    await extractTarball(tarball, unpacked);
+    const manifest = JSON.parse(await readFile(join(unpacked, "package", "package.json"), "utf8"));
+    assert.equal(manifest.name, name);
+    assert.equal(manifest.version, releaseVersion, `${filename} is not the checkout's release version`);
+    candidates.push({manifest, tarball, root: join(unpacked, "package")});
   }
-  return tarballs;
+  return candidates;
 }
 
 function cleanToolEnvironment(runtimeRoot, extra = {}) {
@@ -386,7 +421,9 @@ async function launchArtifact(player, output, environment, mock) {
       child.kill();
       terminationTimer = setTimeout(() => reject(new Error(
         `Packaged Player did not exit after the playable smoke window\nstdout:\n${stdout}\nstderr:\n${stderr}`)),
-      5_000);
+      // The exit event ends this wait; a Player still inside GPU or audio
+      // device start-up on a busy machine can take seconds to be torn down.
+      30_000);
     }, settleMs);
   });
 }
@@ -456,11 +493,18 @@ async function main() {
     const packagingEnvironment = {...process.env};
     delete packagingEnvironment.NODE_PATH;
     delete packagingEnvironment.INIT_CWD;
-    if (configuration.mock) await createMockRuntime(copiedRuntime);
+    let candidates;
+    let runtimeBundle = copiedRuntime;
+    if (configuration.candidates !== undefined) {
+      candidates = await prebuiltCandidates(resolve(configuration.candidates), packDirectory);
+      // The runtime this platform's author gets is the one inside the CLI tarball.
+      runtimeBundle = join(candidates.at(-1).root, "runtime", `${process.platform}-${process.arch}`);
+      assert.ok(await exists(runtimeBundle), `The CLI tarball has no runtime/${process.platform}-${process.arch}`);
+    } else if (configuration.mock) await createMockRuntime(copiedRuntime);
     else await copyRuntimeBundle(configuration.runtime, copiedRuntime);
-    await assertSelfContainedTree(copiedRuntime, [repositoryRoot], "Copied runtime bundle");
+    await assertSelfContainedTree(runtimeBundle, [repositoryRoot], "Copied runtime bundle");
     if (!configuration.mock) {
-      const share = join(copiedRuntime, "share", "PrismatiX");
+      const share = join(runtimeBundle, "share", "PrismatiX");
       for (const relative of [
         "runtime-manifest.json", "PrismatiXUiTypeRegistry.json", "release-inventory.json", "LICENSE",
         "THIRD_PARTY_NOTICES.md", "ASSET_PROVENANCE.json",
@@ -475,8 +519,12 @@ async function main() {
       assert.equal(inventory.shipping?.webGame, false);
       log("verified release inventory", inventory.target);
     }
-    const candidates = await packWorkspacePackages(packDirectory, packagingEnvironment, copiedRuntime);
-    log("packed candidate npm artifacts with bundled runtime", candidates.map(({tarball}) => basename(tarball)).join(", "));
+    if (candidates === undefined) {
+      const runtimePlatform = `${process.platform}-${process.arch}`;
+      candidates = await packPublicPackages(packDirectory, {[runtimePlatform]: copiedRuntime}, packagingEnvironment);
+      for (const {name, files} of candidates) checkPackedContents(name, files, configuration.mock ? [] : [runtimePlatform]);
+      log("packed candidate npm artifacts with bundled runtime", candidates.map(({tarball}) => basename(tarball)).join(", "));
+    } else log("using assembled release tarballs", candidates.map(({tarball}) => basename(tarball)).join(", "));
     registry = await startCandidateRegistry(candidates);
     const home = join(temporaryRoot, "home");
     const cache = join(temporaryRoot, "npm-cache");
@@ -484,35 +532,68 @@ async function main() {
     await Promise.all([home, cache, prefix, installRoot].map((path) => mkdir(path, {recursive: true})));
     const npmrc = join(home, ".npmrc");
     await writeFile(npmrc, `@prismatix:registry=${registry.url}\nregistry=https://registry.npmjs.org/\naudit=false\nfund=false\n`);
+    const usePnpm = configuration.packageManager === "pnpm";
+    const pnpmHome = join(temporaryRoot, "pnpm-home");
+    if (usePnpm) {
+      await mkdir(pnpmHome, {recursive: true});
+      const setting = (key, path) => `${key}=${path.replaceAll("\\", "/")}\n`;
+      await appendFile(npmrc, setting("store-dir", join(temporaryRoot, "pnpm-store")) +
+        setting("cache-dir", join(temporaryRoot, "pnpm-cache")) +
+        setting("global-dir", join(pnpmHome, "global")) + setting("global-bin-dir", pnpmHome));
+    }
+    // Corepack's pnpm keeps its own download cache; keep the real one although
+    // HOME/LOCALAPPDATA move into the clean room.
+    const corepackHome = process.env.COREPACK_HOME ?? (process.platform === "win32"
+      ? join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "node", "corepack")
+      : join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "node", "corepack"));
     const toolEnvironment = cleanToolEnvironment(undefined, {HOME: home, USERPROFILE: home,
       APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"),
-      PRISMATIX_PHASE1_PREVIEW_LOG: previewLog});
+      PRISMATIX_PHASE1_PREVIEW_LOG: previewLog,
+      ...(usePnpm ? {PNPM_HOME: pnpmHome, COREPACK_HOME: corepackHome, COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"} : {})});
+    // An author who uses pnpm has it, and its global bin directory, on PATH.
+    if (usePnpm) toolEnvironment.PATH = [pnpmHome, pnpmInvocation().directory, toolEnvironment.PATH].join(delimiter);
     // cleanToolEnvironment removes inherited npm settings before these isolated settings are added.
     Object.assign(toolEnvironment, {npm_config_prefix: prefix, npm_config_cache: cache, npm_config_userconfig: npmrc});
-    requireSuccess(await npm(["install", "-g", "@prismatix/cli", "--ignore-scripts", "--no-audit", "--no-fund"],
-      {cwd: installRoot, env: toolEnvironment, timeoutMs: 180_000}), "npm install -g @prismatix/cli (isolated candidate registry)");
-    const globalModules = process.platform === "win32" ? join(prefix, "node_modules") : join(prefix, "lib", "node_modules");
-    const installedPackages = join(globalModules, "@prismatix");
+    let installedPackages;
+    if (usePnpm) {
+      requireSuccess(await pnpm(["add", "--global", "@prismatix/cli", "--ignore-scripts"],
+        {cwd: installRoot, env: toolEnvironment, timeoutMs: 300_000}), "pnpm add --global @prismatix/cli (isolated candidate registry)");
+      const globalRoot = requireSuccess(await pnpm(["root", "--global"], {cwd: installRoot, env: toolEnvironment}), "pnpm root --global");
+      installedPackages = join(globalRoot.stdout.trim(), "@prismatix");
+      assert.ok(await exists(join(pnpmHome, process.platform === "win32" ? "prismatix.cmd" : "prismatix")),
+        "pnpm did not create the global command shim");
+    } else {
+      requireSuccess(await npm(["install", "-g", "@prismatix/cli", "--ignore-scripts", "--no-audit", "--no-fund"],
+        {cwd: installRoot, env: toolEnvironment, timeoutMs: 180_000}), "npm install -g @prismatix/cli (isolated candidate registry)");
+      const globalModules = process.platform === "win32" ? join(prefix, "node_modules") : join(prefix, "lib", "node_modules");
+      installedPackages = join(globalModules, "@prismatix");
+      assert.ok(await exists(join(prefix, process.platform === "win32" ? "prismatix.cmd" : "bin/prismatix")), "npm did not create the global command shim");
+    }
     const cli = join(installedPackages, "cli", "dist", "src", "cli.js");
     assert.ok(await exists(cli), "The global CLI entrypoint is missing");
-    assert.ok(await exists(join(prefix, process.platform === "win32" ? "prismatix.cmd" : "bin/prismatix")), "npm did not create the global command shim");
-    await assertSelfContainedTree(installedPackages, [repositoryRoot], "Installed candidate packages");
-    log("installed global candidate CLI", prefix);
+    if (usePnpm) {
+      // pnpm links each package into node_modules from its content-addressed
+      // store; check every installed package where it really lives.
+      for (const name of await readdir(installedPackages))
+        await assertSelfContainedTree(await realpath(join(installedPackages, name)), [repositoryRoot],
+          `Installed candidate package @prismatix/${name}`);
+    } else await assertSelfContainedTree(installedPackages, [repositoryRoot], "Installed candidate packages");
+    log(`installed global candidate CLI with ${configuration.packageManager}`, usePnpm ? pnpmHome : prefix);
 
     const cliRun = (args, options = {}) => run(process.execPath, [cli, ...args, "--json"], {
       cwd: installRoot, env: toolEnvironment, timeoutMs: options.timeoutMs ?? 120_000,
     });
     requireSuccess(await cliRun([
-      // This acceptance covers the npm-installed CLI and its npm lockfile,
-      // even when the checkout itself runs under pnpm.
+      // The project uses the global install's package manager: pnpm (the
+      // documented path) or npm with --package-manager npm.
       "create", projectRoot, "--name", "Clean Room Story", "--id", "phase1-clean-room",
-      "--locale", "zh-TW", "--package-manager", "npm",
+      "--locale", "zh-TW", "--package-manager", configuration.packageManager,
     ]), "prismatix create");
     const project = join(projectRoot, "prismatix.json");
     const story = join(projectRoot, "Story", "main.pxstory");
     assert.ok(await exists(project), "create did not write the minimal prismatix.json manifest");
     assert.ok(await exists(story), "create did not write Story/main.pxstory");
-    assert.ok(await exists(join(projectRoot, "package-lock.json")), "create did not install and lock project tooling");
+    assert.ok(await exists(join(projectRoot, usePnpm ? "pnpm-lock.yaml" : "package-lock.json")), "create did not install and lock project tooling");
     assert.ok(await exists(join(projectRoot, "node_modules", "@prismatix", "cli", "dist", "src", "cli.js")), "create did not prepare pinned project CLI");
     log("created prepared starter", story);
 
@@ -595,7 +676,7 @@ async function main() {
     const player = resolve(String(packReport.player));
     assert.equal(normalized(packageOutput), normalized(explicitPackage));
     await assertSelfContainedTree(packageOutput,
-      [repositoryRoot, copiedRuntime, configuration.runtime ?? ""].filter(Boolean),
+      [repositoryRoot, runtimeBundle, configuration.runtime ?? ""].filter(Boolean),
       "Packaged game");
     if (!configuration.mock) {
       for (const relative of [
@@ -611,6 +692,7 @@ async function main() {
     await writeFile(join(temporaryRoot, "evidence.json"), JSON.stringify({
       candidateOnly: true, published: false, mock: configuration.mock,
       platform: process.platform, architecture: process.arch,
+      packageManager: configuration.packageManager,
       globalInstall: true, automaticProjectInstall: true, bundledRuntime: true,
       watchEditAndRepair: true, offlineReopenAndBuild: true,
       nativeVisualInteraction: "not measured by this harness", externalAuthorTrial: "not run",
