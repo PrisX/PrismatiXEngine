@@ -35,6 +35,12 @@ importers:
       '@prismatix/authoring-sdk':
         specifier: 0.2.0
         version: link:../authoring-sdk
+      '@prismatix/runtime':
+        specifier: 0.2.0
+        version: link:../../runtime-sdk
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       typescript-compiler:
         specifier: npm:typescript@5.9.2
         version: typescript@5.9.2

@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.json && node ../authoring-sdk/dist/src/build-freshness.js --stamp .",
     "test": "node --test dist/test/*.test.js"
   },
-  "dependencies": {"@prismatix/authoring-sdk": "0.2.0", "typescript-compiler": "npm:typescript@5.9.2"},
+  "dependencies": {"@prismatix/authoring-sdk": "0.2.0", "@prismatix/runtime": "0.2.0",
+    "esbuild": "0.28.2", "typescript-compiler": "npm:typescript@5.9.2"},
   "devDependencies": {"@types/node": "26.2.0"}
 }

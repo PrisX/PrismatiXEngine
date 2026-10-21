@@ -49,6 +49,8 @@ import {transcodeMedia, type TranscodedFile} from "./media-transcode.js";
 import {testCommand, testHelp, waitForPort} from "./test-command.js";
 import {PlayerTestClient} from "./qa-client.js";
 import {reachStoryPosition} from "./run-at.js";
+import {buildTypeScriptExtensions, type ExtensionBundle} from "./extension-build.js";
+import {extensionCommand, extensionHelp} from "./extension-scaffold.js";
 
 import {
   assertLocalBuildFresh,
@@ -82,7 +84,7 @@ import {
 assertLocalBuildFresh(fileURLToPath(new URL("../..", import.meta.url)), "@prismatix/cli");
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
-interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly documentTexts: Readonly<Record<string, string>>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly storyAssetFiles: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly uiNodeSpans: ReadonlyMap<string, ReadonlyMap<number, SourceSpan>>; readonly uiWarnings: readonly AuthoringDiagnostic[]; readonly storyPath?: string; readonly storyIndexSource?: string}
+interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly documentTexts: Readonly<Record<string, string>>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly storyAssetFiles: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly uiNodeSpans: ReadonlyMap<string, ReadonlyMap<number, SourceSpan>>; readonly uiWarnings: readonly AuthoringDiagnostic[]; readonly extensionBuilds: Readonly<Record<string, ExtensionBundle>>; readonly extensionWarnings: readonly AuthoringDiagnostic[]; readonly storyPath?: string; readonly storyIndexSource?: string}
 interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string; readonly dependencies: ReadonlySet<string>; readonly protectedPaths: readonly string[]}
 
 class PackagerFailure extends Error {
@@ -111,6 +113,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: ""},
+  extension: {values: "project lang command action dir", flags: "no-register await"},
   eject: {values: "project runtime", flags: "force"},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync accept-removals"},
@@ -163,6 +166,14 @@ function parseOptions(command: string, args: readonly string[]): Options {
   if (command === "add" && !flags.has("help")) {
     if (positional.length !== 2 || !["character", "scene"].includes(positional[0]!))
       throw new Error("Use prismatix add character <alias> [--from <folder>] or prismatix add scene <id>");
+    return {values, flags, positional};
+  }
+  if (command === "extension" && !flags.has("help")) {
+    const counts: Readonly<Record<string, readonly number[]>> = {create: [2], "add-command": [3], "add-action": [3],
+      types: [1, 2], list: [1]};
+    if (!(counts[positional[0] ?? ""] ?? []).includes(positional.length))
+      throw new Error("Use prismatix extension create <id> | add-command <extension> <id> | " +
+        "add-action <extension> <id> | types [extension] | list");
     return {values, flags, positional};
   }
   if (command === "import" && !flags.has("help")) {
@@ -1128,6 +1139,19 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     const source = object(value)?.source;
     if (typeof source === "string") dependencies.add(projectFile(root, source));
   }
+  // TypeScript extensions are bundled (and type-checked) here, so every
+  // command that builds a project hands the Player JavaScript only.
+  const extensionManifests: Record<string, unknown> = {};
+  for (const extensionPath of Array.isArray(raw.extensions) ? raw.extensions : [])
+    if (typeof extensionPath === "string") extensionManifests[extensionPath] = documents[extensionPath];
+  const extensionBuild = await buildTypeScriptExtensions(root, extensionManifests);
+  if (extensionBuild.diagnostics.some((item) => item.severity === "error"))
+    throw new JsxAuthoringFailure(extensionBuild.diagnostics);
+  for (const [path, text] of extensionBuild.sources) {
+    const absolute = projectFile(root, path);
+    dependencies.add(absolute);
+    if (!["node_modules", ".prismatix"].includes(path.split("/")[0]!)) rememberText(absolute, text);
+  }
   for (const extensionPath of Array.isArray(raw.extensions) ? raw.extensions : []) {
     if (typeof extensionPath !== "string") continue;
     const extension = object(documents[extensionPath]);
@@ -1224,6 +1248,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
   return {root, projectPath, project, documents, documentTexts, sourceFiles, locales, dependencies, includedResources,
     storyAssetFiles,
     uiNodeSpans, uiWarnings,
+    extensionBuilds: extensionBuild.builds, extensionWarnings: extensionBuild.diagnostics,
     textSnapshots, absentTextInputs,
     ...(storyIndexSource === undefined ? {} : {storyIndexSource}),
     ...(storyPath === undefined ? {} : {storyPath})};
@@ -1378,8 +1403,9 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
     // Playtests run before every translation has caught up with the Story.
     ...(development ? {untranslatedLocales: "default-locale" as const} : {}),
     ...(uiTypeRegistry === undefined ? {} : {uiTypeRegistry}),
-    ...(inputKeyRegistry === undefined ? {} : {inputKeyRegistry})});
-  const authored = [...loaded.uiWarnings, ...compiled.diagnostics];
+    ...(inputKeyRegistry === undefined ? {} : {inputKeyRegistry}),
+    extensionBuilds: loaded.extensionBuilds});
+  const authored = [...loaded.uiWarnings, ...loaded.extensionWarnings, ...compiled.diagnostics];
   const result = {...compiled, diagnostics: collapseRepeatedWarnings(
     loaded.uiNodeSpans.size === 0 ? authored : withJsxNodeSpans(authored,
       loaded.uiNodeSpans, loaded.root, loaded.textSnapshots))};
@@ -2342,6 +2368,18 @@ async function addCommand(options: Options): Promise<number> {
     return 0;
   } catch (error) {
     printDiagnostics([diagnostic("PXCLI1240", "add failed", options.values.get("project"), String(error))]);
+    return 1;
+  }
+}
+
+async function extensionCliCommand(options: Options): Promise<number> {
+  try {
+    const location = await resolveProjectPath(options.values.get("project"));
+    process.stdout.write(await extensionCommand(location.root, options, machineOutput));
+    return 0;
+  } catch (error) {
+    printDiagnostics([diagnostic("PXCLI1245", "extension failed", options.values.get("project"),
+      error instanceof Error ? error.message : String(error))]);
     return 1;
   }
 }
@@ -3568,6 +3606,7 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "prismatix add character <alias> [--from <folder>] [--name <display name>] [--project <dir>]",
     "normal.png (or default/neutral) becomes the default expression; without --from the character has no sprite.",
     "prismatix add scene <id> [--chapter <chapter-id>] [--title <title>] [--project <dir>]"],
+  extension: extensionHelp,
   eject: ["Copy a built-in Player screen into the project as editable TSX and register it.",
     "prismatix eject ui <title|hud|backlog|save|load|gallery|settings|video|all> [--force] [--runtime <dir>]"],
   augment: ["Add declared files to a built artifact without editing ownership by hand.",
@@ -3628,7 +3667,7 @@ function commandUsage(command: string): void {
 }
 
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|add|eject|dev|validate|build|pack|run|release|import|augment|ids|ui|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen|test> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("Usage: prismatix <create|add|extension|eject|dev|validate|build|pack|run|release|import|augment|ids|ui|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen|test> [project-or-save-or-distribution] [options]\n");
   process.stderr.write("  prismatix  In a terminal, without a command: a menu of the common commands\n");
   process.stderr.write("  prismatix <command> --help  Purpose, examples and options of one command\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
@@ -4017,6 +4056,7 @@ async function projectTool(command: string, options: Options, args: string[]): P
     .includes(command)) return undefined;
   // `import <format> <source> [project]` delegates to the target project's CLI.
   const location = command === "ui" ? await uiProject(options)
+    : command === "extension" ? await resolveProjectPath(options.values.get("project"))
     : await resolveProjectPath(command === "import" ? options.positional[2] : options.positional[0]);
   const manifestPath = join(location.root, "package.json");
   if (!await regularFile(manifestPath)) return launcherStopRequested ? 130 : undefined;
@@ -4100,6 +4140,7 @@ async function dispatch(command: string, args: readonly string[]): Promise<numbe
   if (command === "run") return runCommand(options);
   if (command === "release") return releaseCommand(options);
   if (command === "add") return addCommand(options);
+  if (command === "extension") return extensionCliCommand(options);
   if (command === "eject") return ejectCommand(options);
   if (command === "augment") return augmentCommand(options);
   if (command === "ids") return idsCommand(options);

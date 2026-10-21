@@ -14,6 +14,7 @@ import {basename, dirname, extname, join, resolve} from "node:path";
 import {pathToFileURL} from "node:url";
 
 import {PlayerTestClient, type Journey, type JourneyContext} from "./qa-client.js";
+import {remapExtensionStack} from "./extension-build.js";
 
 export interface TestCommandOptions {
   readonly values: ReadonlyMap<string, string>;
@@ -170,6 +171,15 @@ export async function waitForPort(portFile: string, child: ChildProcess, exited:
   throw new Error(`The Player did not open QA IPC within ${timeoutMs} ms; is it PrismatiXPlayerQA?`);
 }
 
+/** Player log positions in bundled TypeScript extensions, mapped back to their .ts lines. */
+async function remapLog(text: string, projectRoot: string): Promise<string> {
+  const project = await readJsonObject(join(projectRoot, "prismatix.json")) ??
+    await readJsonObject(join(projectRoot, "project.pxproject"));
+  const extensions = Array.isArray(project?.extensions)
+    ? project.extensions.filter((path): path is string => typeof path === "string") : [];
+  return extensions.length === 0 ? text : remapExtensionStack(text, projectRoot, extensions);
+}
+
 async function logTail(dataRoot: string, lines = 40): Promise<string | undefined> {
   const logs: string[] = [];
   try {
@@ -245,7 +255,8 @@ async function runJourney(file: string, player: string, options: TestCommandOpti
   const result: JourneyResult = {name, file, passed, seconds: (Date.now() - started) / 1000,
     dataRoot, outputDirectory,
     ...(passed ? {} : {error: errorText(failure)}),
-    ...(passed ? {} : await logTail(dataRoot).then((tail) => tail === undefined ? {} : {logTail: tail}))};
+    ...(passed ? {} : await logTail(dataRoot).then(async (tail) => tail === undefined ? {}
+      : {logTail: await remapLog(tail, projectRoot)}))};
   const keep = !passed || options.flags.has("keep-data") || sharedRoot !== undefined;
   if (!keep) await rm(scratch, {recursive: true, force: true}).catch(() => {});
   else if (sharedRoot !== undefined) await rm(portFile, {force: true}).catch(() => {});
