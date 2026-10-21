@@ -1,11 +1,15 @@
-// Both backends consume offline translations of the native SPIR-V artifact.
-// SDL continues to own composition, clipping, transforms and presentation.
+// Effects for the WebGL2 renderer: offline translations of the native SPIR-V
+// artifact, run on SDL's own WebGL2 context. SDL continues to own composition,
+// clipping, transforms and presentation. A WebGPU path exists only on explicit
+// opt-in (?webgpu-effects or initialize(gl, {webgpu: true})): it copies every
+// pass between the WebGL canvas and WebGPU and is several times slower. The
+// WebGPU renderer does not initialize this class; it only reads sdlGpuSource().
 export class WebEffects {
   constructor(manifest, files, base) {
     this.manifest = manifest; this.files = files; this.base = base;
     this.programs = new Map(); this.next = 1; this.backend = "webgl2";
   }
-  async initialize(gl) {
+  async initialize(gl, {webgpu = new URL(location.href).searchParams.has("webgpu-effects")} = {}) {
     if (!(gl instanceof WebGL2RenderingContext)) throw new Error("完整特效需要 WebGL2");
     this.gl = gl;
     this.framebuffer = gl.createFramebuffer(); this.vao = gl.createVertexArray();
@@ -17,7 +21,7 @@ export class WebEffects {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     });
-    if (navigator.gpu && !new URL(location.href).searchParams.has("webgl2")) {
+    if (webgpu && navigator.gpu) {
       try {
         const adapter = await navigator.gpu.requestAdapter();
         this.device = adapter && await adapter.requestDevice();
@@ -104,6 +108,15 @@ export class WebEffects {
     if(!mapping||mapping.fingerprint!==fingerprint)throw new Error(`Web effect artifact mismatch: ${id}`);
     const bytes=await this.files.read(mapping.path,0,this.files.size(mapping.path));
     return this.compile(JSON.parse(new TextDecoder().decode(bytes)));
+  }
+  // The WebGPU renderer: the effect's WGSL, rebound at export for SDL_GPU.
+  async sdlGpuSource(id, fingerprint) {
+    const mapping=this.manifest.effects?.[id];
+    if(!mapping||mapping.fingerprint!==fingerprint)throw new Error(`Web effect artifact mismatch: ${id}`);
+    const bytes=await this.files.read(mapping.path,0,this.files.size(mapping.path));
+    const shader=JSON.parse(new TextDecoder().decode(bytes));
+    if(typeof shader.sdlGpuWgsl!=="string")throw new Error(`Web effect was not exported for WebGPU: ${id}`);
+    return shader.sdlGpuWgsl;
   }
   quad(width,height){return new Float32Array([
     0,0,1,1,1,1,0,0,width,0,1,1,1,1,1,0,width,height,1,1,1,1,1,1,
