@@ -116,11 +116,12 @@ endif()
 
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
-# The NDK r27 libc++ (LLVM 18) still ships std::jthread and std::stop_token
-# as experimental. -fexperimental-library enables them and links the NDK's
-# libc++experimental.a; the Player links libc++ statically, so the unstable
+# The NDK r27 libc++ (LLVM 18) and Apple's libc++ still ship std::jthread and
+# std::stop_token as experimental. -fexperimental-library enables them and
+# links libc++experimental.a (the NDK's, or the Xcode toolchain's); both are
+# header-level facilities used only inside our own binaries, so the unstable
 # ABI never crosses a library boundary.
-if(ANDROID)
+if(ANDROID OR APPLE)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-fexperimental-library>")
     add_link_options(-fexperimental-library)
 endif()
