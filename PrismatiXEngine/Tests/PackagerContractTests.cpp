@@ -1212,7 +1212,9 @@ int main() {
                 .manifest.archives.front().file);
         const auto originalBaseArchive = Read(baseArchive);
         bool changedBaseDuringVerification = false;
+#ifdef _WIN32
         bool baseWriteBlocked = false;
+#endif
         const auto changedBasePath =
             fixture.path / "changed-base-concurrent-overlay.pdx";
         const auto changedBase = px::io::CreatePackageOverlayFromRequest(
