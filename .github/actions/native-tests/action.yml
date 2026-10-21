@@ -2,7 +2,8 @@ name: Run the native test suite
 description: >-
   Runs the packaged Player journey (PrismatiX.Player.CatalogNativeAcceptance)
   first, after checking it is registered, then every other CTest test. On
-  Linux the tests run under Xvfb with the dummy audio driver.
+  Linux the tests run under Xvfb with the dummy audio driver; hosted Windows
+  runners have no sound device either, so they use it too.
 
 inputs:
   build-dir:
@@ -48,6 +49,8 @@ runs:
         if [[ "$RUNNER_OS" == "Linux" ]]; then
           display=(xvfb-run -a)
           export SDL_AUDIO_DRIVER=dummy SDL_VIDEO_DRIVER=x11
+        elif [[ "$RUNNER_OS" == "Windows" ]]; then
+          export SDL_AUDIO_DRIVER=dummy
         fi
         ctest --test-dir "${{ inputs.build-dir }}" -N -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' | tee "${{ inputs.build-dir }}/player-e2e-list.txt"
         grep -Fq 'PrismatiX.Player.CatalogNativeAcceptance' "${{ inputs.build-dir }}/player-e2e-list.txt"
@@ -67,6 +70,8 @@ runs:
         if [[ "$RUNNER_OS" == "Linux" ]]; then
           display=(xvfb-run -a)
           export SDL_AUDIO_DRIVER=dummy SDL_VIDEO_DRIVER=x11
+        elif [[ "$RUNNER_OS" == "Windows" ]]; then
+          export SDL_AUDIO_DRIVER=dummy
         fi
         # Every test carries its own TIMEOUT (PrismatiXEngine/CMakeLists.txt).
         "${display[@]}" ctest --test-dir "${{ inputs.build-dir }}" -E '^PrismatiX\.Player\.CatalogNativeAcceptance$' \
