@@ -6,12 +6,14 @@ description: >-
   build the same way.
 
   Two caches keep CI fast. The vcpkg binary cache (built ports) is shared by
-  every job with the same OS, triplet and vcpkg inputs. A ccache compiler
-  cache is used on Linux only: MSVC would need /Z7-style debug info for ccache,
-  which changes the Windows build flags, and Homebrew's ccache pulls in a
-  newer fmt that shadows vcpkg's on Intel macOS (undefined fmt::detail symbols).
-  The vcpkg cache is saved even when a later step fails, so a failing compile
-  does not throw away the dependency build.
+  every job with the same OS, triplet and vcpkg inputs. A compiler cache keeps
+  the object files: ccache on Linux and macOS, sccache on Windows (with /Z7
+  embedded debug info, because a shared-PDB /Zi compile cannot be cached).
+  macOS and Windows install a pinned, checksum-verified prebuilt release
+  rather than Homebrew's ccache, which pulls a newer fmt into /usr/local that
+  shadows vcpkg's on Intel macOS (undefined fmt::detail symbols). The caches
+  are saved even when a later step fails, so a failing compile does not throw
+  away the dependency build or the objects that did compile.
 
   With cache-write "false" (the release workflow) the vcpkg cache is
   restore-only and ccache is not used at all: a release never writes a cache
@@ -44,7 +46,7 @@ inputs:
   cache-write:
     description: >-
       "true" to save the vcpkg binary cache and the compiler cache; "false" to
-      only restore the vcpkg binary cache and not use ccache.
+      only restore the vcpkg binary cache and use no compiler cache.
     default: "true"
 
 runs:
@@ -126,28 +128,85 @@ runs:
       with:
         path: out/ci/vcpkg-binary-cache
         key: vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-${{ steps.vcpkg-dir.outputs.image }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}
+    # Compiler cache, pinned and checksum-verified where it is downloaded.
+    # Linux uses the distribution's ccache. macOS and Windows download an
+    # official prebuilt release instead of a package manager's: Homebrew's
+    # ccache pulls its own fmt into /usr/local, which shadows vcpkg's fmt and
+    # breaks the link on Intel macOS. Windows uses sccache, since ccache
+    # cannot cache MSVC builds with PDB debug info; CI-only /Z7 (embedded
+    # debug info) replaces /Zi there, see the Configure step.
+    - name: Install ccache on macOS
+      if: runner.os == 'macOS' && inputs.cache-write == 'true'
+      shell: bash
+      env:
+        CCACHE_VERSION: "4.13.6"
+        CCACHE_SHA256: "0274210ec9c9936ed5711d59b0de3167a51216a588ddde35f6bc828f366fe6d9"
+      run: |
+        archive="$RUNNER_TEMP/ccache-$CCACHE_VERSION-darwin.tar.gz"
+        curl -fsSL --retry 3 -o "$archive" "https://github.com/ccache/ccache/releases/download/v$CCACHE_VERSION/ccache-$CCACHE_VERSION-darwin.tar.gz"
+        echo "$CCACHE_SHA256  $archive" | shasum -a 256 -c -
+        mkdir -p "$RUNNER_TEMP/ccache-install"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/ccache-install"
+        binary="$(find "$RUNNER_TEMP/ccache-install" -type f -name ccache | head -n 1)"
+        chmod +x "$binary"
+        echo "$(dirname "$binary")" >> "$GITHUB_PATH"
+        "$binary" --version | head -n 1
+        otool -L "$binary"
+    - name: Install sccache on Windows
+      if: runner.os == 'Windows' && inputs.cache-write == 'true'
+      shell: pwsh
+      env:
+        SCCACHE_VERSION: "0.17.0"
+        SCCACHE_SHA256: "e94cfc5b58cbe439302f586c1d1bd7980c2cd371d47bdf385ade657411e6f3ac"
+      run: |
+        $name = "sccache-v$env:SCCACHE_VERSION-x86_64-pc-windows-msvc"
+        $archive = Join-Path $env:RUNNER_TEMP "$name.zip"
+        Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v$env:SCCACHE_VERSION/$name.zip" -OutFile $archive
+        $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $env:SCCACHE_SHA256) { throw "sccache archive checksum mismatch: $actual" }
+        $target = Join-Path $env:RUNNER_TEMP "sccache-install"
+        Expand-Archive -LiteralPath $archive -DestinationPath $target -Force
+        $binary = Get-ChildItem -LiteralPath $target -Recurse -Filter sccache.exe | Select-Object -First 1
+        Add-Content -Path $env:GITHUB_PATH -Value $binary.DirectoryName
+        & $binary.FullName --version
+    # Each cache is capped well below the 10 GB repository budget so the vcpkg
+    # binary caches keep their room.
     - name: Prepare the compiler cache
       id: ccache-setup
-      if: runner.os == 'Linux' && inputs.cache-write == 'true'
+      if: inputs.cache-write == 'true'
       shell: bash
       run: |
+        workspace="${GITHUB_WORKSPACE//\\//}"
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          tool=sccache
+          {
+            echo "SCCACHE_DIR=$workspace/out/ci/sccache"
+            echo "SCCACHE_CACHE_SIZE=2G"
+          } >> "$GITHUB_ENV"
+        else
+          tool=ccache
+          {
+            echo "CCACHE_DIR=$workspace/out/ci/ccache"
+            echo "CCACHE_BASEDIR=$workspace"
+            echo "CCACHE_MAXSIZE=400M"
+            echo "CCACHE_COMPRESS=1"
+            echo "CCACHE_COMPILERCHECK=content"
+          } >> "$GITHUB_ENV"
+        fi
+        mkdir -p "$workspace/out/ci/$tool"
         {
-          echo "CCACHE_DIR=$GITHUB_WORKSPACE/out/ci/ccache"
-          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
-          echo "CCACHE_MAXSIZE=400M"
-          echo "CCACHE_COMPRESS=1"
-          echo "CCACHE_COMPILERCHECK=content"
-        } >> "$GITHUB_ENV"
-        mkdir -p "$GITHUB_WORKSPACE/out/ci/ccache"
-        echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "enabled=true"
+          echo "tool=$tool"
+          echo "dir=out/ci/$tool"
+        } >> "$GITHUB_OUTPUT"
     - name: Restore the compiler cache
       if: steps.ccache-setup.outputs.enabled == 'true'
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
       with:
-        path: out/ci/ccache
-        key: ccache-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.build-type }}-${{ inputs.sanitizers }}-${{ github.sha }}
+        path: ${{ steps.ccache-setup.outputs.dir }}
+        key: ${{ steps.ccache-setup.outputs.tool }}-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.build-type }}-${{ inputs.sanitizers }}-${{ github.sha }}
         restore-keys: |
-          ccache-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.build-type }}-${{ inputs.sanitizers }}-
+          ${{ steps.ccache-setup.outputs.tool }}-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.build-type }}-${{ inputs.sanitizers }}-
     - name: Configure
       if: runner.os != 'Windows'
       shell: bash
@@ -180,10 +239,19 @@ runs:
       env:
         PX_C_COMPILER: ${{ inputs.c-compiler }}
         PX_CXX_COMPILER: ${{ inputs.cxx-compiler }}
+        PX_CCACHE: ${{ steps.ccache-setup.outputs.enabled }}
       run: |
         $compilers = @()
         if ($env:PX_C_COMPILER) { $compilers += "-DCMAKE_C_COMPILER=$env:PX_C_COMPILER" }
         if ($env:PX_CXX_COMPILER) { $compilers += "-DCMAKE_CXX_COMPILER=$env:PX_CXX_COMPILER" }
+        if ($env:PX_CCACHE -eq 'true') {
+          # sccache cannot cache a compile that writes a shared PDB (/Zi), so
+          # CI embeds the debug info in each object (/Z7). Local and release
+          # builds keep the root CMakeLists.txt default, /Zi.
+          $compilers += "-DCMAKE_C_COMPILER_LAUNCHER=sccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
+          $compilers += "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded"
+          sccache --zero-stats
+        }
         cmake -S . -B "${{ inputs.build-dir }}" -G Ninja `
           "-DCMAKE_BUILD_TYPE=${{ inputs.build-type }}" `
           @compilers `
@@ -195,7 +263,7 @@ runs:
           -DPRISMATIX_WARNINGS_AS_ERRORS=ON
         if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
     # Ninja -k 0 keeps compiling after a failure, so one run reports every
-    # broken translation unit (and ccache keeps the ones that did build).
+    # broken translation unit (and the compiler cache keeps the ones that did build).
     - name: Compile the Runtime, SDK, Player and test surface
       if: runner.os != 'Windows'
       shell: bash
@@ -211,11 +279,16 @@ runs:
     - name: Show compiler cache statistics
       if: always() && steps.ccache-setup.outputs.enabled == 'true'
       shell: bash
-      run: ccache --show-stats || true
+      env:
+        PX_CACHE_TOOL: ${{ steps.ccache-setup.outputs.tool }}
+      run: |
+        "$PX_CACHE_TOOL" --show-stats || true
+        # sccache flushes its cache directory when its server stops.
+        if [[ "$PX_CACHE_TOOL" == "sccache" ]]; then sccache --stop-server || true; fi
     - name: Save the compiler cache
       if: always() && steps.ccache-setup.outputs.enabled == 'true'
       continue-on-error: true
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
       with:
-        path: out/ci/ccache
-        key: ccache-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.build-type }}-${{ inputs.sanitizers }}-${{ github.sha }}
+        path: ${{ steps.ccache-setup.outputs.dir }}
+        key: ${{ steps.ccache-setup.outputs.tool }}-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.build-type }}-${{ inputs.sanitizers }}-${{ github.sha }}
