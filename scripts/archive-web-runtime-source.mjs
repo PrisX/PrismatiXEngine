@@ -2,7 +2,11 @@ import {spawn} from 'node:child_process';
 import {writeFile,rename,rm,mkdir} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+// node scripts/archive-web-runtime-source.mjs <destination> [web-player-build-dir]
+// writes RuntimeSource.tar.gz (this checkout's runtime source) and
+// FriBidiSource.tar.gz (the exact LGPL release source the build compiled).
 const root=resolve(fileURLToPath(new URL('..',import.meta.url))),destination=resolve(process.argv[2]);
+const build=resolve(process.argv[3]??join(root,'out/build/wasm-player'));
 function run(executable,args,options={}){
   return new Promise((resolve,reject)=>{
     const child=spawn(executable,args,{windowsHide:true,cwd:root,...options});let output='';
@@ -23,6 +27,5 @@ try{
 }finally{await rm(list,{force:true});await rm(pending,{force:true});}
 // Include the LGPL dependency's exact original release source alongside the
 // full runtime source, rather than requiring a source offer from the host.
-const build=join(root,'out/build/wasm-player');
 const source=join(build,'wasm-deps/fribidi-build/src/prismatix_fribidi_external');
 await run('tar',['-czf',join(destination,'FriBidiSource.tar.gz'),'-C',source,'.']);
