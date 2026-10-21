@@ -19,6 +19,7 @@ runs:
       shell: bash
       env:
         ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
+        LSAN_OPTIONS: suppressions=${{ github.workspace }}/.github/sanitizers/lsan.supp:print_suppressions=0
         UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       run: |
         display=()
@@ -34,6 +35,7 @@ runs:
       shell: bash
       env:
         ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
+        LSAN_OPTIONS: suppressions=${{ github.workspace }}/.github/sanitizers/lsan.supp:print_suppressions=0
         UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         PRISMATIX_PACKAGER_RSS_BYTES: ${{ github.event_name == 'schedule' && runner.os == 'Linux' && '2147483685' || '' }}
         PRISMATIX_VISUAL_OUTPUT_DIR: ${{ github.workspace }}/${{ inputs.visual-output-dir }}
