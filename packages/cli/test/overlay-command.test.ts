@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {spawnSync} from "node:child_process";
-import {copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile} from "node:fs/promises";
+import {chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join, sep} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -131,6 +131,7 @@ test("overlay CLI plans a signed patch from a published artifact", async () => {
       JSON.stringify({archiveShards: 4}));
     const player = join(root, "Player.exe");
     await writeFile(player, "fixture player");
+    await chmod(player, 0o755);
     const packager = join(root, "packager.js");
     const argsFile = join(root, "native-args.json");
     await writeFile(packager,

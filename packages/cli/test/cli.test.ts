@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import {writeFileSync} from "node:fs";
-import {link, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, utimes, writeFile} from "node:fs/promises";
+import {chmod, link, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, utimes, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import {spawn, spawnSync} from "node:child_process";
@@ -23,6 +23,11 @@ function stable(value: unknown): string {
 async function write(path: string, value: string): Promise<void> {
   await mkdir(dirname(path), {recursive: true});
   await writeFile(path, value, "utf8");
+}
+/** A stand-in native tool: discovery requires the executable bit outside Windows. */
+async function writeExecutable(path: string, value: string): Promise<void> {
+  await write(path, value);
+  await chmod(path, 0o755);
 }
 
 function run(args: readonly string[]) {
@@ -398,7 +403,7 @@ test("runtime discovery accepts an installed prefix manifest and reports attempt
   const prefix = await mkdtemp(join(tmpdir(), "prismatix-runtime-prefix-"));
   const bin = join(prefix, "bin");
   const manifest = join(prefix, "share", "PrismatiX", "runtime-manifest.json");
-  await write(join(bin, process.platform === "win32" ? "PrismatiXPreviewHost.exe" : "PrismatiXPreviewHost"), "fixture");
+  await writeExecutable(join(bin, process.platform === "win32" ? "PrismatiXPreviewHost.exe" : "PrismatiXPreviewHost"), "fixture");
   await write(manifest, JSON.stringify({format: "PrismatiXRuntimeManifest", schemaRevision: 1,
     version: "0.1.0", target: `${process.platform}-${process.arch}`, binDir: "../../bin", tools: {
       previewHost: process.platform === "win32" ? "PrismatiXPreviewHost.exe" : "PrismatiXPreviewHost",
@@ -592,7 +597,7 @@ test("pack checks keyboard defaults against its selected Packager's native key m
   const packager = join(tools, "mock-packager.mjs");
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
   await write(packager, "process.exit(0);\n");
-  await write(player, "fixture");
+  await writeExecutable(player, "fixture");
   await write(join(tools, "PrismatiXInputKeyRegistry.json"), JSON.stringify({
     format: "PrismatiXInputKeyRegistry", schemaRevision: 1, keys: ["F8"],
   }));
@@ -1345,7 +1350,7 @@ test("augment publishes declared artifact additions for pack --artifact without 
       requestId: request.requestId, augmentedInput: true}) + "\\n");
   `);
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
-  await write(player, "fixture");
+  await writeExecutable(player, "fixture");
   const packed = run(["pack", value.project, "--artifact", artifact,
     "--packager", mock, "--player", player, "--output", join(value.root, "augmented-package")]);
   assert.equal(packed.status, 0, packed.stderr);
@@ -1799,7 +1804,7 @@ test("pack invokes the native file-based request protocol", async () => {
       requestId: request.requestId, fileRequest: true}) + "\\n");
   `);
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
-  await write(player, "fixture");
+  await writeExecutable(player, "fixture");
   const output = join(value.root, "packaged");
   const packed = run(["pack", value.project, "--packager", mock,
     "--player", player, "--output", output]);
@@ -1844,7 +1849,7 @@ test("pack carries a verified previous distribution into a separate output", asy
     } else process.exit(43);
   `);
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
-  await write(player, "fixture");
+  await writeExecutable(player, "fixture");
   const args = ["pack", value.project, "--packager", mock, "--player", player,
     "--previous-package", previous];
   const packed = run([...args, "--output", join(value.root, "new-distribution")]);
@@ -1916,7 +1921,7 @@ test("pack keeps same-version saves loadable through the project's release linea
       receivedLineage: lineage?.packageFingerprint ?? null}) + "\\n");
   `);
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
-  await write(player, "fixture");
+  await writeExecutable(player, "fixture");
   const lineagePath = join(value.root, ".prismatix-release", "lineage.json");
   const [first, second, third] = ["1", "2", "3"].map(digit => digit.repeat(64));
   const pack = (output: string, fingerprint: string) => {
@@ -1981,7 +1986,7 @@ test("pack validates UI against the selected Packager's adjacent registry", asyn
   const mock = join(tools, "mock-packager.mjs");
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
   await write(mock, "process.exit(0);\n");
-  await write(player, "fixture");
+  await writeExecutable(player, "fixture");
   await write(join(tools, "PrismatiXUiTypeRegistry.json"), JSON.stringify({
     format: "PrismatiXUiTypeRegistry", schemaRevision: 1,
     controls: [{runtimeType: "Control", properties: [{id: "modulate", valueType: "color",
@@ -2002,7 +2007,7 @@ test("pack --check runs native preflight on an artifact without writing a distri
   const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-package-check-"));
   const mock = join(tools, "mock-packager.mjs");
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
-  await write(player, "fixture");
+  await writeExecutable(player, "fixture");
   await write(mock, `
     import {readFile} from "node:fs/promises";
     const [flag, path, mode] = process.argv.slice(2);
@@ -2056,7 +2061,7 @@ test("pack streams native progress and handles more than 16 MiB of progress even
     process.stdout.write(JSON.stringify({event: "completed"}) + "\\n");
   `);
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
-  await write(player, "fixture");
+  await writeExecutable(player, "fixture");
   const packed = runHuman(["pack", value.project, "--packager", mock,
     "--player", player, "--output", join(value.root, "packaged")]);
   assert.equal(packed.status, 0, packed.stderr.slice(-2000));
@@ -2077,7 +2082,7 @@ test("changed pack still refuses a modified old distribution at promotion", asyn
     process.stdout.write(JSON.stringify({event: "completed"}) + "\\n");
   `);
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
-  await write(player, "fixture");
+  await writeExecutable(player, "fixture");
   const output = join(value.root, "packaged");
   const args = ["pack", value.project, "--packager", mock, "--player", player,
     "--output", output];
@@ -2124,7 +2129,7 @@ test("pack reuses an owned artifact without recompiling edited author sources", 
       requestId: request.requestId, reusedArtifact: true}) + "\\n");
   `);
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
-  await write(player, "fixture");
+  await writeExecutable(player, "fixture");
   const packed = run(["pack", value.project, "--artifact", artifact,
     "--packager", mock, "--player", player, "--output", output,
     "--archive-shards", "4", "--publisher-key", publisherKey]);
@@ -2173,7 +2178,7 @@ test("pack preserves structured native diagnostics instead of replacing them wit
     process.exitCode = 1;
   `);
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
-  await write(player, "fixture");
+  await writeExecutable(player, "fixture");
   const packed = run(["pack", value.project, "--packager", mock,
     "--player", player, "--output", join(value.root, "packaged")]);
   assert.equal(packed.status, 1);
@@ -2514,7 +2519,7 @@ test("pack --target android stages the Gradle template and collects the APK and 
         requestId: request.requestId}) + "\\n");
     `);
     const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
-    await write(player, "desktop player");
+    await writeExecutable(player, "desktop player");
     const gradle = join(tools, "mock-gradle.mjs");
     await write(gradle, `
       import {mkdir, readFile, readdir, stat, writeFile} from "node:fs/promises";
