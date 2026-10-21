@@ -1,0 +1,16 @@
+{
+  "name": "prismatix-starter",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "prismatix dev .",
+    "build": "prismatix build ."
+  },
+  "devDependencies": {
+    "@prismatix/cli": "0.1.0",
+    "@prismatix/authoring-sdk": "0.1.0",
+    "@prismatix/runtime": "0.1.0"
+  },
+  "packageManager": "pnpm@10.6.5"
+}

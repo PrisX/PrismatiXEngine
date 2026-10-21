@@ -48,6 +48,8 @@ All options are non-interactive:
 prismatix create "my game" --name "First Light" --id first-light --locale zh-TW --width 1280 --height 720
 ```
 
+`--empty` starts without the sample story, character and backgrounds; `--template adv` also copies the stock HUD, save, load, settings and backlog screens as TSX you can edit. The engine repository's [`Samples/Starter`](../Samples/Starter) is the project PrismatiX Studio creates with its default settings (both options, plus one street background); copy it outside the repository and run `pnpm install`, then `pnpm run dev`.
+
 `--locale` sets the locale tag; it does not translate the Chinese template. The bundled font covers the starter text. Add and test appropriate fonts before authoring other writing systems.
 
 ## Edit the story while it plays

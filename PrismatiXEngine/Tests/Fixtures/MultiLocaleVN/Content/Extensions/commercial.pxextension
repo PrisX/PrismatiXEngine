@@ -1,0 +1,17 @@
+{
+  "format": "PrismatiXExtension",
+  "schemaRevision": 1,
+  "language": "javascript",
+  "id": "commercial-sample",
+  "version": "1.0.0",
+  "requiredEngineVersion": ">=0.1.0 <0.2.0",
+  "entry": "commercial.js",
+  "modules": ["lib/payload.js"],
+  "capabilities": ["runtime", "ui"],
+  "safety": {"previewSafe": true, "deterministic": true, "seekSafe": true, "rollbackSafe": true},
+  "commands": [
+    {"id": "commercial.toast", "await": true, "rollback": "reversible", "capabilities": ["runtime"], "parameters": [{"name": "message", "type": "string", "required": true}]},
+    {"id": "commercial.unlock", "rollback": "reversible", "capabilities": ["runtime"], "parameters": [{"name": "id", "type": "string", "required": true}]}
+  ],
+  "actions": [{"id": "commercial.openGallery", "reentry": "ignoreWhileRunning", "capabilities": ["ui"], "parameters": []}]
+}

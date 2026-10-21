@@ -1,0 +1,9 @@
+; @prismatix-ids
+*start
+[commercial.toast message=story.prologue]
+[effect dream-tone]
+[nvl]
+雨音がホームを包み、この頁は NVL モードで始まる。
+「[ruby=きおく]記憶[/ruby]」が遠い灯の中で目を覚ました。
+[adv]
+[jump scene=chapter1 target=start]

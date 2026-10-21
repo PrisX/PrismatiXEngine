@@ -1,0 +1,12 @@
+{
+  "format":"PrismatiXLocale","schemaRevision":1,"locale":"ja-JP","fontChain":["Content/Fonts/NotoSerifJP-Bold.ttf","Content/Fonts/NotoSansTC-Bold.ttf"],
+  "resources":{
+    "journey.backdrop":"Assets/evening-room.png",
+    "journey.greeting":"Assets/Locales/ja-JP/greeting-v2.wav",
+    "journey.chime":"Assets/chime.wav"
+  },
+  "strings":{
+    "journey.title":"リリーステスト",
+    "journey.release":"第二版"
+  }
+}

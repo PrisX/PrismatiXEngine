@@ -1,0 +1,22 @@
+{
+  "format":"PrismatiXUIComponent","schemaRevision":1,"id":"30000000-0000-4000-8000-000000000001","revision":1,"name":"Vertical Ruby Card","width":300,"height":420,"rootId":"54000000-0000-4000-8000-000000000001",
+  "nodes":[
+    {
+      "id":"54000000-0000-4000-8000-000000000001","parentId":null,"order":0,"kind":"group","runtimeType":"Panel","name":"Card","visible":true,"locked":false,
+      "layout":{"mode":"free","x":0,"y":0,"width":300,"height":420,"anchorX":0,"anchorY":0,"anchorRight":1,"anchorBottom":1,"pivotX":0,"pivotY":0,"margin":0,"alignment":"fill","sizeRule":"fill"},
+      "runtimeProperties":{"clipContent":true},"bindings":{},"accessibilityLabel":"Vertical reading card","accessibilityRole":"group","accessibilityFocusOrder":0
+    },
+    {
+      "id":"54000000-0000-4000-8000-000000000002","parentId":"54000000-0000-4000-8000-000000000001","order":0,"kind":"label","runtimeType":"RichTextLabel","name":"VerticalText","visible":true,"locked":false,
+      "layout":{"mode":"free","x":28,"y":20,"width":244,"height":380,"anchorX":0,"anchorY":0,"anchorRight":0,"anchorBottom":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"center","sizeRule":"fixed"},
+      "text":"春風物語","runtimeProperties":{"markup":"[ruby=はるかぜ]春風[/ruby]物語","vertical":true,"verticalRows":10,"fontSize":30,"wrap":true},"bindings":{},"accessibilityLabel":"春風物語, Harukaze monogatari","accessibilityRole":"text","accessibilityFocusOrder":1
+    }
+  ],
+  "theme":[{"id":"card.text","name":"Card text","value":"#FFF8F0DD"}],
+  "componentInterface":{
+    "metadata":{"description":"Reusable accessible vertical ruby text card"},
+    "properties":[{"id":"content","displayName":"Ruby markup","nodeId":"54000000-0000-4000-8000-000000000002","property":"runtimeProperties.markup","valueType":"string","defaultValue":"[ruby=はるかぜ]春風[/ruby]物語"}],
+    "signals":[],
+    "slots":[]
+  }
+}

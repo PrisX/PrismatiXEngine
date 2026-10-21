@@ -56,6 +56,15 @@ jobs:
             echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Every shipped sample file has a recorded origin and a settled licence
+        run: |
+          # A pending licence (Samples/*/SAMPLE_PROVENANCE.json) blocks a tag;
+          # a dry run reports it as a warning.
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            node scripts/check-sample-provenance.mjs --release
+          else
+            node scripts/check-sample-provenance.mjs
+          fi
 
   javascript:
     name: TypeScript packages, contracts and mock journey

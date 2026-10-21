@@ -1,0 +1,12 @@
+{
+  "format":"PrismatiXSaveMigration",
+  "schemaRevision":1,
+  "id":"journey-v1-to-v2",
+  "from":{"contentVersion":"journey-v1","saveVersion":1},
+  "to":{"contentVersion":"journey-v2","saveVersion":2},
+  "anchor":{"policy":"preserve"},
+  "operations":[
+    {"op":"renameVariable","from":"walkChoice","to":"eveningChoice"},
+    {"op":"setVariable","name":"releaseJourneyVersion","value":2}
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "format":"PrismatiXUIScene","schemaRevision":1,"id":"50000000-0000-4000-8000-000000000003","revision":1,"name":"Commercial Gallery","width":1280,"height":720,"rootId":"53000000-0000-4000-8000-000000000001",
+  "nodes":[
+    {
+      "id":"53000000-0000-4000-8000-000000000001","parentId":null,"order":0,"kind":"group","runtimeType":"Panel","name":"GalleryRoot","visible":true,"locked":false,
+      "layout":{"mode":"free","x":0,"y":0,"width":1280,"height":720,"anchorX":0,"anchorY":0,"anchorRight":1,"anchorBottom":1,"pivotX":0,"pivotY":0,"margin":0,"alignment":"fill","sizeRule":"fill"},
+      "runtimeProperties":{"clipContent":true},"bindings":{},"accessibilityLabel":"Gallery","accessibilityRole":"dialog","accessibilityFocusOrder":0
+    },
+    {
+      "id":"53000000-0000-4000-8000-000000000002","parentId":"53000000-0000-4000-8000-000000000001","order":0,"kind":"label","runtimeType":"Label","name":"GalleryTitle","visible":true,"locked":false,
+      "layout":{"mode":"free","x":70,"y":40,"width":760,"height":64,"anchorX":0,"anchorY":0,"anchorRight":0,"anchorBottom":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
+      "text":"Gallery / 鑑賞模式","runtimeProperties":{"fontSize":36},"bindings":{},"accessibilityLabel":"Gallery","accessibilityRole":"heading","accessibilityFocusOrder":1
+    },
+    {
+      "id":"53000000-0000-4000-8000-000000000003","parentId":"53000000-0000-4000-8000-000000000001","order":1,"kind":"grid","runtimeType":"GridView","name":"Items","visible":true,"locked":false,
+      "layout":{"mode":"free","x":70,"y":130,"width":1000,"height":470,"anchorX":0,"anchorY":0,"anchorRight":0,"anchorBottom":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"fill","sizeRule":"fixed"},
+      "runtimeProperties":{"columns":2,"itemExtent":{"type":"vec2","x":480,"y":220},"gap":{"type":"vec2","x":20,"y":20},"overscan":1},"bindings":{},"accessibilityLabel":"Gallery items","accessibilityRole":"grid","accessibilityDescription":"Unlocked gallery artwork","accessibilityFocusOrder":2
+    },
+    {
+      "id":"53000000-0000-4000-8000-000000000004","parentId":"53000000-0000-4000-8000-000000000001","order":2,"kind":"button","runtimeType":"Button","name":"Back","visible":true,"locked":false,
+      "layout":{"mode":"free","x":1040,"y":620,"width":170,"height":60,"anchorX":0,"anchorY":0,"anchorRight":0,"anchorBottom":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"center","sizeRule":"fixed"},
+      "text":"Back","onClick":{"id":"overlay.close","arguments":{}},"runtimeProperties":{"focusMode":"All"},"bindings":{},"accessibilityLabel":"Close gallery","accessibilityRole":"button","accessibilityFocusOrder":10
+    }
+  ],
+  "theme":[{"id":"gallery.background","name":"Gallery background","value":"#F0121728"}],
+  "behaviorGraph":{"nodes":[],"links":[],"groups":[]},"behaviorTriggers":[],"visualStateGroups":[]
+}

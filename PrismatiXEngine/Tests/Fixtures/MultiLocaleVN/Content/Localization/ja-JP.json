@@ -1,0 +1,11 @@
+{
+  "format": "PrismatiXLocale",
+  "schemaRevision": 1,
+  "locale": "ja-JP",
+  "strings": {
+    "ui.title": "PrismatiX 商用サンプル",
+    "ui.start": "はじめから",
+    "ui.gallery": "ギャラリー",
+    "story.prologue": "プロローグ開始"
+  }
+}

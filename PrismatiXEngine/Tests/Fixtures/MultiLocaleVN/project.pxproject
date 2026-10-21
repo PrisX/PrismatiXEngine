@@ -1,0 +1,43 @@
+{
+  "format": "PrismatiXProject",
+  "schemaRevision": 1,
+  "id": "prismatix-commercial-vn",
+  "name": "PrismatiX Commercial VN",
+  "version": "0.2.0",
+  "contentVersion": "chapter-1",
+  "saveVersion": 2,
+  "graphicsTier": "gpu-effects",
+  "resolution": {"width": 1280, "height": 720},
+  "entry": {"story": "prologue", "ui": "title"},
+  "defaultLocale": "zh-TW",
+  "supportedLocales": ["zh-TW", "ja-JP"],
+  "storyIndex": "Story/story.pxindex",
+  "gameCatalog": "Content/game.pxgame",
+  "extensions": ["Content/Extensions/commercial.pxextension"],
+  "uiEntryPoints": {
+    "title": "Content/UI/Title.pxui",
+    "hud": "Content/UI/HUD.pxui",
+    "gallery": "Content/UI/Gallery.pxui"
+  },
+  "uiComponents": [{
+    "id": "30000000-0000-4000-8000-000000000001",
+    "name": "Vertical Ruby Card",
+    "source": "Content/UI/VerticalRubyCard.pxuicomponent"
+  }],
+  "assets": [{
+    "id": "40000000-0000-4000-8000-000000000001",
+    "name": "Ending CG",
+    "kind": "cg",
+    "source": "Assets/ending.svg",
+    "sourceFileName": "ending.svg",
+    "tags": ["gallery", "sample"]
+  }],
+  "effects": [{"id": "dream-tone", "source": "Effects/dream-tone.pxeffect"}],
+  "saveMigrations": [{
+    "id": "chapter-0-to-1",
+    "from": {"contentVersion": "chapter-0", "saveVersion": 1},
+    "to": {"contentVersion": "chapter-1", "saveVersion": 2},
+    "asset": "Content/Migrations/chapter-0-to-1.pxsave-migration"
+  }],
+  "settings": {"sample.controllerNavigation": true, "sample.dialogueModes": ["ADV", "NVL"]}
+}

@@ -1,0 +1,44 @@
+{
+  "format": "PrismatiXProject",
+  "schemaRevision": 1,
+  "id": "prismatix-release-journey",
+  "name": "PrismatiX release journey",
+  "version": "2.0.0",
+  "contentVersion": "journey-v2",
+  "saveVersion": 2,
+  "graphicsTier": "basic",
+  "resolution": {"width": 1280, "height": 720},
+  "entry": {"story": "main", "ui": "title"},
+  "defaultLocale": "zh-TW",
+  "supportedLocales": ["zh-TW", "ja-JP"],
+  "storyIndex": "Story/story.pxindex",
+  "gameCatalog": "Content/game.pxgame",
+  "extensions": [],
+  "uiEntryPoints": {
+    "title": "Content/UI/Title.tsx",
+    "hud": "Content/UI/HUD.tsx",
+    "gallery": "Content/UI/Gallery.tsx",
+    "backlog": "Content/UI/Backlog.tsx",
+    "save": "Content/UI/Save.tsx",
+    "load": "Content/UI/Load.tsx"
+  },
+  "assets": [
+    {"id":"10000000-0000-4000-8000-000000000001","name":"Evening room","kind":"background","source":"Assets/evening-room.png","sourceFileName":"evening-room.png","tags":["fixture","background"]},
+    {"id":"20000000-0000-4000-8000-000000000001","name":"Chime","kind":"audio","source":"Assets/chime.wav","sourceFileName":"chime.wav","tags":["fixture","sfx"]},
+    {"id":"30000000-0000-4000-8000-000000000001","name":"Ending CG","kind":"cg","source":"Assets/ending-cg.png","sourceFileName":"ending-cg.png","tags":["fixture","gallery"]},
+    {"id":"40000000-0000-4000-8000-000000000001","name":"Noto Sans TC Bold","kind":"font","source":"Content/Fonts/NotoSansTC-Bold.ttf","sourceFileName":"NotoSansTC-Bold.ttf","tags":["font","cjk"]},
+    {"id":"40000000-0000-4000-8000-000000000004","name":"Noto Serif JP Bold","kind":"font","source":"Content/Fonts/NotoSerifJP-Bold.ttf","sourceFileName":"NotoSerifJP-Bold.ttf","tags":["font","japanese"]},
+    {"id":"40000000-0000-4000-8000-000000000002","name":"SIL Open Font License 1.1","kind":"license","source":"Content/Fonts/OFL-1.1.txt","sourceFileName":"OFL-1.1.txt","tags":["license","font"]},
+    {"id":"40000000-0000-4000-8000-000000000003","name":"Asset provenance","kind":"provenance","source":"ASSET_PROVENANCE.md","sourceFileName":"ASSET_PROVENANCE.md","tags":["notice","provenance"]}
+  ],
+  "saveMigrations": [{
+    "id": "journey-v1-to-v2",
+    "from": {"contentVersion": "journey-v1", "saveVersion": 1},
+    "to": {"contentVersion": "journey-v2", "saveVersion": 2},
+    "asset": "Content/Migrations/journey-v1-to-v2.pxsave-migration"
+  }],
+  "characters": [
+    {"id":"60000000-0000-4000-8000-000000000001","alias":"guide","displayName":"嚮導","source":"Characters/60000000-0000-4000-8000-000000000001.pxcharacter"}
+  ],
+  "settings": {"fixture.releaseJourney": "v1-to-v2"}
+}

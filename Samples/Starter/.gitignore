@@ -1,0 +1,4 @@
+node_modules/
+.prismatix/
+dist/
+*.log

@@ -1,0 +1,143 @@
+{
+  "format": "PrismatiXSampleProvenance",
+  "schemaRevision": 1,
+  "sample": "Starter",
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "07b7c7af2d0b97c9298c8636079b024c9eb44d02d4b0d8be73e450b20f6043e3",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "ASSET_PROVENANCE.md",
+      "sha256": "752091e015b46a78bb0625c28c04747c042609674a5ae2782d5ee0b0bbc4f1a0",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Assets/Backgrounds/street.jpg",
+      "sha256": "4c134ca7dda9cd5b2e386cf3e0574f9ba648aa21dece660cd78c65688ce90116",
+      "origin": "Supplied by the project owner (Owen Liu) as PrismatiX Studio's new-project background; ASSET_PROVENANCE.md records its generation metadata",
+      "license": "TBD",
+      "status": "pending",
+      "note": "Licence: TBD. Pending the project owner's confirmation of redistribution rights (including the terms of the model and LoRA named in ASSET_PROVENANCE.md). Release-blocking until confirmed."
+    },
+    {
+      "path": "Content/Fonts/NotoSansTC-Bold.ttf",
+      "sha256": "ed4ae6ed781e34d0beee896e9be5d835a938ac7adabbcc1b6b6904290006f372",
+      "origin": "Copy of the engine's Resources/Fonts/NotoSansTC-Bold.ttf (Google Noto font family (legacy repository import))",
+      "license": "OFL-1.1",
+      "copyOf": "Resources/Fonts/NotoSansTC-Bold.ttf"
+    },
+    {
+      "path": "Content/Fonts/OFL-1.1.txt",
+      "sha256": "b6c05d42a8eda9f2ed2476bbaef9e2f40854c0a7766b496a664476ed454869dd",
+      "origin": "SIL Open Font License 1.1 text, as in the engine's Resources/Fonts/OFL-1.1.txt",
+      "license": "OFL-1.1"
+    },
+    {
+      "path": "Content/Localization/zh-TW.json",
+      "sha256": "58c2fddd09bbbb2ff52685302eb2dbe2580dda3fbb5d0dcdde59ebed3e79e5b1",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Content/UI/Backlog.tsx",
+      "sha256": "82b25c04cbf84e85ec9b1b72587f53bf5a99ce0021e223a389af0af2ea909ebf",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Content/UI/HUD.tsx",
+      "sha256": "a275a906d5e65254d2eed27b82988048173a4ad3a369b154a9705666b688f9ff",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Content/UI/Load.tsx",
+      "sha256": "34d8d2e45f12d5043af2892b5271e556e0d8578810aa2088bbd20f59d38b04d1",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Content/UI/PrismatiX/NOTICE.md",
+      "sha256": "e96fa3b7888ac293fd4cb7cc8d9315bd5c8a400274f3fe0504dff8bf45661365",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Content/UI/PrismatiX/PrismatiXEngine_Logo.png",
+      "sha256": "4502d5660798694cc99e6306ed2625aa0f4ceca651a38f163a091236dbde0214",
+      "origin": "Copy of the engine's Resources/Branding/PrismatiXEngine_Logo.png (PrismatiXEngine project branding, repository history a7e858b55fd8c22d5bb2580389a27772bb0f56ec)",
+      "license": "project-branding-restricted",
+      "copyOf": "Resources/Branding/PrismatiXEngine_Logo.png"
+    },
+    {
+      "path": "Content/UI/Save.tsx",
+      "sha256": "4e50548227abe8579f3f664c60334b6e89cfb12983e67454d2f67744c0d847f5",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Content/UI/Settings.tsx",
+      "sha256": "5f43d39f7fd5c43db3447474bf86a6ac72c505abc5b32d7e7b820d0394f8eaf0",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Content/UI/Splash.studio.json",
+      "sha256": "aad47856299baa6ef7d535a5e7a4eb8366e7376fc565ce122bbbf6f7fc156889",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Content/UI/Splash.tsx",
+      "sha256": "3d26e1688b964a1791064b1e84570bf009068c302a9358836063ba1b23673326",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Content/UI/Title.tsx",
+      "sha256": "907d38b7288cd2651739c71242122197f837b87dbe62b1480aef759e9043a4e1",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "README.md",
+      "sha256": "287a276d1f59017b9ce0b6e08549809611b73d78a12f38b68c58c1e1337b9836",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Story/main.pxstory",
+      "sha256": "9114818ef50559ba840e11778c052abdfef0fabfa3eb73f94e1d5a57760ead46",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Story/main.pxstory.pxids.json",
+      "sha256": "147d0ba527c3a1a7481748a40f5bf66eb2a2a92986cebd5a4f99af86e9be2e1e",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "package.json",
+      "sha256": "d5b4385233e9018c264276c085ef96c4a5bf9213408a94ea09a09f7c050c41f9",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "prismatix.json",
+      "sha256": "a7bcffc6b542ed64125e0054a3a3b53c8b740db2941adb13ad742d434c7d8f70",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "9e096ca6307cfea2b4b9c590aa59f41929f1bfff0e15a47c61f66acbdc9c0254",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    }
+  ]
+}

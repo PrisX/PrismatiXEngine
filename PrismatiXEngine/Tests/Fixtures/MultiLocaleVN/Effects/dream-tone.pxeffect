@@ -1,0 +1,8 @@
+{
+  "format": "PrismatiXEffect",
+  "schemaRevision": 1,
+  "id": "dream-tone",
+  "targetLayer": "stage",
+  "shader": "Effects/dream-tone.frag.hlsl",
+  "uniforms": [{"name": "amount", "type": "number", "slot": 0, "default": 0.55, "minimum": 0, "maximum": 1}]
+}

@@ -1,0 +1,5 @@
+{
+  "format":"PrismatiXStoryIndex","schemaRevision":1,"id":"release-journey","entryScene":"main",
+  "chapters":[{"id":"chapter-evening","title":"Evening","scenes":["main"]}],
+  "scenes":[{"id":"main","title":"Evening","sources":{"zh-TW":"Story/zh-TW/main.pxstory","ja-JP":"Story/ja-JP/main.pxstory"},"requiredLabels":["start","walk","long-night","ending"]}]
+}

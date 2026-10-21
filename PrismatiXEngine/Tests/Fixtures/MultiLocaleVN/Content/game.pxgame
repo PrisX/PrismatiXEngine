@@ -1,0 +1,21 @@
+{
+  "format": "PrismatiXGame",
+  "schemaRevision": 1,
+  "variables": [
+    {"name": "routeName", "type": "string", "default": "common", "scope": "session"},
+    {"name": "endingUnlocked", "type": "boolean", "default": false, "scope": "profile"}
+  ],
+  "progressionFlags": ["ending-cg"],
+  "gallery": [{
+    "id": "ending-cg",
+    "title": "First Train",
+    "image": {"id": "40000000-0000-4000-8000-000000000001", "path": "Assets/ending.svg", "kind": "cg"},
+    "thumbnail": {"id": "40000000-0000-4000-8000-000000000001", "path": "Assets/ending.svg", "kind": "cg"},
+    "unlockFlag": "ending-cg"
+  }],
+  "unlockables": [{"id": "ending-cg", "kind": "gallery", "condition": "endingUnlocked == true", "payload": {"route": "stay"}}],
+  "inputBindings": [
+    {"key": "G", "command": "screen.open", "argument": "gallery"},
+    {"key": "B", "command": "screen.open", "argument": "backlog"}
+  ]
+}

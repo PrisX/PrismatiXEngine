@@ -1,0 +1,11 @@
+{
+  "format": "PrismatiXLocale",
+  "schemaRevision": 1,
+  "locale": "zh-TW",
+  "strings": {
+    "ui.title": "PrismatiX 商業範例",
+    "ui.start": "開始遊戲",
+    "ui.gallery": "鑑賞模式",
+    "story.prologue": "序章開始"
+  }
+}

@@ -1,0 +1,14 @@
+; @prismatix-ids
+*start
+[set routeName=choice]
+[choice text="ホームに残る" goto=stay]
+[choice text="灯台へ向かう" goto=leave]
+[choice.wait]
+*stay
+[set endingUnlocked=true]
+[commercial.unlock id=ending-cg]
+私たちは始発電車を待った。
+[end]
+*leave
+彼女は海辺の灯台へ歩き出した。
+[end]

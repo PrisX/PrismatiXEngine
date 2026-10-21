@@ -1,0 +1,14 @@
+; @prismatix-ids
+*start
+[set routeName=choice]
+[choice text="留在月台" goto=stay]
+[choice text="前往燈塔" goto=leave]
+[choice.wait]
+*stay
+[set endingUnlocked=true]
+[commercial.unlock id=ending-cg]
+我們等到了第一班電車。
+[end]
+*leave
+她轉身走向海邊的燈塔。
+[end]

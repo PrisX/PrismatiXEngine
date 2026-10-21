@@ -145,7 +145,7 @@ PrismatiXEngine/
 ├── Contracts/         JSON Schemas for every document the toolchain writes
 ├── packages/          authoring-sdk, cli, vscode-pxstory
 ├── runtime-sdk/       TypeScript types for runtime extensions
-├── Samples/           Complete example projects
+├── Samples/Starter/   The project PrismatiX Studio creates by default
 └── docs/              Guides, examples and the release contract
 ```
 

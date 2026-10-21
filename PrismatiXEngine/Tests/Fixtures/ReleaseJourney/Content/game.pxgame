@@ -1,0 +1,20 @@
+{
+  "format":"PrismatiXGame","schemaRevision":1,
+  "variables":[
+    {"name":"eveningChoice","type":"string","default":"undecided","scope":"session","description":"The evening route (V2 name; V1 called it walkChoice)"},
+    {"name":"endingUnlocked","type":"boolean","default":false,"scope":"profile","description":"Whether the ending CG is unlocked"},
+    {"name":"releaseJourneyVersion","type":"integer","default":2,"scope":"session","description":"Set to 2 by the V1 to V2 save migration"}
+  ],
+  "progressionFlags":["evening-ending"],
+  "gallery":[{
+    "id":"evening-ending","title":"Evening ending",
+    "image":{"id":"30000000-0000-4000-8000-000000000001","path":"Assets/ending-cg.png","kind":"cg"},
+    "thumbnail":{"id":"30000000-0000-4000-8000-000000000001","path":"Assets/ending-cg.png","kind":"cg"},
+    "unlockFlag":"evening-ending"
+  }],
+  "unlockables":[{"id":"evening-ending","kind":"gallery","condition":"endingUnlocked == true","payload":{"route":"gallery"}}],
+  "inputBindings":[
+    {"key":"G","command":"screen.open","argument":"gallery"},
+    {"key":"B","command":"screen.open","argument":"backlog"}
+  ]
+}

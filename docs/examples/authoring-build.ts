@@ -4,7 +4,8 @@ import {resolve} from "node:path";
 import {compileProject, ENGINE_VERSION, loadStorySourceFiles,
   type StoryIndexDocument} from "@prismatix/authoring-sdk";
 
-const sampleRoot = resolve("Samples/CommercialVN");
+// A small multi-locale test project; any canonical project.pxproject works.
+const sampleRoot = resolve("PrismatiXEngine/Tests/Fixtures/MultiLocaleVN");
 const json = async (path: string): Promise<unknown> =>
   JSON.parse(await readFile(resolve(sampleRoot, path), "utf8")) as unknown;
 const record = (value: unknown): Record<string, unknown> => {
@@ -58,7 +59,7 @@ for (const locale of Array.isArray(descriptor.supportedLocales)
 const result = compileProject({project, documents, sourceFiles, locales,
   projectPath: "project.pxproject"});
 if (!result.valid || result.artifact === undefined)
-  throw new Error(`Commercial sample did not compile: ${JSON.stringify(result.diagnostics)}`);
+  throw new Error(`Multi-locale project did not compile: ${JSON.stringify(result.diagnostics)}`);
 if (result.artifact.engineVersion !== ENGINE_VERSION ||
     result.artifact.sourceMap.mappings.length === 0 ||
     result.artifact.localeArtifacts["ja-JP"] === undefined)

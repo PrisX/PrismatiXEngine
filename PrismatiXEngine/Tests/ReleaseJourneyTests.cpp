@@ -1,3 +1,8 @@
+// The native half of scripts/release-journey.mjs: `write-v1` writes player
+// saves, profile and config from the packaged V1 release; `verify-v2` reads
+// them from the packaged V2 release and migrates the slot through its
+// packaged migration. It reads only packaged artifacts.
+
 #include "Engine/IO/Archive.h"
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfile.h"
@@ -67,8 +72,8 @@ px::io::Archive OpenArchive(px::test::Suite& suite,
 bool WriteVersionOne(px::test::Suite& suite,
                      const std::filesystem::path& release) {
     const auto manifest = ReadManifest(suite, release);
-    suite.Require(manifest.gameId == "prisma-family-demo" &&
-                      manifest.contentVersion == "family-v1" &&
+    suite.Require(manifest.gameId == "prismatix-release-journey" &&
+                      manifest.contentVersion == "journey-v1" &&
                       manifest.saveVersion == 1 &&
                       !manifest.persistenceDataId.empty(),
                   "version-one package publishes a stable persistence identity");
@@ -80,16 +85,16 @@ bool WriteVersionOne(px::test::Suite& suite,
     px::progress::GlobalProfile profile;
     profile.MarkSeen("main.long.page.520");
     profile.MarkChoiceSeen("main.choice.long");
-    profile.UnlockCG("three-cups-ending");
+    profile.UnlockCG("evening-ending");
     px::VariantArray rememberedRoutes;
-    rememberedRoutes.emplace_back("cocoa");
+    rememberedRoutes.emplace_back("walk");
     rememberedRoutes.emplace_back("long-night");
     px::VariantObject releaseState;
     releaseState.emplace("route", px::Variant("long-night"));
     releaseState.emplace("rememberedRoutes",
                          px::Variant(std::move(rememberedRoutes)));
     releaseState.emplace("version", px::Variant(std::int64_t{1}));
-    profile.SetVariable("family.release",
+    profile.SetVariable("journey.release",
                         px::Variant(std::move(releaseState)));
     suite.Require(px::progress::SaveGlobalProfile(
                       profile, (saveRoot / "profile.dat").string(), &key),
@@ -128,8 +133,8 @@ bool WriteVersionOne(px::test::Suite& suite,
     snapshot.vm.scriptPath = manifest.startRuntimeIr;
     snapshot.chapter = "chapter-evening";
     snapshot.routes.stack = {"hud"};
-    snapshot.typedVariables["brotherChoice"] = px::Variant("long-night");
-    snapshot.typedVariables["familyEndingUnlocked"] = px::Variant(true);
+    snapshot.typedVariables["walkChoice"] = px::Variant("long-night");
+    snapshot.typedVariables["endingUnlocked"] = px::Variant(true);
     snapshot.timestamp = 1'800'000'000;
     snapshot.playtimeMs = 9'876'543;
     px::progress::SaveSystem saves;
@@ -152,11 +157,11 @@ bool WriteVersionOne(px::test::Suite& suite,
 bool VerifyVersionTwo(px::test::Suite& suite,
                       const std::filesystem::path& release) {
     const auto manifest = ReadManifest(suite, release);
-    suite.Require(manifest.gameId == "prisma-family-demo" &&
-                      manifest.contentVersion == "family-v2" &&
+    suite.Require(manifest.gameId == "prismatix-release-journey" &&
+                      manifest.contentVersion == "journey-v2" &&
                       manifest.saveVersion == 2 &&
                       manifest.saveMigrations.size() == 1,
-                  "version-two package declares the real sample migration");
+                  "version-two package declares the fixture migration");
     const auto key = px::progress::DeriveGameDataPersistenceKey(
         manifest.persistenceDataId);
     const auto fallbackKeys = FallbackKeys(manifest);
@@ -169,10 +174,10 @@ bool VerifyVersionTwo(px::test::Suite& suite,
             fallbackKeys) == px::progress::PersistLoadStatus::Loaded &&
             profile.HasSeen("main.long.page.520") &&
             profile.HasChoiceSeen("main.choice.long") &&
-            profile.CGUnlocked("three-cups-ending") &&
-            profile.Variable("family.release") != nullptr,
+            profile.CGUnlocked("evening-ending") &&
+            profile.Variable("journey.release") != nullptr,
         "version-two reads version-one seen, unlock, and composite profile data");
-    const auto* releaseState = profile.Variable("family.release")->AsObject();
+    const auto* releaseState = profile.Variable("journey.release")->AsObject();
     suite.Expect(releaseState && releaseState->contains("rememberedRoutes") &&
                      releaseState->at("rememberedRoutes").AsArray() &&
                      releaseState->at("rememberedRoutes").AsArray()->size() == 2,
@@ -191,7 +196,7 @@ bool VerifyVersionTwo(px::test::Suite& suite,
     saves.Configure(saveRoot.string(), &key, fallbackKeys);
     const auto loaded = saves.Load(7);
     suite.Require(loaded.has_value() &&
-                      loaded->contentVersion == "family-v1" &&
+                      loaded->contentVersion == "journey-v1" &&
                       loaded->saveVersion == 1 &&
                       loaded->packageFingerprint != manifest.packageFingerprint,
                   "version-two reads the exact version-one slot before migration");
@@ -200,7 +205,7 @@ bool VerifyVersionTwo(px::test::Suite& suite,
     suite.Expect(
         archive.Contains("Assets/Locales/zh-TW/greeting-v2.wav") &&
             archive.Contains("Assets/Locales/ja-JP/greeting-v2.wav") &&
-            archive.Contains("Assets/three-cups-ending.png") &&
+            archive.Contains("Assets/ending-cg.png") &&
             archive.Contains("Assets/evening-room.png") &&
             archive.Contains("ASSET_PROVENANCE.md") &&
             archive.Contains("Content/Fonts/OFL-1.1.txt") &&
@@ -227,13 +232,13 @@ bool VerifyVersionTwo(px::test::Suite& suite,
     suite.Require(migrated.IsOk(),
                   "version-one slot migrates through the packaged migration asset");
     const auto& value = migrated.Value();
-    const auto choice = value.typedVariables.find("nightChoice");
+    const auto choice = value.typedVariables.find("eveningChoice");
     const auto journeyVersion =
         value.typedVariables.find("releaseJourneyVersion");
     suite.Expect(
-        value.contentVersion == "family-v2" && value.saveVersion == 2 &&
+        value.contentVersion == "journey-v2" && value.saveVersion == 2 &&
             value.packageFingerprint == manifest.packageFingerprint &&
-            !value.typedVariables.contains("brotherChoice") &&
+            !value.typedVariables.contains("walkChoice") &&
             choice != value.typedVariables.end() &&
             choice->second.TryGet<std::string>() &&
             *choice->second.TryGet<std::string>() == "long-night" &&
@@ -244,8 +249,8 @@ bool VerifyVersionTwo(px::test::Suite& suite,
     suite.Require(saves.Save(7, value),
                   "migrated slot is committed with the current stable key");
     const auto roundTrip = saves.Load(7);
-    suite.Expect(roundTrip && roundTrip->contentVersion == "family-v2" &&
-                     roundTrip->typedVariables.contains("nightChoice"),
+    suite.Expect(roundTrip && roundTrip->contentVersion == "journey-v2" &&
+                     roundTrip->typedVariables.contains("eveningChoice"),
                  "migrated slot reads back after the package upgrade");
 
     const auto protectedPath = saveRoot / "protected-wrong-key.dat";
@@ -266,7 +271,7 @@ bool VerifyVersionTwo(px::test::Suite& suite,
 }  // namespace
 
 int main(const int argc, char** argv) {
-    px::test::Suite suite("PrismaFamilyReleaseJourney");
+    px::test::Suite suite("ReleaseJourney");
     suite.Run("PackagedArtifactsOnly", [&] {
         suite.Require(argc == 3,
                       "verifier receives a mode and packaged release directory");

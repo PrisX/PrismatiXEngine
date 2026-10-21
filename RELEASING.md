@@ -9,9 +9,12 @@ which does all of it. Nothing is published from a developer machine.
 
 1. **version**: the tag must equal every package version
    (`node scripts/verify-release-version.mjs --tag vX.Y.Z` also checks the
-   exact cross-pins, CMake, vcpkg.json, the starter template, the VS Code
-   extension, `CHANGELOG.md` and `docs/releases/X.Y.Z.md`), and the tagged
-   commit must be on `master`.
+   exact cross-pins, CMake, vcpkg.json, the starter template, the Starter
+   sample, the VS Code extension, `CHANGELOG.md` and
+   `docs/releases/X.Y.Z.md`), and the tagged commit must be on `master`.
+   `node scripts/check-sample-provenance.mjs --release` must pass: every file
+   under `Samples/` listed in its `SAMPLE_PROVENANCE.json` with a settled
+   licence. A licence recorded as pending (`"license": "TBD"`) blocks the tag.
 2. **javascript**: `pnpm run check` (contracts, every TypeScript package test,
    the mock clean-install journey, docs examples).
 3. **native**, on Windows x64, Linux x64, macOS x64 and macOS arm64: the same
@@ -72,14 +75,18 @@ Do these once, before the first tag.
    source): the three `package.json` files and their exact `@prismatix/*`
    pins, `packages/vscode-pxstory/package.json` (and the language server's
    `serverInfo`), `packages/cli/templates/minimal/package.json`,
+   `Samples/Starter/package.json`,
    `cmake/PrismatiXContractVersions.cmake`, `vcpkg.json`,
    `ASSET_PROVENANCE.json` (`release`) and the exact pin in
    `docs/releases/delivery-contract.md`. Run `pnpm install` to refresh
    `pnpm-lock.yaml`.
 2. Move the `[Unreleased]` notes in `CHANGELOG.md` to a dated `[X.Y.Z]`
    section and write `docs/releases/X.Y.Z.md`.
-3. `node scripts/verify-release-version.mjs` must pass, and `pnpm test` and
-   `ctest` must pass locally.
+3. `node scripts/verify-release-version.mjs` and
+   `node scripts/check-sample-provenance.mjs --release` must pass, and
+   `pnpm test` and `ctest` must pass locally. When PrismatiX Studio's default
+   new project changed, regenerate the sample first with
+   `node scripts/refresh-starter-sample.mjs --studio <Studio checkout>`.
 4. Commit, then push and tag:
 
    ```bash

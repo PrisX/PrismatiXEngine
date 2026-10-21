@@ -1,0 +1,12 @@
+{
+  "format": "PrismatiXSaveMigration",
+  "schemaRevision": 1,
+  "id": "chapter-0-to-1",
+  "from": {"contentVersion": "chapter-0", "saveVersion": 1},
+  "to": {"contentVersion": "chapter-1", "saveVersion": 2},
+  "anchor": {"policy": "preserve"},
+  "operations": [
+    {"op": "renameVariable", "from": "route", "to": "routeName"},
+    {"op": "setVariable", "name": "endingUnlocked", "value": false}
+  ]
+}

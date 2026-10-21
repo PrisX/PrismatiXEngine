@@ -41,6 +41,9 @@ supported platforms, verification status and known limitations.
   encryption, sharding, WebP/Opus transcoding) and QuickJS-NG extensions.
 - VS Code extension source (`packages/vscode-pxstory`, not published to the
   Marketplace in this release).
+- Repository sample `Samples/Starter`, the project PrismatiX Studio creates
+  by default, with a provenance inventory checked before every release (not
+  part of the npm packages).
 
 ### Changed
 

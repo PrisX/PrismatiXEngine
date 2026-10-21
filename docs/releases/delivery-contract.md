@@ -55,7 +55,10 @@ inventory next to the Player under `Notices/`.
    smoke. Its unverified status must be explicit; it is not a prerequisite for
    a release restricted to the verified desktop SDK targets.
 6. Verify notices, font hashes and sample provenance before publishing an
-   artifact.
+   artifact. Every file under `Samples/` is listed with its SHA-256, origin
+   and licence in its sample's `SAMPLE_PROVENANCE.json`;
+   `node scripts/check-sample-provenance.mjs --release` fails on an unlisted
+   or changed file and on any licence still pending.
 7. For a Web release, verify shipping runtime hashes and notices, real-browser
    canvas/media/effect behavior, persistent saves and migration, complete offline
    playback and accepted updates. Record tested browsers/devices explicitly.

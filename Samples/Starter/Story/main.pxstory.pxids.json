@@ -1,0 +1,6 @@
+{"entries":[
+{"fingerprint":"414b853cb16eb327","kind":"label","sourceId":"story-d27790ff2b2464b4"},
+{"command":"bg","fingerprint":"bd9e911dfe063748","kind":"command","sourceId":"story-92676795530d415f"},
+{"fingerprint":"2d2dfc2e4507cbbb","kind":"narration","sourceId":"story-cce88c274a0d74d4"},
+{"command":"end","fingerprint":"3970bd816bb2ccca","kind":"command","sourceId":"story-37a6804be6bb6851"}
+],"format":"PrismatiXStoryIdentityMap","schemaRevision":1}

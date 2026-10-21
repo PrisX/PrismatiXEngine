@@ -899,14 +899,13 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
     set_tests_properties(PrismatiX.SDK.PackagerContract
                          PROPERTIES LABELS "sdk;contract;packager;gpu;native")
 
-    # Invoked by Samples/PrismaFamilyDemo/Scripts/release-journey.mjs after
-    # public CLI packaging. It deliberately has no standalone CTest entry:
+    # Invoked by scripts/release-journey.mjs after public CLI packaging
+    # (PrismatiX.SDK.ReleaseJourney below). It has no CTest entry of its own:
     # the verifier never synthesizes Runtime IR or bypasses the authoring path.
-    add_executable(PrismatiXPrismaFamilyReleaseJourneyTests
-                   Tests/PrismaFamilyReleaseJourneyTests.cpp)
-    target_link_libraries(PrismatiXPrismaFamilyReleaseJourneyTests PRIVATE
+    add_executable(PrismatiXReleaseJourneyTests Tests/ReleaseJourneyTests.cpp)
+    target_link_libraries(PrismatiXReleaseJourneyTests PRIVATE
                           PrismatiXRuntime PrismatiXPackagerSDK)
-    prismatix_configure_target(PrismatiXPrismaFamilyReleaseJourneyTests)
+    prismatix_configure_target(PrismatiXReleaseJourneyTests)
 
     add_executable(PrismatiXCharacterResourcesContractTests
                    Tests/CharacterResourcesContractTests.cpp)
@@ -951,12 +950,24 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
         # PROCESSORS keeps a parallel ctest from oversubscribing the machine.
         set_tests_properties(PrismatiX.SDK.PackageVerifierColdStart PROPERTIES
             LABELS "sdk;contract;packager;native" TIMEOUT 90 PROCESSORS 4)
+        # V1 and V2 of Tests/Fixtures/ReleaseJourney through `prismatix
+        # validate`, `build` and `pack`, then V1 saves upgraded by the V2
+        # package's migration (scripts/release-journey.mjs).
+        add_test(NAME PrismatiX.SDK.ReleaseJourney
+            COMMAND "${PRISMATIX_NODE_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/release-journey.mjs"
+                    --cli "${CMAKE_CURRENT_SOURCE_DIR}/../packages/cli/dist/src/cli.js"
+                    --packager $<TARGET_FILE:PrismatiXPackager>
+                    --player $<TARGET_FILE:PrismatiXPlayer>
+                    --verifier $<TARGET_FILE:PrismatiXReleaseJourneyTests>)
+        set_tests_properties(PrismatiX.SDK.ReleaseJourney PROPERTIES
+            LABELS "sdk;e2e;packager;release;native" TIMEOUT 300 PROCESSORS 2)
     endif()
     add_test(
         NAME PrismatiX.Player.CatalogNativeAcceptance
         COMMAND PrismatiXPlayerCatalogNativeAcceptanceTests
                 $<TARGET_FILE:PrismatiXPlayerQA>
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Samples/CommercialVN/Content
+                ${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/MultiLocaleVN/Content
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/NotoSansTC-Bold.ttf
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/logo.wav

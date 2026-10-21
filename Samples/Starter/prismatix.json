@@ -1,0 +1,65 @@
+{
+  "name": "PrismatiX Starter",
+  "id": "prismatix-starter",
+  "defaultLocale": "zh-TW",
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "uiEntryPoints": {
+    "splash": "Content/UI/Splash.tsx",
+    "title": "Content/UI/Title.tsx",
+    "hud": "Content/UI/HUD.tsx",
+    "save": "Content/UI/Save.tsx",
+    "load": "Content/UI/Load.tsx",
+    "settings": "Content/UI/Settings.tsx",
+    "backlog": "Content/UI/Backlog.tsx"
+  },
+  "storyAssets": {
+    "bg": [
+      "Assets"
+    ]
+  },
+  "assets": [
+    {
+      "id": "30000000-0000-4000-8000-000000000001",
+      "name": "Noto Sans TC",
+      "kind": "font",
+      "source": "Content/Fonts/NotoSansTC-Bold.ttf"
+    },
+    {
+      "id": "40000000-0000-4000-8000-000000000001",
+      "name": "Font license",
+      "kind": "license",
+      "source": "Content/Fonts/OFL-1.1.txt"
+    },
+    {
+      "id": "40000000-0000-4000-8000-000000000002",
+      "name": "PrismatiX logo notice",
+      "kind": "license",
+      "source": "Content/UI/PrismatiX/NOTICE.md"
+    },
+    {
+      "id": "50000000-0000-4000-8000-000000000001",
+      "name": "Starter provenance",
+      "kind": "provenance",
+      "source": "ASSET_PROVENANCE.md"
+    },
+    {
+      "id": "2125f0c8-d2be-4545-b068-105d5f401c74",
+      "name": "街道",
+      "kind": "background",
+      "source": "Assets/Backgrounds/street.jpg"
+    }
+  ],
+  "settings": {
+    "player.splashes": [
+      {
+        "scene": "Content/UI/Splash.tsx",
+        "minimumDuration": 2.8,
+        "skippable": true,
+        "skipAllowedAfter": 0.4
+      }
+    ]
+  }
+}

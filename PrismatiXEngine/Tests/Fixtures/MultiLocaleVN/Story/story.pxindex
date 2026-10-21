@@ -1,0 +1,11 @@
+{
+  "format": "PrismatiXStoryIndex",
+  "schemaRevision": 1,
+  "id": "commercial-main",
+  "entryScene": "prologue",
+  "chapters": [{"id": "chapter-1", "title": "Chapter 1", "scenes": ["prologue", "chapter1"]}],
+  "scenes": [
+    {"id": "prologue", "sources": {"zh-TW": "Story/zh-TW/prologue.pxstory", "ja-JP": "Story/ja-JP/prologue.pxstory"}, "requiredLabels": ["start"]},
+    {"id": "chapter1", "sources": {"zh-TW": "Story/zh-TW/chapter1.pxstory", "ja-JP": "Story/ja-JP/chapter1.pxstory"}, "requiredLabels": ["start", "stay", "leave"]}
+  ]
+}

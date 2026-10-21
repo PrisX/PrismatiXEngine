@@ -97,22 +97,23 @@ jobs:
           triplet: x64-windows
           build-dir: out/ci/sdk-msvc
           vcpkg-install-root: out/ci/vcpkg/msvc
-      - name: Execute CLI to native Packager commercial journey
+      - name: Execute CLI to native Packager journey on the Starter sample
         shell: pwsh
         run: |
-          node packages/cli/dist/src/cli.js pack `
-            Samples/CommercialVN/project.pxproject `
+          node scripts/stage-starter-sample.mjs out/ci/starter
+          if ($LASTEXITCODE -ne 0) { throw 'Staging the Starter sample failed' }
+          node packages/cli/dist/src/cli.js pack out/ci/starter `
             --packager out/ci/sdk-msvc/PrismatiXEngine/PrismatiXPackager.exe `
             --player out/ci/sdk-msvc/PrismatiXEngine/PrismatiXPlayer.exe `
-            --output out/ci/cli-commercial
+            --output out/ci/cli-starter
           if ($LASTEXITCODE -ne 0) { throw 'CLI to native Packager journey failed' }
           foreach ($path in @(
-            'out/ci/cli-commercial/Content.pdx',
-            'out/ci/cli-commercial/Package/manifest.json',
-            'out/ci/cli-commercial/PrismatiXPlayer.exe'
+            'out/ci/cli-starter/Content.pdx',
+            'out/ci/cli-starter/Package/manifest.json',
+            'out/ci/cli-starter/PrismatiXPlayer.exe'
           )) {
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-              throw "CLI commercial package is missing $path"
+              throw "Starter package is missing $path"
             }
           }
       - uses: ./.github/actions/native-tests

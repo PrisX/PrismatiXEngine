@@ -47,7 +47,7 @@
     }
   ],
   "policy": {
-    "sampleAssets": "Each redistributable sample must carry its own provenance inventory; an absent inventory means the sample is not a release starter.",
+    "sampleAssets": "Each sample under Samples/ carries SAMPLE_PROVENANCE.json listing every file with its SHA-256, origin and licence; scripts/check-sample-provenance.mjs --release rejects an unlisted or changed file and any licence still pending.",
     "unknownOrigin": "Assets with unknown origin or redistribution terms are release-blocking."
   }
 }

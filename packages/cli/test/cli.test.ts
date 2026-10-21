@@ -2226,14 +2226,16 @@ test("inspect-save cannot accept a JS-hashed envelope without the authoritative 
   assert.equal(inspected.stdout, "");
 });
 
-test("the commercial sample compiles and publishes every release-gated capability", async () => {
-  const sample = resolve("../..", "Samples/CommercialVN/project.pxproject");
+const multiLocaleFixture = resolve("../..", "PrismatiXEngine/Tests/Fixtures/MultiLocaleVN");
+
+test("a multi-locale project validates, builds and publishes every release-gated capability", async () => {
+  const sample = join(multiLocaleFixture, "project.pxproject");
   for (const locale of ["zh-TW", "ja-JP"]) for (const scene of ["prologue", "chapter1"]) {
-    const story = resolve("../..", `Samples/CommercialVN/Story/${locale}/${scene}.pxstory`);
+    const story = join(multiLocaleFixture, `Story/${locale}/${scene}.pxstory`);
     assert.doesNotMatch(await readFile(story, "utf8"), /\[id\s/u);
     assert.equal((await stat(`${story}.pxids.json`)).isFile(), true);
   }
-  const root = await mkdtemp(join(tmpdir(), "prismatix-commercial-sample-"));
+  const root = await mkdtemp(join(tmpdir(), "prismatix-multi-locale-"));
   const output = join(root, "artifact");
   const validated = run(["validate", sample]);
   assert.equal(validated.status, 0, validated.stderr);
@@ -2267,68 +2269,60 @@ test("the commercial sample compiles and publishes every release-gated capabilit
   );
 });
 
-test("the PrismaFamilyDemo authors every UI route in TSX and builds canonical-only UI", async () => {
-  const sample = resolve("../..", "Samples/PrismaFamilyDemo/project.pxproject");
-  for (const locale of ["zh-TW", "ja-JP"]) {
-    const story = resolve("../..", `Samples/PrismaFamilyDemo/Story/${locale}/main.pxstory`);
-    assert.doesNotMatch(await readFile(story, "utf8"), /\[id\s/u);
-    assert.equal((await stat(`${story}.pxids.json`)).isFile(), true);
-  }
-  const root = await mkdtemp(join(tmpdir(), "prismatix-jsx-sample-"));
-  const output = join(root, "artifact");
-  const authoredProject = JSON.parse(await readFile(sample, "utf8")) as {
-    uiEntryPoints: Record<string, string>;
-  };
-  assert.ok(Object.values(authoredProject.uiEntryPoints).every((path) => path.endsWith(".tsx")));
-  const validated = run(["validate", sample]);
-  assert.equal(validated.status, 0, validated.stderr);
-  const built = run(["build", sample, "--artifact-only", "--output", output]);
-  assert.equal(built.status, 0, built.stderr);
-  for (const name of ["Title", "HUD", "Gallery", "Backlog", "Save", "Load"])
-    assert.equal((await stat(join(output, `Content/UI/${name}.pxui`))).isFile(), true);
-  for (const path of [
-    "Runtime/Locales/zh-TW/main.pxir", "Runtime/Locales/ja-JP/main.pxir",
-    "Assets/Locales/zh-TW/greeting-v2.wav", "Assets/Locales/ja-JP/greeting-v2.wav",
-    "Assets/three-cups-ending.png", "Assets/evening-room.png",
-    "Content/Migrations/family-v1-to-v2.pxsave-migration",
-  ]) assert.equal((await stat(join(output, path))).isFile(), true, `missing ${path}`);
-  const published = await readFile(join(output, "project.pxproject"), "utf8");
-  assert.doesNotMatch(published, /\.(?:jsx|tsx)/u);
-  assert.equal((await readFile(join(output, "Content/UI/HUD.pxui"), "utf8"))
-    .includes('"format": "PrismatiXUIScene"'), true);
-  const zh = JSON.parse(await readFile(
-    join(output, "Runtime/Locales/zh-TW/main.pxir"), "utf8")) as {
-      operations: Array<{kind: string; operationId: string; sourceId: string;
-        arguments: Record<string, string>}>;
-    };
-  const ja = JSON.parse(await readFile(
-    join(output, "Runtime/Locales/ja-JP/main.pxir"), "utf8")) as typeof zh;
-  assert.deepEqual(
-    ja.operations.map(({kind, operationId, sourceId}) => ({kind, operationId, sourceId})),
-    zh.operations.map(({kind, operationId, sourceId}) => ({kind, operationId, sourceId})),
-  );
-  assert.ok(zh.operations.filter(({kind}) =>
-    kind === "narration" || kind === "dialogue").length >= 521);
-  assert.notDeepEqual(
-    zh.operations.filter(({kind}) => kind === "background").map(({arguments: value}) => value.asset),
-    ja.operations.filter(({kind}) => kind === "background").map(({arguments: value}) => value.asset),
-  );
-  assert.notDeepEqual(
-    zh.operations.filter(({kind}) => kind === "voice").map(({arguments: value}) => value.asset),
-    ja.operations.filter(({kind}) => kind === "voice").map(({arguments: value}) => value.asset),
-  );
+test("the Starter sample (Studio's default new project) validates and builds", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "prismatix-starter-sample-"));
+  try {
+    // The sample pins the release; staging links this checkout's packages in.
+    const root = join(parent, "starter");
+    const staged = spawnSync(process.execPath, [resolve("../../scripts/stage-starter-sample.mjs"), root], {encoding: "utf8"});
+    assert.equal(staged.status, 0, staged.stderr);
+    const manifest = JSON.parse(await readFile(join(root, "prismatix.json"), "utf8")) as
+      {characters?: unknown; assets: Array<{kind: string; source: string}>; uiEntryPoints: Record<string, string>};
+    assert.equal(manifest.characters, undefined);
+    assert.deepEqual(manifest.assets.filter((asset) => asset.kind === "background").map((asset) => asset.source),
+      ["Assets/Backgrounds/street.jpg"]);
+    assert.deepEqual(Object.keys(manifest.uiEntryPoints).sort(),
+      ["backlog", "hud", "load", "save", "settings", "splash", "title"]);
+    const pinned = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {devDependencies: Record<string, string>};
+    const version = (JSON.parse(await readFile("package.json", "utf8")) as {version: string}).version;
+    assert.deepEqual(pinned.devDependencies, {"@prismatix/cli": version, "@prismatix/authoring-sdk": version,
+      "@prismatix/runtime": version});
+    assert.match(await readFile(join(root, "Story/main.pxstory"), "utf8"), /^\[bg street duration=1s\]$/mu);
+
+    const validated = run(["validate", root]);
+    assert.equal(validated.status, 0, validated.stdout + validated.stderr);
+    const output = join(parent, "artifact");
+    const built = run(["build", root, "--artifact-only", "--output", output]);
+    assert.equal(built.status, 0, built.stdout + built.stderr);
+    for (const name of ["Splash", "Title", "HUD", "Save", "Load", "Settings", "Backlog"])
+      assert.equal((await stat(join(output, `Content/UI/${name}.pxui`))).isFile(), true, `missing ${name}.pxui`);
+    assert.equal((await stat(join(output, "Assets/Backgrounds/street.jpg"))).isFile(), true);
+    const ir = JSON.parse(await readFile(join(output, "Runtime/main.pxir"), "utf8")) as
+      {operations: Array<{kind: string; arguments?: Record<string, string>}>};
+    assert.deepEqual(ir.operations.filter((operation) => operation.kind === "background")
+      .map((operation) => operation.arguments?.asset), ["Assets/Backgrounds/street.jpg"]);
+  } finally { await rm(parent, {recursive: true, force: true}); }
 });
 
-test("the PrismaFamily V1 to V2 release journey stays on public authoring inputs", async () => {
-  const root = await mkdtemp(join(tmpdir(), "prismatix-family-release-test-"));
-  const script = resolve("../..", "Samples/PrismaFamilyDemo/Scripts/release-journey.mjs");
-  const cli = resolve("dist/src/cli.js");
-  const result = spawnSync(process.execPath,
-    [script, "--cli", cli, "--output", root], {encoding: "utf8"});
-  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-  assert.match(result.stdout, /PrismaFamily release journey passed/u);
-  assert.equal((await stat(join(root, "author-v1/project.pxproject"))).isFile(), true);
-  assert.equal((await stat(join(root, "author-v2/project.pxproject"))).isFile(), true);
+test("the V1 to V2 release journey builds TSX screens for every route and two locales from public inputs", async () => {
+  const fixture = resolve("../..", "PrismatiXEngine/Tests/Fixtures/ReleaseJourney/project.pxproject");
+  const authored = JSON.parse(await readFile(fixture, "utf8")) as {uiEntryPoints: Record<string, string>};
+  assert.deepEqual(Object.keys(authored.uiEntryPoints).sort(), ["backlog", "gallery", "hud", "load", "save", "title"]);
+  assert.ok(Object.values(authored.uiEntryPoints).every((path) => path.endsWith(".tsx")));
+  // scripts/release-journey.mjs generates the Story and media, builds both
+  // versions and checks the artifacts (canonical .pxui only, one topology per
+  // locale and version, locale-specific picture and voice, changed V2 media).
+  // CTest PrismatiX.SDK.ReleaseJourney runs it again with the native tools.
+  const root = await mkdtemp(join(tmpdir(), "prismatix-release-journey-test-"));
+  try {
+    const script = resolve("../..", "scripts/release-journey.mjs");
+    const result = spawnSync(process.execPath, [script, "--cli", resolve("dist/src/cli.js"), "--output", root],
+      {encoding: "utf8"});
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /Release journey passed/u);
+    assert.equal((await stat(join(root, "author-v1/project.pxproject"))).isFile(), true);
+    assert.equal((await stat(join(root, "author-v2/Content/UI/Backlog.pxui"))).isFile(), true);
+  } finally { await rm(root, {recursive: true, force: true}); }
 });
 
 test("distribution.linkMedia hard-links project media into the artifact", async () => {

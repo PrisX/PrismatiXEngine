@@ -37,6 +37,10 @@ const template = await readJson(join(repositoryRoot, "packages", "cli", "templat
 for (const [dependency, range] of Object.entries(template.devDependencies ?? {}))
   if (dependency.startsWith("@prismatix/"))
     expect(range === version, `starter template pins ${dependency}@${range}, expected ${version}`);
+const sample = await readJson(join(repositoryRoot, "Samples", "Starter", "package.json"));
+for (const [dependency, range] of Object.entries(sample.devDependencies ?? {}))
+  if (dependency.startsWith("@prismatix/"))
+    expect(range === version, `Samples/Starter pins ${dependency}@${range}, expected ${version}`);
 
 const vscode = await readJson(join(repositoryRoot, "packages", "vscode-pxstory", "package.json"));
 expect(vscode.version === version, `vscode-pxstory is ${vscode.version}, expected ${version}`);

@@ -1,0 +1,9 @@
+; @prismatix-ids
+*start
+[commercial.toast message=story.prologue]
+[effect dream-tone]
+[nvl]
+雨聲覆蓋了月台，這一頁以 NVL 模式開始。
+「[ruby=きおく]記憶[/ruby]」在遠處的燈火裡醒來。
+[adv]
+[jump scene=chapter1 target=start]

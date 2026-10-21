@@ -39,3 +39,8 @@ Thumbs.db
 # IDE
 .vscode
 .vs
+
+# Local state of the samples (Studio layout cache, release lineage of a test pack)
+Samples/*/.prismatix-studio/
+Samples/*/.prismatix-release/
+Samples/*/dist/

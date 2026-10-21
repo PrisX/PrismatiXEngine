@@ -1,0 +1,12 @@
+{
+  "format":"PrismatiXLocale","schemaRevision":1,"locale":"zh-TW","fontChain":["Content/Fonts/NotoSansTC-Bold.ttf"],
+  "resources":{
+    "journey.backdrop":"Assets/ending-cg.png",
+    "journey.greeting":"Assets/Locales/zh-TW/greeting-v2.wav",
+    "journey.chime":"Assets/chime.wav"
+  },
+  "strings":{
+    "journey.title":"發行測試",
+    "journey.release":"第二版"
+  }
+}

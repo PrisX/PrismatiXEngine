@@ -6,6 +6,7 @@
   "scripts": {
     "contracts:generate": "node scripts/generate-contract-bundle.mjs",
     "contracts:check": "node scripts/generate-contract-bundle.mjs --check",
+    "samples:check": "node scripts/check-sample-provenance.mjs",
     "runtime:build": "pnpm --dir runtime-sdk run build",
     "runtime:test": "pnpm --dir runtime-sdk run test",
     "cli:build": "pnpm --filter @prismatix/cli run build",
@@ -20,7 +21,7 @@
     "test:preview-ui": "node scripts/preview-ui-regression.mjs",
     "test:phase1:mock": "pnpm run build && pnpm run phase1:acceptance:mock",
     "test:phase1": "pnpm run build && pnpm run phase1:acceptance",
-    "test": "pnpm run build && pnpm --filter @prismatix/authoring-sdk run test && pnpm run vscode:test && pnpm run runtime:test && pnpm run cli:test && pnpm run test:package && pnpm run phase1:acceptance:mock && pnpm run docs:test",
+    "test": "pnpm run build && pnpm --filter @prismatix/authoring-sdk run test && pnpm run vscode:test && pnpm run runtime:test && pnpm run cli:test && pnpm run test:package && pnpm run phase1:acceptance:mock && pnpm run docs:test && pnpm run samples:check",
     "test:package": "node -e \"Promise.all([import('@prismatix/authoring-sdk'), import('@prismatix/authoring-sdk/jsx-runtime')]).then(([sdk, jsx]) => { if (typeof sdk.compileStory !== 'function' || typeof sdk.loadStorySourceFiles !== 'function' || typeof sdk.validateDocument !== 'function' || typeof sdk.compileJsxUi !== 'function' || typeof jsx.jsx !== 'function') process.exit(1); })\"",
     "check": "pnpm run test"
   },

@@ -1,0 +1,6 @@
+; @prismatix-ids
+; 在這裡寫故事。直接打字就是旁白，@名字 讓角色說話。
+*start
+[bg street duration=1s]
+故事從這裡開始。
+[end]
