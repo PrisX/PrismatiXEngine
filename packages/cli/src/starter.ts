@@ -1,6 +1,6 @@
 import {spawn} from "node:child_process";
 import {randomUUID} from "node:crypto";
-import {copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, rmdir, writeFile} from "node:fs/promises";
+import {copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, rmdir, stat, writeFile} from "node:fs/promises";
 import {basename, dirname, extname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {externalizeStoryIds, serializeStoryIdentityMap} from "@prismatix/authoring-sdk";
@@ -77,6 +77,8 @@ async function emptyDestination(target: string): Promise<boolean> {
 }
 
 const isFile = (path: string): Promise<boolean> => lstat(path).then((info) => info.isFile(), () => false);
+/** A PATH entry may be a link (Corepack and Homebrew install pnpm as one); follow it. */
+const isFileOrLink = (path: string): Promise<boolean> => stat(path).then((info) => info.isFile(), () => false);
 
 /**
  * Finds npm's JS entry beside Node.js, so Windows needs no shell command
@@ -108,7 +110,7 @@ async function pnpmCommand(): Promise<string[]> {
   for (const directory of (process.env.PATH ?? process.env.Path ?? "").split(windows ? ";" : ":")) {
     if (!directory) continue;
     if (windows && await isFile(join(directory, "pnpm.exe"))) return [join(directory, "pnpm.exe")];
-    if (!windows && await isFile(join(directory, "pnpm"))) return [join(directory, "pnpm")];
+    if (!windows && await isFileOrLink(join(directory, "pnpm"))) return [join(directory, "pnpm")];
     const shim = windows ? await isFile(join(directory, "pnpm.cmd")) : false;
     if (!windows || !shim) continue;
     for (const script of [join(directory, "node_modules", "pnpm", "bin", "pnpm.cjs"),
