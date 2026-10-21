@@ -65,6 +65,20 @@ supported platforms, verification status and known limitations.
   unmerged SDL WebGPU backend of libsdl-org/SDL#16020 pinned to one commit).
   `scripts/build-wasm-player.mjs` builds both on Windows, Linux and macOS;
   CI builds them on Linux and plays the Starter sample in headless Chrome.
+- Desktop distributions are branded and laid out per platform
+  (`prismatix.json` `distribution`): `icon` takes a square PNG as well as an
+  `.ico` and becomes a 16-256 px Windows icon, a macOS `.icns` and Linux icon
+  theme sizes; `productName`, `companyName`, `copyright` and `version` become
+  the Windows version information (Explorer's Details tab) and the macOS
+  `Info.plist`. macOS packs a `.app` bundle (`distribution.macos.bundleIdentifier`,
+  ad-hoc signed when packed on a Mac); Linux ships `lib/` and a `.desktop`
+  entry. `"layout": "bundled"` keeps only the executable at the top of a
+  Windows distribution, with the runtime and game data in an engine folder
+  that Windows loads as a private assembly; `"flat"` stays the default.
+- The shipped Windows Player is a GUI program, so a game opens no console
+  window. Started from a terminal it prints to that console, and `--console`
+  opens one; the log file is unchanged. `PrismatiXPlayerQA` stays a console
+  program.
 - `@prismatix/authoring-sdk`: `.pxstory` parsing with source spans and
   recovery, project compilation to Runtime IR and source maps, stable save
   identities, validation of every canonical document (revision 1), a React-free

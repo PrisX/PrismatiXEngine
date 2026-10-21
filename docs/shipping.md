@@ -40,7 +40,7 @@ so later releases keep loading players' saves. Put the settings every build of
 the project should use in `prismatix.json` instead of repeating flags:
 
 ```json
-"distribution": {"executableName": "first-light", "icon": "Assets/icon.ico",
+"distribution": {"executableName": "first-light", "icon": "Assets/icon.png",
   "output": "release/First Light", "compression": "fast", "archiveShards": 4}
 ```
 
@@ -76,18 +76,141 @@ to `prismatix.json`. Directories are expanded during validate/build; the files
 are packaged as owned dependencies, while this author-only field is omitted
 from the runtime project document. Missing or empty roots fail validation.
 
-### Executable name and icon
+### Executable name, icon and version information
 
-`prismatix pack` names the game's executable after `distribution`, which is
-read only when packaging and never shipped as content:
+`prismatix pack` names and brands the game's executable after `distribution`,
+which is read only when packaging and never shipped as content:
 
 ```json
-"distribution": {"executableName": "hikari", "icon": "Assets/Branding/hikari.ico"}
+"distribution": {
+  "executableName": "Hikari",
+  "icon": "Assets/Branding/icon.png",
+  "productName": "光之軌跡",
+  "companyName": "Hikari Works",
+  "copyright": "© 2026 Hikari Works",
+  "version": "1.2.0"
+}
 ```
 
-The platform extension is kept (`hikari.exe` on Windows). On Windows the
-`.ico` becomes the executable's only icon, which Explorer, the taskbar and the
-game window use. Changing either value rebuilds the package.
+- `executableName` replaces `PrismatiXPlayer`; the platform extension is kept
+  (`Hikari.exe` on Windows).
+- `icon` is a square PNG (at least 256x256; 1024x1024 for the sharpest macOS
+  icon) or a Windows `.ico`. From a PNG, `pack` makes a Windows icon with 16,
+  24, 32, 48, 64, 128 and 256 px frames, a macOS `.icns` and the Linux icon
+  theme sizes. A PNG that is not square is centered on a transparent square,
+  and `pack` warns when it is not square or smaller than 256 px. An `.ico` is
+  used on Windows as authored; macOS and Linux use its largest frame.
+- `productName` (default: the project name), `companyName`, `copyright` and
+  `version` (default: the project's `version`) become the executable's
+  version information, which Explorer shows in **Properties → Details** and
+  Task Manager shows as the process description, and the macOS `Info.plist`.
+  `version` may carry a pre-release suffix (`1.2.0-beta.1`): it is shown as
+  written, and the numeric part (`1.2.0.0`) is the Windows file version and
+  the macOS bundle version.
+
+Every value is limited to 256 bytes on one line. Changing any of them, or the
+icon file, rebuilds the package.
+
+### Distribution layout
+
+On Windows the default `"layout": "flat"` keeps the runtime DLLs, notices and
+game data (`Content.pdx`, `Package/`) beside the executable, as before.
+`"layout": "bundled"` keeps only the executable at the top of the folder and
+moves everything else into `engineFolder` (default `Engine`):
+
+```json
+"distribution": {"executableName": "Hikari", "layout": "bundled", "engineFolder": "Engine"}
+```
+
+```text
+Hikari.exe
+Engine/
+  Engine.manifest   SDL3.dll  avcodec-62.dll  ...
+  Content.pdx  Package/  Notices/
+```
+
+The engine folder is a Windows *private side-by-side assembly*:
+`Engine.manifest` lists the DLLs, and the executable's application manifest
+depends on an assembly of that name, so the Windows loader itself resolves
+every DLL (the executable's imports, the DLLs' imports of each other, and
+libraries loaded by name at run time) from that folder before the game's code
+runs. It is still a single game process, so the taskbar, window icon, exit
+code, command-line arguments and overlays such as Steam's behave exactly as in
+the flat layout. The executable records the folder name, finds its game data
+there and uses the same per-user save and log folders. `engineFolder` takes
+1 to 64 letters, digits, `.`, `_` and `-` (it is also the assembly name) and
+cannot be `Package`, `Save`, `Updates` or `Notices`. Rename the folder only by
+repacking: the name is written into the executable.
+
+macOS and Linux have their own conventions and ignore `layout`:
+
+- **macOS** packs a `<executableName>.app` bundle (the product name when
+  there is no `executableName`): `Contents/MacOS/<executable>`,
+  `Contents/Resources/` with the game data and `<executable>.icns`,
+  `Contents/Frameworks/` for any runtime `.dylib`, and an `Info.plist` with
+  `CFBundleName`, `CFBundleIdentifier`, `CFBundleShortVersionString`,
+  `CFBundleVersion`, `CFBundleIconFile`, `LSMinimumSystemVersion` (the
+  Player's deployment target) and `NSHighResolutionCapable`. The identifier
+  comes from `distribution.macos.bundleIdentifier`, by default
+  `com.example.<project id>` (an id that already contains a dot is used as
+  is). Set your own reverse-DNS identifier before releasing: macOS keeps
+  per-app permissions and preferences under it.
+
+  ```json
+  "distribution": {"executableName": "Hikari", "macos": {"bundleIdentifier": "jp.hikari-works.hikari"}}
+  ```
+
+  When `pack` runs on a Mac it relinks bundled libraries through
+  `@rpath` (`install_name_tool`) and signs the bundle ad hoc
+  (`codesign --sign -`), which Apple Silicon requires before anything runs.
+  An ad-hoc signature is enough for your own testing, not for players:
+  Gatekeeper blocks downloaded apps that are not signed with a Developer ID
+  and notarized. That is the author's step, after `pack` and with your Apple
+  Developer account:
+
+  ```sh
+  codesign --force --deep --options runtime --timestamp \
+    --sign "Developer ID Application: Your Name (TEAMID)" "dist/Hikari/Hikari.app"
+  ditto -c -k --keepParent "dist/Hikari/Hikari.app" Hikari.zip
+  xcrun notarytool submit Hikari.zip --keychain-profile "notary" --wait
+  xcrun stapler staple "dist/Hikari/Hikari.app"
+  ```
+
+  Re-sign and re-notarize after every repack.
+- **Linux** keeps the executable (mode 755) and game data at the top, moves
+  shared libraries into `lib/` (the Player searches `$ORIGIN/lib`), and adds
+  `<executable>.desktop` and `icons/hicolor/<size>/apps/<executable>.png`
+  (16 to 256 px). The `.desktop` entry uses the executable and icon theme
+  names, so it works once an installer, a launcher or the player puts the
+  executable on `PATH` and the `icons` tree under `~/.local/share/icons` or
+  `/usr/share/icons`; the game itself runs from any folder without them.
+
+`run --dev` and the packages that the Android and Web exports convert always
+use the plain flat layout. Tools that take a distribution folder
+(`verify-package`, `plan-patch`, `create-overlay`, `inspect-save --package`,
+`pack --target web --web-package`) find the game data in any of these
+layouts.
+
+### Console output on Windows
+
+The shipped Windows Player is a GUI program: double-clicking a game opens only
+its window, never a console. Diagnostics always go to the log file in the
+per-user data folder ([Packaged Player user data](#packaged-player-user-data)).
+Started from a terminal (Command Prompt, PowerShell, Windows Terminal), the
+Player attaches to that console and prints its log there too; the prompt
+returns at once because Windows does not wait for GUI programs, so use
+`start /wait Hikari.exe` in Command Prompt or
+`Start-Process -Wait .\Hikari.exe` in PowerShell to wait for it. Pass
+`--console` to open a console window of its own when there is no terminal, for
+example from a shortcut:
+
+```text
+Hikari.exe --console
+```
+
+Output that is redirected to a file or pipe (scripts, CI, the CLI) is written
+there unchanged. `PrismatiXPlayerQA`, the Packager and PreviewHost stay
+console programs.
 
 ### Packing an artifact you already built
 
@@ -342,7 +465,9 @@ The public key is a lowercase, uncompressed SEC1 P-256 point in
 private key outside the project and distribution, restrict access to it, and
 back it up securely. `overlay-keygen` refuses to overwrite either output.
 
-After verification, install the PDX as `v1/Package/updates/patch.pdx` and
+After verification, install the PDX as `v1/Package/updates/patch.pdx` (in
+the engine folder, `v1/Engine/Package/updates/`, for the Windows bundled
+layout, and in `Contents/Resources/Package/updates/` of a macOS `.app`) and
 restart Player. Place later patches in the same updates directory; Player
 discovers their dependency order from
 the signed base and target documents. The Player checks the pinned publisher key, signature, exact
