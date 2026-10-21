@@ -133,7 +133,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "491f6e284fc8c0b56463f7ac6d39af6072d7ae9912988b13e27467fdce6928a0",
+      "sha256": "4cf4bee6cf61b4bfa0eac2be38cad5744d7ff2653b5f1142db307e2b6e59408d",
       "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
       "license": "MIT"
     },
