@@ -9,19 +9,89 @@ export interface ResourceRef {
 
 export type VariableScope = "session" | "profile";
 
+/** What the Player passes as the second argument of every Action handler. */
 export interface ScriptActionContext {
+  /** True while Studio/Preview runs the Action; avoid irreversible work then. */
   readonly preview: boolean;
+  /** The UI scene (route document) whose control fired the Action. */
   readonly scene?: string;
+  /** The UUID of the control that fired the Action. */
   readonly node?: string;
+  /** The control signal, such as "pressed" or "toggled". */
   readonly signal?: string;
+  /** The route that was current when the Action started. */
+  readonly route?: string;
   readonly [key: string]: RuntimeValue | undefined;
 }
 
+/**
+ * A command or Action may also be a generator that yields Engine await tokens
+ * (`yield ctx.time.token(0.5)`). Each yield is a persistent, saveable
+ * suspension point, exactly like awaiting the matching `wait` Promise.
+ */
+export type EngineWaitGenerator = Generator<EngineAwaitToken, void, unknown>;
+
 export type ScriptCommandHandler<TArgs extends Record<string, RuntimeValue> = Record<string, RuntimeValue>, TResult = unknown> =
-  (args: TArgs) => TResult | Promise<TResult>;
+  (args: TArgs) => TResult | Promise<TResult> | EngineWaitGenerator;
 
 export type ScriptActionHandler<TArgs extends Record<string, RuntimeValue> = Record<string, RuntimeValue>> =
-  (args: TArgs, context: ScriptActionContext) => void | Promise<void>;
+  (args: TArgs, context: ScriptActionContext) => void | Promise<void> | EngineWaitGenerator;
+
+/** A `resource` parameter as the Player passes it: catalog identity and path. */
+export interface ResourceValue {
+  readonly id: string;
+  readonly path: string;
+}
+
+/** A `vec2` parameter. */
+export interface Vec2Value {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Typed manifest declarations. `prismatix` generates a declaration file per
+ * extension (`prismatix-extension.d.ts`) that augments these interfaces from
+ * the `.pxextension` manifest, so `defineCommand("id", handler)` checks the id
+ * and types the handler's arguments without hand-written generics:
+ *
+ * ```ts
+ * declare module "@prismatix/runtime" {
+ *   interface ExtensionCommandDeclarations {
+ *     "game.raise": {readonly args: {readonly amount: number}; readonly await: false;
+ *       readonly rollback: "boundary"};
+ *   }
+ * }
+ * ```
+ */
+export interface ExtensionCommandDeclarations {}
+export interface ExtensionActionDeclarations {}
+/** Set by the generated declarations: `{readonly id: "..."; readonly declared: true}`. */
+export interface ExtensionManifestTypes {}
+
+export type DeclaredCommandId = keyof ExtensionCommandDeclarations & string;
+export type DeclaredActionId = keyof ExtensionActionDeclarations & string;
+
+type ManifestTypesLoaded = ExtensionManifestTypes extends {readonly declared: true} ? true : false;
+
+/**
+ * With generated manifest types, an id that the manifest does not declare is
+ * a type error (the Player would reject its registration at load time).
+ */
+export type CommandIdForExplicitArgs = ManifestTypesLoaded extends true
+  ? DeclaredCommandId | "(this command id is not declared in the extension manifest)" : string;
+export type ActionIdForExplicitArgs = ManifestTypesLoaded extends true
+  ? DeclaredActionId | "(this Action id is not declared in the extension manifest)" : string;
+
+export type DeclaredCommandArgs<K extends DeclaredCommandId> =
+  ExtensionCommandDeclarations[K] extends {readonly args: infer A} ? A : Record<string, RuntimeValue>;
+export type DeclaredActionArgs<K extends DeclaredActionId> =
+  ExtensionActionDeclarations[K] extends {readonly args: infer A} ? A : Record<string, RuntimeValue>;
+
+export type DeclaredCommandHandler<K extends DeclaredCommandId, TResult = unknown> =
+  (args: DeclaredCommandArgs<K>) => TResult | Promise<TResult> | EngineWaitGenerator;
+export type DeclaredActionHandler<K extends DeclaredActionId> =
+  (args: DeclaredActionArgs<K>, context: ScriptActionContext) => void | Promise<void> | EngineWaitGenerator;
 
 export interface LogicalSize {
   readonly w: number;
@@ -459,6 +529,52 @@ export interface TimelineMarkerEvent {
   readonly payload: RuntimeValue;
 }
 
+/**
+ * Events the Player emits to every extension. Payload values that came from
+ * native code are strings (`slot`, `delta`); scripts may emit any other name
+ * with any JSON payload through `emit`.
+ */
+export interface EngineEventMap {
+  /** Once, after the extensions have loaded and the game starts. */
+  "engine.ready": null;
+  /** Once, while the Player shuts down. Do no engine work here. */
+  "engine.shutdown": null;
+  /** Every frame before pending commands/Actions advance. `delta` is seconds. */
+  "frame.update": {readonly delta: string};
+  /** A Story scenario started; `resource` is its Runtime IR path. */
+  "scenario.started": {readonly resource: string};
+  "save.loaded": {readonly slot: string};
+  "save.written": {readonly slot: string};
+  /** A Timeline marker crossed during playback. */
+  "timeline.marker": TimelineMarkerEvent;
+}
+
+export type EngineEventName = keyof EngineEventMap;
+export type EngineEventHandler<K extends EngineEventName> =
+  (payload: EngineEventMap[K]) => void | Promise<void>;
+
+export interface StateOptions<T extends JsonValue> {
+  /** Raise when the saved shape changes and supply `migrate`. Default 1. */
+  readonly version?: number;
+  readonly initial: T;
+  migrate?(state: JsonValue, fromVersion: number, toVersion: number): T;
+}
+
+export interface StateStore<T extends JsonValue> {
+  get(): T;
+  set(value: T): void;
+  update(change: (current: T) => T): T;
+  /** Restores `initial`. */
+  reset(): void;
+}
+
+/** The sandbox `console`: these three methods write to the Player log. */
+export interface SandboxConsole {
+  log(...values: unknown[]): void;
+  warn(...values: unknown[]): void;
+  error(...values: unknown[]): void;
+}
+
 export interface DisplayModeTable {
   readonly TopLeft: 0;
   readonly TopRight: 1;
@@ -480,6 +596,7 @@ export interface PrismatiXEngine {
   log(...values: unknown[]): void;
   RegisterCommand<TArgs extends Record<string, RuntimeValue> = Record<string, RuntimeValue>, TResult = unknown>(id: string, handler: ScriptCommandHandler<TArgs, TResult>): void;
   RegisterAction<TArgs extends Record<string, RuntimeValue> = Record<string, RuntimeValue>>(id: string, handler: ScriptActionHandler<TArgs>): void;
+  on<K extends EngineEventName>(event: K, handler: EngineEventHandler<K>): void;
   on(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): void;
   emit(event: string, payload?: RuntimeValue): Promise<void>;
   /** @deprecated Use on. */
@@ -825,6 +942,7 @@ void engineBindingCoverage;
 declare global {
   // These globals are installed by the native/wasm JavaScriptHost before an
   // extension entry script is evaluated. `px` is an alias of `Engine`.
+  // The sandbox `console` is declared by "@prismatix/runtime/sandbox".
   var Engine: PrismatiXEngine;
   var px: PrismatiXEngine;
   var DisplayMode: DisplayModeTable;
@@ -966,8 +1084,27 @@ export interface PrismatiXContext {
     token(handle: number): ScreenEffectAwaitToken;
   };
   readonly events: {
-    on(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): void;
+    /**
+     * Subscribes for the rest of the session. The returned function stops
+     * delivery to this handler (the Player has no per-handler removal, so the
+     * facade gates delivery instead).
+     */
+    on<K extends EngineEventName>(event: K, handler: EngineEventHandler<K>): Unsubscribe;
+    on(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): Unsubscribe;
+    /** Delivers the next occurrence only. */
+    once<K extends EngineEventName>(event: K, handler: EngineEventHandler<K>): Unsubscribe;
+    once(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): Unsubscribe;
     emit(event: string, payload?: RuntimeValue): Promise<void>;
+  };
+  readonly frame: {
+    /** Calls `handler` every frame with the elapsed seconds (`frame.update`). */
+    onUpdate(handler: (deltaSeconds: number) => void): Unsubscribe;
+  };
+  /** Writes to the Player log (and the Studio/QA console). */
+  readonly log: {
+    info(...values: unknown[]): void;
+    warn(...values: unknown[]): void;
+    error(...values: unknown[]): void;
   };
   /** The platform the game runs on: `os` is "windows", "macos", "linux", "android" or "ios". */
   readonly platform: PlatformInfo;
@@ -1008,6 +1145,13 @@ export interface PrismatiXContext {
       version: number,
       provider: ExtensionStateProvider<T>,
     ): void;
+    /**
+     * A saved, rollback-aware value: registers a provider that captures and
+     * restores it with saves, loads, seeks and rollback. Call it while the
+     * extension entry runs, never inside a command or Action. Needs the
+     * manifest's "persistence" capability.
+     */
+    define<T extends JsonValue>(id: string, options: StateOptions<T>): StateStore<T>;
   };
   readonly renderer: {
     logicalSize(): LogicalSize;
@@ -1113,6 +1257,55 @@ function observeModel<T>(
   publish();
   engine.on("frame.update", publish);
   return () => { active = false; };
+}
+
+function gatedSubscription(
+  engine: PrismatiXEngine,
+  event: string,
+  handler: (payload: RuntimeValue) => void | Promise<void>,
+  once: boolean,
+): Unsubscribe {
+  let active = true;
+  engine.on(event, (payload: RuntimeValue) => {
+    if (!active) return undefined;
+    if (once) active = false;
+    return handler(payload);
+  });
+  return () => { active = false; };
+}
+
+function sandboxConsole(): Partial<SandboxConsole> {
+  return (globalThis as {console?: Partial<SandboxConsole>}).console ?? {};
+}
+
+function jsonCopy<T extends JsonValue>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function defineStateStore<T extends JsonValue>(
+  engine: PrismatiXEngine,
+  id: string,
+  options: StateOptions<T>,
+): StateStore<T> {
+  let current = jsonCopy(options.initial);
+  const migrate = options.migrate;
+  engine.RegisterStateProvider<T>(id, options.version ?? 1, {
+    capture: () => current,
+    restore: (saved) => { current = jsonCopy(saved); },
+    ...(migrate === undefined ? {} : {
+      migrate: (saved: JsonValue, fromVersion: number, toVersion: number) =>
+        migrate.call(options, saved, fromVersion, toVersion),
+    }),
+  });
+  return {
+    get: () => current,
+    set: (value) => { current = jsonCopy(value); },
+    update: (change) => {
+      current = jsonCopy(change(current));
+      return current;
+    },
+    reset: () => { current = jsonCopy(options.initial); },
+  };
 }
 
 export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engine): PrismatiXContext {
@@ -1270,8 +1463,22 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       token: (handle) => engine.AwaitScreenEffect(handle),
     },
     events: {
-      on: (event, handler) => engine.on(event, handler),
+      on: (event: string, handler: (payload: never) => void | Promise<void>) =>
+        gatedSubscription(engine, event, handler as (payload: RuntimeValue) => void, false),
+      once: (event: string, handler: (payload: never) => void | Promise<void>) =>
+        gatedSubscription(engine, event, handler as (payload: RuntimeValue) => void, true),
       emit: (event, payload) => engine.emit(event, payload),
+    },
+    frame: {
+      onUpdate: (handler) => gatedSubscription(engine, "frame.update", (payload) => {
+        const delta = Number((payload as {delta?: unknown} | null)?.delta);
+        handler(Number.isFinite(delta) ? delta : 0);
+      }, false),
+    },
+    log: {
+      info: (...values) => engine.log(...values),
+      warn: (...values) => (sandboxConsole().warn ?? engine.log)(...values),
+      error: (...values) => (sandboxConsole().error ?? engine.log)(...values),
     },
     get platform() { return engine.GetPlatform(); },
     input: {
@@ -1311,6 +1518,7 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
     state: {
       registerProvider: (id, version, provider) =>
         engine.RegisterStateProvider(id, version, provider),
+      define: (id, options) => defineStateStore(engine, id, options),
     },
     renderer: {
       logicalSize: () => engine.GetLogicalSize(),
@@ -1330,17 +1538,51 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
   };
 }
 
-export function defineCommand<TArgs extends Record<string, RuntimeValue>, TResult = unknown>(
-  id: string,
+/**
+ * Registers the handler of a Story command the manifest declares. With the
+ * generated `prismatix-extension.d.ts`, the id is checked and `args` is typed
+ * from the manifest. A command whose manifest says `await: true` holds the
+ * Story until an async handler settles or a generator handler returns. Await
+ * only Engine waits (`ctx.time`, `ctx.animation`, `ctx.effects`, video and
+ * audio handles, `ctx.session.say`): they are saved with the game, while any
+ * other pending Promise is rejected by the Player.
+ */
+export function defineCommand<K extends DeclaredCommandId, TResult = unknown>(
+  id: K,
+  handler: DeclaredCommandHandler<K, TResult>,
+  engine?: PrismatiXEngine,
+): void;
+export function defineCommand<TArgs extends Record<string, RuntimeValue> = Record<string, RuntimeValue>, TResult = unknown>(
+  id: CommandIdForExplicitArgs,
   handler: ScriptCommandHandler<TArgs, TResult>,
+  engine?: PrismatiXEngine,
+): void;
+export function defineCommand(
+  id: string,
+  handler: ScriptCommandHandler<Record<string, RuntimeValue>, unknown>,
   engine: PrismatiXEngine = globalThis.Engine,
 ): void {
   engine.RegisterCommand(id, handler);
 }
 
-export function defineAction<TArgs extends Record<string, RuntimeValue>>(
-  id: string,
+/**
+ * Registers the handler of a UI Action the manifest declares. Its `reentry`
+ * decides what another press does while it runs (allow, ignoreWhileRunning,
+ * restart). Same id/argument typing and wait rules as `defineCommand`.
+ */
+export function defineAction<K extends DeclaredActionId>(
+  id: K,
+  handler: DeclaredActionHandler<K>,
+  engine?: PrismatiXEngine,
+): void;
+export function defineAction<TArgs extends Record<string, RuntimeValue> = Record<string, RuntimeValue>>(
+  id: ActionIdForExplicitArgs,
   handler: ScriptActionHandler<TArgs>,
+  engine?: PrismatiXEngine,
+): void;
+export function defineAction(
+  id: string,
+  handler: ScriptActionHandler<Record<string, RuntimeValue>>,
   engine: PrismatiXEngine = globalThis.Engine,
 ): void {
   engine.RegisterAction(id, handler);
