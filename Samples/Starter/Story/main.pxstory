@@ -2,5 +2,9 @@
 ; 在這裡寫故事。直接打字就是旁白，@名字 讓角色說話。
 *start
 [bg street duration=1s]
+[show shirone normal left]
+@白音 你好，我是白音。歡迎你來。
+[show koharu normal right]
+@小春 我、我是小春……在行首寫 @ 加上名字，就能讓我們說話。
 故事從這裡開始。
 [end]

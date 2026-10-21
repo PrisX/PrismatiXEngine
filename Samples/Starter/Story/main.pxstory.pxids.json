@@ -1,6 +1,10 @@
 {"entries":[
 {"fingerprint":"414b853cb16eb327","kind":"label","sourceId":"story-d27790ff2b2464b4"},
 {"command":"bg","fingerprint":"bd9e911dfe063748","kind":"command","sourceId":"story-92676795530d415f"},
+{"command":"show","fingerprint":"d8dadef724d2f886","kind":"command","sourceId":"story-d52ac74d73229062"},
+{"fingerprint":"4c376f02f465381a","kind":"dialogue","sourceId":"story-b21935cf23f5d1ba"},
+{"command":"show","fingerprint":"5f18523a0c321049","kind":"command","sourceId":"story-9eee123fd2343dce"},
+{"fingerprint":"63634222daa86476","kind":"dialogue","sourceId":"story-90e634492021d66a"},
 {"fingerprint":"2d2dfc2e4507cbbb","kind":"narration","sourceId":"story-cce88c274a0d74d4"},
 {"command":"end","fingerprint":"3970bd816bb2ccca","kind":"command","sourceId":"story-37a6804be6bb6851"}
 ],"format":"PrismatiXStoryIdentityMap","schemaRevision":1}

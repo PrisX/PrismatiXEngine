@@ -2,10 +2,10 @@
 
 The project PrismatiX Studio creates with the New project dialog's default
 settings: the built-in look (title, HUD, save, load, settings and backlog
-screens as editable TSX), the "Made with PrismatiX" startup screen, an empty
-Traditional Chinese Story that opens on a street background, and no
-characters. `scripts/refresh-starter-sample.mjs` in the engine repository
-regenerates it.
+screens as editable TSX), the "Made with PrismatiX" startup screen, and a short
+Traditional Chinese Story that opens on a street with two characters, 白音
+(Shirone) and 小春 (Koharu). `scripts/refresh-starter-sample.mjs` in the
+engine repository regenerates it.
 
 Copy this folder somewhere outside the engine repository, then:
 
@@ -15,10 +15,11 @@ pnpm run dev          # live preview; edit Story/main.pxstory and save
 pnpm run build        # a desktop build with the Player, in dist/
 ```
 
-The street picture's licence is not settled yet (see `ASSET_PROVENANCE.md`):
-replace `Assets/Backgrounds/street.jpg` before you release a game made from
-this sample. `SAMPLE_PROVENANCE.json` lists the origin and licence of every
-file here.
+The street background and the two character portraits are AI-generated images
+supplied by the project owner (Owen Liu) for use in samples only: replace
+`Assets/Backgrounds/street.jpg` and `Assets/Characters/` before you release
+a game made from this sample (see `ASSET_PROVENANCE.md`).
+`SAMPLE_PROVENANCE.json` lists the origin and licence of every file here.
 
 ## About this project
 

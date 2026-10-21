@@ -11,17 +11,45 @@
     },
     {
       "path": "ASSET_PROVENANCE.md",
-      "sha256": "752091e015b46a78bb0625c28c04747c042609674a5ae2782d5ee0b0bbc4f1a0",
+      "sha256": "263794de6dc186c363737e6a9253dd61b7f7311ca117f7e84a6ac8e4bb8009ec",
       "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
       "license": "MIT"
     },
     {
       "path": "Assets/Backgrounds/street.jpg",
       "sha256": "4c134ca7dda9cd5b2e386cf3e0574f9ba648aa21dece660cd78c65688ce90116",
-      "origin": "Supplied by the project owner (Owen Liu) as PrismatiX Studio's new-project background; ASSET_PROVENANCE.md records its generation metadata",
-      "license": "TBD",
-      "status": "pending",
-      "note": "Licence: TBD. Pending the project owner's confirmation of redistribution rights (including the terms of the model and LoRA named in ASSET_PROVENANCE.md). Release-blocking until confirmed."
+      "origin": "Supplied by the project owner (Owen Liu): the street background PrismatiX Studio puts in every new project",
+      "license": "sample-only",
+      "status": "sample-only",
+      "note": "AI-generated image supplied by the project owner (Owen Liu) for use in samples only. Replace it before releasing a game."
+    },
+    {
+      "path": "Assets/Characters/koharu/normal.png",
+      "sha256": "3b8c6b014f3304fcf40220eb3ab78af965f66608d5414f91956912be07644655",
+      "origin": "Supplied by the project owner (Owen Liu): the portrait of 小春 (Koharu), one of the two characters PrismatiX Studio puts in every new project",
+      "license": "sample-only",
+      "status": "sample-only",
+      "note": "AI-generated image supplied by the project owner (Owen Liu) for use in samples only. Replace it before releasing a game."
+    },
+    {
+      "path": "Assets/Characters/shirone/normal.png",
+      "sha256": "7fdf790ad270134cc32bf6be23cf06117f01f2076636d06c0eb79e42f27b77d7",
+      "origin": "Supplied by the project owner (Owen Liu): the portrait of 白音 (Shirone), one of the two characters PrismatiX Studio puts in every new project",
+      "license": "sample-only",
+      "status": "sample-only",
+      "note": "AI-generated image supplied by the project owner (Owen Liu) for use in samples only. Replace it before releasing a game."
+    },
+    {
+      "path": "Characters/koharu.pxcharacter",
+      "sha256": "9e55aa8f639ac50a6c518468e49e2836ea7bf3ff4b233be5b3031cf834ee42d8",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
+    },
+    {
+      "path": "Characters/shirone.pxcharacter",
+      "sha256": "80c35c8e89909fb12c4370dc488b2019369eecd11634482240a0e993c0405677",
+      "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
+      "license": "MIT"
     },
     {
       "path": "Content/Fonts/NotoSansTC-Bold.ttf",
@@ -105,19 +133,19 @@
     },
     {
       "path": "README.md",
-      "sha256": "287a276d1f59017b9ce0b6e08549809611b73d78a12f38b68c58c1e1337b9836",
+      "sha256": "491f6e284fc8c0b56463f7ac6d39af6072d7ae9912988b13e27467fdce6928a0",
       "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
       "license": "MIT"
     },
     {
       "path": "Story/main.pxstory",
-      "sha256": "9114818ef50559ba840e11778c052abdfef0fabfa3eb73f94e1d5a57760ead46",
+      "sha256": "9304a7e5b4c3365f8453ef3c5b044e3469353fbac257e78df5389eb49bd48e01",
       "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
       "license": "MIT"
     },
     {
       "path": "Story/main.pxstory.pxids.json",
-      "sha256": "147d0ba527c3a1a7481748a40f5bf66eb2a2a92986cebd5a4f99af86e9be2e1e",
+      "sha256": "a78320fa8490d5d213f1f43389d3c5fec7f3594f883d04af4c6826847d98db2a",
       "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
       "license": "MIT"
     },
@@ -129,7 +157,7 @@
     },
     {
       "path": "prismatix.json",
-      "sha256": "a7bcffc6b542ed64125e0054a3a3b53c8b740db2941adb13ad742d434c7d8f70",
+      "sha256": "eec2389170147c2a2b5203b5be3d82ef7b81611b80b2762045026627ffec55d7",
       "origin": "Written by `prismatix create --template adv --empty` (packages/cli/templates/minimal) and PrismatiX Studio's new-project step; see scripts/refresh-starter-sample.mjs",
       "license": "MIT"
     },

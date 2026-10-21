@@ -17,24 +17,24 @@ used.
 
 `street.jpg` (in a new project: `Assets/Backgrounds/street.jpg`, written in a
 Story as `[bg street]`) is the background PrismatiX Studio puts in every new
-project: a sunny city street with a large tree, 1920x1080.
+project: a sunny city street with a large tree, a 1920x1080 JPEG without
+metadata (SHA-256
+`4c134ca7dda9cd5b2e386cf3e0574f9ba648aa21dece660cd78c65688ce90116`).
 
-Source: supplied by the project owner (Owen Liu) as `sky.png`, a 1920x1080
-RGB PNG (SHA-256
-`8dbe020d52cd679298fca39bf2df87b400e241dcd75c44403c99434099e4e426`).
+AI-generated image supplied by the project owner (Owen Liu) for use in samples
+only. Replace it before releasing a game.
 
-The PNG's embedded ComfyUI metadata records an image generation: checkpoint
-`waiIllustriousSDXL_v160`, LoRA `GalgameBackground-Illustrious-r64-fro0.9`
-at strength 1.0, prompt "scenery, no humans, city, road, day, blue sky, tree,
-shadow", seed 330003410125970, 25 steps, euler sampler with the normal
-scheduler, CFG 5, generated at 1920x1080. This is what the file says about
-itself; it has not been checked further.
+## Starter character provenance
 
-Shipped file: re-encoded as a JPEG (quality 90, no chroma subsampling) with the
-metadata removed; SHA-256
-`4c134ca7dda9cd5b2e386cf3e0574f9ba648aa21dece660cd78c65688ce90116`.
+The two characters PrismatiX Studio puts in every new project, each a
+full-body portrait (832x1472 RGBA PNG, transparent background, no metadata):
 
-Licence: TBD. Pending the project owner's confirmation of redistribution rights
-(including the terms of the model and LoRA named above). Until that is
-confirmed, do not assume the picture may be redistributed: replace it before
-releasing a game.
+- `shirone.png`: in a new project `Assets/Characters/shirone/normal.png`, the
+  `normal` expression of the character `shirone` (白音 / Shirone). SHA-256
+  `7fdf790ad270134cc32bf6be23cf06117f01f2076636d06c0eb79e42f27b77d7`.
+- `koharu.png`: in a new project `Assets/Characters/koharu/normal.png`, the
+  `normal` expression of the character `koharu` (小春 / Koharu). SHA-256
+  `3b8c6b014f3304fcf40220eb3ab78af965f66608d5414f91956912be07644655`.
+
+Each is an AI-generated image supplied by the project owner (Owen Liu) for use
+in samples only. Replace it before releasing a game.

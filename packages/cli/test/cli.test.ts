@@ -2282,8 +2282,12 @@ test("the Starter sample (Studio's default new project) validates and builds", a
     const staged = spawnSync(process.execPath, [resolve("../../scripts/stage-starter-sample.mjs"), root], {encoding: "utf8"});
     assert.equal(staged.status, 0, staged.stderr);
     const manifest = JSON.parse(await readFile(join(root, "prismatix.json"), "utf8")) as
-      {characters?: unknown; assets: Array<{kind: string; source: string}>; uiEntryPoints: Record<string, string>};
-    assert.equal(manifest.characters, undefined);
+      {characters?: Array<{alias: string; displayName: string; source: string}>;
+        assets: Array<{kind: string; source: string}>; uiEntryPoints: Record<string, string>};
+    // The Studio's new-project cast: 白音 and 小春, one portrait each.
+    assert.deepEqual(manifest.characters, [
+      {alias: "shirone", displayName: "白音", source: "Characters/shirone.pxcharacter"},
+      {alias: "koharu", displayName: "小春", source: "Characters/koharu.pxcharacter"}]);
     assert.deepEqual(manifest.assets.filter((asset) => asset.kind === "background").map((asset) => asset.source),
       ["Assets/Backgrounds/street.jpg"]);
     assert.deepEqual(Object.keys(manifest.uiEntryPoints).sort(),
@@ -2292,7 +2296,9 @@ test("the Starter sample (Studio's default new project) validates and builds", a
     const version = (JSON.parse(await readFile("package.json", "utf8")) as {version: string}).version;
     assert.deepEqual(pinned.devDependencies, {"@prismatix/cli": version, "@prismatix/authoring-sdk": version,
       "@prismatix/runtime": version});
-    assert.match(await readFile(join(root, "Story/main.pxstory"), "utf8"), /^\[bg street duration=1s\]$/mu);
+    const story = await readFile(join(root, "Story/main.pxstory"), "utf8");
+    assert.match(story, /^\[bg street duration=1s\]$/mu);
+    assert.match(story, /^\[show shirone normal left\]$[\s\S]*^\[show koharu normal right\]$/mu);
 
     const validated = run(["validate", root]);
     assert.equal(validated.status, 0, validated.stdout + validated.stderr);
@@ -2301,7 +2307,9 @@ test("the Starter sample (Studio's default new project) validates and builds", a
     assert.equal(built.status, 0, built.stdout + built.stderr);
     for (const name of ["Splash", "Title", "HUD", "Save", "Load", "Settings", "Backlog"])
       assert.equal((await stat(join(output, `Content/UI/${name}.pxui`))).isFile(), true, `missing ${name}.pxui`);
-    assert.equal((await stat(join(output, "Assets/Backgrounds/street.jpg"))).isFile(), true);
+    for (const path of ["Assets/Backgrounds/street.jpg", "Assets/Characters/shirone/normal.png",
+      "Assets/Characters/koharu/normal.png"])
+      assert.equal((await stat(join(output, path))).isFile(), true, `missing ${path}`);
     const ir = JSON.parse(await readFile(join(output, "Runtime/main.pxir"), "utf8")) as
       {operations: Array<{kind: string; arguments?: Record<string, string>}>};
     assert.deepEqual(ir.operations.filter((operation) => operation.kind === "background")

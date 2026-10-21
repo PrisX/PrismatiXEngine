@@ -7,8 +7,9 @@
 //
 // It follows the Studio's own path (src/components/shell/Home.tsx): this
 // checkout's `prismatix create ... --template adv --empty`, then the Studio's
-// starter background (src/components/library/starter.ts), using the Studio's
-// own transforms from src/lib/library/starter.ts and its library picture and
+// starter content (src/components/library/starter.ts: the street background
+// and the two characters with their opening lines), using the Studio's own
+// transforms from src/lib/library/starter.ts and its library pictures and
 // provenance. Then it removes what belongs to one machine (node_modules, the
 // lockfile with its `link:` paths, caches), pins the tools to this release,
 // adds the sample's README header and writes SAMPLE_PROVENANCE.json.
@@ -55,8 +56,8 @@ function run(command, commandArgs, cwd) {
 }
 const exists = (path) => stat(path).then(() => true, () => false);
 
-const {starterBackground, withOpeningBackground, withStarterBackground, withTitleBackdrop} =
-  await import(pathToFileURL(join(studioRoot, "src", "lib", "library", "starter.ts")).href);
+const {starterBackground, starterCastLines, starterCharacterProvenanceKey, starterCharacters, starterCharacterText,
+  withOpeningBackground, withStarterBackground, withStarterCharacters, withTitleBackdrop} = await import(pathToFileURL(join(studioRoot, "src", "lib", "library", "starter.ts")).href);
 const library = join(studioRoot, "src", "lib", "library", "assets");
 
 const parent = await mkdtemp(join(tmpdir(), "prismatix-starter-"));
@@ -67,23 +68,41 @@ try {
     "--width", String(width), "--height", String(height), "--template", "adv", "--empty",
     "--package-manager", "pnpm"], parent);
 
-  // 2. addStarterBackground(root, {titleBackdrop: true}).
+  // 2. addStarterContent(root, {titleBackdrop: true}).
   const abs = (path) => join(root, ...path.split("/"));
   const manifestPath = abs("prismatix.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  await mkdir(dirname(abs(starterBackground.path)), {recursive: true});
-  await copyFile(join(library, ...starterBackground.key.split("/")), abs(starterBackground.path));
-  const notice = await readFile(join(library, ...starterBackground.provenanceKey.split("/")), "utf8");
   const provenancePath = abs(starterBackground.provenance);
-  const existing = await exists(provenancePath) ? await readFile(provenancePath, "utf8") : null;
-  if (existing === null) await writeFile(provenancePath, notice, "utf8");
-  else if (!existing.includes(starterBackground.path))
-    await writeFile(provenancePath, `${existing.trimEnd()}\n\n${notice.replace(/^# /u, "## ")}`, "utf8");
-  const next = withStarterBackground(manifest, {background: randomUUID(), provenance: randomUUID()});
-  await writeFile(manifestPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  const libraryFile = (key) => join(library, ...key.split("/"));
+  const addProvenance = async (notice, marker) => {
+    const existing = await exists(provenancePath) ? await readFile(provenancePath, "utf8") : null;
+    if (existing === null) await writeFile(provenancePath, notice, "utf8");
+    else if (!existing.includes(marker))
+      await writeFile(provenancePath, `${existing.trimEnd()}
+
+${notice.replace(/^# /u, "## ")}`, "utf8");
+  };
+  await mkdir(dirname(abs(starterBackground.path)), {recursive: true});
+  await copyFile(libraryFile(starterBackground.key), abs(starterBackground.path));
+  await addProvenance(await readFile(libraryFile(starterBackground.provenanceKey), "utf8"), starterBackground.path);
+  const registered = new Set((manifest.characters ?? []).map((entry) => entry.alias));
+  const added = starterCharacters.filter((entry) => !registered.has(entry.alias));
+  for (const entry of added) {
+    if (await exists(abs(entry.source))) continue;
+    await mkdir(dirname(abs(entry.path)), {recursive: true});
+    await copyFile(libraryFile(entry.key), abs(entry.path));
+    await mkdir(dirname(abs(entry.source)), {recursive: true});
+    await writeFile(abs(entry.source), starterCharacterText(entry, manifest), "utf8");
+  }
+  if (added.length > 0)
+    await addProvenance(await readFile(libraryFile(starterCharacterProvenanceKey), "utf8"), starterCharacters[0].path);
+  const next = withStarterCharacters(withStarterBackground(manifest, {background: randomUUID(), provenance: randomUUID()}));
+  await writeFile(manifestPath, `${JSON.stringify(next, null, 2)}
+`, "utf8");
   const storyPath = abs("Story/main.pxstory");
   const story = await readFile(storyPath, "utf8");
-  const opened = withOpeningBackground(story);
+  const opened = withOpeningBackground(story, starterBackground.story,
+    added.length === starterCharacters.length ? starterCastLines(manifest.defaultLocale) : []);
   if (opened !== story) {
     await writeFile(storyPath, opened, "utf8");
     run(process.execPath, [cli, "ids", root, "--sync", "--write", "--json"], root);
@@ -111,10 +130,10 @@ try {
 
 The project PrismatiX Studio creates with the New project dialog's default
 settings: the built-in look (title, HUD, save, load, settings and backlog
-screens as editable TSX), the "Made with PrismatiX" startup screen, an empty
-Traditional Chinese Story that opens on a street background, and no
-characters. \`scripts/refresh-starter-sample.mjs\` in the engine repository
-regenerates it.
+screens as editable TSX), the "Made with PrismatiX" startup screen, and a short
+Traditional Chinese Story that opens on a street with two characters, 白音
+(Shirone) and 小春 (Koharu). \`scripts/refresh-starter-sample.mjs\` in the
+engine repository regenerates it.
 
 Copy this folder somewhere outside the engine repository, then:
 
@@ -124,10 +143,11 @@ pnpm run dev          # live preview; edit Story/main.pxstory and save
 pnpm run build        # a desktop build with the Player, in dist/
 \`\`\`
 
-The street picture's licence is not settled yet (see \`ASSET_PROVENANCE.md\`):
-replace \`Assets/Backgrounds/street.jpg\` before you release a game made from
-this sample. \`SAMPLE_PROVENANCE.json\` lists the origin and licence of every
-file here.
+The street background and the two character portraits are AI-generated images
+supplied by the project owner (Owen Liu) for use in samples only: replace
+\`Assets/Backgrounds/street.jpg\` and \`Assets/Characters/\` before you release
+a game made from this sample (see \`ASSET_PROVENANCE.md\`).
+\`SAMPLE_PROVENANCE.json\` lists the origin and licence of every file here.
 
 ${projectReadme.trimEnd()}
 `, "utf8");

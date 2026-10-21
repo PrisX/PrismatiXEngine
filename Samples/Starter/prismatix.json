@@ -46,7 +46,7 @@
       "source": "ASSET_PROVENANCE.md"
     },
     {
-      "id": "2125f0c8-d2be-4545-b068-105d5f401c74",
+      "id": "87c108ce-b680-4503-a7cf-fc750728c6b9",
       "name": "街道",
       "kind": "background",
       "source": "Assets/Backgrounds/street.jpg"
@@ -61,5 +61,17 @@
         "skipAllowedAfter": 0.4
       }
     ]
-  }
+  },
+  "characters": [
+    {
+      "alias": "shirone",
+      "displayName": "白音",
+      "source": "Characters/shirone.pxcharacter"
+    },
+    {
+      "alias": "koharu",
+      "displayName": "小春",
+      "source": "Characters/koharu.pxcharacter"
+    }
+  ]
 }
