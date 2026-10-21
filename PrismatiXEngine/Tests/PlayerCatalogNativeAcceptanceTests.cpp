@@ -87,11 +87,25 @@ bool WaitUntil(const std::chrono::milliseconds timeout,
 bool WaitForLog(const std::filesystem::path& log,
                 const std::string_view expected,
                 const std::chrono::milliseconds timeout = kPlayerStepTimeout) {
-    return WaitUntil(timeout, [&] {
+    const bool found = WaitUntil(timeout, [&] {
         std::error_code error;
         if (!std::filesystem::is_regular_file(log, error) || error) return false;
         return Read(log).find(expected) != std::string::npos;
     });
+    if (!found) {
+        // A missed line is otherwise a bare "required setup was false". Show
+        // what the Player did log, which is what a CI run has to go on.
+        std::cout << "Player log never contained: " << expected
+                  << "\n--- last lines of " << log.string() << " ---\n";
+        const std::string text = Read(log);
+        std::size_t begin = text.size();
+        for (int lines = 0; begin > 1 && lines < 40; ++lines) {
+            const std::size_t newline = text.rfind('\n', begin - 2);
+            begin = newline == std::string::npos ? 0 : newline + 1;
+        }
+        std::cout << text.substr(begin) << "\n--- end of log ---\n";
+    }
+    return found;
 }
 
 #if defined(_WIN32)
