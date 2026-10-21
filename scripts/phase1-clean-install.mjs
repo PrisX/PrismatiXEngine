@@ -550,8 +550,10 @@ async function main() {
       APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"),
       PRISMATIX_PHASE1_PREVIEW_LOG: previewLog,
       ...(usePnpm ? {PNPM_HOME: pnpmHome, COREPACK_HOME: corepackHome, COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"} : {})});
-    // An author who uses pnpm has it, and its global bin directory, on PATH.
-    if (usePnpm) toolEnvironment.PATH = [pnpmHome, pnpmInvocation().directory, toolEnvironment.PATH].join(delimiter);
+    // An author who uses pnpm has it, and its global bin directory, on PATH
+    // (older pnpm uses PNPM_HOME itself, newer pnpm PNPM_HOME/bin).
+    if (usePnpm) toolEnvironment.PATH = [pnpmHome, join(pnpmHome, "bin"), pnpmInvocation().directory,
+      toolEnvironment.PATH].join(delimiter);
     // cleanToolEnvironment removes inherited npm settings before these isolated settings are added.
     Object.assign(toolEnvironment, {npm_config_prefix: prefix, npm_config_cache: cache, npm_config_userconfig: npmrc});
     let installedPackages;
