@@ -62,15 +62,22 @@ function(prismatix_configure_target target)
             target_compile_options(${target} PRIVATE -Werror)
         endif()
         # Clang diagnoses intentionally partial C++20 designated initializers
-        # (Clang 18 as -Wmissing-field-initializers, Clang 19+ and Emscripten
-        # as -Wmissing-designated-field-initializers); GCC and MSVC accept them
-        # silently. Keep the diagnostic visible without making this safe
-        # default-initialization pattern release-blocking; all other warnings
-        # remain errors under PRISMATIX_WARNINGS_AS_ERRORS.
+        # (Clang 18 as -Wmissing-field-initializers; Clang 19+, Apple Clang 17+
+        # and Emscripten also as -Wmissing-designated-field-initializers, a
+        # warning option older Clangs reject as unknown). GCC and MSVC accept
+        # the pattern silently. Keep the diagnostics visible without making
+        # this safe default-initialization pattern release-blocking; every
+        # other warning remains an error under PRISMATIX_WARNINGS_AS_ERRORS.
         if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
             target_compile_options(${target} PRIVATE
-                -Wno-error=missing-field-initializers
-                -Wno-error=missing-designated-field-initializers)
+                -Wno-error=missing-field-initializers)
+            if((CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang" AND
+                    CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 17) OR
+               (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND
+                    CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 19))
+                target_compile_options(${target} PRIVATE
+                    -Wno-error=missing-designated-field-initializers)
+            endif()
         endif()
     endif()
     if(PRISMATIX_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
