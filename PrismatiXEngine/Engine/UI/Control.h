@@ -7,6 +7,7 @@
 #include "Engine/UI/Styles/StyleDefinition.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <limits>

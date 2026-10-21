@@ -3,6 +3,7 @@
 #include "Engine/Core/Result.h"
 #include "Engine/UI/Control.h"
 
+#include <cmath>
 #include <functional>
 #include <map>
 #include <string>
