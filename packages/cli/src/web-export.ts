@@ -2,11 +2,12 @@ import {spawn} from "node:child_process";
 import {createHash} from "node:crypto";
 import {readFileSync} from "node:fs";
 import {copyFile, mkdir, open, readFile, readdir, stat, writeFile} from "node:fs/promises";
+import {createRequire} from "node:module";
 import {basename, delimiter, dirname, extname, join, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {fingerprintFile, publishDirectory} from "./output-safety.js";
 import {readWebShaderArtifact} from "./web-pdx.js";
-import {checkoutRoot, cliPackageRoot} from "./runtime-discovery.js";
+import {checkoutRoot} from "./runtime-discovery.js";
 import {convertWebShader, sdlGpuWgsl} from "./web-shader.js";
 
 export const webTemplateRoot = fileURLToPath(new URL("../../templates/web", import.meta.url));
@@ -122,19 +123,82 @@ export async function resolveWebPlayer(directory: string, renderer: WebRenderer 
       engineVersion: metadata.engineVersion, renderer, ...details, artifacts, notices, sources}};
 }
 
+/** The npm package holding the Web Player (both renderers), installed on demand at exactly the CLI's version. */
+export const webPlayerPackageName = "@prismatix/web-player";
+
+export interface WebPlayerLocation {
+  readonly directory: string;
+  /** project: the project's own dependency; cli: resolvable from this CLI; checkout: an engine checkout's build. */
+  readonly source: "project" | "cli" | "checkout";
+  readonly version: string;
+}
+export interface WebPlayerInstall {
+  readonly manager: "pnpm" | "npm";
+  readonly args: readonly string[];
+  /** The command line to show an author. */
+  readonly command: string;
+}
+
+/** No Web Player of this CLI's version; `install` is the command that adds one to the project. */
+export class WebPlayerMissing extends Error {
+  constructor(readonly install: WebPlayerInstall, readonly projectRoot: string | undefined, readonly problems: readonly string[]) {
+    super(`The Web Player is not installed. Web export uses ${webPlayerPackageName} at exactly this CLI's version ` +
+      `(${CLI_VERSION}); add it to the project with \`${install.command}\`` +
+      `${projectRoot === undefined ? "" : ` in ${projectRoot}`} (or \`prismatix add web-player\`), ` +
+      `or pass --web-player <dir> (docs/web-export.md).${problems.length > 0 ? ` ${problems.join("; ")}.` : ""}`);
+    this.name = "WebPlayerMissing";
+  }
+}
+
+const isFile = (path: string) => stat(path).then(info => info.isFile(), () => false);
+
+/**
+ * How a project adds the Web Player: pinned exactly, like the project's other
+ * @prismatix packages, with the package manager whose lockfile the project has
+ * (pnpm, the documented tool, when it has none).
+ */
+export async function webPlayerInstall(projectRoot: string | undefined): Promise<WebPlayerInstall> {
+  const npm = projectRoot !== undefined && !await isFile(join(projectRoot, "pnpm-lock.yaml")) &&
+    await isFile(join(projectRoot, "package-lock.json"));
+  const spec = `${webPlayerPackageName}@${CLI_VERSION}`;
+  return npm ? {manager: "npm", args: ["install", "-D", "--save-exact", spec], command: `npm install -D --save-exact ${spec}`}
+    : {manager: "pnpm", args: ["add", "-D", spec], command: `pnpm add -D ${spec}`};
+}
+
 /**
  * The Web Player `prismatix pack --target web` uses without --web-player:
- * the one a release CLI carries in runtime/web, else (CLI running from an
- * engine checkout) that checkout's out/package/wasm-player.
+ * @prismatix/web-player as the project resolves it (its own devDependency),
+ * else as this CLI resolves it, else (CLI running from an engine checkout)
+ * that checkout's out/package/wasm-player. A package of another version is
+ * reported, not used.
  */
-export async function defaultWebPlayerDirectory(environment: NodeJS.ProcessEnv = process.env): Promise<string> {
-  const candidates = [join(cliPackageRoot, "runtime", "web")];
+export async function locateWebPlayer(projectRoot: string | undefined,
+  environment: NodeJS.ProcessEnv = process.env): Promise<WebPlayerLocation> {
+  const problems: string[] = [];
+  const resolvers: [WebPlayerLocation["source"], NodeJS.Require][] = [];
+  if (projectRoot !== undefined) resolvers.push(["project", createRequire(join(resolve(projectRoot), "package.json"))]);
+  resolvers.push(["cli", createRequire(import.meta.url)]);
+  for (const [source, resolveFrom] of resolvers) {
+    let manifestPath: string;
+    try { manifestPath = resolveFrom.resolve(`${webPlayerPackageName}/package.json`); }
+    catch { continue; }
+    const directory = dirname(manifestPath);
+    const version = (JSON.parse(await readFile(manifestPath, "utf8")) as {version?: unknown}).version;
+    if (version !== CLI_VERSION) problems.push(`${directory} is ${webPlayerPackageName}@${String(version)}, not ${CLI_VERSION}`);
+    else if (!await isFile(join(directory, "web-player.json"))) problems.push(`${directory} has no web-player.json`);
+    else return {directory, source, version};
+  }
   const checkout = await checkoutRoot(environment);
-  if (checkout) candidates.push(join(checkout, "out", "package", "wasm-player"));
-  for (const candidate of candidates)
-    if (await stat(join(candidate, "web-player.json")).then(info => info.isFile(), () => false)) return candidate;
-  throw new Error(`This CLI carries no Web Player (looked in ${candidates.join(", ")}); ` +
-    "pass --web-player <dir> built by scripts/build-wasm-player.mjs (docs/web-export.md)");
+  if (checkout) {
+    const directory = join(checkout, "out", "package", "wasm-player");
+    if (await isFile(join(directory, "web-player.json"))) {
+      const version = (JSON.parse(await readFile(join(directory, "web-player.json"), "utf8")) as WebPlayerManifest).engineVersion;
+      if (version === CLI_VERSION) return {directory, source: "checkout", version};
+      problems.push(`the engine checkout's Web Player in ${directory} is ${String(version)}, not ${CLI_VERSION}; ` +
+        "rebuild it with scripts/build-wasm-player.mjs");
+    } else problems.push(`the engine checkout has no Web Player build in ${directory} (scripts/build-wasm-player.mjs)`);
+  }
+  throw new WebPlayerMissing(await webPlayerInstall(projectRoot), projectRoot, problems);
 }
 
 /** A host shader converter: the environment override, the package's tools/, then PATH. */

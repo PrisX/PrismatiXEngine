@@ -13,8 +13,8 @@ import type * as TS from "typescript-compiler";
 import {ts} from "./typescript.js";
 
 import {
-  checkoutRuntimeFile, discoverQaPlayer, discoverRuntimeTool, discoverRuntimeBundle, RuntimeDiscoveryFailure, runtimeDiscoveryHint,
-  type RuntimeDiscoveryOptions,
+  checkoutRuntimeFile, discoverQaPlayer, discoverRuntimeTool, discoverRuntimeBundle, nativePackageFile, RuntimeDiscoveryFailure,
+  runtimeDiscoveryHint, type RuntimeDiscoveryOptions,
 } from "./runtime-discovery.js";
 import {fingerprintFile, publishDirectory, publishedInputs, retainPublishedDirectoryIfMatching,
   retirePublishedDirectory,
@@ -22,7 +22,7 @@ import {fingerprintFile, publishDirectory, publishedInputs, retainPublishedDirec
 import {glyphWarnings} from "./glyph-coverage.js";
 import {augmentArtifact} from "./artifact-augment.js";
 import {assessPackageDiskSpace, availableBytesForOutput, formatDiskBytes} from "./disk-space.js";
-import {createStarter, defaultPackageManager, pnpmInstalled, type PackageManager} from "./starter.js";
+import {addProjectDependency, createStarter, defaultPackageManager, pnpmInstalled, type PackageManager} from "./starter.js";
 import {changeDirectory, cliVersion, createWizard, type CreateAnswers, projectMenu, runScript, say} from "./interactive.js";
 import * as tui from "./tui.js";
 import {canPrompt} from "./tui.js";
@@ -44,7 +44,8 @@ import {builtinRoutes, ejectBuiltinUi} from "./eject.js";
 import {AndroidExportError, androidSettings, checkAndroidInputs, checkKeystoreEnvironment,
   claimAndroidOutput, collectAndroidOutputs, findAndroidSdk, findGradle, resolveAndroidPlayer,
   runGradle, stageGradleProject, templateSdlVersion} from "./android-export.js";
-import {defaultWebPlayerDirectory, exportWeb, resolveWebPlayer, webRenderers, type WebRenderer} from "./web-export.js";
+import {exportWeb, locateWebPlayer, resolveWebPlayer, WebPlayerMissing, webPlayerInstall, webPlayerPackageName,
+  webRenderers, type WebRenderer} from "./web-export.js";
 import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
 import {transcodeMedia, type TranscodedFile} from "./media-transcode.js";
 import {testCommand, testHelp, waitForPort} from "./test-command.js";
@@ -113,7 +114,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target android-player gradle android-sdk web-player web-renderer web-package ffmpeg", flags: "encrypt ignore-disk-space check verify-media debug no-transcode"},
   run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
-  add: {values: "project from name chapter title", flags: ""},
+  add: {values: "project from name chapter title", flags: "check"},
   extension: {values: "project lang command action dir", flags: "no-register await"},
   eject: {values: "project runtime", flags: "force"},
   augment: {values: "artifact manifest", flags: ""},
@@ -165,8 +166,11 @@ function parseOptions(command: string, args: readonly string[]): Options {
     return {values, flags, positional};
   }
   if (command === "add" && !flags.has("help")) {
-    if (positional.length !== 2 || !["character", "scene"].includes(positional[0]!))
-      throw new Error("Use prismatix add character <alias> [--from <folder>] or prismatix add scene <id>");
+    if (positional[0] === "web-player" ? positional.length !== 1
+      : positional.length !== 2 || !["character", "scene"].includes(positional[0]!))
+      throw new Error("Use prismatix add character <alias> [--from <folder>], prismatix add scene <id> " +
+        "or prismatix add web-player [--check]");
+    if (flags.has("check") && positional[0] !== "web-player") throw new Error("--check only applies to add web-player");
     return {values, flags, positional};
   }
   if (command === "extension" && !flags.has("help")) {
@@ -1278,8 +1282,7 @@ async function assertLoadedTextSourcesUnchanged(loaded: LoadedProject): Promise<
 
 async function loadUiRegistry(override?: string, runtimeHint?: string,
   packagerPath?: string): Promise<UiTypeRegistryMetadata | undefined> {
-  const bundled = fileURLToPath(new URL(
-    `../../runtime/${process.platform}-${process.arch}/share/PrismatiX/PrismatiXUiTypeRegistry.json`, import.meta.url));
+  const bundled = nativePackageFile("PrismatiXUiTypeRegistry.json");
   let path: string | undefined;
   if (override !== undefined) path = resolve(override);
   else if (runtimeHint !== undefined || packagerPath !== undefined) {
@@ -1292,7 +1295,7 @@ async function loadUiRegistry(override?: string, runtimeHint?: string,
     path = candidates.find((candidate) => existsSync(candidate));
     if (path === undefined && runtimeHint !== undefined)
       throw new Error(`UI TypeRegistry manifest was not found in --runtime ${hint}; use --ui-registry or build PrismatiXUiTypeRegistryManifest`);
-  } else if (existsSync(bundled)) path = bundled;
+  } else if (bundled !== undefined) path = bundled;
   else path = await checkoutRuntimeFile("PrismatiXUiTypeRegistry.json");
   if (path === undefined) return undefined;
   const emitter = join(dirname(path), process.platform === "win32"
@@ -1322,8 +1325,7 @@ async function loadUiRegistry(override?: string, runtimeHint?: string,
 async function loadInputKeyRegistry(runtimeHint?: string,
   packagerPath?: string): Promise<InputKeyRegistryMetadata | undefined> {
   const filename = "PrismatiXInputKeyRegistry.json";
-  const bundled = fileURLToPath(new URL(
-    `../../runtime/${process.platform}-${process.arch}/share/PrismatiX/${filename}`, import.meta.url));
+  const bundled = nativePackageFile(filename);
   let path: string | undefined;
   let location: string | undefined;
   if (runtimeHint !== undefined || packagerPath !== undefined) {
@@ -1338,7 +1340,7 @@ async function loadInputKeyRegistry(runtimeHint?: string,
       ? "PrismatiXInputKeyManifest.exe" : "PrismatiXInputKeyManifest");
     if (path === undefined && existsSync(exporter))
       throw new Error(`Input key manifest was not found beside the selected native Runtime: ${hint}; rebuild PrismatiXInputKeyRegistryManifest`);
-  } else if (existsSync(bundled)) path = bundled;
+  } else if (bundled !== undefined) path = bundled;
   if (path === undefined) return undefined;
   const emitter = join(location ?? dirname(path), process.platform === "win32"
     ? "PrismatiXInputKeyManifest.exe" : "PrismatiXInputKeyManifest");
@@ -2354,9 +2356,37 @@ async function ejectCommand(options: Options): Promise<number> {
   }
 }
 
+/**
+ * `add web-player`: adds @prismatix/web-player at exactly this CLI's version
+ * to the project with its package manager, unless a matching one is already
+ * found; with --check it only reports what `pack --target web` would use.
+ */
+async function addWebPlayerCommand(root: string, check: boolean): Promise<number> {
+  const find = () => locateWebPlayer(root).catch((error: unknown) => {
+    if (error instanceof WebPlayerMissing) return undefined;
+    throw error;
+  });
+  const install = await webPlayerInstall(root);
+  let found = await find();
+  const adding = found === undefined && !check;
+  if (adding) {
+    if (!machineOutput) process.stderr.write(`Adding ${webPlayerPackageName}@${cliVersion} with ${install.manager}…\n`);
+    await addProjectDependency(root, install.manager, install.args, machineOutput);
+    found = await find();
+    if (found === undefined) throw new Error(`${install.command} finished but ${webPlayerPackageName}@${cliVersion} is still not found`);
+  }
+  const report = {installed: found !== undefined, required: cliVersion, install: install.command,
+    ...(found === undefined ? {} : {version: found.version, source: found.source, directory: found.directory})};
+  process.stdout.write(machineOutput ? `${JSON.stringify({added: adding ? "web-player" : null, webPlayer: report})}\n`
+    : found === undefined ? `The Web Player is not installed; add it with \`${install.command}\` or \`prismatix add web-player\`.\n`
+    : `${adding ? "Added" : "Found"} the Web Player ${found.version} (${found.source}): ${found.directory}\n`);
+  return 0;
+}
+
 async function addCommand(options: Options): Promise<number> {
   try {
     const location = await resolveProjectPath(options.values.get("project"));
+    if (options.positional[0] === "web-player") return await addWebPlayerCommand(location.root, options.flags.has("check"));
     const [kind, name] = options.positional as [string, string];
     const result = kind === "character"
       ? await addCharacter(location.root, name, {
@@ -2525,7 +2555,8 @@ async function webPackCommand(options: Options): Promise<number> {
     const location = await resolveProjectPath(options.positional[0]);
     // Both renderers are experimental; WebGL2 runs in more browsers.
     const renderer = (options.values.get("web-renderer") ?? "webgl2") as WebRenderer;
-    const playerDirectory = (await resolveWebPlayer(options.values.get("web-player") ?? await defaultWebPlayerDirectory(), renderer)).root;
+    const playerDirectory = (await resolveWebPlayer(options.values.get("web-player") ??
+      (await locateWebPlayer(location.root)).directory, renderer)).root;
     const output = resolve(options.values.get("output") ?? join(location.root, "dist", "web"));
     let distribution = options.values.get("web-package");
     if (!distribution) {
@@ -2544,6 +2575,8 @@ async function webPackCommand(options: Options): Promise<number> {
     return 0;
   } catch (error) {
     printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure ? error.diagnostics :
+      error instanceof WebPlayerMissing ? [diagnostic("PXCLI1262", "The Web Player is not installed", options.positional[0],
+        error.message)] :
       [diagnostic("PXCLI1260", "Web export failed", options.positional[0], String(error))]);
     return 1;
   } finally { if (temporary) await rm(temporary, {recursive: true, force: true}); }
@@ -3599,7 +3632,8 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "    needs JAVA_HOME (JDK 17+), Gradle 8.9+ and an Android SDK with platform 35 (ANDROID_HOME)",
     "prismatix pack [project] --target web [--web-renderer webgl2|webgpu] [--web-player <WASM Player dir>]",
     "    [--web-package <distribution>] [--output <dir>] [--ffmpeg <path>]   experimental; webgl2 (default) or webgpu,",
-    "    from the Web Player this CLI carries unless --web-player names another (docs/web-export.md)"],
+    "    with the project's @prismatix/web-player (prismatix add web-player) unless --web-player names another",
+    "    (docs/web-export.md)"],
   run: ["Build a distribution and start its Player.",
     "prismatix run [project] [--runtime <dir>]",
     "prismatix run [project] --dev [--json]                 an editor's Play button",
@@ -3622,10 +3656,12 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
   release: ["Validate, build, pack and verify a release candidate in one step.",
     "prismatix release [project] [--output <dir>] [--runtime <dir>]",
     "Defaults for --output, --compression and --archive-shards come from prismatix.json distribution."],
-  add: ["Register a character from a folder of expression images, or add a scene to the story index.",
+  add: ["Register a character from a folder of expression images, add a scene to the story index, or add the Web Player.",
     "prismatix add character <alias> [--from <folder>] [--name <display name>] [--project <dir>]",
     "normal.png (or default/neutral) becomes the default expression; without --from the character has no sprite.",
-    "prismatix add scene <id> [--chapter <chapter-id>] [--title <title>] [--project <dir>]"],
+    "prismatix add scene <id> [--chapter <chapter-id>] [--title <title>] [--project <dir>]",
+    "prismatix add web-player [--check] [--project <dir>]   adds @prismatix/web-player at exactly this CLI's version",
+    "    with the project's package manager, for pack --target web; --check only reports whether it is there"],
   extension: extensionHelp,
   eject: ["Copy a built-in Player screen into the project as editable TSX and register it.",
     "prismatix eject ui <title|hud|backlog|save|load|gallery|settings|video|all> [--force] [--runtime <dir>]"],
@@ -4076,7 +4112,7 @@ async function projectTool(command: string, options: Options, args: string[]): P
     .includes(command)) return undefined;
   // `import <format> <source> [project]` delegates to the target project's CLI.
   const location = command === "ui" ? await uiProject(options)
-    : command === "extension" ? await resolveProjectPath(options.values.get("project"))
+    : command === "extension" || command === "add" ? await resolveProjectPath(options.values.get("project"))
     : await resolveProjectPath(command === "import" ? options.positional[2] : options.positional[0]);
   const manifestPath = join(location.root, "package.json");
   if (!await regularFile(manifestPath)) return launcherStopRequested ? 130 : undefined;

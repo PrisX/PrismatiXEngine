@@ -3,8 +3,16 @@ import {createServer} from "node:http";
 import {readFile} from "node:fs/promises";
 import {pathToFileURL} from "node:url";
 
-/** A loopback-only, read-only registry of explicitly supplied candidate tarballs. */
-export async function startCandidateRegistry(candidates) {
+/**
+ * A loopback-only, read-only registry of explicitly supplied candidate tarballs.
+ *
+ * `absent` lists packages this run did not pack, such as the native packages
+ * of other platforms when one platform is tested: the registry answers their
+ * metadata ({name, version, os, cpu, libc}) as the real registry would, so
+ * npm and pnpm resolve the CLI's optionalDependencies and skip them, but
+ * their tarball is a 404, so an install that wrongly needs one fails.
+ */
+export async function startCandidateRegistry(candidates, {absent = []} = {}) {
   const packages = new Map();
   for (const {manifest, tarball} of candidates) {
     if (!manifest.name.startsWith("@prismatix/")) throw new Error("Only PrismatiX candidates may enter this registry");
@@ -12,6 +20,11 @@ export async function startCandidateRegistry(candidates) {
     packages.set(manifest.name, {manifest, bytes,
       integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
       shasum: createHash("sha1").update(bytes).digest("hex")});
+  }
+  for (const {name, version, ...platform} of absent) {
+    if (!name.startsWith("@prismatix/") || packages.has(name)) throw new Error(`${name} cannot be both a candidate and absent`);
+    packages.set(name, {manifest: {name, version, ...platform}, bytes: undefined,
+      integrity: `sha512-${createHash("sha512").update("").digest("base64")}`, shasum: createHash("sha1").update("").digest("hex")});
   }
   let baseUrl;
   const requests = [];
@@ -23,6 +36,7 @@ export async function startCandidateRegistry(candidates) {
     const item = packages.get(name);
     if (request.method !== "GET" || item === undefined) { response.writeHead(404); response.end(); return; }
     if (tarballRequest) {
+      if (item.bytes === undefined) { response.writeHead(404); response.end(); return; }
       response.writeHead(200, {"content-type": "application/octet-stream", "content-length": item.bytes.length});
       response.end(item.bytes); return;
     }

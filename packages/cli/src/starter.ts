@@ -155,6 +155,20 @@ async function runPackageManager(command: string[], args: string[], directory: s
   });
 }
 
+/**
+ * Adds a dependency to an existing project with the package manager its
+ * lockfile names (`prismatix add web-player`). `args` are the manager's own,
+ * such as ["add", "-D", "pkg@1.2.3"]; `quiet` captures its output for --json.
+ */
+export async function addProjectDependency(directory: string, manager: PackageManager, args: readonly string[],
+  quiet: boolean): Promise<void> {
+  const command = manager === "pnpm" ? await pnpmCommand() : await npmCommand();
+  const extra = manager === "npm" ? ["--ignore-scripts", "--no-audit", "--no-fund"]
+    : ["--ignore-scripts", "--config.confirmModulesPurge=false"];
+  await runPackageManager(command, [...args, ...extra], directory,
+    `${manager} could not add ${args.at(-1) ?? "the package"} to the project; check registry/proxy access and retry`, quiet);
+}
+
 const preparationFailure = (manager: PackageManager): string =>
   `${manager} dependency preparation failed. Check registry/proxy access and retry create; the destination was not changed`;
 

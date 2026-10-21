@@ -4,7 +4,7 @@ import {mkdtemp, mkdir, readFile, readdir, rm, writeFile} from "node:fs/promises
 import {dirname, join} from "node:path";
 import {tmpdir} from "node:os";
 import test from "node:test";
-import {exportWeb, resolveWebPlayer} from "../src/web-export.js";
+import {exportWeb, locateWebPlayer, resolveWebPlayer, WebPlayerMissing, webPlayerInstall} from "../src/web-export.js";
 import {sdlGpuWgsl} from "../src/web-shader.js";
 
 const version = (JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {version: string}).version;
@@ -134,6 +134,35 @@ test("rejects Web Players of another version, revision or without the requested 
     await assert.rejects(resolveWebPlayer(player, "webgpu"), /no webgpu renderer/);
     await writeFile(join(player, "web-player.json"), JSON.stringify({...metadata, schemaRevision: 1}));
     await assert.rejects(resolveWebPlayer(player), /schema revision 1 is not supported/);
+  } finally { await rm(root, {recursive: true, force: true}); }
+});
+
+test("finds the project's @prismatix/web-player of this version, else names the exact install command", async () => {
+  const root = await mkdtemp(join(tmpdir(), "px-web-player-"));
+  const noCheckout = {PRISMATIX_NO_CHECKOUT_RUNTIME: "1"};
+  try {
+    const project = join(root, "game");
+    await mkdir(project, {recursive: true});
+    await writeFile(join(project, "package.json"), JSON.stringify({private: true}));
+    await assert.rejects(locateWebPlayer(project, noCheckout), (error: unknown) =>
+      error instanceof WebPlayerMissing && error.install.manager === "pnpm" &&
+      error.install.command === `pnpm add -D @prismatix/web-player@${version}` &&
+      error.message.includes(`pnpm add -D @prismatix/web-player@${version}`) && error.message.includes("prismatix add web-player"));
+    await writeFile(join(project, "package-lock.json"), "{}");
+    assert.equal((await webPlayerInstall(project)).command, `npm install -D --save-exact @prismatix/web-player@${version}`);
+    await writeFile(join(project, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    assert.equal((await webPlayerInstall(project)).manager, "pnpm");
+
+    const installed = join(project, "node_modules", "@prismatix", "web-player");
+    await writePlayer(installed);
+    await writeFile(join(installed, "package.json"), JSON.stringify({name: "@prismatix/web-player", version: "0.0.1"}));
+    await assert.rejects(locateWebPlayer(project, noCheckout), (error: unknown) =>
+      error instanceof WebPlayerMissing && /@prismatix\/web-player@0\.0\.1, not/u.test(error.message));
+    await writeFile(join(installed, "package.json"), JSON.stringify({name: "@prismatix/web-player", version}));
+    const found = await locateWebPlayer(project, noCheckout);
+    assert.equal(found.source, "project");
+    assert.equal(found.directory, installed);
+    assert.equal((await resolveWebPlayer(found.directory)).renderer, "webgl2");
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 

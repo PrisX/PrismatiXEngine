@@ -1,7 +1,7 @@
 {
   "name": "@prismatix/cli",
   "version": "0.1.0",
-  "description": "The PrismatiX command line: create, preview, validate, build and pack PrismatiX visual novels with the bundled native Player runtime.",
+  "description": "The PrismatiX command line: create, preview, validate, build and pack PrismatiX visual novels with the native Player runtime for your platform.",
   "keywords": [
     "prismatix",
     "visual-novel",
@@ -38,7 +38,6 @@
   "files": [
     "dist/src",
     "templates",
-    "runtime",
     "README.md",
     "LICENSE"
   ],

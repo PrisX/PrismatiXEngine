@@ -16,8 +16,9 @@ cover each part in full.
 
 Install Node.js (22.15 or later; 24 is what the release is tested with) and
 pnpm first (`corepack enable pnpm`, or see https://pnpm.io/installation). The
-CLI package carries the native Player and Packager for your platform; you do not
-need C++, CMake or an engine checkout.
+CLI installs the native Player and Packager for your platform with it (the
+`@prismatix/native-<platform>-<arch>` package, an optional dependency pnpm and
+npm pick for your machine); you do not need C++, CMake or an engine checkout.
 
 ```bash
 pnpm add -g @prismatix/cli
@@ -200,6 +201,8 @@ tests are in the [shipping reference](shipping.md).
 
 The terminal shows readable diagnostics by default. Pass `--json` for stable NDJSON codes, paths and source spans on stderr; preserve stderr for editor integrations. `PXSTORY1199` identifies an unknown Story command. Unknown options and invalid typed values fail. `dev --once` tests initial apply/play and shutdown, not an interactive editing session.
 
-Normal discovery uses the matching `runtime/<platform>-<architecture>/` bundle inside the CLI package. A missing or incompatible bundle is an installation/release problem. Do not install C++ build tools as an author workaround. Explicit `--runtime`, per-tool options and `PRISMATIX_*` overrides are developer diagnostics.
+Normal discovery uses the native package for your platform and architecture, `@prismatix/native-<platform>-<arch>` (for example `@prismatix/native-win32-x64`), which the CLI resolves from its own installation; the CLI lists every supported platform's package as an optional dependency of exactly its version, and pnpm and npm install only the one that matches. If it is missing, for example after installing with `--no-optional` or `--omit=optional`, or on an unsupported platform, the CLI names the package and how to reinstall; reinstall without that option (in a project, `pnpm install`). Do not install C++ build tools as an author workaround. Explicit `--runtime`, per-tool options and `PRISMATIX_*` overrides are developer diagnostics.
+
+Exporting for the web needs one more package, `@prismatix/web-player`, which the CLI does not install: `prismatix add web-player` adds it at the CLI's exact version (see [Web export](web-export.md)).
 
 For registry or proxy errors during create, fix the registry/proxy configuration in `.npmrc` (pnpm and npm both read it) and retry. Do not use sudo or disable security controls. A nonempty or read-only destination is rejected. After abrupt termination, inspect a leftover create lock before removing its empty lock directory and retrying.

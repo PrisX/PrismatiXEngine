@@ -2,10 +2,9 @@
 
 The `prismatix` command creates, previews, validates, builds and packs
 [PrismatiX](https://github.com/PrisX/PrismatiXEngine) visual novels. The
-package carries the native PrismatiX Player, Packager and Preview Host for each
-supported desktop platform under `runtime/<platform>-<architecture>/`, so you do
-not need C++ tools or an engine checkout. Players of the finished game do not
-need Node.js.
+native PrismatiX Player, Packager and Preview Host for your platform come with
+it (see [Native runtimes](#native-runtimes)), so you do not need C++ tools or
+an engine checkout. Players of the finished game do not need Node.js.
 
 ## Install
 
@@ -38,6 +37,7 @@ lockfile with your source and upgrade deliberately.
 | `pack [project]` | Packs content with the Player; `--target web` and `--target android` (experimental) |
 | `release [project]` | Validate, build, pack and verify in one step |
 | `add character`, `add scene` | Adds project content |
+| `add web-player` | Adds `@prismatix/web-player` (this CLI's exact version) for `pack --target web`; `--check` only reports |
 | `extension create <id>` | A TypeScript (or `--lang js`) runtime extension |
 | `eject ui <route>` | Copies a built-in screen into the project as TSX |
 | `import artemis <extracted> [project]` | Converts an Artemis game |
@@ -48,20 +48,34 @@ lockfile with your source and upgrade deliberately.
 `prismatix <command> --help` explains each command. `--json` prints stable NDJSON
 diagnostics for editors and CI.
 
-## Bundled runtimes
+## Native runtimes
 
-| Runtime folder | Platform |
+Each platform's runtime is its own package. This CLI lists all of them as
+optional dependencies of exactly its own version; pnpm and npm install only
+the one whose `os` and `cpu` match your machine, and the CLI finds it the way
+Node.js resolves its dependencies.
+
+| Package | Platform |
 | --- | --- |
-| `runtime/win32-x64` | Windows x64 |
-| `runtime/linux-x64` | Linux x64 (glibc) |
-| `runtime/darwin-x64` | macOS Intel |
-| `runtime/darwin-arm64` | macOS Apple silicon |
+| `@prismatix/native-win32-x64` | Windows x64 |
+| `@prismatix/native-linux-x64` | Linux x64 (glibc) |
+| `@prismatix/native-darwin-x64` | macOS Intel |
+| `@prismatix/native-darwin-arm64` | macOS Apple silicon |
 
-Each runtime folder carries its own `share/PrismatiX/runtime-manifest.json`,
+Installing with `--no-optional` or `--omit=optional` leaves the runtime out;
+the CLI then names the missing package. On any other platform the CLI says
+there is no native runtime for it.
+
+Each native package carries its own `share/PrismatiX/runtime-manifest.json`,
 the MIT license, `THIRD_PARTY_NOTICES.md`, `ASSET_PROVENANCE.json` and the
 licences of its native dependencies; a packed game copies them next to the
 Player under `Notices/`. Which platforms are verified for a release is listed in
 its release notes.
+
+The experimental Web Player (`pack --target web`) is the separate package
+`@prismatix/web-player`, which this CLI does not install. Add it to a project
+that exports for the web with `prismatix add web-player`, or
+`pnpm add -D @prismatix/web-player@<this CLI's version>`.
 
 ## Documentation
 
@@ -73,5 +87,6 @@ its release notes.
 
 ## License
 
-MIT. The bundled native runtime includes third-party components under their own
-licences; see `runtime/<platform>-<architecture>/share/PrismatiX/THIRD_PARTY_NOTICES.md`.
+MIT. The native runtime packages include third-party components under their own
+licences; see `share/PrismatiX/THIRD_PARTY_NOTICES.md` in the
+`@prismatix/native-<platform>-<architecture>` package.

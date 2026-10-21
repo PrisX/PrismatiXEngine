@@ -8,7 +8,8 @@
 
 import {readFile, stat} from "node:fs/promises";
 import {join} from "node:path";
-import {publicPackages, readJson, releaseVersion, repositoryRoot} from "./release-packages.mjs";
+import {cliOptionalDependencies, nativePackageManifest, publicPackages, readJson, releasePackageNames, releasePlatforms,
+  releaseVersion, repositoryRoot, webPlayerPackageManifest} from "./release-packages.mjs";
 
 const problems = [];
 const expect = (condition, message) => { if (!condition) problems.push(message); };
@@ -32,6 +33,18 @@ for (const {name, root} of publicPackages) {
     if (dependency.startsWith("@prismatix/"))
       expect(range === version, `${name} depends on ${dependency}@${range}, expected exactly ${version}`);
 }
+
+const cli = await readJson(join(repositoryRoot, "packages", "cli", "package.json"));
+expect(!(cli.files ?? []).includes("runtime"), "packages/cli/package.json still lists runtime in files (the native packages carry it)");
+expect(cli.optionalDependencies === undefined,
+  "packages/cli/package.json lists optionalDependencies; release-packages.mjs adds the native packages when it packs");
+for (const [dependency, range] of Object.entries(cliOptionalDependencies(version)))
+  expect(range === version && nativePackageManifest(dependency.slice("@prismatix/native-".length), version, []).version === version,
+    `${dependency} is not pinned to exactly ${version}`);
+expect(webPlayerPackageManifest(version, []).version === version, "the Web Player package does not carry the release version");
+const names = releasePackageNames();
+expect(new Set(names).size === names.length && names.length === releasePlatforms.length + 1 + publicPackages.length,
+  `release package names collide: ${names.join(", ")}`);
 
 const template = await readJson(join(repositoryRoot, "packages", "cli", "templates", "minimal", "package.json"));
 for (const [dependency, range] of Object.entries(template.devDependencies ?? {}))

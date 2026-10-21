@@ -12,7 +12,8 @@ console targets are not supported by this release.
 
 ## Compatibility
 
-- This candidate pins CLI, authoring SDK and bundled runtime to exact `0.1.0`.
+- This candidate pins CLI, authoring SDK, the native runtime packages and the
+  Web Player package to exact `0.1.0`.
   The global command delegates project operations to their pinned local CLI;
   missing or mismatched local installations are diagnosed. The runtime SDK
   belongs to the same contract line, but a minor-line match alone is not proof
@@ -28,9 +29,14 @@ console targets are not supported by this release.
 
 ## Release contents
 
-The author-facing CLI tarball includes the platform runtime in
-`runtime/<platform>-<architecture>/`. Listing `runtime` in package.json is not
-proof of inclusion: inspect and install the actual candidate tarball. Create
+The author-facing CLI tarball carries no native runtime. Each platform's runtime
+is its own package, `@prismatix/native-<platform>-<architecture>` (the runtime
+bundle at the package root, with `os`/`cpu` fields), which the CLI lists as an
+exact-version optional dependency and resolves from its installation. A
+generated manifest is not proof of inclusion: inspect and install the actual
+candidate tarballs and check that the author's machine got its native package.
+The Web Player is the separate `@prismatix/web-player` package, installed into
+a project on demand at the CLI's exact version. Create
 prepares and locks the local toolchain automatically. No packages were publicly
 published by this audit.
 

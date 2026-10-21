@@ -5,7 +5,10 @@ description: >-
   candidate packages with that runtime bundled, a global install, create,
   dev/edit/error/repair, offline reopen/build and a packaged Player launch.
   The journey runs with pnpm (the documented path) and with npm. With
-  archive-dir set it also writes the runtime archive the release attaches.
+  archive-dir set (a release) it first strips debug information from the
+  Linux and macOS binaries, keeping it in a debug-symbols archive, so the
+  journey runs what ships, and then writes the runtime archive the release
+  attaches.
 
 inputs:
   build-dir:
@@ -18,7 +21,9 @@ inputs:
     description: Directory name of the acceptance project (exercises non-ASCII paths).
     default: first-game
   archive-dir:
-    description: When set, write prismatix-native-runtime-<version>-<platform>-<arch>.tar.gz here.
+    description: >-
+      When set, strip the bundle and write prismatix-native-runtime-<version>-<platform>-<arch>.tar.gz
+      and its -debug-symbols.tar.gz (Linux, macOS) here.
     default: ""
 
 runs:
@@ -29,6 +34,10 @@ runs:
       run: |
         rm -rf "${{ inputs.prefix }}"
         cmake --install "${{ inputs.build-dir }}" --prefix "${{ inputs.prefix }}" --component PrismatiXRuntime
+    - name: Strip debug information from the release binaries (symbols kept in a separate archive)
+      if: inputs.archive-dir != '' && runner.os != 'Windows'
+      shell: bash
+      run: node scripts/assemble-release.mjs strip-runtime --runtime "${{ inputs.prefix }}" --symbols "${{ inputs.archive-dir }}"
     - name: Clean-install author journey (pnpm, then npm)
       shell: bash
       env:

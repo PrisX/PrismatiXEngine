@@ -1,5 +1,6 @@
 import {access, readFile, realpath, stat} from "node:fs/promises";
-import {constants, readFileSync} from "node:fs";
+import {constants, readFileSync, statSync} from "node:fs";
+import {createRequire} from "node:module";
 import {basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 
@@ -157,8 +158,58 @@ async function isSourceCheckout(): Promise<boolean> {
   return await exists(join(packageRoot, "src")) &&
     await exists(resolve(packageRoot, "..", "..", "CMakePresets.json"));
 }
-/** This CLI package's root directory (where a release carries runtime/). */
+/** This CLI package's root directory. */
 export const cliPackageRoot = packageRoot;
+/** The platforms a release publishes a native package for (Node's `${platform}-${arch}`). */
+export const nativePlatforms = ["win32-x64", "linux-x64", "darwin-x64", "darwin-arm64"] as const;
+const hostPlatform = `${process.platform}-${process.arch}`;
+/**
+ * The native runtime of this machine comes from its own npm package,
+ * `@prismatix/native-<platform>-<arch>`, which the CLI lists as an
+ * exact-version optional dependency so npm and pnpm install only the one
+ * matching the machine.
+ */
+export const nativePackageName = `@prismatix/native-${hostPlatform}`;
+const requireFromCli = createRequire(import.meta.url);
+
+/**
+ * The installed native package's root (holding bin/ and share/PrismatiX/),
+ * resolved from this CLI the way Node resolves its dependencies; undefined
+ * when it is not installed or is not this CLI's version.
+ */
+export function nativePackageRoot(): string | undefined {
+  let manifestPath: string;
+  try { manifestPath = requireFromCli.resolve(`${nativePackageName}/package.json`); }
+  catch { return undefined; }
+  try {
+    const version = (JSON.parse(readFileSync(manifestPath, "utf8")) as {version?: unknown}).version;
+    return version === CLI_VERSION ? dirname(manifestPath) : undefined;
+  } catch { return undefined; }
+}
+
+/** A file in the installed native package's share/PrismatiX/, if both exist. */
+export function nativePackageFile(file: string): string | undefined {
+  const root = nativePackageRoot();
+  if (root === undefined) return undefined;
+  const path = join(root, "share", "PrismatiX", file);
+  try { return statSync(path).isFile() ? path : undefined; }
+  catch { return undefined; }
+}
+
+/** Why there is no native package, and what installs it. */
+export function nativePackageHint(): string {
+  if (!(nativePlatforms as readonly string[]).includes(hostPlatform))
+    return `PrismatiX has no native runtime for ${hostPlatform}; the supported platforms are ${nativePlatforms.join(", ")}.`;
+  let installed: string | undefined;
+  try {
+    installed = (JSON.parse(readFileSync(requireFromCli.resolve(`${nativePackageName}/package.json`), "utf8")) as {version?: string}).version;
+  } catch { /* Not installed. */ }
+  const found = installed === undefined ? "is not installed" : `is version ${installed}, not ${CLI_VERSION}`;
+  return `The native runtime for ${hostPlatform} is the package ${nativePackageName}@${CLI_VERSION}, an optional ` +
+    `dependency of @prismatix/cli that ${found}. Reinstall @prismatix/cli ${CLI_VERSION} without --no-optional or ` +
+    "--omit=optional (in a project: pnpm install, or npm install; globally: " +
+    `pnpm add -g @prismatix/cli@${CLI_VERSION}).`;
+}
 /** The engine checkout's root, for a source-checkout CLI; PRISMATIX_NO_CHECKOUT_RUNTIME=1 disables it. */
 export async function checkoutRoot(environment: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
   if (environment.PRISMATIX_NO_CHECKOUT_RUNTIME === "1" || !(await isSourceCheckout())) return undefined;
@@ -198,9 +249,11 @@ export async function discoverRuntimeTool(tool: RuntimeTool, options: RuntimeDis
     if (found) return found;
     throw new RuntimeDiscoveryFailure(tool, attempts);
   }
-  const bundledRoot = join(packageRoot, "runtime", `${process.platform}-${process.arch}`);
-  const bundled = await fromHint(bundledRoot, tool, "bundled runtime", false, attempts);
-  if (bundled) return bundled;
+  const nativeRoot = nativePackageRoot();
+  if (nativeRoot !== undefined) {
+    const bundled = await fromHint(nativeRoot, tool, `bundled runtime (${nativePackageName})`, false, attempts);
+    if (bundled) return bundled;
+  } else attempts.push(`${nativePackageName}@${CLI_VERSION}: not installed`);
   if (options.allowSystemRuntime === true || environment.PRISMATIX_ALLOW_SYSTEM_RUNTIME === "1") {
     const pathCandidates = (options.path ?? environment.PATH ?? "").split(delimiter).filter(Boolean).map(value => join(value, toolNames[tool]));
     const fromPath = await firstExisting(pathCandidates, "PATH", attempts);
@@ -267,5 +320,8 @@ export async function discoverQaPlayer(options: RuntimeDiscoveryOptions & {reado
 
 export function runtimeDiscoveryHint(error: RuntimeDiscoveryFailure): string {
   const option = error.tool === "previewHost" ? "--preview-host" : `--${error.tool}`;
-  return `Install a CLI package containing a compatible runtime, or explicitly select a developer runtime using ${option}, --runtime, ${toolEnvironment[error.tool]}, or PRISMATIX_RUNTIME_DIR. Checked: ${error.attempts.join(", ")}`;
+  const developer = `select a runtime explicitly with ${option}, --runtime, ${toolEnvironment[error.tool]}, or PRISMATIX_RUNTIME_DIR`;
+  const advice = nativePackageRoot() === undefined ? `${nativePackageHint()} Developers can also ${developer}.`
+    : `Reinstall @prismatix/cli ${CLI_VERSION} so its native package is intact, or (developers) ${developer}.`;
+  return `${advice} Checked: ${error.attempts.join(", ")}`;
 }

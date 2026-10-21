@@ -7,18 +7,23 @@ import {
   access, appendFile, cp, lstat, mkdir, mkdtemp, readFile, readdir,
   realpath, rm, writeFile,
 } from "node:fs/promises";
+import {createRequire} from "node:module";
 import {homedir, tmpdir} from "node:os";
 import {
   basename, delimiter, dirname, extname, isAbsolute, join, resolve,
 } from "node:path";
 import {fileURLToPath} from "node:url";
 import {startCandidateRegistry} from "./candidate-registry.mjs";
-import {checkPackedContents, packPublicPackages, publicPackages} from "./release-packages.mjs";
+import {checkPackedContents, nativePackageName, packPublicPackages, publicPackages, releasePlatforms, tarballName,
+  webPlayerPackageName} from "./release-packages.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The release version every candidate package and the bundled runtime must carry.
 const releaseVersion = JSON.parse(readFileSync(join(repositoryRoot, "packages", "cli", "package.json"), "utf8")).version;
 const authorEdit = "The clean-install edit reached Preview and the packaged game.";
+// The native package npm and pnpm must install for this machine (an optional dependency of the CLI).
+const hostPlatform = `${process.platform}-${process.arch}`;
+const hostNativePackage = nativePackageName(hostPlatform);
 const invalidStoryCommand = "[phase1-invalid-command]";
 const defaultTimeoutMs = 60_000;
 
@@ -217,6 +222,26 @@ async function assertSelfContainedTree(root, forbiddenRoots, label) {
   }
 }
 
+/**
+ * The native package an installed CLI resolves (as the CLI itself does, from
+ * its real path): this platform's, at the release version, and no other.
+ */
+async function installedNativePackage(cliEntry, label) {
+  const resolveFrom = createRequire(await realpath(cliEntry));
+  let root;
+  try { root = dirname(resolveFrom.resolve(`${hostNativePackage}/package.json`)); }
+  catch { assert.fail(`${label} cannot resolve ${hostNativePackage}: its optional dependency was not installed`); }
+  const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  assert.equal(manifest.version, releaseVersion, `${label} got ${hostNativePackage}@${manifest.version}`);
+  assert.ok(await exists(join(root, "share", "PrismatiX", "runtime-manifest.json")), `${hostNativePackage} has no runtime manifest`);
+  for (const {id} of releasePlatforms) {
+    const other = nativePackageName(id);
+    if (other !== hostNativePackage)
+      assert.throws(() => resolveFrom.resolve(`${other}/package.json`), `${label} also installed ${other} on ${hostPlatform}`);
+  }
+  return root;
+}
+
 /** Unpacks one file of a published tarball (bsdtar on Windows, so drive letters are not hosts). */
 async function extractTarball(tarball, destination, members = []) {
   await mkdir(destination, {recursive: true});
@@ -224,12 +249,20 @@ async function extractTarball(tarball, destination, members = []) {
   requireSuccess(await run(tar, ["-xzf", tarball, "-C", destination, ...members], {timeoutMs: 300_000}), `extract ${tarball}`);
 }
 
-/** Uses already assembled release tarballs (assemble-release.mjs) instead of packing the checkout. */
+/**
+ * Uses already assembled release tarballs (assemble-release.mjs) instead of
+ * packing the checkout: the repository's packages, this platform's native
+ * package, and whichever other native packages and Web Player package exist.
+ */
 async function prebuiltCandidates(directory, packDirectory) {
   await mkdir(packDirectory, {recursive: true});
   const candidates = [];
-  for (const {name} of publicPackages) {
-    const filename = `${name.slice(1).replace("/", "-")}-${releaseVersion}.tgz`;
+  const available = new Set(await readdir(directory));
+  const optional = [...releasePlatforms.map(({id}) => nativePackageName(id)), webPlayerPackageName]
+    .filter((name) => name !== hostNativePackage && available.has(tarballName(name, releaseVersion)));
+  for (const name of [hostNativePackage, ...optional, ...publicPackages.map((item) => item.name)]) {
+    const filename = tarballName(name, releaseVersion);
+    assert.ok(available.has(filename), `${directory} has no ${filename}`);
     const tarball = join(packDirectory, filename);
     await cp(join(directory, filename), tarball);
     const unpacked = join(packDirectory, "unpacked", basename(filename, ".tgz"));
@@ -499,9 +532,8 @@ async function main() {
     let runtimeBundle = copiedRuntime;
     if (configuration.candidates !== undefined) {
       candidates = await prebuiltCandidates(resolve(configuration.candidates), packDirectory);
-      // The runtime this platform's author gets is the one inside the CLI tarball.
-      runtimeBundle = join(candidates.at(-1).root, "runtime", `${process.platform}-${process.arch}`);
-      assert.ok(await exists(runtimeBundle), `The CLI tarball has no runtime/${process.platform}-${process.arch}`);
+      // The runtime this platform's author gets is the one in its native package.
+      runtimeBundle = candidates.find(({manifest}) => manifest.name === hostNativePackage).root;
     } else if (configuration.mock) await createMockRuntime(copiedRuntime);
     else await copyRuntimeBundle(configuration.runtime, copiedRuntime);
     await assertSelfContainedTree(runtimeBundle, [repositoryRoot], "Copied runtime bundle");
@@ -522,12 +554,21 @@ async function main() {
       log("verified release inventory", inventory.target);
     }
     if (candidates === undefined) {
-      const runtimePlatform = `${process.platform}-${process.arch}`;
-      candidates = await packPublicPackages(packDirectory, {[runtimePlatform]: copiedRuntime}, packagingEnvironment);
-      for (const {name, files} of candidates) checkPackedContents(name, files, configuration.mock ? [] : [runtimePlatform]);
-      log("packed candidate npm artifacts with bundled runtime", candidates.map(({tarball}) => basename(tarball)).join(", "));
+      candidates = await packPublicPackages(packDirectory, {[hostPlatform]: copiedRuntime}, packagingEnvironment);
+      // A mock runtime has script tools, not the native executables.
+      for (const {name, files, manifest} of candidates)
+        if (!configuration.mock || name !== hostNativePackage) checkPackedContents(name, files, manifest);
+      log("packed candidate npm artifacts with this platform's native package", candidates.map(({tarball}) => basename(tarball)).join(", "));
     } else log("using assembled release tarballs", candidates.map(({tarball}) => basename(tarball)).join(", "));
-    registry = await startCandidateRegistry(candidates);
+    const cliManifest = candidates.find(({manifest}) => manifest.name === "@prismatix/cli").manifest;
+    assert.ok(cliManifest.optionalDependencies?.[hostNativePackage] === releaseVersion,
+      `The CLI does not list ${hostNativePackage}@${releaseVersion} as an optional dependency`);
+    // The other platforms' native packages exist on the real registry; here
+    // only their metadata does, so a correct install skips them.
+    const absent = releasePlatforms.filter(({id}) => !candidates.some(({manifest}) => manifest.name === nativePackageName(id)))
+      .map(({id, os, cpu, libc}) => ({name: nativePackageName(id), version: releaseVersion, os: [os], cpu: [cpu],
+        ...(libc ? {libc: [libc]} : {})}));
+    registry = await startCandidateRegistry(candidates, {absent});
     const home = join(temporaryRoot, "home");
     const cache = join(temporaryRoot, "npm-cache");
     const prefix = join(temporaryRoot, "npm-prefix");
@@ -593,6 +634,9 @@ async function main() {
           `Installed candidate package @prismatix/${name}`);
     } else await assertSelfContainedTree(installedPackages, [repositoryRoot], "Installed candidate packages");
     log(`installed global candidate CLI with ${configuration.packageManager}`, usePnpm ? pnpmHome : prefix);
+    const globalNative = await installedNativePackage(cli, "The global CLI");
+    await assertSelfContainedTree(globalNative, [repositoryRoot], `Installed ${hostNativePackage}`);
+    log(`installed ${hostNativePackage} with the global CLI`, globalNative);
 
     const cliRun = (args, options = {}) => run(process.execPath, [cli, ...args, "--json"], {
       cwd: installRoot, env: toolEnvironment, timeoutMs: options.timeoutMs ?? 120_000,
@@ -608,8 +652,39 @@ async function main() {
     assert.ok(await exists(project), "create did not write the minimal prismatix.json manifest");
     assert.ok(await exists(story), "create did not write Story/main.pxstory");
     assert.ok(await exists(join(projectRoot, usePnpm ? "pnpm-lock.yaml" : "package-lock.json")), "create did not install and lock project tooling");
-    assert.ok(await exists(join(projectRoot, "node_modules", "@prismatix", "cli", "dist", "src", "cli.js")), "create did not prepare pinned project CLI");
+    const projectCli = join(projectRoot, "node_modules", "@prismatix", "cli", "dist", "src", "cli.js");
+    assert.ok(await exists(projectCli), "create did not prepare pinned project CLI");
     log("created prepared starter", story);
+    log(`installed ${hostNativePackage} with the project CLI`, await installedNativePackage(projectCli, "The project CLI"));
+    const projectManifest = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8"));
+    assert.equal(projectManifest.devDependencies?.[webPlayerPackageName], undefined, "create must not add the Web Player");
+
+    // The Web Player is installed on demand: without it a web export names the
+    // exact install command; with the candidate tarball it installs and exports.
+    const webOutput = join(temporaryRoot, "web-game");
+    const missingWeb = await cliRun(["pack", projectRoot, "--target", "web", "--output", webOutput]);
+    assert.notEqual(missingWeb.code, 0, "pack --target web succeeded without the Web Player");
+    const missingDiagnostic = parseJsonLines(missingWeb.stderr).find((value) => value?.code === "PXCLI1262");
+    const installHint = usePnpm ? `pnpm add -D ${webPlayerPackageName}@${releaseVersion}`
+      : `npm install -D --save-exact ${webPlayerPackageName}@${releaseVersion}`;
+    assert.ok(missingDiagnostic && String(missingDiagnostic.hint).includes(installHint),
+      `pack --target web without the Web Player did not name \`${installHint}\`:\n${missingWeb.stderr}`);
+    log("web export without the Web Player names its install", installHint);
+    if (candidates.some(({manifest}) => manifest.name === webPlayerPackageName)) {
+      const added = requireSuccess(await cliRun(["add", "web-player", "--project", projectRoot], {timeoutMs: 300_000}),
+        "prismatix add web-player");
+      assert.equal(lastObject(added.stdout, (value) => value.webPlayer !== undefined)?.webPlayer?.source, "project",
+        `add web-player did not install the project's Web Player:\n${added.stdout}`);
+      const pinned = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8")).devDependencies?.[webPlayerPackageName];
+      assert.equal(pinned, releaseVersion, `the project pins ${webPlayerPackageName}@${pinned}, not exactly ${releaseVersion}`);
+      const exported = requireSuccess(await cliRun(["pack", projectRoot, "--target", "web", "--output", webOutput],
+        {timeoutMs: 600_000}), "prismatix pack --target web");
+      assert.ok(lastObject(exported.stdout, (value) => value.packed === true), `web export did not report:\n${exported.stdout}`);
+      for (const file of ["index.html", "web-player.json", "prismatix-player.wasm"])
+        assert.ok(await exists(join(webOutput, file)), `web export has no ${file}`);
+      await rm(webOutput, {recursive: true, force: true});
+      log("installed the Web Player on demand and exported for the web", webOutput);
+    }
 
     requireSuccess(await cliRun(["validate", project]), "prismatix validate after author edit");
     if (configuration.mock) {

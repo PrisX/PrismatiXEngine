@@ -1,12 +1,15 @@
 name: Release
 
 # Pushing a tag vX.Y.Z (matching every package version) builds and tests the
-# native runtime on each release platform and the Web Player (both renderers,
-# on Linux), assembles the three npm packages with every platform runtime and
-# the Web Player inside @prismatix/cli, re-runs the clean-install
-# author journey from those exact tarballs on each platform, creates a draft
-# GitHub Release with the assets and SHA256SUMS, and then, after approval in
-# the `release` environment, publishes to npm and makes the release public.
+# native runtime on each release platform (stripped on Linux and macOS, with
+# the symbols kept as a release asset) and the Web Player (both renderers, on
+# Linux), assembles the npm packages (@prismatix/native-<platform>-<arch> per
+# platform, @prismatix/web-player, @prismatix/authoring-sdk,
+# @prismatix/runtime and @prismatix/cli, whose optionalDependencies name the
+# native packages), re-runs the clean-install author journey from those exact
+# tarballs on each platform, creates a draft GitHub Release with the assets
+# and SHA256SUMS, and then, after approval in the `release` environment,
+# publishes to npm in dependency order and makes the release public.
 #
 # Running it by hand (workflow_dispatch) is always a dry run: everything up to
 # and including `npm publish --dry-run`, with no GitHub Release and no publish.
@@ -152,8 +155,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # The experimental Web Player, both renderers, which the CLI carries in
-  # runtime/web so `prismatix pack --target web` needs no --web-player.
+  # The experimental Web Player, both renderers: the @prismatix/web-player
+  # package a project adds when it exports for the web.
   web-player:
     name: Web Player (WebGL2 and WebGPU)
     needs: version
@@ -196,13 +199,13 @@ jobs:
         with:
           name: web-player
           path: out/web-player
-      - name: Pack @prismatix/authoring-sdk, @prismatix/runtime and @prismatix/cli with every runtime and the Web Player
+      - name: Pack the native packages, @prismatix/web-player, @prismatix/authoring-sdk, @prismatix/runtime and @prismatix/cli
         run: node scripts/assemble-release.mjs assemble --runtimes out/runtime-archives --web-player out/web-player --out out/release
       - name: List the published tarball contents
         run: |
           for tarball in out/release/npm/*.tgz; do
             echo "== $tarball"
-            tar -tzf "$tarball" | grep -v '^package/runtime/.*/share/PrismatiX/licenses/' | sort
+            tar -tzf "$tarball" | grep -v '^package/share/PrismatiX/licenses/' | sort
           done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -270,10 +273,13 @@ jobs:
           path: out/release
       - name: Dry-run every publish in dependency order
         run: |
-          for name in authoring-sdk runtime cli; do
-            npm publish "out/release/npm/prismatix-$name-${{ needs.version.outputs.version }}.tgz" \
-              --dry-run --access public --tag latest
-          done
+          # release.json lists the tarballs in publish order: the native
+          # packages and the Web Player, then authoring-sdk, runtime and cli.
+          node -e 'for (const {tarball} of require("./out/release/release.json").npm) console.log(tarball)' > "$RUNNER_TEMP/publish-order"
+          while read -r tarball; do
+            echo "== $tarball"
+            npm publish "out/release/$tarball" --dry-run --access public --tag latest
+          done < "$RUNNER_TEMP/publish-order"
 
   github-release:
     name: Draft the GitHub Release
@@ -349,13 +355,18 @@ jobs:
           if [[ -n "$NPM_TOKEN" ]]; then
             npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"
           fi
-          for name in authoring-sdk runtime cli; do
-            if npm view "@prismatix/$name@$VERSION" version >/dev/null 2>&1; then
-              echo "@prismatix/$name@$VERSION is already published; skipping"
+          # Publish order from release.json: the native packages and the Web
+          # Player first, so @prismatix/cli never names a package that is not
+          # on npm yet.
+          node -e 'for (const {name, tarball} of require("./out/release/release.json").npm) console.log(`${name} ${tarball}`)' \
+            > "$RUNNER_TEMP/publish-order"
+          while read -r name tarball; do
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already published; skipping"
               continue
             fi
-            npm publish "out/release/npm/prismatix-$name-$VERSION.tgz" --access public --provenance --tag latest
-          done
+            npm publish "out/release/$tarball" --access public --provenance --tag latest
+          done < "$RUNNER_TEMP/publish-order"
       - name: Make the GitHub Release public
         env:
           GH_TOKEN: ${{ github.token }}

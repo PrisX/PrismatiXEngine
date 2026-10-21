@@ -3,7 +3,8 @@ import {chmod, mkdtemp, mkdir, readFile, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {delimiter, join} from "node:path";
 import test from "node:test";
-import {discoverQaPlayer, discoverRuntimeBundle, discoverRuntimeTool, RuntimeDiscoveryFailure} from "../src/runtime-discovery.js";
+import {discoverQaPlayer, discoverRuntimeBundle, discoverRuntimeTool, nativePackageName, nativePackageRoot, nativePlatforms,
+  RuntimeDiscoveryFailure, runtimeDiscoveryHint} from "../src/runtime-discovery.js";
 
 async function fixture(t: test.TestContext) {
   const root = await mkdtemp(join(tmpdir(), "prismatix-runtime-discovery-"));
@@ -125,4 +126,21 @@ test("the QA Player for run --at is found beside the Player, or named explicitly
   assert.equal((await discoverQaPlayer({runtime: f.root, environment: {PRISMATIX_PLAYER_QA: other}})).path, other);
   await assert.rejects(discoverQaPlayer({playerQA: join(f.root, "missing.exe"), environment: {}}),
     rejected(/does not exist/));
+});
+
+test("without its native package the CLI names the package that holds this platform's runtime", async () => {
+  // The checkout's CLI has no @prismatix/native-* installed (release-packages.mjs adds them to a packed CLI).
+  assert.equal(nativePackageName, `@prismatix/native-${process.platform}-${process.arch}`);
+  assert.equal(nativePackageRoot(), undefined);
+  let failure: RuntimeDiscoveryFailure | undefined;
+  await discoverRuntimeTool("player", {environment: {}, checkoutFallback: false})
+    .catch((error: unknown) => { if (error instanceof RuntimeDiscoveryFailure) failure = error; });
+  assert.ok(failure, "discovery must fail without a native package");
+  assert.ok(failure.attempts.some(attempt => attempt.startsWith(`${nativePackageName}@`) && attempt.endsWith("not installed")));
+  const hint = runtimeDiscoveryHint(failure);
+  if ((nativePlatforms as readonly string[]).includes(`${process.platform}-${process.arch}`)) {
+    const version = (JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {version: string}).version;
+    assert.ok(hint.includes(`${nativePackageName}@${version}, an optional dependency of @prismatix/cli that is not installed`), hint);
+    assert.match(hint, /--no-optional or --omit=optional/);
+  } else assert.match(hint, /has no native runtime for/);
 });

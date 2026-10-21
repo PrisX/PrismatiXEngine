@@ -14,13 +14,32 @@ in the browsers you intend to support before you publish it.
 
 ## Export a game
 
-The `@prismatix/cli` package carries the Web Player for its own version (both
-renderers, in `runtime/web`), so a project needs nothing else:
+The Web Player (both renderers) is its own npm package, `@prismatix/web-player`,
+which `@prismatix/cli` does not install: only projects that export for the web
+need its 21 MB. Add it to the project once, at exactly the version of the
+project's `@prismatix/cli` (0.1.0 here), the same way the project pins its
+other `@prismatix` packages:
+
+```bash
+pnpm add -D @prismatix/web-player@0.1.0
+# npm projects: npm install -D --save-exact @prismatix/web-player@0.1.0
+# or let the CLI pick the project's package manager and version:
+pnpm exec prismatix add web-player
+```
+
+Commit `package.json` and the lockfile with it. Then export:
 
 ```bash
 pnpm exec prismatix pack --target web                        # WebGL2, into dist/web
 pnpm exec prismatix pack --target web --web-renderer webgpu --output dist/web-webgpu
 ```
+
+Without the package, `pack --target web` stops before packing anything and
+prints the install command for that project (diagnostic `PXCLI1262`). A Web
+Player of another version is reported, not used; upgrade it together with
+`@prismatix/cli`. `prismatix add web-player --check` only reports what an
+export would use. PrismatiX Studio's Web card offers the same install with one
+click.
 
 Serve the folder from any static host that sends the headers in
 [Hosting and updates](#hosting-and-updates); from an engine checkout,
@@ -31,7 +50,7 @@ Serve the folder from any static host that sends the headers in
 | --- | --- |
 | `--web-renderer webgl2` (default) | SDL's WebGL 2 renderer plus the WebGL 2 effects layer. Runs wherever WebGL 2 does. |
 | `--web-renderer webgpu` | SDL's GPU renderer on WebGPU: the same drawing and effects path as the desktop Player. Needs a WebGPU browser; see [WebGPU status](#webgpu-status). |
-| `--web-player <dir>` | Use another Web Player package (for example one you built) instead of the CLI's. It must have the CLI's version. |
+| `--web-player <dir>` | Use another Web Player package (for example one you built) instead of the project's `@prismatix/web-player`. It must have the CLI's version. |
 | `--web-package <distribution>` | Reuse an existing packaged game and its save lineage instead of packing first. |
 | `--ffmpeg <executable>` | The encoder for movie renditions (default `ffmpeg` on `PATH`). |
 
@@ -51,8 +70,8 @@ version control.
 Movies need FFmpeg with libx264/AAC on the exporting machine. Custom effects
 (node, stage and transition shaders) are converted from their SPIR-V at export
 time with SPIRV-Cross and Naga 27.0.0: put `spirv-cross` and `naga` on `PATH`,
-or point `PRISMATIX_SPIRV_CROSS` and `PRISMATIX_NAGA` at them. The CLI's Web
-Player does not carry these host tools (they are per-platform executables); a
+or point `PRISMATIX_SPIRV_CROSS` and `PRISMATIX_NAGA` at them. The
+`@prismatix/web-player` package does not carry these host tools (they are per-platform executables); a
 Web Player you build yourself includes them in `tools/`. Games without custom
 effects need neither.
 
@@ -164,8 +183,10 @@ local files.
 
 ## Build the Web Player
 
-Only needed to change the engine or to test a local build; the CLI already
-carries one. `scripts/build-wasm-player.mjs` runs on Windows, Linux and macOS.
+Only needed to change the engine or to test a local build; `@prismatix/web-player`
+is the released one. A CLI running from an engine checkout uses the
+checkout's `out/package/wasm-player` when the project has no
+`@prismatix/web-player`. `scripts/build-wasm-player.mjs` runs on Windows, Linux and macOS.
 Install Node.js 24+, CMake, Ninja, the Emscripten SDK **6.0.5** (the CI pin;
 the script refuses another version), Rust/Cargo, and a native vcpkg install
 that provides shadercross and SPIRV-Cross (a native build of the engine, see
