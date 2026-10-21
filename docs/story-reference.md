@@ -1286,6 +1286,33 @@ saves, loads and rollback resume them where they were.
 
 Runtime extensions run in QuickJS, without Node filesystem/process/network modules or unrestricted time/random/eval APIs. Installing a Node package does not make it a runtime dependency. TSX authoring is evaluated during the build in Node and is a separate trust boundary: only build projects and dependencies you trust. Runtime sandbox limits do not make arbitrary build-time project code safe.
 
+## Extension commands
+
+A Story command the Player does not have comes from an extension: a
+`.pxextension` manifest that declares the command and its parameters, and a
+script that handles it. Create one, in TypeScript by default:
+
+```sh
+prismatix extension create my-fx --command greet
+```
+
+```pxstory
+[myFx.greet name="Aoi"]
+```
+
+The command is written like a built-in one, with the parameters its manifest
+declares (`validate` checks names, types, enum choices and ranges). `main.ts`
+handles it with `defineCommand("myFx.greet", ({name}) => ...)` from
+`@prismatix/runtime`; its arguments are typed from the manifest. The build
+bundles the TypeScript and what it imports into one JavaScript file for the
+Player and reports TypeScript errors as `PXCLIEXT2001` warnings at their line;
+a Node.js import or a syntax error stops it (`PXCLIEXT1001`). A command whose
+manifest has `"await": true` holds the Story until its handler finishes (await
+only engine waits such as `ctx.time.wait`). `prismatix extension add-command
+my-fx shout` declares another. See
+[runtime-sdk/README.md](../runtime-sdk/README.md) for handler rules, events
+and saved state.
+
 ## Command schema for editors
 
 Tools that edit Story scripts (the VS Code extension, PrismatiX Studio, your

@@ -9,24 +9,59 @@ import {createPrismatiXContext, defineCommand} from "@prismatix/runtime";
 
 const ctx = createPrismatiXContext();
 
-defineCommand<{amount: number}>("game.raiseAffection", async ({amount}) => {
+defineCommand("game.raiseAffection", async ({amount}) => {
   const current = Number(ctx.variables.get("affection") ?? 0);
   ctx.variables.set("affection", current + amount);
   await ctx.time.wait(0.1);
 });
 ```
 
-For code that prefers the host API directly, importing the package's types also declares the existing `Engine`, `px`, and `DisplayMode` globals.
+For code that prefers the host API directly, importing the package's types also declares the existing `Engine`, `px`, and `DisplayMode` globals; `"types": ["@prismatix/runtime/sandbox"]` in a tsconfig adds the sandbox `console`.
 
-## Build-time bundling
+## TypeScript extensions
 
-The embedded JavaScript host executes extension entry scripts; it is not a Node.js module loader and does not resolve npm packages at runtime. TypeScript extensions may import `@prismatix/runtime` while authoring, but the project build step must transpile/bundle those imports into the JavaScript shipped with the game.
+Start one with the CLI (PrismatiX Studio's New Extension dialog runs the same command):
 
-In other words:
+```sh
+prismatix extension create my-fx --command greet --action open
+```
 
-- authoring/build machine: TypeScript + `@prismatix/runtime` imports are fine;
-- packaged extension: ship bundled JavaScript with no unresolved npm imports;
-- native Player / WASM Preview: execute that JavaScript through the same embedded ScriptHost API.
+It writes `Content/Extensions/my-fx/`: the manifest `my-fx.pxextension` (`"entry": "main.ts"`), `main.ts` with a handler stub per command and Action, a `tsconfig.json`, and `prismatix-extension.d.ts`, and registers the manifest in `prismatix.json`. `--lang js` writes a plain `main.js` that uses the `Engine` global instead.
+
+Every command that builds the game (`validate`, `build`, `pack`, `run --dev` and so Studio's Play button, `test`, the web and Android exports) bundles a `.ts` entry with esbuild into one ES module beside it (`main.ts` -> `main.js`) and publishes that, with the manifest's `entry` pointing at it. The Player never sees TypeScript. The bundle contains:
+
+- `@prismatix/runtime` (this facade; a few KB);
+- relative imports (`./lib/util` or `./lib/util.ts`) inside the project;
+- pure-JavaScript npm packages from the project's `node_modules`, inlined. A Node.js built-in (`fs`, `node:path`, ...) or `@prismatix/authoring-sdk` is a build error (`PXCLIEXT1001`), as is a syntax error or an unresolved import. A package that calls `Date`, timers, `fetch` or `Math.random` bundles but fails in the sandbox, so prefer small, pure ones.
+
+Output is deterministic (no machine paths) and cached in `.prismatix/cache/extensions` by the content hash of every input. Each build also type-checks the extension against this package, the sandbox globals (ES2023, no DOM or Node.js) and its manifest. Type errors are warnings (`PXCLIEXT2001`, with the `.ts` file and line), so a quick experiment still plays; using `Date`, `eval`, `Function` or `Math.random` is warning `PXCLIEXT2002`. `prismatix test` maps Player log positions in a bundle back to the `.ts` line through the cached source map.
+
+### Typed handlers from the manifest
+
+`prismatix-extension.d.ts` augments this package with the manifest's declarations, so the id and arguments of `defineCommand`/`defineAction` are checked without hand-written generics:
+
+```ts
+// my-fx.pxextension declares myFx.greet {name: string (required), times: integer = 1}
+defineCommand("myFx.greet", ({name, times}) => {   // name: string, times: number
+  ctx.log.info(name.repeat(times));
+});
+defineCommand("myFx.typo", () => {});               // type error: not declared
+```
+
+Parameter types map to `boolean`, `number` (integer/number), `string` (a string enum becomes a union of its values), `Vec2Value` `{x, y}`, `Rect` `{x, y, w, h}`, `Color` `{r, g, b, a}` (0-255), `ResourceValue` `{id, path}`, `string` (uuid/token), `RuntimeValue[]` and objects. A parameter that is `required` or has a `default` is always present. Run `prismatix extension types` after editing the manifest by hand (`add-command`/`add-action` refresh it themselves); builds check against fresh declarations and warn (`PXCLIEXT2003`) when the file on disk is stale. Code without the generated file can still pass explicit argument types: `defineCommand<{amount: number}>(...)`.
+
+### Handlers, waits and cancellation
+
+- A command whose manifest says `"await": true` holds the Story until its handler finishes; `false` lets the Story go on at once. An Action's `reentry` decides what another press does while it runs: `allow`, `ignoreWhileRunning` or `restart` (the Player drops the running continuation).
+- Await only Engine waits: `ctx.time.wait`, animation, screen-effect, video and audio handles, `ctx.session.say`. Each is a saved suspension point that survives save, load and rollback by replaying the handler to the same point (keep side effects in `ctx.state`). Awaiting any other Promise is rejected by the Player.
+- A handler may also be a generator that yields the matching tokens (`yield ctx.time.token(0.5)`, `yield ctx.audio.play(path).token()`).
+- There is no cancellation signal: a restarted or cancelled Action simply never resumes, so `finally` blocks do not run. Do clean-up at the start of the next run.
+- The entry runs once when the game loads; register handlers, events and state there, never inside a handler (the Player rejects registration from a running handler).
+- `ctx.events.on(name, handler)` returns a function that stops delivery; `once` delivers one event. Built-in events are typed: `engine.ready`, `engine.shutdown`, `frame.update` (`delta` seconds as a string; `ctx.frame.onUpdate` gives a number), `scenario.started`, `save.loaded`, `save.written` and `timeline.marker`.
+- `ctx.state.define(id, {initial, version, migrate})` returns a saved, rollback-aware value (`get`, `set`, `update`, `reset`) built on the state providers below. It needs the `persistence` capability.
+- `ctx.log.info/warn/error` write to the Player log, like the sandbox `console`.
+- The Player refuses a call whose capability the manifest's `capabilities` do not list: `ui` for `defineAction` and `ctx.ui` routes, `audio`, `video`, `animation`, `persistence` for `ctx.saves` and `ctx.state`, `render` for retained `ctx.renderer.upsert/remove/clear`, `input` for `ctx.input.actionPressed/actionDown`, and `runtime` for the rest. Builds warn about a call the manifest does not cover (`PXCLIEXT2004`).
+- Player log lines and errors that name a bundle position (`main.js:12:5`) are shown at the TypeScript line by `prismatix test`.
 
 The facade deliberately wraps the existing host instead of defining a second scripting runtime. Native Player and WASM Preview therefore keep identical ScriptHost semantics.
 

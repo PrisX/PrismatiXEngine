@@ -47,6 +47,8 @@ Extension-declared Actions use the parameter names and types in their `.pxextens
 
 The same typed UI argument bridge accepts `color`, `uuid`, `token`, `vec2`, `rect`, arrays and objects. `prismatix validate` checks extension-declared Action arguments (required names, types, enum choices and ranges) and includes static resource paths, including manifest resource defaults, in the artifact. Actions registered only by a Player/host at runtime have no authoring manifest to check and remain runtime-validated. A bare string path is still a string, so it cannot satisfy a declared `resource` parameter.
 
+`prismatix extension create my-fx --action open` scaffolds such an extension in TypeScript (`--lang js` for plain JavaScript): the manifest, a `main.ts` handler stub `defineAction("myFx.open", (args, context) => ...)` typed from the manifest, and the registration in `prismatix.json`. `prismatix extension add-action my-fx close` declares another. The handler's `context` carries `preview`, `scene`, `node`, `signal` and `route`; the manifest's `reentry` (`allow`, `ignoreWhileRunning`, `restart`) decides what a second press does while it runs. Every build bundles the TypeScript for the Player and reports type errors as `PXCLIEXT2001` warnings (see [runtime-sdk/README.md](../runtime-sdk/README.md)).
+
 ## Controls and styling
 
 ### Panels without textures
