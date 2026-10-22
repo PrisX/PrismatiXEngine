@@ -56,14 +56,37 @@ async function esbuild(): Promise<typeof import("esbuild")> {
   return esbuildModule;
 }
 
-let runtimeFiles: {entry: string; declarations: string; sandbox: string} | undefined;
-function runtime(): {entry: string; declarations: string; sandbox: string} {
+// The entries of @prismatix/runtime an extension may import: the facade and
+// the experimental layer-1 ("raw") and layer-2 ("native") modules. Each is a
+// single module without imports, inlined into the bundle.
+const runtimeSubpaths = ["raw", "native"] as const;
+
+interface RuntimeFiles {
+  readonly entry: string;
+  readonly declarations: string;
+  readonly sandbox: string;
+  /** "@prismatix/runtime/raw" and the other subpath entries, by import specifier. */
+  readonly modules: ReadonlyMap<string, {readonly entry: string; readonly declarations: string}>;
+}
+
+let runtimeFiles: RuntimeFiles | undefined;
+function runtime(): RuntimeFiles {
   if (runtimeFiles === undefined) {
     const entry = fileURLToPath(import.meta.resolve("@prismatix/runtime"));
+    const modules = new Map<string, {entry: string; declarations: string}>();
+    for (const subpath of runtimeSubpaths) {
+      const file = join(dirname(entry), `${subpath}.js`);
+      modules.set(`@prismatix/runtime/${subpath}`, {entry: file, declarations: file.replace(/\.js$/u, ".d.ts")});
+    }
     runtimeFiles = {entry, declarations: entry.replace(/\.js$/u, ".d.ts"),
-      sandbox: join(dirname(entry), "..", "..", "sandbox.d.ts")};
+      sandbox: join(dirname(entry), "..", "..", "sandbox.d.ts"), modules};
   }
   return runtimeFiles;
+}
+
+/** The declaration file of a runtime import specifier, or undefined for any other module. */
+function runtimeDeclarations(specifier: string): string | undefined {
+  return specifier === "@prismatix/runtime" ? runtime().declarations : runtime().modules.get(specifier)?.declarations;
 }
 
 function sha256(value: string | Buffer): string {
@@ -77,6 +100,7 @@ async function currentToolIdentity(): Promise<string> {
   toolIdentity ??= sha256([cacheFormat, (await esbuild()).version, ts.version,
     sha256(readFileSync(files.entry)), sha256(readFileSync(files.declarations)),
     sha256(readFileSync(files.sandbox)),
+    ...[...files.modules.values()].flatMap((module) => [sha256(readFileSync(module.entry)), sha256(readFileSync(module.declarations))]),
     sha256(readFileSync(fileURLToPath(import.meta.url)))].join("\0"));
   return toolIdentity;
 }
@@ -139,18 +163,18 @@ function messageDiagnostic(root: string, message: Message, code: string,
 
 const nodeBuiltins = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
 
-function sandboxPlugin(runtimeSource: string): Plugin {
+function sandboxPlugin(runtimeSources: ReadonlyMap<string, string>): Plugin {
   return {
     name: "prismatix-sandbox",
     // esbuild filters are Go regular expressions: no JavaScript flags.
     setup(context) {
-      context.onResolve({filter: new RegExp("^@prismatix/runtime$")}, () =>
-        ({path: "@prismatix/runtime", namespace: runtimeNamespace}));
-      context.onLoad({filter: new RegExp(".*"), namespace: runtimeNamespace}, () =>
-        ({contents: runtimeSource, loader: "js"}));
+      context.onResolve({filter: new RegExp(`^@prismatix/runtime(?:/(?:${runtimeSubpaths.join("|")}))?$`)}, (args) =>
+        ({path: args.path, namespace: runtimeNamespace}));
+      context.onLoad({filter: new RegExp(".*"), namespace: runtimeNamespace}, (args) =>
+        ({contents: runtimeSources.get(args.path) ?? "", loader: "js"}));
       context.onResolve({filter: new RegExp("^@prismatix/(?:runtime/sandbox|authoring-sdk|cli)(?:/.*)?$")}, (args) => ({
         errors: [{text: `"${args.path}" is build-time tooling; the Player cannot load it. ` +
-          "Import \"@prismatix/runtime\" in extension code."}]}));
+          "Import \"@prismatix/runtime\" (or its \"/raw\" and \"/native\" entries) in extension code."}]}));
       context.onResolve({filter: new RegExp("^[^./]")}, (args) => nodeBuiltins.has(args.path) ? {
         errors: [{text: `"${args.path}" is a Node.js module. Extensions run in the Player's sandbox, ` +
           "which has no filesystem, network, process or timer modules."}]} : undefined);
@@ -244,6 +268,24 @@ const contextMemberCapabilities: Readonly<Record<string, string>> = {
   "renderer.upsert": "render", "renderer.remove": "render", "renderer.clear": "render",
   "input.actionPressed": "input", "input.actionDown": "input",
 };
+// @prismatix/runtime/raw and /native: the receiver's type names the capability
+// of every member that reaches the Player (the rest only read limits or stats).
+const memberCapabilities: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  PrismatiXRaw: {createMesh: "raw.mesh", mesh: "raw.mesh", createTexture: "raw.texture", createTarget: "raw.target"},
+  RawMesh: {update: "raw.mesh", vertices: "raw.mesh", indices: "raw.mesh", destroy: "raw.mesh"},
+  RawTexture: {upload: "raw.texture", destroy: "raw.texture"},
+  RawTarget: {update: "raw.target", destroy: "raw.target"},
+  PrismatiXNative: {services: "native", has: "native", request: "native", requestText: "native",
+    requestJson: "native", onMessage: "native"},
+  PrismatiXNativeHost: {Services: "native", Has: "native", Request: "native", TakeMessages: "native"},
+};
+/** The capability an `EngineRaw` call needs; Limits, Stats and Clear need none. */
+export function rawCapability(name: string): string | undefined {
+  if (/Mesh$|^Upload(?:Vertices|Indices)$/u.test(name)) return "raw.mesh";
+  if (/Texture$/u.test(name)) return "raw.texture";
+  if (/Target$/u.test(name)) return "raw.target";
+  return undefined;
+}
 export function engineCapability(name: string): string {
   if (/^(?:PushRoute|ReplaceRoute|BackRoute|ShowModal|CloseModal|SetRouteTransition|RegisterAction)$/u.test(name)) return "ui";
   if (/^(?:PlaySE|PlayVoice|StopVoice|PlayBGM|StopBGM|PlayAmbience|StopAmbience|AwaitAudio|WaitAudio)$/u.test(name) ||
@@ -281,6 +323,8 @@ function capabilityFindings(program: TS.Program, root: string, files: readonly T
         let what = node.getText(source);
         if (owner === "PrismatiXContext") capability = contextCapabilities[name];
         else if (owner === "PrismatiXEngine") capability = engineCapability(name);
+        else if (owner === "PrismatiXRawHost") capability = rawCapability(name);
+        else if (owner !== undefined && memberCapabilities[owner] !== undefined) capability = memberCapabilities[owner]![name];
         else if (ts.isPropertyAccessExpression(node.expression) &&
             typeName(node.expression.expression) === "PrismatiXContext") {
           capability = contextMemberCapabilities[`${node.expression.name.text}.${name}`];
@@ -332,9 +376,12 @@ function typeCheck(root: string, entryPath: string, declarationsPath: string,
   host.readFile = (fileName) => resolve(fileName) === declarationsKey ? declarations : readFileText(fileName);
   const cache = ts.createModuleResolutionCache(root,
     (value) => ts.sys.useCaseSensitiveFileNames ? value : value.toLowerCase(), options);
-  host.resolveModuleNames = (names, containingFile) => names.map((name) => name === "@prismatix/runtime"
-    ? {resolvedFileName: runtime().declarations, extension: ts.Extension.Dts, isExternalLibraryImport: true}
-    : ts.resolveModuleName(name, containingFile, options, host, cache).resolvedModule);
+  host.resolveModuleNames = (names, containingFile) => names.map((name) => {
+    const declarations = runtimeDeclarations(name);
+    return declarations !== undefined
+      ? {resolvedFileName: declarations, extension: ts.Extension.Dts, isExternalLibraryImport: true}
+      : ts.resolveModuleName(name, containingFile, options, host, cache).resolvedModule;
+  });
   const program = ts.createProgram({rootNames: [entryPath, declarationsPath, runtime().sandbox], options, host});
   const authored = program.getSourceFiles().filter((source) => !source.isDeclarationFile &&
     within(root, resolve(source.fileName)) !== undefined &&
@@ -398,7 +445,9 @@ export async function buildTypeScriptExtensions(root: string,
       continue;
     }
 
-    const runtimeSource = readFileSync(runtime().entry, "utf8").replace(/\n\/\/# sourceMappingURL=.*\s*$/u, "\n");
+    const withoutMap = (file: string) => readFileSync(file, "utf8").replace(/\n\/\/# sourceMappingURL=.*\s*$/u, "\n");
+    const runtimeSources = new Map([["@prismatix/runtime", withoutMap(runtime().entry)],
+      ...[...runtime().modules].map(([specifier, module]) => [specifier, withoutMap(module.entry)] as const)]);
     const outfile = resolve(root, ...joinVirtual(directory, bundleEntry).split("/"));
     let result;
     try {
@@ -409,7 +458,7 @@ export async function buildTypeScriptExtensions(root: string,
         mainFields: ["module", "main"], conditions: ["import", "module", "default"],
         resolveExtensions: [".ts", ".mjs", ".js", ".json"],
         charset: "utf8", legalComments: "eof", logLevel: "silent",
-        plugins: [sandboxPlugin(runtimeSource)],
+        plugins: [sandboxPlugin(runtimeSources)],
       });
     } catch (error) {
       const failure = error as {errors?: Message[]};

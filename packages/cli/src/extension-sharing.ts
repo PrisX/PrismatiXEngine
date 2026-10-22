@@ -5,16 +5,22 @@
 
 import {existsSync} from "node:fs";
 import {readFile, writeFile} from "node:fs/promises";
-import {join, resolve} from "node:path";
+import {dirname, join, resolve} from "node:path";
 
 import {
   ENGINE_VERSION,
   EXTENSION_PACKAGE_SUFFIX,
+  manifestPlatforms,
+  nativeExtensionPlatforms,
+  nativeKeyFingerprint,
+  nativePackFileName,
   parseExtensionPackageId,
   parseSemVer,
+  readExtensionNativePack,
   resolveExtensionVersion,
   validateExtensionPackage,
   type AuthoringDiagnostic,
+  type NativeExtensionPlatform,
 } from "@prismatix/authoring-sdk";
 
 import {
@@ -40,30 +46,33 @@ import {
 } from "./extension-registry.js";
 import {projectManifest} from "./extension-scaffold.js";
 import * as tui from "./tui.js";
+import {SIGNING_KEY_ENVIRONMENT, writeSigningKey} from "./extension-native.js";
+import {parsePlatformList} from "./platform-runtime.js";
 
 export const sharingSubcommands = new Set(["pack", "add", "remove", "update", "outdated", "verify", "inspect", "search",
-  "info", "publish", "yank", "registry"]);
+  "info", "publish", "yank", "registry", "keygen"]);
 
 /** Subcommands that also work outside a project. */
-export const projectlessSubcommands = new Set(["search", "info", "publish", "yank", "inspect"]);
+export const projectlessSubcommands = new Set(["search", "info", "publish", "yank", "inspect", "keygen"]);
 
 /** Allowed positional counts (including the subcommand). */
 export const sharingArity: Readonly<Record<string, readonly number[]>> = {
   pack: [1, 2], add: [2], remove: [2], update: [1, 2], outdated: [1], verify: [1], inspect: [2], search: [1, 2],
-  info: [2], publish: [1, 2], yank: [2], registry: [1, 2],
+  info: [2], publish: [1, 2], yank: [2], registry: [1, 2], keygen: [2],
 };
 
 export const sharingHelp = [
   "",
   "Sharing (docs/extensions-sharing.md):",
-  "prismatix extension pack [extension] [--owner <owner>] [--output <dir>] [--include-source]",
+  "prismatix extension pack [extension] [--owner <owner>] [--output <dir>] [--include-source] [--signing-key <key.pem>]",
   "prismatix extension add <owner/name[@range] | ./file.pxext | https://.../file.pxext | npm:<package>[@range]>",
-  "    [--yes] [--sha256 <hex>] [--registry <url>]",
+  "    [--yes] [--sha256 <hex>] [--registry <url>] [--allow-native] [--platform <list|all|host>]",
   "prismatix extension remove <owner/name>",
-  "prismatix extension update [owner/name] [--to <range> | --reinstall] [--yes]",
+  "prismatix extension update [owner/name] [--to <range> | --reinstall] [--yes] [--platform <list>] [--allow-native]",
   "prismatix extension outdated | verify",
-  "prismatix extension inspect <source>",
-  "prismatix extension search [query] [--capability <name>] [--page <n>]",
+  "prismatix extension inspect <source> [--platform <list>]",
+  "prismatix extension search [query] [--capability <name>] [--platform <platform>] [--page <n>]",
+  "prismatix extension keygen <key.pem>              (a P-256 key that signs native libraries)",
   "prismatix extension info <owner/name>",
   "prismatix extension publish [file.pxext | extension] [--owner <owner>]   (token: PRISMATIX_REGISTRY_TOKEN)",
   "prismatix extension yank <owner/name@version> [--undo] [--reason <text>]",
@@ -74,6 +83,9 @@ export const sharingHelp = [
   "do and installs it into Extensions/<owner>/<name>/, registered and recorded in prismatix-extensions.lock;",
   "nothing in a package runs at install time. The registry is --registry, PRISMATIX_EXTENSION_REGISTRY or",
   `the project's settings["${REGISTRY_SETTING}"]; there is no default.`,
+  "An extension with native libraries (docs/native-extensions.md) installs only with --allow-native, which",
+  "accepts code that runs outside the sandbox; --platform picks the native packs to fetch (this computer's",
+  "by default). pack signs its libraries with --signing-key or PRISMATIX_EXTENSION_SIGNING_KEY.",
 ];
 
 interface CommandOptions {
@@ -92,6 +104,8 @@ function installOptions(options: CommandOptions, progress: (message: string) => 
   return {
     ...(options.values.has("registry") ? {registry: options.values.get("registry")!} : {}),
     ...(options.values.has("sha256") ? {sha256: options.values.get("sha256")!} : {}),
+    ...(options.values.has("platform") ? {platforms: parsePlatformList([options.values.get("platform")!])} : {}),
+    allowNative: options.flags.has("allow-native"),
     yes: options.flags.has("yes"),
     onProgress: progress,
     // Without a terminal (scripts, CI, --json, Studio) only --yes installs.
@@ -130,16 +144,29 @@ export async function extensionSharingCommand(root: string | undefined, options:
   };
   const engine = ENGINE_VERSION;
 
+  if (subcommand === "keygen") {
+    const key = await writeSigningKey(resolve(first!));
+    return {status: 0, text: machine ? json({file: key.source, publicKey: key.publicKey,
+      fingerprint: await nativeKeyFingerprint(key.publicKey)}) : [
+      `Wrote ${key.source} (keep it secret and out of the project; anyone with it can sign libraries as you)`,
+      `  public key ${key.publicKey}`,
+      `  fingerprint ${await nativeKeyFingerprint(key.publicKey)}`,
+      `Pack with --signing-key ${first} or ${SIGNING_KEY_ENVIRONMENT}=${first}.`, ""].join("\n")};
+  }
+
   if (subcommand === "pack") {
     const result = await packExtension(project(), first, {
       ...(options.values.has("owner") ? {owner: options.values.get("owner")!} : {}),
       ...(options.values.has("output") ? {output: options.values.get("output")!} : {}),
+      ...(options.values.has("signing-key") ? {signingKey: options.values.get("signing-key")!} : {}),
       includeSource: options.flags.has("include-source")});
     return {status: 0, warnings: result.warnings, text: machine ? json(result) : [
       ...result.created.map((path) => `Created ${path}`),
       ...(result.created.length > 0 ? ["  Fill in pxext.json's description, author, license and links, and README.md, before you publish."] : []),
       `Packed ${result.id}@${result.version}: ${displayPath(project(), result.file)}`,
-      `  ${result.files.length} files, ${result.size} bytes, SHA-256 ${result.sha256}`, ""].join("\n")};
+      `  ${result.files.length} files, ${result.size} bytes, SHA-256 ${result.sha256}`,
+      ...result.nativePacks.map((pack) => `  ${pack.platform} native pack: ${displayPath(project(), pack.file)} ` +
+        `(${pack.size} bytes, SHA-256 ${pack.sha256})`), ""].join("\n")};
   }
 
   if (subcommand === "inspect") {
@@ -147,7 +174,9 @@ export async function extensionSharingCommand(root: string | undefined, options:
     const summary = root === undefined ? undefined : await summarizePackage(root, fetched);
     const value = summary ?? {id: fetched.contents.metadata!.id, version: fetched.contents.metadata!.version,
       sha256: fetched.sha256, size: fetched.bytes.length, source: fetched.source, capabilities: fetched.contents.manifest!.capabilities,
-      requiredEngineVersion: fetched.contents.manifest!.requiredEngineVersion};
+      requiredEngineVersion: fetched.contents.manifest!.requiredEngineVersion,
+      ...(fetched.contents.manifest!.native === undefined ? {} : {native: fetched.contents.manifest!.native,
+        platforms: manifestPlatforms(fetched.contents.manifest!)})};
     return {status: 0, text: machine ? json({...value, metadata: fetched.contents.metadata, files: [...fetched.contents.files.keys()]})
       : `${summary === undefined ? JSON.stringify(value, null, 2) : describeSummary(summary)}\n` +
         `${summary !== undefined && summary.conflicts.length > 0 ? `Conflicts: ${summary.conflicts.map((item) =>
@@ -220,12 +249,15 @@ export async function extensionSharingCommand(root: string | undefined, options:
     const client = new RegistryClient(location.url);
     const page = options.values.has("page") ? Number(options.values.get("page")) : 1;
     if (!Number.isInteger(page) || page < 1) throw new Error("--page must be a positive integer");
+    const platform = options.values.get("platform");
     const result = await client.search({...(first === undefined ? {} : {query: first}), engine,
-      ...(options.values.has("capability") ? {capability: options.values.get("capability")!} : {}), page});
+      ...(options.values.has("capability") ? {capability: options.values.get("capability")!} : {}),
+      ...(platform === undefined ? {} : {platform}), page});
     return {status: 0, text: machine ? json({registry: location.url, engine, ...result}) : result.results.length === 0
-      ? `Nothing on ${location.url} matches${first ? ` "${first}"` : ""} for engine ${engine}.\n`
+      ? `Nothing on ${location.url} matches${first ? ` "${first}"` : ""} for engine ${engine}${platform ? ` on ${platform}` : ""}.\n`
       : `${result.results.map((item) => `${item.id}@${item.latestVersion}  ${item.displayName ?? ""}` +
-        `${item.description ? `\n    ${item.description}` : ""}\n    capabilities: ${item.capabilities.join(", ") || "none"}`).join("\n")}\n` +
+        `${item.description ? `\n    ${item.description}` : ""}\n    capabilities: ${item.capabilities.join(", ") || "none"}` +
+        `${item.platforms ? `\n    platforms: ${item.platforms.join(", ")}` : ""}${item.native ? "  (native code)" : ""}`).join("\n")}\n` +
         `${result.total > result.page * result.pageSize ? `Page ${result.page}; more with --page ${result.page + 1}\n` : ""}`};
   }
 
@@ -233,13 +265,16 @@ export async function extensionSharingCommand(root: string | undefined, options:
     const location = await requireRegistry(root, options.values.get("registry"));
     const client = new RegistryClient(location.url);
     const details = await client.extension(first!);
-    const resolved = resolveExtensionVersion(details.value.versions, "*", engine);
+    const platform = options.values.get("platform");
+    const resolved = resolveExtensionVersion(details.value.versions, "*", engine, platform);
     const value = {...details.value, compatibleVersion: resolved.version?.version ?? null,
-      ...(resolved.version === undefined ? {problem: resolutionMessage(first!, "*", engine, resolved)} : {})};
+      ...(resolved.version === undefined ? {problem: resolutionMessage(first!, "*", engine, resolved, platform)} : {})};
     return {status: 0, text: machine ? json(value) : [
       `${details.value.displayName ?? details.value.id} (${details.value.id})`,
       ...(details.value.description ? [`  ${details.value.description}`] : []),
       `  capabilities: ${details.value.capabilities.join(", ") || "none"}`,
+      ...(details.value.platforms ? [`  platforms: ${details.value.platforms.join(", ")}`] : []),
+      ...(details.value.native ? ["  loads native libraries (installs only with --allow-native)"] : []),
       `  versions: ${details.value.versions.map((item) => `${item.version}${item.yanked ? " (yanked)" : ""}`).join(", ")}`,
       resolved.version === undefined ? `  ${value.problem}` : `  installs ${resolved.version.version} on engine ${engine}`,
       ""].join("\n")};
@@ -252,7 +287,8 @@ export async function extensionSharingCommand(root: string | undefined, options:
     if (file === undefined) {
       const packed = await packExtension(project(), first, {
         ...(options.values.has("owner") ? {owner: options.values.get("owner")!} : {}),
-        ...(options.values.has("output") ? {output: options.values.get("output")!} : {})});
+        ...(options.values.has("output") ? {output: options.values.get("output")!} : {}),
+        ...(options.values.has("signing-key") ? {signingKey: options.values.get("signing-key")!} : {})});
       file = packed.file;
       warnings = packed.warnings;
       progress(`Packed ${packed.id}@${packed.version}`);
@@ -263,9 +299,21 @@ export async function extensionSharingCommand(root: string | undefined, options:
       throw new Error(`${file} is not a valid package: ${validation.diagnostics.filter((item) => item.severity === "error")
         .map((item) => `${item.code} ${item.message}${item.path ? ` (${item.path})` : ""}`).join("; ")}`);
     if (parseSemVer(validation.version!) === undefined) throw new Error(`${validation.version} is not a version`);
+    // A native extension's packs sit beside the main package, as pack writes them.
+    const nativePacks = new Map<NativeExtensionPlatform, Uint8Array>();
+    for (const platform of nativeExtensionPlatforms) {
+      if (validation.manifest!.native?.libraries[platform] === undefined) continue;
+      const packFile = join(dirname(file), nativePackFileName(validation.id!, validation.version!, platform));
+      if (!existsSync(packFile)) throw new Error(`The ${platform} native pack ${packFile} is missing; pack the extension again`);
+      const packBytes = new Uint8Array(await readFile(packFile));
+      const checked = await readExtensionNativePack(packBytes, validation.manifest!, platform);
+      if (!checked.valid)
+        throw new Error(`${packFile} is not a valid native pack: ${checked.diagnostics.map((item) => `${item.code} ${item.message}`).join("; ")}`);
+      nativePacks.set(platform, packBytes);
+    }
     const location = await requireRegistry(root, options.values.get("registry"));
     const client = new RegistryClient(location.url, token === undefined ? {} : {token});
-    const published = await client.publish(bytes, validation, progress);
+    const published = await client.publish(bytes, validation, progress, nativePacks);
     return {status: 0, warnings: [...warnings, ...validation.diagnostics], text: machine
       ? json({registry: location.url, file, id: validation.id, ...published.value})
       : `Published ${validation.id}@${published.value.version} to ${location.url} (SHA-256 ${published.value.sha256})\n`};

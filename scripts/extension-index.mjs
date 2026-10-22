@@ -8,6 +8,9 @@
 //   {"id": "owner/name", "versions": [{"url": "https://.../owner-name-1.0.0.pxext",
 //     "sha256": "<optional pin>", "yanked": false, "yankedReason": "...", "publishedAt": "2026-10-22T00:00:00Z"}]}
 // A version's url may be relative to its entry file (a package kept beside it).
+// A native extension's version also has its native packs: by default the
+// `<owner>-<name>-<version>-native-<platform>.pxext` beside its url, or
+// "native": {"<platform>": {"url": "...", "sha256": "<optional pin>"}}.
 //
 // Every package is downloaded, checked with validateExtensionPackage (the
 // check `prismatix extension add` and a registry run) and hashed; its id and
@@ -22,10 +25,16 @@ import {mkdir, readdir, readFile, rm, writeFile} from "node:fs/promises";
 import {dirname, join, relative, resolve} from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 
+import {createHash} from "node:crypto";
+
 import {
   compareSemVer,
+  manifestPlatforms,
+  nativeExtensionPlatforms,
+  nativePackFileName,
   parseExtensionPackageId,
   parseSemVer,
+  readExtensionNativePack,
   validateExtensionPackage,
   validateRegistryDocument,
 } from "@prismatix/authoring-sdk";
@@ -93,7 +102,23 @@ export async function buildExtensionIndex(entriesDirectory, outputDirectory, log
         throw new Error(`${where}: version ${validation.version} is listed twice`);
       for (const warning of validation.diagnostics.filter((d) => d.severity === "warning"))
         log(`  warning ${warning.code}: ${warning.message}`);
-      versions.push({item, url, bytes, validation});
+      // Native packs, checked against the hashes the package's manifest pins.
+      const natives = [];
+      for (const platform of nativeExtensionPlatforms) {
+        if (validation.manifest.native?.libraries[platform] === undefined) continue;
+        const name = nativePackFileName(entry.id, validation.version, platform);
+        const pinned = item.native?.[platform];
+        const packUrl = new URL(pinned?.url ?? name, pinned?.url === undefined ? url : pathToFileURL(file));
+        const packBytes = await download(packUrl);
+        const pack = await readExtensionNativePack(packBytes, validation.manifest, platform);
+        if (!pack.valid) throw new Error(`${where}: ${packUrl.href} is not a valid ${platform} native pack: ` +
+          pack.diagnostics.map((d) => `${d.code} ${d.message}`).join("; "));
+        const sha256 = createHash("sha256").update(packBytes).digest("hex");
+        if (pinned?.sha256 !== undefined && pinned.sha256 !== sha256)
+          throw new Error(`${where}: ${packUrl.href} has SHA-256 ${sha256}, not the pinned ${pinned.sha256}`);
+        natives.push({platform, name, url: packUrl, bytes: packBytes, sha256});
+      }
+      versions.push({item, url, bytes, validation, natives});
     }
     versions.sort((left, right) => compareSemVer(right.validation.version, left.validation.version));
     extensions.push({id: entry.id, ...parsed, versions});
@@ -107,17 +132,29 @@ export async function buildExtensionIndex(entriesDirectory, outputDirectory, log
     const shown = stable[0] ?? extension.versions.find((item) => !item.item.yanked) ?? extension.versions[0];
     const metadata = shown.validation.metadata;
     const manifest = shown.validation.manifest;
+    // Absent `platforms` means every platform (a JavaScript-only extension).
+    const platformsOf = (value) => value.platforms === undefined && value.native === undefined ? {}
+      : {platforms: manifestPlatforms(value)};
     for (const item of extension.versions) {
       // A package kept beside its entry is published next to its version document.
       if (item.url.protocol === "file:") {
         const name = `${extension.owner}-${extension.name}-${item.validation.version}.pxext`;
         await write(join(base, "versions", item.validation.version, name), item.bytes);
       }
+      const platformDownloads = {};
+      for (const native of item.natives) {
+        if (native.url.protocol === "file:")
+          await write(join(base, "versions", item.validation.version, native.name), native.bytes);
+        platformDownloads[native.platform] = {download: native.url.protocol === "file:" ? native.name : native.url.href,
+          sha256: native.sha256, size: native.bytes.length};
+      }
       const document = checked("version", {
         id: extension.id, version: item.validation.version, requiredEngineVersion: item.validation.manifest.requiredEngineVersion,
         sha256: item.validation.sha256, size: item.validation.size,
         download: item.url.protocol === "file:" ? `${extension.owner}-${extension.name}-${item.validation.version}.pxext` : item.url.href,
-        manifest: item.validation.manifest, metadata: item.validation.metadata, yanked: item.item.yanked === true,
+        manifest: item.validation.manifest, metadata: item.validation.metadata, ...platformsOf(item.validation.manifest),
+        ...(item.natives.length === 0 ? {} : {platformDownloads}),
+        yanked: item.item.yanked === true,
         ...(typeof item.item.yankedReason === "string" && item.item.yanked ? {yankedReason: item.item.yankedReason} : {}),
         ...(typeof item.item.publishedAt === "string" ? {publishedAt: item.item.publishedAt} : {}),
       }, `${extension.id}@${item.validation.version}`);
@@ -142,11 +179,12 @@ export async function buildExtensionIndex(entriesDirectory, outputDirectory, log
       ...(metadata.homepage === undefined ? {} : {homepage: metadata.homepage}),
       ...(metadata.repository === undefined ? {} : {repository: metadata.repository}),
       ...(metadata.keywords === undefined ? {} : {keywords: metadata.keywords}),
-      ...media, capabilities: manifest.capabilities,
+      ...media, capabilities: manifest.capabilities, ...platformsOf(manifest),
+      ...(manifest.native === undefined ? {} : {native: true}),
       latestVersion: stable[0]?.validation.version ?? null,
       versions: extension.versions.map((item) => ({version: item.validation.version,
         requiredEngineVersion: item.validation.manifest.requiredEngineVersion, yanked: item.item.yanked === true,
-        sha256: item.validation.sha256, size: item.validation.size,
+        sha256: item.validation.sha256, size: item.validation.size, ...platformsOf(item.validation.manifest),
         ...(typeof item.item.publishedAt === "string" ? {publishedAt: item.item.publishedAt} : {})})),
     }, extension.id);
     await write(join(base, "index.json"), details);
@@ -154,7 +192,9 @@ export async function buildExtensionIndex(entriesDirectory, outputDirectory, log
       ...(metadata.displayName === undefined ? {} : {displayName: metadata.displayName}),
       ...(metadata.description ? {description: metadata.description} : {}),
       latestVersion: stable[0].validation.version, requiredEngineVersion: manifest.requiredEngineVersion,
-      capabilities: manifest.capabilities, ...(metadata.keywords === undefined ? {} : {keywords: metadata.keywords}),
+      capabilities: manifest.capabilities, ...platformsOf(manifest),
+      ...(manifest.native === undefined ? {} : {native: true}),
+      ...(metadata.keywords === undefined ? {} : {keywords: metadata.keywords}),
       ...(media.icon === undefined ? {} : {icon: `../extensions/${extension.owner}/${extension.name}/icon.png`}),
       ...(typeof stable[0].item.publishedAt === "string" ? {updatedAt: stable[0].item.publishedAt} : {})});
   }

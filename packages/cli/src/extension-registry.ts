@@ -16,10 +16,13 @@ import {join} from "node:path";
 
 import {
   extensionPackageLimits,
+  nativePackBytes,
   parseExtensionPackageId,
   resolveExtensionVersion,
+  supportsPlatform,
   validateRegistryDocument,
   type ExtensionPackageValidation,
+  type NativeExtensionPlatform,
   type RegistryDocumentKind,
   type RegistryExtension,
   type RegistryPublishResponse,
@@ -206,11 +209,12 @@ export class RegistryClient {
 
   /** Search; a static index is filtered here the way the search route filters. */
   async search(options: {readonly query?: string; readonly engine?: string; readonly capability?: string;
-    readonly page?: number}): Promise<RegistrySearchResponse> {
+    readonly platform?: string; readonly page?: number}): Promise<RegistrySearchResponse> {
     const query = new URLSearchParams();
     if (options.query) query.set("q", options.query);
     if (options.engine) query.set("engine", options.engine);
     if (options.capability) query.set("capability", options.capability);
+    if (options.platform) query.set("platform", options.platform);
     if (options.page !== undefined && options.page > 1) query.set("page", String(options.page));
     const found = await this.get<RegistrySearchResponse>("/v1/search", "searchResponse", query);
     const absolute = (result: RegistrySearchResult): RegistrySearchResult =>
@@ -222,7 +226,8 @@ export class RegistryClient {
       // A static index lists each extension's latest version only, so it
       // is not filtered by engine here: installing resolves a compatible one.
       return words.every((word) => text.includes(word)) &&
-        (options.capability === undefined || result.capabilities.includes(options.capability));
+        (options.capability === undefined || result.capabilities.includes(options.capability)) &&
+        (options.platform === undefined || supportsPlatform(result.platforms, options.platform));
     });
     const pageSize = 20;
     const page = Math.max(1, options.page ?? 1);
@@ -251,12 +256,15 @@ export class RegistryClient {
    * (the resolve route; against a static index, resolved here from the
    * extension's version list by the same rule).
    */
-  async resolve(id: string, range: string, engine: string): Promise<Located<RegistryVersion>> {
+  async resolve(id: string, range: string, engine: string, platform?: string): Promise<Located<RegistryVersion>> {
     const route = `/v1/extensions/${idPath(id)}/resolve`;
-    const url = `${this.base}${route}?${new URLSearchParams({range, engine})}`;
+    const url = `${this.base}${route}?${new URLSearchParams({range, engine, ...(platform === undefined ? {} : {platform})})}`;
     const response = await this.#request(url, {headers: {accept: "application/json"}});
     if (response.ok) {
       const value = await this.#json<RegistryVersion>(response, url, "version");
+      // A registry that ignores `platform` would answer with any version.
+      if (platform !== undefined && !supportsPlatform(value.platforms ?? value.manifest.platforms, platform))
+        throw new RegistryRequestError(`${id}@${value.version} does not run on ${platform}`, 404, "platform_unsupported");
       return {value, url: response.url || url, static: false};
     }
     if (![404, 405, 501].includes(response.status)) return this.#failure(response, url);
@@ -264,29 +272,42 @@ export class RegistryClient {
     const body = errorBody(text);
     if (body !== undefined) throw new RegistryRequestError(`${id}@${range}: ${body.message} (${body.code})`, response.status, body.code);
     const details = await this.extension(id);
-    const resolved = resolveExtensionVersion(details.value.versions, range, engine);
-    if (resolved.version === undefined) throw new RegistryRequestError(resolutionMessage(id, range, engine, resolved),
-      404, resolved.problem === "engine" ? "engine_incompatible" : "no_matching_version");
+    const resolved = resolveExtensionVersion(details.value.versions, range, engine, platform);
+    if (resolved.version === undefined) throw new RegistryRequestError(resolutionMessage(id, range, engine, resolved, platform),
+      404, resolved.problem === "engine" ? "engine_incompatible" : resolved.problem === "platform" ? "platform_unsupported"
+        : "no_matching_version");
     return this.version(id, resolved.version.version);
+  }
+
+  async #downloadChecked(reference: string, base: string, size: number, expected: string, limit: number): Promise<Uint8Array> {
+    const url = checkedUrl(reference, base);
+    if (size > limit) throw new Error(`${url.href} is ${size} bytes; at most ${limit} are allowed`);
+    const response = await this.#request(url.href);
+    checkedUrl(response.url || url.href);
+    if (!response.ok) return this.#failure(response, url.href);
+    const bytes = await readLimited(response, size, url.href).catch((cause: unknown) => {
+      throw new Error(`${url.href} is larger than the ${size} bytes the registry lists; nothing was installed (${String(cause)})`);
+    });
+    if (bytes.length !== size)
+      throw new Error(`${url.href} is ${bytes.length} bytes, not the ${size} the registry lists; nothing was installed`);
+    const digest = sha256(bytes);
+    if (digest !== expected)
+      throw new Error(`${url.href} does not match the SHA-256 the registry lists (got ${digest}, expected ${expected}); nothing was installed`);
+    return bytes;
   }
 
   /** Downloads a version's .pxext and checks its size and SHA-256 against the version document. */
   async download(version: Located<RegistryVersion>): Promise<Uint8Array> {
-    const url = checkedUrl(version.value.download, version.url);
-    if (version.value.size > extensionPackageLimits.packageBytes)
-      throw new Error(`${url.href} is ${version.value.size} bytes; packages are at most ${extensionPackageLimits.packageBytes}`);
-    const response = await this.#request(url.href);
-    checkedUrl(response.url || url.href);
-    if (!response.ok) return this.#failure(response, url.href);
-    const bytes = await readLimited(response, version.value.size, url.href).catch((cause: unknown) => {
-      throw new Error(`${url.href} is larger than the ${version.value.size} bytes the registry lists; nothing was installed (${String(cause)})`);
-    });
-    if (bytes.length !== version.value.size)
-      throw new Error(`${url.href} is ${bytes.length} bytes, not the ${version.value.size} the registry lists; nothing was installed`);
-    const digest = sha256(bytes);
-    if (digest !== version.value.sha256)
-      throw new Error(`${url.href} does not match the SHA-256 the registry lists (got ${digest}, expected ${version.value.sha256}); nothing was installed`);
-    return bytes;
+    return this.#downloadChecked(version.value.download, version.url, version.value.size, version.value.sha256,
+      extensionPackageLimits.packageBytes);
+  }
+
+  /** Downloads a version's native pack for one platform, checked against the version document. */
+  async downloadNative(version: Located<RegistryVersion>, platform: NativeExtensionPlatform): Promise<Uint8Array> {
+    const entry = version.value.platformDownloads?.[platform];
+    if (entry === undefined)
+      throw new Error(`${version.value.id ?? "The extension"}@${version.value.version} has no ${platform} native pack on the registry`);
+    return this.#downloadChecked(entry.download, version.url, entry.size, entry.sha256, nativePackBytes);
   }
 
   #authorization(): Record<string, string> {
@@ -301,12 +322,16 @@ export class RegistryClient {
    * and POST /v1/uploads/{uploadId}/confirm makes the version public.
    */
   async publish(bytes: Uint8Array, validation: ExtensionPackageValidation,
-    onProgress?: (message: string) => void): Promise<Located<RegistryVersion>> {
+    onProgress?: (message: string) => void,
+    nativePacks: ReadonlyMap<NativeExtensionPlatform, Uint8Array> = new Map()): Promise<Located<RegistryVersion>> {
     const authorization = this.#authorization();
     if (!validation.valid || validation.metadata === undefined || validation.manifest === undefined)
       throw new Error("Only a valid package can be published");
+    const platformPackages = Object.fromEntries([...nativePacks].map(([platform, data]) =>
+      [platform, {sha256: sha256(data), size: data.length}]));
     const request = {id: validation.metadata.id, version: validation.metadata.version!, sha256: validation.sha256,
-      size: validation.size, manifest: validation.manifest, metadata: validation.metadata};
+      size: validation.size, manifest: validation.manifest, metadata: validation.metadata,
+      ...(nativePacks.size === 0 ? {} : {platformPackages})};
     const announce = `${this.base}/v1/extensions`;
     onProgress?.(`Announcing ${request.id}@${request.version} to ${this.base}`);
     const started = await this.#request(announce, {method: "POST", body: JSON.stringify(request),
@@ -319,6 +344,16 @@ export class RegistryClient {
     for (const name of Object.keys(headers)) if (name.toLowerCase() === "authorization") delete headers[name];
     const put = await this.#request(target.href, {method: "PUT", body: bytes as Uint8Array<ArrayBuffer>, headers});
     if (!put.ok) return this.#failure(put, target.href);
+    for (const [platform, data] of nativePacks) {
+      const slot = upload.platformUploads?.[platform];
+      if (slot === undefined) throw new Error(`${announce} gave no upload for the ${platform} native pack; this registry may not support native extensions`);
+      const destination = checkedUrl(slot.uploadUrl, started.url || announce);
+      const packHeaders: Record<string, string> = {"content-type": "application/octet-stream", ...slot.uploadHeaders ?? {}};
+      for (const name of Object.keys(packHeaders)) if (name.toLowerCase() === "authorization") delete packHeaders[name];
+      onProgress?.(`Uploading the ${platform} native pack (${data.length} bytes)`);
+      const sent = await this.#request(destination.href, {method: "PUT", body: data as Uint8Array<ArrayBuffer>, headers: packHeaders});
+      if (!sent.ok) return this.#failure(sent, destination.href);
+    }
     const confirm = `${this.base}/v1/uploads/${encodeURIComponent(upload.uploadId)}/confirm`;
     onProgress?.("Confirming the upload");
     const confirmed = await this.#request(confirm, {method: "POST", headers: {...authorization, accept: "application/json"}});
@@ -326,6 +361,9 @@ export class RegistryClient {
     const value = await this.#json<RegistryVersion>(confirmed, confirm, "version");
     if (value.sha256 !== validation.sha256 || value.version !== request.version)
       throw new Error(`${confirm} confirmed ${value.version} (${value.sha256}), not the uploaded ${request.version} (${validation.sha256})`);
+    for (const [platform, announced] of Object.entries(platformPackages))
+      if (value.platformDownloads?.[platform as NativeExtensionPlatform]?.sha256 !== announced.sha256)
+        throw new Error(`${confirm} did not confirm the uploaded ${platform} native pack (${announced.sha256})`);
     return {value, url: confirmed.url || confirm, static: false};
   }
 
@@ -342,8 +380,11 @@ export class RegistryClient {
 }
 
 export function resolutionMessage(id: string, range: string, engine: string,
-  resolved: {readonly problem?: string; readonly incompatible?: readonly {version: string; requiredEngineVersion: string}[]}): string {
+  resolved: {readonly problem?: string; readonly incompatible?: readonly {version: string; requiredEngineVersion: string}[]},
+  platform?: string): string {
   if (resolved.problem === "invalid-range") return `${range} is not a version range`;
+  if (resolved.problem === "platform")
+    return `No version of ${id} matching ${range} for engine ${engine} runs on ${platform}`;
   if (resolved.problem === "engine")
     return `No version of ${id} matching ${range} runs on engine ${engine}: ${(resolved.incompatible ?? [])
       .map((item) => `${item.version} needs ${item.requiredEngineVersion}`).join(", ")}`;

@@ -24,20 +24,29 @@ import {
   EXTENSION_LOCK_FILE,
   extensionFilesDigest,
   extensionPackageLimits,
+  isNativeExtensionPlatform,
   isVersionRange,
+  manifestPlatforms,
   maxSatisfyingVersion,
+  nativeExtensionPlatforms,
+  nativeKeyFingerprint,
+  nativePackBytes,
+  nativePackFileName,
   parseExtensionPackageId,
+  readExtensionNativePack,
   readExtensionPackage,
   satisfiesVersionRange,
   validateDocument,
   type AuthoringDiagnostic,
   type ExtensionManifest,
+  type ExtensionNativePack,
   type ExtensionPackageContents,
   type ExtensionPackageMetadata,
+  type NativeExtensionPlatform,
 } from "@prismatix/authoring-sdk";
 
 import {extractTarGz} from "./archive.js";
-import {integrityMatches, registryUrl} from "./platform-runtime.js";
+import {hostPlatform, integrityMatches, registryUrl} from "./platform-runtime.js";
 import {checkedUrl, RegistryClient, requireRegistry, type Located} from "./extension-registry.js";
 import {projectExtensions, projectManifest, registerText, type LocatedExtension} from "./extension-scaffold.js";
 import type {RegistryVersion} from "@prismatix/authoring-sdk";
@@ -88,8 +97,12 @@ export interface ExtensionLockEntry {
   /** The range `update` follows (registry and npm sources). */
   readonly range?: string;
   readonly manifest: string;
-  /** extensionFilesDigest of Extensions/<owner>/<name>/. */
+  /** extensionFilesDigest of Extensions/<owner>/<name>/ (native files included). */
   readonly files: string;
+  /** SHA-256 of the native signing key accepted with --allow-native. */
+  readonly nativeKey?: string;
+  /** The native pack installed for each platform. */
+  readonly platforms?: Readonly<Partial<Record<NativeExtensionPlatform, {readonly sha256: string; readonly size: number}>>>;
 }
 
 export interface ExtensionLock {
@@ -114,8 +127,13 @@ async function writeExtensionLock(root: string, extensions: Readonly<Record<stri
   const ordered: Record<string, ExtensionLockEntry> = {};
   for (const id of Object.keys(extensions).sort()) {
     const entry = extensions[id]!;
+    const platforms = entry.platforms === undefined ? undefined : Object.fromEntries(nativeExtensionPlatforms
+      .filter((platform) => entry.platforms![platform] !== undefined)
+      .map((platform) => [platform, {sha256: entry.platforms![platform]!.sha256, size: entry.platforms![platform]!.size}]));
     ordered[id] = {version: entry.version, sha256: entry.sha256, size: entry.size, source: entry.source,
-      ...(entry.range === undefined ? {} : {range: entry.range}), manifest: entry.manifest, files: entry.files};
+      ...(entry.range === undefined ? {} : {range: entry.range}), manifest: entry.manifest, files: entry.files,
+      ...(entry.nativeKey === undefined ? {} : {nativeKey: entry.nativeKey}),
+      ...(platforms === undefined || Object.keys(platforms).length === 0 ? {} : {platforms})};
   }
   const lock: ExtensionLock = {format: "PrismatiXExtensionLock", lockVersion: 1, extensions: ordered};
   const path = join(root, EXTENSION_LOCK_FILE);
@@ -135,11 +153,23 @@ export interface FetchedPackage {
   /** Set when the registry marks this version yanked. */
   readonly yanked?: string;
   readonly notes: readonly string[];
+  /** The checked native pack of each platform fetched (native extensions only). */
+  readonly natives?: ReadonlyMap<NativeExtensionPlatform, FetchedNativePack>;
+}
+
+export interface FetchedNativePack {
+  readonly bytes: Uint8Array;
+  readonly sha256: string;
+  readonly pack: ExtensionNativePack;
 }
 
 export interface InstallOptions {
   readonly registry?: string;
   readonly yes?: boolean;
+  /** Consent to install an extension that loads native libraries (code outside the sandbox). */
+  readonly allowNative?: boolean;
+  /** The platforms whose native packs to fetch; this computer's when absent. */
+  readonly platforms?: readonly NativeExtensionPlatform[];
   /** Expected SHA-256 of a file or URL source. */
   readonly sha256?: string;
   readonly fetch?: typeof fetch;
@@ -188,7 +218,7 @@ function fileSource(root: string, path: string): string {
 }
 
 async function fetchNpm(name: string, range: string | undefined, options: InstallOptions):
-  Promise<{bytes: Uint8Array; source: string}> {
+  Promise<{bytes: Uint8Array; source: string; siblings: Map<string, Uint8Array>}> {
   const fetchImpl = options.fetch ?? fetch;
   const registry = registryUrl();
   const metadataUrl = new URL(name.replace("/", "%2f"), registry);
@@ -236,7 +266,13 @@ async function fetchNpm(name: string, range: string | undefined, options: Instal
     const path = resolve(root, file);
     if (relative(root, path).startsWith("..") || !(await lstat(path)).isFile())
       throw new Error(`${name}@${version} names ${file}, which is not a file in the package`);
-    return {bytes: new Uint8Array(await readFile(path)), source: `npm:${name}@${version}`};
+    // Native packs travel beside the main package.
+    const siblings = new Map<string, Uint8Array>();
+    for (const entry of await readdir(dirname(path), {withFileTypes: true}))
+      if (entry.isFile() && /-native-[a-z0-9-]+\.pxext$/u.test(entry.name) && siblings.size < 8 &&
+          (await lstat(join(dirname(path), entry.name))).size <= nativePackBytes)
+        siblings.set(entry.name, new Uint8Array(await readFile(join(dirname(path), entry.name))));
+    return {bytes: new Uint8Array(await readFile(path)), source: `npm:${name}@${version}`, siblings};
   } finally {
     await rm(temporary, {recursive: true, force: true});
   }
@@ -252,12 +288,17 @@ export async function fetchExtensionPackage(root: string, spec: string | Extensi
     if (options.sha256 !== undefined && sha256(bytes) !== options.sha256.toLowerCase())
       throw new Error(`The package's SHA-256 is ${sha256(bytes)}, not the expected ${options.sha256}; nothing was installed`);
   };
+  // Only an explicit --platform narrows which versions resolve: a project may
+  // target platforms other than this computer.
+  const narrowed = options.platforms?.length === 1 ? options.platforms[0] : undefined;
+  let fetched: FetchedPackage;
+  let nativeBytes: (platform: NativeExtensionPlatform, file: string) => Promise<Uint8Array>;
   if (source.kind === "registry") {
     const location = await requireRegistry(root, options.registry);
     const client = new RegistryClient(location.url, options.fetch === undefined ? {} : {fetch: options.fetch});
     const range = source.range ?? "*";
-    options.onProgress?.(`Resolving ${source.id}@${range} for engine ${engine} on ${location.url}`);
-    const version: Located<RegistryVersion> = await client.resolve(source.id, range, engine);
+    options.onProgress?.(`Resolving ${source.id}@${range} for engine ${engine}${narrowed ? ` on ${narrowed}` : ""} on ${location.url}`);
+    const version: Located<RegistryVersion> = await client.resolve(source.id, range, engine, narrowed);
     options.onProgress?.(`Downloading ${source.id}@${version.value.version}`);
     const bytes = await client.download(version);
     const contents = checkedPackage(bytes, `${source.id}@${version.value.version}`);
@@ -265,11 +306,14 @@ export async function fetchExtensionPackage(root: string, spec: string | Extensi
       throw new Error(`The registry served ${contents.metadata!.id}@${contents.metadata!.version} for ${source.id}@${version.value.version}; nothing was installed`);
     if (version.value.yanked) notes.push(`${source.id}@${version.value.version} is yanked${version.value.yankedReason
       ? `: ${version.value.yankedReason}` : ""}; it installs only because it is pinned exactly`);
-    return {bytes, sha256: version.value.sha256, contents, source: `registry+${location.url}`,
+    fetched = {bytes, sha256: version.value.sha256, contents, source: `registry+${location.url}`,
       range: source.range ?? `^${version.value.version}`,
       ...(version.value.yanked ? {yanked: version.value.yankedReason ?? "yanked"} : {}), notes};
-  }
-  if (source.kind === "file") {
+    nativeBytes = (platform) => {
+      options.onProgress?.(`Downloading the ${platform} native pack of ${source.id}@${version.value.version}`);
+      return client.downloadNative(version, platform);
+    };
+  } else if (source.kind === "file") {
     const path = resolve(source.path);
     const info = await lstat(path).catch(() => undefined);
     if (info === undefined || !info.isFile()) throw new Error(`${source.path} is not a file`);
@@ -277,9 +321,15 @@ export async function fetchExtensionPackage(root: string, spec: string | Extensi
       throw new Error(`${source.path} is larger than ${extensionPackageLimits.packageBytes} bytes`);
     const bytes = new Uint8Array(await readFile(path));
     pinned(bytes);
-    return {bytes, sha256: sha256(bytes), contents: checkedPackage(bytes, source.path), source: fileSource(root, path), notes};
-  }
-  if (source.kind === "url") {
+    fetched = {bytes, sha256: sha256(bytes), contents: checkedPackage(bytes, source.path), source: fileSource(root, path), notes};
+    nativeBytes = async (_platform, file) => {
+      const sibling = join(dirname(path), file);
+      const found = await lstat(sibling).catch(() => undefined);
+      if (found === undefined || !found.isFile()) throw new Error(`${file} is not beside ${source.path}`);
+      if (found.size > nativePackBytes) throw new Error(`${file} is larger than ${nativePackBytes} bytes`);
+      return new Uint8Array(await readFile(sibling));
+    };
+  } else if (source.kind === "url") {
     const url = checkedUrl(source.url);
     options.onProgress?.(`Downloading ${url.href}`);
     const response = await (options.fetch ?? fetch)(url, {redirect: "follow"});
@@ -290,12 +340,44 @@ export async function fetchExtensionPackage(root: string, spec: string | Extensi
     if (options.sha256 === undefined)
       notes.push(`Downloaded from a URL without --sha256; the lock records ${sha256(bytes)} so later changes are caught`);
     url.hash = "";
-    return {bytes, sha256: sha256(bytes), contents: checkedPackage(bytes, url.href), source: url.href, notes};
+    fetched = {bytes, sha256: sha256(bytes), contents: checkedPackage(bytes, url.href), source: url.href, notes};
+    // A native pack is checked against the hashes the main package pins.
+    nativeBytes = async (_platform, file) => {
+      const sibling = checkedUrl(file, url);
+      options.onProgress?.(`Downloading ${sibling.href}`);
+      const answer = await (options.fetch ?? fetch)(sibling, {redirect: "follow"});
+      checkedUrl(answer.url || sibling.href);
+      if (!answer.ok) throw new Error(`${sibling.href} answered ${answer.status} ${answer.statusText}`);
+      return readBody(answer, nativePackBytes, sibling.href);
+    };
+  } else {
+    const npm = await fetchNpm(source.name, source.range, options);
+    pinned(npm.bytes);
+    fetched = {bytes: npm.bytes, sha256: sha256(npm.bytes), contents: checkedPackage(npm.bytes, npm.source), source: npm.source,
+      ...(source.range === undefined ? {} : {range: source.range}), notes};
+    nativeBytes = async (_platform, file) => {
+      const found = npm.siblings.get(file);
+      if (found === undefined) throw new Error(`${npm.source} holds no ${file}`);
+      return found;
+    };
   }
-  const npm = await fetchNpm(source.name, source.range, options);
-  pinned(npm.bytes);
-  return {bytes: npm.bytes, sha256: sha256(npm.bytes), contents: checkedPackage(npm.bytes, npm.source), source: npm.source,
-    ...(source.range === undefined ? {} : {range: source.range}), notes};
+  const manifest = fetched.contents.manifest!;
+  if (manifest.native === undefined) return fetched;
+  const wanted = options.platforms ?? (isNativeExtensionPlatform(hostPlatform) ? [hostPlatform] : []);
+  const offered = manifestPlatforms(manifest);
+  const natives = new Map<NativeExtensionPlatform, FetchedNativePack>();
+  for (const platform of wanted) {
+    if (!offered.includes(platform) || manifest.native.libraries[platform] === undefined)
+      throw new Error(`${manifest.id} has no native library for ${platform} (it has ${offered.join(", ") || "none"}); nothing was installed`);
+    const file = nativePackFileName(fetched.contents.metadata!.id, fetched.contents.metadata!.version!, platform);
+    const bytes = await nativeBytes(platform, file);
+    const pack = await readExtensionNativePack(bytes, manifest, platform);
+    if (!pack.valid) throw new PackageRejected(pack.diagnostics, file);
+    natives.set(platform, {bytes, sha256: sha256(bytes), pack});
+  }
+  if (wanted.length === 0)
+    notes.push(`This computer (${hostPlatform}) is not a native platform; no native library was installed (use --platform)`);
+  return {...fetched, natives};
 }
 
 // Checks ---------------------------------------------------------------------
@@ -339,7 +421,23 @@ export const capabilityDescriptions: Readonly<Record<string, string>> = {
   persistence: "save, load and delete save data and keep its own saved state",
   input: "read input actions (keys and buttons)",
   render: "draw its own render nodes on screen",
+  "raw.mesh": "draw its own meshes (vertices, textures, blending, masks) on screen; experimental",
+  "raw.texture": "create textures and write their pixels; experimental",
+  "raw.target": "draw into offscreen render targets; experimental",
+  native: "call its native libraries' services",
 };
+
+export interface NativeSummary {
+  readonly services: readonly string[];
+  /** Platforms the package has native libraries for. */
+  readonly platforms: readonly NativeExtensionPlatform[];
+  /** Platforms whose native packs are being installed. */
+  readonly installing: readonly NativeExtensionPlatform[];
+  /** SHA-256 of the signing public key. */
+  readonly keyFingerprint?: string;
+  /** The fingerprint the lock accepted before, when it differs. */
+  readonly previousKey?: string;
+}
 
 export interface PackageSummary {
   readonly id: string;
@@ -362,6 +460,10 @@ export interface PackageSummary {
   readonly conflicts: readonly ExtensionConflict[];
   readonly warnings: readonly AuthoringDiagnostic[];
   readonly notes: readonly string[];
+  /** Platforms it runs on; absent: every platform. */
+  readonly platforms?: readonly string[];
+  /** Set when it loads native libraries: installing needs --allow-native. */
+  readonly native?: NativeSummary;
 }
 
 function installFolder(id: string): string {
@@ -375,7 +477,16 @@ export async function summarizePackage(root: string, fetched: FetchedPackage, en
   const lock = await readExtensionLock(root);
   const target = `${installFolder(metadata.id)}/${fetched.contents.manifestPath}`;
   const installed = lock.extensions[metadata.id];
+  const keyFingerprint = manifest.native?.publicKey === undefined ? undefined : await nativeKeyFingerprint(manifest.native.publicKey);
+  const native: NativeSummary | undefined = manifest.native === undefined ? undefined : {
+    services: manifest.native.services,
+    platforms: nativeExtensionPlatforms.filter((platform) => manifest.native!.libraries[platform] !== undefined),
+    installing: [...fetched.natives?.keys() ?? []],
+    ...(keyFingerprint === undefined ? {} : {keyFingerprint}),
+    ...(installed?.nativeKey !== undefined && installed.nativeKey !== keyFingerprint ? {previousKey: installed.nativeKey} : {})};
   return {id: metadata.id, version: metadata.version!, sha256: fetched.sha256, size: fetched.bytes.length, source: fetched.source,
+    ...(manifest.platforms === undefined && manifest.native === undefined ? {} : {platforms: manifestPlatforms(manifest)}),
+    ...(native === undefined ? {} : {native}),
     ...(metadata.displayName === undefined ? {} : {displayName: metadata.displayName}),
     ...(metadata.description === undefined || metadata.description === "" ? {} : {description: metadata.description}),
     ...(metadata.license === undefined ? {} : {license: metadata.license}),
@@ -401,7 +512,20 @@ export function describeSummary(summary: PackageSummary): string {
     ...summary.capabilities.map((capability) => `    - ${capability}: ${capabilityDescriptions[capability] ?? capability}`),
     `  It adds ${summary.commands.length} Story command(s)${summary.commands.length ? `: ${summary.commands.join(", ")}` : ""}`,
     `  and ${summary.actions.length} UI Action(s)${summary.actions.length ? `: ${summary.actions.join(", ")}` : ""}.`,
-    "  Nothing runs now; its scripts run only in the game's sandbox, limited to these capabilities.",
+    ...(summary.platforms === undefined ? [] : [`  Runs on: ${summary.platforms.join(", ")}`]),
+    ...(summary.native === undefined
+      ? ["  Nothing runs now; its scripts run only in the game's sandbox, limited to these capabilities."]
+      : [
+        "  WARNING: it loads NATIVE CODE. Its libraries run inside the game process with the player's full",
+        "  permissions (files, network, everything), outside the sandbox and the capabilities above. Install it",
+        "  only if you trust its author as much as the engine itself. Nothing runs now.",
+        `  Native services: ${summary.native.services.join(", ")}`,
+        `  Native libraries for: ${summary.native.platforms.join(", ")}; installing: ${summary.native.installing.join(", ") || "none"}`,
+        `  Signing key SHA-256: ${summary.native.keyFingerprint ?? "(none)"}`,
+        ...(summary.native.previousKey === undefined ? []
+          : [`  The signing key CHANGED: the installed version was signed by ${summary.native.previousKey}.`]),
+        "  It installs only with --allow-native.",
+      ]),
     ...(summary.installed ? [`  Replaces the installed ${summary.installed.version}.`] : []),
     ...summary.notes.map((note) => `  Note: ${note}`),
   ].join("\n");
@@ -472,6 +596,11 @@ export async function installFetchedPackage(root: string, fetched: FetchedPackag
   const target = join(root, ...folder.split("/"));
   if (existsSync(target) && existing === undefined)
     throw new Error(`${folder} exists but ${EXTENSION_LOCK_FILE} does not list ${metadata.id}; move the folder away first`);
+  // An update signed by the key the lock already accepted needs no new consent.
+  const acceptedKey = existing?.nativeKey !== undefined && existing.nativeKey === summary.native?.keyFingerprint;
+  if (summary.native !== undefined && options.allowNative !== true && !acceptedKey)
+    throw new Error(`${summary.id} loads native libraries (${summary.native.services.join(", ")}), code that runs outside ` +
+      "the sandbox with the player's full permissions. Review it (prismatix extension inspect) and add --allow-native to install it; nothing was installed");
   if (options.yes !== true) {
     const accepted = options.confirm === undefined ? false : await options.confirm(describeSummary(summary));
     if (!accepted) throw new Error(options.confirm === undefined
@@ -483,8 +612,11 @@ export async function installFetchedPackage(root: string, fetched: FetchedPackag
   const staging = join(base, `.staging-${randomUUID()}`);
   const old = join(base, `.old-${randomUUID()}`);
   let moved = false;
+  const installedFiles = new Map(fetched.contents.files);
+  for (const native of fetched.natives?.values() ?? [])
+    for (const [path, data] of native.pack.files) installedFiles.set(path, data);
   try {
-    for (const [path, data] of fetched.contents.files) {
+    for (const [path, data] of installedFiles) {
       const file = join(staging, ...path.split("/"));
       if (relative(staging, file).startsWith("..")) throw new Error(`Refusing to write ${path} outside the extension folder`);
       await mkdir(dirname(file), {recursive: true});
@@ -505,9 +637,13 @@ export async function installFetchedPackage(root: string, fetched: FetchedPackag
     if (existing !== undefined && existing.manifest !== manifestPath) text = unregisterText(text, existing.manifest);
     text = registerText(text, manifestPath);
     if (text !== project.text) { await writeFile(join(root, project.file), text, "utf8"); updated.push(project.file); }
+    const platforms = Object.fromEntries([...fetched.natives ?? []].map(([platform, native]) =>
+      [platform, {sha256: native.sha256, size: native.bytes.length}]));
     const entry: ExtensionLockEntry = {version: metadata.version!, sha256: fetched.sha256, size: fetched.bytes.length,
       source: fetched.source, ...(fetched.range === undefined ? {} : {range: fetched.range}), manifest: manifestPath,
-      files: await extensionFilesDigest(fetched.contents.files)};
+      files: await extensionFilesDigest(installedFiles),
+      ...(summary.native?.keyFingerprint === undefined ? {} : {nativeKey: summary.native.keyFingerprint}),
+      ...(Object.keys(platforms).length === 0 ? {} : {platforms})};
     await writeExtensionLock(root, {...lock.extensions, [metadata.id]: entry});
     updated.push(EXTENSION_LOCK_FILE);
     if (moved) await rm(old, {recursive: true, force: true});
@@ -593,16 +729,24 @@ export async function updateExtensions(root: string, id: string | undefined,
       continue;
     }
     const {sha256: _pin, ...unpinned} = options;
-    const fetched = await fetchExtensionPackage(root, source, unpinned);
+    // Native packs: the platforms already installed, plus any --platform asks for.
+    const lockedPlatforms = nativeExtensionPlatforms.filter((platform) => entry.platforms?.[platform] !== undefined);
+    const platforms = [...new Set([...lockedPlatforms, ...options.platforms ?? []])];
+    const fetched = await fetchExtensionPackage(root, source,
+      {...unpinned, ...(platforms.length === 0 ? {} : {platforms})});
     const next = fetched.contents.metadata!.version!;
     if (options.reinstall === true) {
       if (fetched.sha256 !== entry.sha256)
         throw new Error(`${name}@${entry.version} from ${entry.source} is not the package the lock records (SHA-256 ${fetched.sha256}, expected ${entry.sha256}); nothing was installed`);
+      for (const platform of lockedPlatforms)
+        if (fetched.natives?.get(platform)?.sha256 !== entry.platforms![platform]!.sha256)
+          throw new Error(`The ${platform} native pack of ${name}@${entry.version} is not the one the lock records; nothing was installed`);
       await installFetchedPackage(root, {...fetched, ...(entry.range === undefined ? {} : {range: entry.range})} as FetchedPackage, {...options, yes: true});
       outcomes.push({id: name, from: entry.version, to: next, status: "reinstalled"});
       continue;
     }
-    if (fetched.sha256 === entry.sha256 && options.to === undefined) {
+    const addsPlatforms = platforms.some((platform) => !lockedPlatforms.includes(platform));
+    if (fetched.sha256 === entry.sha256 && options.to === undefined && !addsPlatforms) {
       outcomes.push({id: name, from: entry.version, status: "current"});
       continue;
     }
@@ -614,7 +758,10 @@ export async function updateExtensions(root: string, id: string | undefined,
     const installed = await readFile(join(root, ...entry.manifest.split("/")), "utf8")
       .then((text) => JSON.parse(text) as ExtensionManifest).catch(() => undefined);
     const added = fetched.contents.manifest!.capabilities.filter((item) => !installed?.capabilities.includes(item));
-    const yes = options.yes === true || added.length === 0;
+    // So does native code signed by a different key.
+    const key = fetched.contents.manifest!.native?.publicKey;
+    const rekeyed = key !== undefined && entry.nativeKey !== await nativeKeyFingerprint(key);
+    const yes = options.yes === true || (added.length === 0 && !rekeyed);
     await installFetchedPackage(root, {...fetched, range: options.to ?? entry.range ?? fetched.range ?? `^${next}`} as FetchedPackage,
       {...options, yes});
     outcomes.push({id: name, from: entry.version, to: next, status: "updated"});

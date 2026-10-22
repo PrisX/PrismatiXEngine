@@ -18,22 +18,36 @@ import {
   extensionTypeDeclarations,
   extensionUsesTypeScript,
   isSafePackagePath,
+  nativeExtensionPlatforms,
+  nativePackFileName,
   parseExtensionPackageId,
-  readExtensionPackage,
+  readExtensionNativePack,
   validateDocument,
+  validateExtensionPackage,
   writeExtensionPackage,
   type AuthoringDiagnostic,
   type ExtensionManifest,
   type ExtensionPackageFile,
   type ExtensionPackageMetadata,
+  type NativeExtensionPlatform,
 } from "@prismatix/authoring-sdk";
 
-import {buildTypeScriptExtensions, engineCapability} from "./extension-build.js";
+import {buildTypeScriptExtensions, engineCapability, rawCapability} from "./extension-build.js";
 import {directoryOf, findExtension, projectExtensions, readObject, type LocatedExtension} from "./extension-scaffold.js";
+import {nativePackFiles, readSigningKey, sealNativeManifest, SIGNING_KEY_ENVIRONMENT} from "./extension-native.js";
+
+export interface NativePackResult {
+  readonly platform: NativeExtensionPlatform;
+  readonly file: string;
+  readonly sha256: string;
+  readonly size: number;
+}
 
 export interface ExtensionPackResult {
   /** Absolute path of the written .pxext. */
   readonly file: string;
+  /** The native pack written beside it for each platform (native extensions). */
+  readonly nativePacks: readonly NativePackResult[];
   readonly id: string;
   readonly version: string;
   readonly sha256: string;
@@ -80,12 +94,13 @@ function javascriptCapabilityFindings(source: string, path: string, capabilities
   manifestName: string): AuthoringDiagnostic[] {
   const findings: AuthoringDiagnostic[] = [];
   const seen = new Set<string>();
-  for (const match of source.matchAll(/\bEngine\s*\.\s*([A-Za-z_$][\w$]*)/gu)) {
-    const capability = engineCapability(match[1]!);
-    if (capabilities.has(capability) || seen.has(`${match[1]}:${capability}`)) continue;
-    seen.add(`${match[1]}:${capability}`);
+  for (const match of source.matchAll(/\b(Engine|EngineRaw|EngineNative)\s*\.\s*([A-Za-z_$][\w$]*)/gu)) {
+    const [, host, name] = match as unknown as [string, string, string];
+    const capability = host === "Engine" ? engineCapability(name) : host === "EngineNative" ? "native" : rawCapability(name);
+    if (capability === undefined || capabilities.has(capability) || seen.has(`${host}.${name}:${capability}`)) continue;
+    seen.add(`${host}.${name}:${capability}`);
     findings.push({severity: "warning", code: "PXCLIEXT2004",
-      message: `Engine.${match[1]} needs the "${capability}" capability, which ${manifestName} does not declare`, path,
+      message: `${host}.${name} needs the "${capability}" capability, which ${manifestName} does not declare`, path,
       hint: `Add "${capability}" to "capabilities" in ${manifestName}; the Player refuses the call otherwise.`});
   }
   return findings;
@@ -144,8 +159,23 @@ async function packageMetadata(root: string, located: LocatedExtension, owner: s
   return metadata;
 }
 
+async function writeAtomically(output: string, name: string, bytes: Uint8Array): Promise<string> {
+  const file = join(output, name);
+  const partial = join(output, `.${name}.${randomUUID()}.partial`);
+  try {
+    await writeFile(partial, bytes);
+    await rm(file, {force: true});
+    await rename(partial, file);
+  } finally {
+    await rm(partial, {force: true});
+  }
+  return file;
+}
+
 export async function packExtension(root: string, reference: string | undefined, options: {
   readonly owner?: string; readonly output?: string; readonly includeSource?: boolean;
+  /** PEM private key that signs native libraries (else PRISMATIX_EXTENSION_SIGNING_KEY). */
+  readonly signingKey?: string;
 } = {}): Promise<ExtensionPackResult> {
   const located = await chooseExtension(root, reference);
   const {manifest, manifestPath} = located;
@@ -180,6 +210,34 @@ export async function packExtension(root: string, reference: string | undefined,
     }
     packaged = {...manifest, entry: `dist/${manifest.entry}`,
       ...(manifest.modules === undefined ? {} : {modules: manifest.modules.map((module) => `dist/${module}`)})};
+  }
+
+  // Native libraries: each platform that has its files is pinned, signed and
+  // shipped as its own native pack; the others are left out of the package.
+  let nativePlatforms: NativeExtensionPlatform[] = [];
+  if (packaged.native !== undefined) {
+    const keyPath = options.signingKey ?? process.env[SIGNING_KEY_ENVIRONMENT]?.trim();
+    if (keyPath === undefined || keyPath === "")
+      throw new Error(`${manifestPath} has native libraries, which a package signs: pass --signing-key <key.pem> or set ` +
+        `${SIGNING_KEY_ENVIRONMENT} (prismatix extension keygen <file> creates a key; keep it out of the project)`);
+    const key = await readSigningKey(keyPath);
+    const check = await sealNativeManifest(root, manifestPath, packaged, {mode: "check"});
+    if (check.diagnostics.some((item) => item.severity === "error")) throw new ExtensionPackFailure(check.diagnostics);
+    const missing = nativeExtensionPlatforms.filter((platform) =>
+      packaged.native!.libraries[platform] !== undefined && !check.available.includes(platform));
+    for (const platform of missing)
+      warnings.push({severity: "warning", code: "PXCLIEXT2006", path: manifestPath,
+        message: `The ${platform} native library is not built; the package leaves ${platform} out`});
+    if (check.available.length === 0)
+      throw new Error(`${manifestPath} lists native libraries but none of their files exist; build them first`);
+    const libraries = Object.fromEntries(check.available.map((platform) => [platform, packaged.native!.libraries[platform]!]));
+    const trimmed: ExtensionManifest = {...packaged, native: {...packaged.native, libraries},
+      ...(packaged.platforms === undefined ? {} : {platforms: packaged.platforms.filter((platform) =>
+        !(missing as readonly string[]).includes(platform))})};
+    const sealed = await sealNativeManifest(root, manifestPath, trimmed, {mode: "sign", key: async () => key});
+    if (sealed.diagnostics.some((item) => item.severity === "error")) throw new ExtensionPackFailure(sealed.diagnostics);
+    packaged = sealed.manifest;
+    nativePlatforms = [...check.available];
   }
   files.push({path: manifestFile, data: text(`${JSON.stringify(packaged, null, 2)}\n`)});
   files.push({path: `types/${EXTENSION_TYPES_FILE}`, data: text(extensionTypeDeclarations(manifest, manifestFile))});
@@ -227,23 +285,27 @@ export async function packExtension(root: string, reference: string | undefined,
     if (!isSafePackagePath(file.path)) throw new Error(`${file.path} cannot be packaged: package paths use letters, digits, "_", "-" and "." only`);
 
   const bytes = writeExtensionPackage(files);
-  const contents = readExtensionPackage(bytes);
+  const contents = await validateExtensionPackage(bytes);
   if (!contents.valid) throw new ExtensionPackFailure(contents.diagnostics);
   warnings.push(...contents.diagnostics);
+  const nativePacks: {platform: NativeExtensionPlatform; bytes: Uint8Array}[] = [];
+  for (const platform of nativePlatforms) {
+    const packBytes = writeExtensionPackage(await nativePackFiles(root, manifestPath, packaged, platform));
+    const checked = await readExtensionNativePack(packBytes, packaged, platform);
+    if (!checked.valid) throw new ExtensionPackFailure(checked.diagnostics);
+    nativePacks.push({platform, bytes: packBytes});
+  }
 
   const output = options.output === undefined ? join(root, "dist", "extensions")
     : isAbsolute(options.output) ? options.output : resolve(options.output);
   await mkdir(output, {recursive: true});
-  const file = join(output, extensionPackageFileName(metadata.id, manifest.version));
-  const partial = join(output, `.${basename(file)}.${randomUUID()}.partial`);
-  try {
-    await writeFile(partial, bytes);
-    await rm(file, {force: true});
-    await rename(partial, file);
-  } finally {
-    await rm(partial, {force: true});
-  }
-  return {file, id: metadata.id, version: manifest.version, sha256: createHash("sha256").update(bytes).digest("hex"),
+  const file = await writeAtomically(output, extensionPackageFileName(metadata.id, manifest.version), bytes);
+  const digest = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
+  const nativeResults: NativePackResult[] = [];
+  for (const pack of nativePacks)
+    nativeResults.push({platform: pack.platform, sha256: digest(pack.bytes), size: pack.bytes.length,
+      file: await writeAtomically(output, nativePackFileName(metadata.id, manifest.version, pack.platform), pack.bytes)});
+  return {file, nativePacks: nativeResults, id: metadata.id, version: manifest.version, sha256: digest(bytes),
     size: bytes.length, files: [...contents.files.keys()], created, warnings};
 }
 

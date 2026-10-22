@@ -37,7 +37,7 @@ import {packageContentKey, packageRetentionKey, refreshRuntimePackageIfMatching,
 import {debugPackagerHint} from "./package-tool-hint.js";
 import {distributionDataRoot, finishMacAppBundle, machOCodeSignature, machOForeignDependencies,
   machOSlices} from "./distribution-layout.js";
-import {addPlatformCommand, addPlatformRuntime, hostPlatform, locatePlatformRuntime, parsePlatformList,
+import {addPlatformCommand, addPlatformRuntime, hostPlatform, isDesktopPlatform, locatePlatformRuntime, parsePlatformList,
   platformLabels, platformOs, platformRuntimeStatus, PlatformRuntimeMissing,
   type DesktopPlatform} from "./platform-runtime.js";
 import {archiveDistribution, archiveExtension} from "./distribution-archive.js";
@@ -63,6 +63,9 @@ import {PlayerOutput, type ExtensionLogRecord} from "./player-output.js";
 import {extensionCommand, extensionHelp} from "./extension-scaffold.js";
 import {installedStatus} from "./extension-install.js";
 import {extensionSharingCommand, projectlessSubcommands, sharingArity, sharingHelp, sharingSubcommands} from "./extension-sharing.js";
+import {platformFindings, projectSigning, sealNativeManifest, stageNativePlugins, type BuildTarget,
+  type NativeSigning} from "./extension-native.js";
+import {projectExtensions} from "./extension-scaffold.js";
 
 import {
   assertLocalBuildFresh,
@@ -79,13 +82,17 @@ import {
   storyRequiresIdentityMap,
   StoryProjectCompilationCache,
   ENGINE_VERSION,
+  nativeExtensionPlatforms,
+  nativePlatformFiles,
   stableSourceIdReport,
   synchronizeStoryIdentityMap,
   validateDocument,
   type AuthoringDiagnostic,
   type BuildArtifact,
   type CompileProjectInput,
+  type ExtensionManifest,
   type InputKeyRegistryMetadata,
+  type NativeExtensionPlatform,
   type ProjectDistribution,
   type ProjectDocument,
   type SourceSpan,
@@ -119,14 +126,14 @@ const machineOutput = process.argv.includes("--json");
 const commandOptions: Readonly<Record<string, {values: string; flags: string}>> = {
   create: {values: "name id locale width height template runtime package-manager", flags: "empty"},
   dev: {values: "runtime preview-host debounce ui-registry at route", flags: "once smoke"},
-  validate: {values: "runtime ui-registry", flags: ""},
+  validate: {values: "runtime ui-registry target platform", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space no-transcode"},
   pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target platform android-player gradle android-sdk web-player web-renderer web-package ffmpeg", flags: "encrypt ignore-disk-space check verify-media debug no-transcode archive"},
   run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: "check"},
-  extension: {values: "project lang command action dir owner output registry sha256 to capability page reason",
-    flags: "no-register await yes include-source undo reinstall"},
+  extension: {values: "project lang command action dir owner output registry sha256 to capability page reason platform signing-key",
+    flags: "no-register await yes include-source undo reinstall allow-native"},
   eject: {values: "project runtime", flags: "force"},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync accept-removals"},
@@ -231,9 +238,11 @@ function parseOptions(command: string, args: readonly string[]): Options {
     throw new Error("--verify-media requires pack --check");
   // pack's --target names a platform; the patch and overlay commands use
   // --target for a distribution path.
-  if (command === "pack" && values.has("target") &&
+  if ((command === "pack" || command === "validate") && values.has("target") &&
       !["desktop", "android", "web"].includes(values.get("target")!))
     throw new Error("--target must be desktop, android or web");
+  if (command === "validate" && values.has("platform") && values.get("target") !== "desktop")
+    throw new Error("validate --platform requires --target desktop");
   const web = command === "pack" && values.get("target") === "web";
   for (const name of ["web-player", "web-renderer", "web-package", "ffmpeg"])
     if (values.has(name) && !web) throw new Error(`--${name} requires --target web`);
@@ -1009,6 +1018,10 @@ async function conventionalStory(root: string): Promise<string | undefined> {
   } catch { return undefined; }
 }
 
+// How loadProject treats authored native libraries: builds sign them (the
+// environment's key or the project's development key); validate only checks.
+let nativeSigningMode: "check" | "sign" = "sign";
+
 async function loadProject(projectArgument?: string): Promise<LoadedProject> {
   const resolvedProject = await resolveProjectPath(projectArgument);
   const {root, projectPath} = resolvedProject;
@@ -1191,6 +1204,19 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
   const extensionBuild = await buildTypeScriptExtensions(root, extensionManifests);
   if (extensionBuild.diagnostics.some((item) => item.severity === "error"))
     throw new JsxAuthoringFailure(extensionBuild.diagnostics);
+  // Native libraries: the packaged manifest pins every file's SHA-256 and
+  // carries each platform's signature, which the Player checks before loading.
+  const signing: NativeSigning = nativeSigningMode === "check" ? {mode: "check"} : projectSigning(root);
+  const nativeDiagnostics: AuthoringDiagnostic[] = [];
+  for (const [extensionPath, value] of Object.entries(extensionManifests)) {
+    const manifest = object(value) as unknown as ExtensionManifest | undefined;
+    if (manifest?.native === undefined || !Array.isArray(manifest.capabilities)) continue;
+    const sealed = await sealNativeManifest(root, extensionPath, manifest, signing);
+    nativeDiagnostics.push(...sealed.diagnostics);
+    documents[extensionPath] = sealed.manifest;
+  }
+  if (nativeDiagnostics.some((item) => item.severity === "error"))
+    throw new JsxAuthoringFailure(nativeDiagnostics);
   for (const [path, text] of extensionBuild.sources) {
     const absolute = projectFile(root, path);
     dependencies.add(absolute);
@@ -1476,11 +1502,18 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
 
 async function validateCommand(options: Options): Promise<number> {
   try {
+    nativeSigningMode = "check";
     const loaded = await loadProject(options.positional[0]);
     const result = await compileLoaded(loaded, undefined, options.values.get("ui-registry"),
       options.values.get("runtime"), undefined, storyProgressReporter());
-    printDiagnostics(result.diagnostics);
-    if (!result.valid) return 1;
+    // --target checks the extensions against a build target, as pack does.
+    const target = options.values.get("target");
+    const targetFindings = target === undefined ? [] : platformFindings(
+      await projectExtensions(loaded.root),
+      target === "web" ? {kind: "web"} : target === "android" ? {kind: "android"}
+        : {kind: "desktop", platforms: parsePlatformList([options.values.get("platform") ?? "host"])});
+    printDiagnostics([...result.diagnostics, ...targetFindings]);
+    if (!result.valid || targetFindings.some((item) => item.severity === "error")) return 1;
     const includedFiles = new Set(Object.values(loaded.includedResources).flat());
     const projectAssets = result.artifact!.project.assets;
     const catalogIncludeOverlap = (Array.isArray(projectAssets) ? projectAssets : []).filter((asset) => {
@@ -2450,6 +2483,23 @@ async function packProject(options: Options, settings: {
       if (laidOut.length > 0 && !laidOut.startsWith("..") && !isAbsolute(laidOut))
         packagedPlayerPath = laidOut;
     }
+    // Native extensions: the libraries for this platform go beside the game
+    // data as loose files (the Player cannot load a library from the
+    // package); the packaged manifest pins and signs each one.
+    if (settings.intermediate !== true && !scriptTool) {
+      const platform: string = settings.platform ?? hostPlatform;
+      const native = (await sealedArtifactExtensions(root, artifactRoot, project))
+        .filter((item) => item.manifest.native !== undefined);
+      if (native.length > 0) {
+        if (!isDesktopPlatform(platform))
+          throw new PackagerFailure([diagnostic("PXCLIEXT1104", `Native extensions cannot be packed on ${platform}`, root)]);
+        const findings = platformFindings(native, {kind: "desktop", platforms: [platform]});
+        if (findings.length > 0) throw new PackagerFailure(findings);
+        const copied = await stageNativePlugins(root, native, platform, await distributionDataRoot(staging));
+        progress({severity: "information", code: "PXCLI1280",
+          message: `Copied ${copied.length} native extension file(s) for ${platform}`});
+      }
+    }
     // Script stand-ins for the Packager (tests) produce no real bundle for codesign.
     const app = targetOs === "darwin" && !(scriptTool && process.platform === "darwin")
       ? /^(.+?\.app)[\\/]Contents[\\/]MacOS[\\/]/u.exec(packagedPlayerPath)?.[1] : undefined;
@@ -2677,9 +2727,39 @@ async function releaseCommand(options: Options): Promise<number> {
 // pack --target android: a desktop-format package under <output>/build/package,
 // then the Gradle template turns it and the prebuilt Android Player into an
 // APK (and an AAB when a release keystore is configured).
+/**
+ * Refuses a build for a target some registered extension cannot run on (a
+ * native extension on the Web or Android, an extension whose `platforms`
+ * leave the target out) before anything is built.
+ */
+/**
+ * The extension manifests a compiled artifact ships (sealed: native files
+ * pinned and signed), with the platforms whose native files are in the project.
+ */
+async function sealedArtifactExtensions(root: string, artifactRoot: string, project: ProjectDocument):
+  Promise<{manifestPath: string; manifest: ExtensionManifest; available: NativeExtensionPlatform[]}[]> {
+  const result: {manifestPath: string; manifest: ExtensionManifest; available: NativeExtensionPlatform[]}[] = [];
+  for (const manifestPath of project.extensions ?? []) {
+    const manifest = await readJson(projectFile(artifactRoot, manifestPath)) as ExtensionManifest;
+    const folder = manifestPath.includes("/") ? manifestPath.slice(0, manifestPath.lastIndexOf("/") + 1) : "";
+    const available = nativeExtensionPlatforms.filter((platform) => manifest.native?.libraries[platform] !== undefined &&
+      nativePlatformFiles(manifest, platform).every((file) => existsSync(projectFile(root, `${folder}${file.path}`))));
+    result.push({manifestPath, manifest, available});
+  }
+  return result;
+}
+
+async function checkExtensionTargets(root: string, target: BuildTarget): Promise<void> {
+  if (!existsSync(root)) return;
+  const extensions = await projectExtensions(root).catch(() => []);
+  const findings = platformFindings(extensions, target);
+  if (findings.length > 0) throw new PackagerFailure(findings);
+}
+
 async function androidPackCommand(options: Options): Promise<number> {
   try {
     const location = await resolveProjectPath(options.positional[0]);
+    await checkExtensionTargets(location.root, {kind: "android"});
     const raw = location.manifestExists ? object(await readJson(location.projectPath)) : undefined;
     if (raw?.distribution !== undefined) {
       const error = projectDistributionError(raw.distribution);
@@ -2896,6 +2976,7 @@ async function webPackCommand(options: Options): Promise<number> {
   let temporary: string | undefined;
   try {
     const location = await resolveProjectPath(options.positional[0]);
+    await checkExtensionTargets(location.root, {kind: "web"});
     // Both renderers are experimental; WebGL2 runs in more browsers.
     const renderer = (options.values.get("web-renderer") ?? "webgl2") as WebRenderer;
     const playerDirectory = (await resolveWebPlayer(options.values.get("web-player") ??
