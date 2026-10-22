@@ -501,6 +501,15 @@ public:
     void Cancel(const std::uint64_t handle) override {
         m_host.CancelAction(handle);
     }
+    void CancelWithReason(const std::uint64_t handle,
+                          const ui::ActionCancelReason reason) override {
+        m_host.CancelAction(
+            handle, reason == ui::ActionCancelReason::Restart
+                        ? CancellationReason::Restart
+                    : reason == ui::ActionCancelReason::Closed
+                        ? CancellationReason::Closed
+                        : CancellationReason::Cancelled);
+    }
 
 private:
     JavaScriptHost& m_host;
@@ -532,8 +541,14 @@ public:
             JS_FreeValue(context, debugLocals);
             for (auto& [_, callback] : commands) JS_FreeValue(context, callback);
             for (auto& [_, callback] : actions) JS_FreeValue(context, callback);
-            for (auto& [_, callbacks] : events)
-                for (auto& callback : callbacks) JS_FreeValue(context, callback);
+            for (auto& [_, listeners] : events)
+                for (auto& listener : listeners)
+                    JS_FreeValue(context, listener.callback);
+            for (auto& [pending, _] : retiredCommands) FreeContinuation(pending);
+            for (auto& [pending, _] : retiredActions) FreeContinuation(pending);
+            JS_FreeValue(context, cancellationError);
+            JS_FreeValue(context, createCancellation);
+            JS_FreeValue(context, makeAbortError);
             for (auto& [_, provider] : stateProviders) {
                 JS_FreeValue(context, provider.capture);
                 JS_FreeValue(context, provider.restore);
@@ -566,6 +581,13 @@ public:
         ContinuationFlavor flavor = ContinuationFlavor::Generator;
         JSValue continuation = JS_UNDEFINED;
         JSValue resume = JS_UNDEFINED;
+        // Rejects the engine wait an async handler is suspended on.
+        JSValue reject = JS_UNDEFINED;
+        // Fires the handler's abort signal (see CreateCancellation).
+        JSValue abort = JS_UNDEFINED;
+        // Set when cancellation was requested while JavaScript was running;
+        // the entry is no longer live and FlushCancellations ends it.
+        std::optional<CancellationReason> cancelRequested;
         vn::Command command;
         std::uint32_t yieldIndex = 0;
         WaitToken wait;
@@ -576,6 +598,9 @@ public:
         ContinuationFlavor flavor = ContinuationFlavor::Generator;
         JSValue continuation = JS_UNDEFINED;
         JSValue resume = JS_UNDEFINED;
+        JSValue reject = JS_UNDEFINED;
+        JSValue abort = JS_UNDEFINED;
+        std::optional<CancellationReason> cancelRequested;
         std::uint64_t id = 0;
         ui::ActionInvocation invocation;
         std::uint32_t yieldIndex = 0;
@@ -586,6 +611,12 @@ public:
     struct PromiseWaitCapability {
         WaitToken wait;
         JSValue resolve = JS_UNDEFINED;
+        JSValue reject = JS_UNDEFINED;
+    };
+
+    struct EventListener {
+        std::uint64_t id = 0;
+        JSValue callback = JS_UNDEFINED;
     };
 
     enum class StepResult { Yielded, Finished, Failed };
@@ -669,15 +700,38 @@ public:
     void FreeContinuation(Pending& pending) {
         JS_FreeValue(context, pending.continuation);
         JS_FreeValue(context, pending.resume);
+        JS_FreeValue(context, pending.reject);
+        JS_FreeValue(context, pending.abort);
         pending.continuation = JS_UNDEFINED;
         pending.resume = JS_UNDEFINED;
+        pending.reject = JS_UNDEFINED;
+        pending.abort = JS_UNDEFINED;
     }
 
     void DiscardCreatedPromiseWait() {
         if (!createdPromiseWait) return;
         JS_FreeValue(context, createdPromiseWait->resolve);
+        JS_FreeValue(context, createdPromiseWait->reject);
         createdPromiseWait.reset();
     }
+
+    // Counts the host calls of this realm that are running JavaScript.
+    // Cancellation requested inside one is deferred until the outermost
+    // returns (the handler being cancelled may be the one on the stack, and
+    // the pending lists may be under iteration).
+    class EntryScope {
+    public:
+        explicit EntryScope(Impl& owner) : owner(owner) { ++owner.entryDepth; }
+        ~EntryScope() {
+            if (--owner.entryDepth == 0 && owner.cancellationsQueued)
+                owner.host.FlushCancellations();
+        }
+        EntryScope(const EntryScope&) = delete;
+        EntryScope& operator=(const EntryScope&) = delete;
+
+    private:
+        Impl& owner;
+    };
 
     static int Interrupt(JSRuntime*, void* opaque) {
         const auto* self = static_cast<Impl*>(opaque);
@@ -1025,8 +1079,66 @@ public:
             return JS_ThrowTypeError(context, "Engine.On requires an event and function");
         const auto event = self->String(values[0]);
         if (!event || event->empty()) return JS_ThrowTypeError(context, "event id is empty");
-        self->events[*event].push_back(JS_DupValue(context, values[1]));
-        return JS_UNDEFINED;
+        const std::uint64_t id = self->nextListenerId++;
+        self->events[*event].push_back({id, JS_DupValue(context, values[1])});
+        self->listenerEvents.emplace(id, *event);
+        return JS_NewInt64(context, static_cast<std::int64_t>(id));
+    }
+
+    // Engine.off(listener): removes the listener Engine.on returned. True
+    // when it was registered; removing twice is harmless.
+    static JSValue Off(JSContext* context, JSValueConst, const int count,
+                       JSValueConst* values) {
+        auto* self = From(context);
+        if (!self->HasCapability("runtime"))
+            return self->PermissionDenied("runtime", "Engine.off");
+        std::int64_t id = 0;
+        if (count < 1 || !JS_IsNumber(values[0]) ||
+            JS_ToInt64(context, &id, values[0]) != 0)
+            return JS_ThrowTypeError(
+                context, "Engine.off requires the listener id Engine.on returned");
+        return JS_NewBool(context, id > 0 && self->RemoveListener(
+                                                 static_cast<std::uint64_t>(id)));
+    }
+
+    // Engine.listenerCount(event?): live native listeners in this realm.
+    static JSValue ListenerCountOf(JSContext* context, JSValueConst,
+                                   const int count, JSValueConst* values) {
+        auto* self = From(context);
+        if (!self->HasCapability("runtime"))
+            return self->PermissionDenied("runtime", "Engine.listenerCount");
+        std::string event;
+        if (count >= 1 && !JS_IsUndefined(values[0]) &&
+            !self->StringArgument(count, values, 0, event))
+            return JS_ThrowTypeError(
+                context, "Engine.listenerCount takes an optional event id");
+        return JS_NewInt64(context,
+                           static_cast<std::int64_t>(self->CountListeners(event)));
+    }
+
+    bool RemoveListener(const std::uint64_t id) {
+        const auto owner = listenerEvents.find(id);
+        if (owner == listenerEvents.end()) return false;
+        const auto list = events.find(owner->second);
+        if (list != events.end()) {
+            const auto listener = std::ranges::find(
+                list->second, id, &EventListener::id);
+            if (listener != list->second.end()) {
+                JS_FreeValue(context, listener->callback);
+                list->second.erase(listener);
+            }
+            if (list->second.empty()) events.erase(list);
+        }
+        listenerEvents.erase(owner);
+        return true;
+    }
+
+    [[nodiscard]] std::size_t CountListeners(const std::string_view event) const {
+        if (!event.empty()) {
+            const auto found = events.find(std::string(event));
+            return found == events.end() ? 0 : found->second.size();
+        }
+        return listenerEvents.size();
     }
 
     static JSValue EmitEvent(JSContext* context, JSValueConst, const int count,
@@ -1200,6 +1312,10 @@ public:
     }
 
     JSValue CreatePromiseWait(WaitToken wait) {
+        // A handler that is being cancelled cannot start another wait: the
+        // wait throws the same AbortError, so `finally` keeps unwinding.
+        if (!JS_IsUndefined(cancellationError))
+            return JS_Throw(context, JS_DupValue(context, cancellationError));
         if (!acceptingPromiseWait)
             return JS_ThrowTypeError(
                 context,
@@ -1211,9 +1327,9 @@ public:
         JSValue resolvingFunctions[2] = {JS_UNDEFINED, JS_UNDEFINED};
         JSValue promise = JS_NewPromiseCapability(context, resolvingFunctions);
         if (JS_IsException(promise)) return promise;
-        JS_FreeValue(context, resolvingFunctions[1]);
         createdPromiseWait = PromiseWaitCapability{
-            .wait = std::move(wait), .resolve = resolvingFunctions[0]};
+            .wait = std::move(wait), .resolve = resolvingFunctions[0],
+            .reject = resolvingFunctions[1]};
         return promise;
     }
 
@@ -3257,6 +3373,11 @@ public:
                           JS_NewCFunction(context, &On, "on", 2));
         JS_SetPropertyStr(context, engine, "emit",
                           JS_NewCFunction(context, &EmitEvent, "emit", 2));
+        JS_SetPropertyStr(context, engine, "off",
+                          JS_NewCFunction(context, &Off, "off", 1));
+        JS_SetPropertyStr(context, engine, "listenerCount",
+                          JS_NewCFunction(context, &ListenerCountOf,
+                                          "listenerCount", 1));
         JS_SetPropertyStr(context, engine, "__runtimeCall",
                           JS_NewCFunction(context, &RuntimeCall, "__runtimeCall", 1));
         JS_SetPropertyStr(context, global, "Engine", engine);
@@ -3453,7 +3574,264 @@ public:
         EndExecution();
         if (JS_IsException(result)) Error("<prismatix-sandbox>", Exception());
         JS_FreeValue(context, result);
+        BindCancellation();
     }
+
+    // The abort signal handed to every command and Action handler
+    // (`context.abortSignal`) and the AbortError it is aborted with. Both
+    // stay private to the host: the script evaluates to the two factories
+    // instead of publishing globals.
+    void BindCancellation() {
+        constexpr std::string_view source = R"js((() => {
+            const freeze = Object.freeze;
+            class AbortError extends Error {
+                constructor(kind, label) {
+                    super(`${label} was cancelled (${kind})`);
+                    this.code = "PXJS7301";
+                    this.kind = kind;
+                }
+            }
+            Object.defineProperty(AbortError.prototype, "name", { value: "AbortError" });
+            const create = () => {
+                let aborted = false;
+                let reason;
+                let onabort = null;
+                const listeners = [];
+                const signal = {
+                    get aborted() { return aborted; },
+                    get reason() { return reason; },
+                    get onabort() { return onabort; },
+                    set onabort(value) { onabort = typeof value === "function" ? value : null; },
+                    addEventListener(type, listener) {
+                        if (type !== "abort" || typeof listener !== "function" || aborted) return;
+                        if (!listeners.includes(listener)) listeners.push(listener);
+                    },
+                    removeEventListener(type, listener) {
+                        const index = listeners.indexOf(listener);
+                        if (type === "abort" && index >= 0) listeners.splice(index, 1);
+                    },
+                    onAbort(listener) {
+                        if (typeof listener !== "function")
+                            throw new TypeError("onAbort requires a function");
+                        if (aborted) {
+                            listener.call(signal, reason);
+                            return () => {};
+                        }
+                        const wrapped = () => listener.call(signal, reason);
+                        listeners.push(wrapped);
+                        return () => {
+                            const index = listeners.indexOf(wrapped);
+                            if (index >= 0) listeners.splice(index, 1);
+                        };
+                    },
+                    throwIfAborted() { if (aborted) throw reason; },
+                };
+                const abort = (error) => {
+                    if (aborted) return undefined;
+                    aborted = true;
+                    reason = error;
+                    const event = freeze({ type: "abort", target: signal });
+                    let failure;
+                    const run = (listener) => {
+                        try { listener.call(signal, event); }
+                        catch (thrown) { if (failure === undefined) failure = thrown; }
+                    };
+                    if (onabort) run(onabort);
+                    for (const listener of listeners.splice(0)) run(listener);
+                    return failure;
+                };
+                return [freeze(signal), abort];
+            };
+            return freeze([create, (kind, label) => new AbortError(kind, label)]);
+        })())js";
+        BeginExecution();
+        JSValue factories = JS_Eval(context, source.data(), source.size(),
+                                    "<prismatix-sandbox>", JS_EVAL_TYPE_GLOBAL);
+        EndExecution();
+        if (JS_IsException(factories)) {
+            Error("<prismatix-sandbox>", Exception());
+            return;
+        }
+        createCancellation = JS_GetPropertyUint32(context, factories, 0);
+        makeAbortError = JS_GetPropertyUint32(context, factories, 1);
+        JS_FreeValue(context, factories);
+    }
+
+    // A fresh [signal, abort] pair; undefined values when the realm has none.
+    [[nodiscard]] std::pair<JSValue, JSValue> CreateCancellation() {
+        if (!JS_IsFunction(context, createCancellation))
+            return {JS_UNDEFINED, JS_UNDEFINED};
+        BeginExecution();
+        JSValue pair = JS_Call(context, createCancellation, JS_UNDEFINED, 0, nullptr);
+        EndExecution();
+        if (JS_IsException(pair)) {
+            Error("<prismatix-sandbox>", Exception());
+            return {JS_UNDEFINED, JS_UNDEFINED};
+        }
+        JSValue signal = JS_GetPropertyUint32(context, pair, 0);
+        JSValue abort = JS_GetPropertyUint32(context, pair, 1);
+        JS_FreeValue(context, pair);
+        return {signal, abort};
+    }
+
+    [[nodiscard]] JSValue AbortErrorValue(const CancellationReason reason,
+                                          const std::string& label) {
+        const auto kind = CancellationKind(reason);
+        if (JS_IsFunction(context, makeAbortError)) {
+            JSValue arguments[] = {
+                JS_NewStringLen(context, kind.data(), kind.size()),
+                JS_NewStringLen(context, label.data(), label.size())};
+            BeginExecution();
+            JSValue error = JS_Call(context, makeAbortError, JS_UNDEFINED, 2, arguments);
+            EndExecution();
+            JS_FreeValue(context, arguments[0]);
+            JS_FreeValue(context, arguments[1]);
+            if (!JS_IsException(error)) return error;
+            JS_FreeValue(context, JS_GetException(context));
+        }
+        JSValue error = JS_NewError(context);
+        JS_SetPropertyStr(context, error, "name", JS_NewString(context, "AbortError"));
+        JS_SetPropertyStr(context, error, "code", JS_NewString(context, "PXJS7301"));
+        JS_SetPropertyStr(context, error, "kind",
+                          JS_NewStringLen(context, kind.data(), kind.size()));
+        return error;
+    }
+
+    [[nodiscard]] bool IsAbortError(JSValueConst value, JSValueConst expected) const {
+        if (JS_IsStrictEqual(context, value, expected)) return true;
+        return JS_IsObject(value) && StringProperty(value, "name") == "AbortError";
+    }
+
+    // Runs queued Promise jobs within the per-call budget; false when one threw.
+    bool DrainJobs() {
+        int jobs = 0;
+        while (JS_IsJobPending(runtime) && jobs++ < 64) {
+            JSContext* jobContext = nullptr;
+            BeginExecution();
+            const int result = JS_ExecutePendingJob(runtime, &jobContext);
+            EndExecution();
+            if (result < 0) return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] std::string ValueText(JSValueConst value) const {
+        std::string message = String(value).value_or("JavaScript value");
+        if (JS_IsObject(value)) {
+            JSValue stack = JS_GetPropertyStr(context, value, "stack");
+            if (!JS_IsUndefined(stack)) {
+                if (const auto trace = String(stack); trace && *trace != message)
+                    message.append("\n").append(*trace);
+            }
+            JS_FreeValue(context, stack);
+        }
+        return message;
+    }
+
+    // Ends a running handler. Its abort signal fires first (onabort, then
+    // listeners in the order they were added); then the engine wait it is
+    // suspended on rejects with the AbortError (async handlers), or the
+    // AbortError is thrown at its `yield` (generators, which get return() if
+    // they yield again), so catch/finally blocks run now. Engine waits
+    // created while it unwinds throw the same AbortError. Engine operations
+    // run live but are not journaled: the continuation is discarded.
+    template <typename Pending>
+    void CancelContinuation(Pending& pending, const CancellationReason reason,
+                            const std::string& source, const std::string& label,
+                            const vn::Command* command = nullptr) {
+        ++entryDepth;
+        EngineOperationJournal scratch;
+        JournalScope journalScope(*this, scratch);
+        CommandScope commandScope(*this, command);
+        if (pending.wait.kind == "debug" || pending.wait.kind == "debug-resume") {
+            debug = {};
+            JS_FreeValue(context, debugLocals);
+            debugLocals = JS_UNDEFINED;
+        }
+        JSValue error = AbortErrorValue(reason, label);
+        if (JS_IsFunction(context, pending.abort)) {
+            BeginExecution();
+            JSValue failure = JS_Call(context, pending.abort, JS_UNDEFINED, 1, &error);
+            EndExecution();
+            if (JS_IsException(failure)) Error(source, Exception());
+            else if (!JS_IsUndefined(failure))
+                Error(source, "abort listener failed: " + ValueText(failure));
+            JS_FreeValue(context, failure);
+        }
+        JSValue previous = cancellationError;
+        cancellationError = JS_DupValue(context, error);
+        EndPromiseCapture();
+        DiscardCreatedPromiseWait();
+        if (pending.flavor == ContinuationFlavor::Promise) {
+            if (JS_IsFunction(context, pending.reject)) {
+                BeginExecution();
+                JSValue rejected =
+                    JS_Call(context, pending.reject, JS_UNDEFINED, 1, &error);
+                EndExecution();
+                if (JS_IsException(rejected)) Error(source, Exception());
+                JS_FreeValue(context, rejected);
+                if (!DrainJobs()) Error(source, Exception());
+                const auto state = JS_PromiseState(context, pending.continuation);
+                if (state == JS_PROMISE_REJECTED) {
+                    JSValue thrown = JS_PromiseResult(context, pending.continuation);
+                    if (!IsAbortError(thrown, error)) Error(source, ValueText(thrown));
+                    JS_FreeValue(context, thrown);
+                } else if (state == JS_PROMISE_PENDING) {
+                    Console(ConsoleLevel::Warning,
+                            source + " was cancelled (" +
+                                std::string(CancellationKind(reason)) +
+                                ") but did not finish: it awaits something other "
+                                "than an engine wait");
+                }
+            }
+        } else if (JS_IsObject(pending.continuation)) {
+            bool finished = false;
+            for (const char* method : {"throw", "return"}) {
+                JSValue function =
+                    JS_GetPropertyStr(context, pending.continuation, method);
+                if (!JS_IsFunction(context, function)) {
+                    JS_FreeValue(context, function);
+                    break;
+                }
+                JSValue argument = std::string_view(method) == "throw"
+                                       ? JS_DupValue(context, error)
+                                       : JS_UNDEFINED;
+                BeginExecution();
+                JSValue result = JS_Call(context, function, pending.continuation,
+                                         1, &argument);
+                EndExecution();
+                JS_FreeValue(context, argument);
+                JS_FreeValue(context, function);
+                if (JS_IsException(result)) {
+                    JSValue thrown = JS_GetException(context);
+                    if (!IsAbortError(thrown, error)) Error(source, ValueText(thrown));
+                    JS_FreeValue(context, thrown);
+                    finished = true;
+                } else if (JS_IsObject(result)) {
+                    JSValue done = JS_GetPropertyStr(context, result, "done");
+                    finished = JS_ToBool(context, done) > 0;
+                    JS_FreeValue(context, done);
+                } else {
+                    finished = true;
+                }
+                JS_FreeValue(context, result);
+                if (finished) break;
+            }
+            if (!finished)
+                Console(ConsoleLevel::Warning,
+                        source + " was cancelled (" +
+                            std::string(CancellationKind(reason)) +
+                            ") but kept yielding; it was dropped");
+            if (!DrainJobs()) Error(source, Exception());
+        }
+        DiscardCreatedPromiseWait();
+        JS_FreeValue(context, cancellationError);
+        cancellationError = previous;
+        JS_FreeValue(context, error);
+        FreeContinuation(pending);
+        --entryDepth;
+    }
+
 
     [[nodiscard]] Result<ExtensionStates> CaptureStateProviders() {
         std::vector<std::string> ids;
@@ -3675,21 +4053,14 @@ public:
 
     [[nodiscard]] std::string PromiseFailure(JSValueConst promise) {
         JSValue reason = JS_PromiseResult(context, promise);
-        std::string message = String(reason).value_or("JavaScript Promise rejected");
-        if (JS_IsObject(reason)) {
-            JSValue stack = JS_GetPropertyStr(context, reason, "stack");
-            if (!JS_IsUndefined(stack)) {
-                if (const auto trace = String(stack); trace && *trace != message)
-                    message.append("\n").append(*trace);
-            }
-            JS_FreeValue(context, stack);
-        }
+        std::string message = ValueText(reason);
         JS_FreeValue(context, reason);
         return message;
     }
 
     StepResult ObservePromise(JSValueConst promise, JSValue& resume,
-                              WaitToken& wait, const std::string& source) {
+                              JSValue& reject, WaitToken& wait,
+                              const std::string& source) {
         int jobs = 0;
         while (JS_IsJobPending(runtime) && jobs++ < 64) {
             JSContext* jobContext = nullptr;
@@ -3735,12 +4106,14 @@ public:
 
         wait = std::move(createdPromiseWait->wait);
         resume = createdPromiseWait->resolve;
+        reject = createdPromiseWait->reject;
         createdPromiseWait.reset();
         return StepResult::Yielded;
     }
 
     StepResult StepPromise(JSValueConst promise, JSValue& resume,
-                           WaitToken& wait, const std::string& source) {
+                           JSValue& reject, WaitToken& wait,
+                           const std::string& source) {
         if (JS_IsUndefined(resume)) {
             Error(source, "JavaScript Promise continuation has no engine resolver");
             return StepResult::Failed;
@@ -3751,7 +4124,9 @@ public:
         JSValue result = JS_Call(context, resume, JS_UNDEFINED, 1, &argument);
         EndExecution();
         JS_FreeValue(context, resume);
+        JS_FreeValue(context, reject);
         resume = JS_UNDEFINED;
+        reject = JS_UNDEFINED;
         if (JS_IsException(result)) {
             EndPromiseCapture();
             DiscardCreatedPromiseWait();
@@ -3760,7 +4135,7 @@ public:
             return StepResult::Failed;
         }
         JS_FreeValue(context, result);
-        return ObservePromise(promise, resume, wait, source);
+        return ObservePromise(promise, resume, reject, wait, source);
     }
 
     StepResult StepGenerator(JSValueConst generator, WaitToken& wait,
@@ -3862,8 +4237,16 @@ public:
         return arguments;
     }
 
+    // The second argument of a command handler: { abortSignal }.
+    [[nodiscard]] JSValue CommandContext(JSValueConst signal) {
+        JSValue commandContext = JS_NewObject(context);
+        JS_SetPropertyStr(context, commandContext, "abortSignal",
+                          JS_DupValue(context, signal));
+        return commandContext;
+    }
+
     [[nodiscard]] std::pair<JSValue, JSValue> ActionArguments(
-        const ui::ActionInvocation& invocation) {
+        const ui::ActionInvocation& invocation, JSValueConst signal) {
         JSValue arguments = JS_NewObject(context);
         for (const auto& [name, value] : invocation.arguments)
             JS_SetPropertyStr(context, arguments, name.c_str(),
@@ -3883,6 +4266,8 @@ public:
                                        invocation.context.currentRoute.c_str()));
         JS_SetPropertyStr(context, actionContext, "preview",
                           JS_NewBool(context, invocation.context.preview));
+        JS_SetPropertyStr(context, actionContext, "abortSignal",
+                          JS_DupValue(context, signal));
         return {arguments, actionContext};
     }
 
@@ -3890,6 +4275,7 @@ public:
         ContinuationFlavor flavor = ContinuationFlavor::Generator;
         JSValue continuation = JS_UNDEFINED;
         JSValue resume = JS_UNDEFINED;
+        JSValue reject = JS_UNDEFINED;
         WaitToken wait;
     };
 
@@ -3924,11 +4310,11 @@ public:
         } else if (JS_IsPromise(continuation)) {
             replayed.flavor = ContinuationFlavor::Promise;
             result = ObservePromise(continuation, replayed.resume,
-                                    replayed.wait, source);
+                                    replayed.reject, replayed.wait, source);
             for (std::uint32_t index = 1;
                  result == StepResult::Yielded && index < yieldIndex; ++index) {
                 result = StepPromise(continuation, replayed.resume,
-                                     replayed.wait, source);
+                                     replayed.reject, replayed.wait, source);
             }
         } else {
             EndPromiseCapture();
@@ -3944,6 +4330,7 @@ public:
                   "engine operation journal contains calls beyond the restored checkpoint");
         JS_FreeValue(context, replayed.continuation);
         JS_FreeValue(context, replayed.resume);
+        JS_FreeValue(context, replayed.reject);
         return std::nullopt;
     }
 
@@ -3954,7 +4341,18 @@ public:
     JSContext* context = nullptr;
     std::unordered_map<std::string, JSValue> commands;
     std::unordered_map<std::string, JSValue> actions;
-    std::unordered_map<std::string, std::vector<JSValue>> events;
+    std::unordered_map<std::string, std::vector<EventListener>> events;
+    std::unordered_map<std::uint64_t, std::string> listenerEvents;
+    std::uint64_t nextListenerId = 1;
+    JSValue createCancellation = JS_UNDEFINED;
+    JSValue makeAbortError = JS_UNDEFINED;
+    // The AbortError of the handler being cancelled right now.
+    JSValue cancellationError = JS_UNDEFINED;
+    int entryDepth = 0;
+    bool cancellationsQueued = false;
+    // Cancelled entries a restore replaced before FlushCancellations ran.
+    std::vector<std::pair<PendingCommandContinuation, CancellationReason>> retiredCommands;
+    std::vector<std::pair<PendingActionContinuation, CancellationReason>> retiredActions;
     std::unordered_set<std::string> declaredCommands;
     std::unordered_set<std::string> declaredActions;
     std::unordered_set<std::string> loadedActionSources;
@@ -4007,11 +4405,16 @@ JavaScriptHost::JavaScriptHost(const ScriptServices& services)
     }
 }
 
-JavaScriptHost::~JavaScriptHost() = default;
+JavaScriptHost::~JavaScriptHost() {
+    // Handlers still running end with "shutdown": their abort listeners and
+    // finally blocks run while the realm and its services still exist.
+    if (m_impl && m_impl->Ready()) CancelPending(CancellationReason::Shutdown);
+}
 
 bool JavaScriptHost::RunString(const std::string& source,
                                const std::string& sourceName) {
     if (!m_impl->Ready()) return false;
+    Impl::EntryScope entry(*m_impl);
     m_impl->BeginExecution();
     JSValue result = JS_Eval(m_impl->context, source.data(), source.size(),
                              sourceName.c_str(), JS_EVAL_TYPE_GLOBAL);
@@ -4042,6 +4445,7 @@ bool JavaScriptHost::RunModuleFile(const std::string& vfsPath) {
         m_impl->Error(vfsPath, "JavaScript module was not declared by its extension");
         return false;
     }
+    Impl::EntryScope entry(*m_impl);
     m_impl->BeginExecution();
     JSValue result = JS_Eval(m_impl->context, source->second.data(),
                              source->second.size(), vfsPath.c_str(),
@@ -4112,6 +4516,9 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
         // The candidate has already atomically replaced both descriptor
         // sources. Prevent the retired realm from removing the new source.
         (*current)->m_impl->ownsRegistrations = false;
+        // Handlers of the retired realm end with "reload"; its listeners go
+        // with it.
+        (*current)->CancelPending(CancellationReason::Reload);
         *current = std::move(candidate);
     }
     return true;
@@ -4521,50 +4928,52 @@ Status JavaScriptHost::DispatchEventInCurrentRealm(
         return Status::Fail(ScriptDiagnostic(
             "PXJS7200", "JavaScript event realm is unavailable", event));
     const auto found = m_impl->events.find(event);
-    if (found != m_impl->events.end()) {
-        JSValue payload = m_impl->ToJavaScript(payloadValue);
-        for (const auto& callback : found->second) {
-            m_impl->BeginExecution();
-            JSValue result = JS_Call(m_impl->context, callback, JS_UNDEFINED, 1, &payload);
-            m_impl->EndExecution();
-            if (JS_IsException(result)) {
-                const auto details = m_impl->Exception();
+    if (found == m_impl->events.end()) return Status::Ok();
+    Impl::EntryScope entry(*m_impl);
+    // Listeners added while this event is delivered wait for the next one;
+    // listeners removed meanwhile (Engine.off) are skipped.
+    std::vector<Impl::EventListener> snapshot;
+    snapshot.reserve(found->second.size());
+    for (const auto& listener : found->second)
+        snapshot.push_back({listener.id, JS_DupValue(m_impl->context, listener.callback)});
+    JSValue payload = m_impl->ToJavaScript(payloadValue);
+    Status status = Status::Ok();
+    for (const auto& listener : snapshot) {
+        if (!m_impl->listenerEvents.contains(listener.id)) continue;
+        m_impl->BeginExecution();
+        JSValue result = JS_Call(m_impl->context, listener.callback, JS_UNDEFINED, 1, &payload);
+        m_impl->EndExecution();
+        if (JS_IsException(result)) {
+            const auto details = m_impl->Exception();
+            m_impl->Error("event:" + event, details);
+            JS_FreeValue(m_impl->context, result);
+            status = Status::Fail(ScriptDiagnostic(
+                "PXJS7202", "JavaScript event handler failed", details,
+                m_impl->extensionId));
+            break;
+        }
+        if (JS_IsPromise(result)) {
+            if (!m_impl->DrainJobs())
+                m_impl->Error("event:" + event, m_impl->Exception());
+            const auto promiseState = JS_PromiseState(m_impl->context, result);
+            if (promiseState != JS_PROMISE_FULFILLED) {
+                const auto details = promiseState == JS_PROMISE_REJECTED
+                                         ? m_impl->PromiseFailure(result)
+                                         : std::string(
+                                               "event Promise exceeded the pending-job budget or awaited a non-event operation");
                 m_impl->Error("event:" + event, details);
                 JS_FreeValue(m_impl->context, result);
-                JS_FreeValue(m_impl->context, payload);
-                return Status::Fail(ScriptDiagnostic(
-                    "PXJS7202", "JavaScript event handler failed", details,
+                status = Status::Fail(ScriptDiagnostic(
+                    "PXJS7203", "JavaScript event Promise failed", details,
                     m_impl->extensionId));
+                break;
             }
-            if (JS_IsPromise(result)) {
-                int jobs = 0;
-                while (JS_IsJobPending(m_impl->runtime) && jobs++ < 64) {
-                    JSContext* jobContext = nullptr;
-                    m_impl->BeginExecution();
-                    const int executed =
-                        JS_ExecutePendingJob(m_impl->runtime, &jobContext);
-                    m_impl->EndExecution();
-                    if (executed < 0) break;
-                }
-                const auto promiseState = JS_PromiseState(m_impl->context, result);
-                if (promiseState != JS_PROMISE_FULFILLED) {
-                    const auto details = promiseState == JS_PROMISE_REJECTED
-                                             ? m_impl->PromiseFailure(result)
-                                             : std::string(
-                                                   "event Promise exceeded the pending-job budget or awaited a non-event operation");
-                    m_impl->Error("event:" + event, details);
-                    JS_FreeValue(m_impl->context, result);
-                    JS_FreeValue(m_impl->context, payload);
-                    return Status::Fail(ScriptDiagnostic(
-                        "PXJS7203", "JavaScript event Promise failed", details,
-                        m_impl->extensionId));
-                }
-            }
-            JS_FreeValue(m_impl->context, result);
         }
-        JS_FreeValue(m_impl->context, payload);
+        JS_FreeValue(m_impl->context, result);
     }
-    return Status::Ok();
+    JS_FreeValue(m_impl->context, payload);
+    for (auto& listener : snapshot) JS_FreeValue(m_impl->context, listener.callback);
+    return status;
 }
 
 Status JavaScriptHost::Emit(const std::string& event,
@@ -4626,20 +5035,26 @@ bool JavaScriptHost::InvokeCommand(const vn::Command& command) {
                 return realm->InvokeCommand(command);
         return false;
     }
-    JSValue arguments = m_impl->CommandArguments(command);
+    Impl::EntryScope entry(*m_impl);
+    auto [signal, abort] = m_impl->CreateCancellation();
+    JSValue parameters[] = {m_impl->CommandArguments(command),
+                            m_impl->CommandContext(signal)};
+    JS_FreeValue(m_impl->context, signal);
     EngineOperationJournal journal;
     Impl::JournalScope journalScope(*m_impl, journal);
     Impl::CommandScope commandScope(*m_impl, &command);
     m_impl->BeginPromiseCapture();
     m_impl->BeginExecution();
-    JSValue result = JS_Call(m_impl->context, found->second, JS_UNDEFINED, 1, &arguments);
+    JSValue result = JS_Call(m_impl->context, found->second, JS_UNDEFINED, 2, parameters);
     m_impl->EndExecution();
-    JS_FreeValue(m_impl->context, arguments);
+    JS_FreeValue(m_impl->context, parameters[0]);
+    JS_FreeValue(m_impl->context, parameters[1]);
     if (JS_IsException(result)) {
         m_impl->EndPromiseCapture();
         m_impl->DiscardCreatedPromiseWait();
         m_impl->Error("command:" + command.type, m_impl->Exception());
         JS_FreeValue(m_impl->context, result);
+        JS_FreeValue(m_impl->context, abort);
         return true;
     }
     if (m_impl->IsGenerator(result)) {
@@ -4651,6 +5066,7 @@ bool JavaScriptHost::InvokeCommand(const vn::Command& command) {
         if (step == Impl::StepResult::Yielded) {
             Impl::PendingCommandContinuation pending;
             pending.continuation = result;
+            pending.abort = abort;
             pending.command = command;
             pending.yieldIndex = 1;
             pending.wait = std::move(wait);
@@ -4659,18 +5075,22 @@ bool JavaScriptHost::InvokeCommand(const vn::Command& command) {
             return true;
         }
         JS_FreeValue(m_impl->context, result);
+        JS_FreeValue(m_impl->context, abort);
         return true;
     }
     if (JS_IsPromise(result)) {
         JSValue resume = JS_UNDEFINED;
+        JSValue reject = JS_UNDEFINED;
         Impl::WaitToken wait;
         const auto step = m_impl->ObservePromise(
-            result, resume, wait, "command:" + command.type);
+            result, resume, reject, wait, "command:" + command.type);
         if (step == Impl::StepResult::Yielded) {
             Impl::PendingCommandContinuation pending;
             pending.flavor = Impl::ContinuationFlavor::Promise;
             pending.continuation = result;
             pending.resume = resume;
+            pending.reject = reject;
+            pending.abort = abort;
             pending.command = command;
             pending.yieldIndex = 1;
             pending.wait = std::move(wait);
@@ -4679,7 +5099,9 @@ bool JavaScriptHost::InvokeCommand(const vn::Command& command) {
             return true;
         }
         JS_FreeValue(m_impl->context, resume);
+        JS_FreeValue(m_impl->context, reject);
         JS_FreeValue(m_impl->context, result);
+        JS_FreeValue(m_impl->context, abort);
         return true;
     }
     const bool orphanedWait = m_impl->createdPromiseWait.has_value();
@@ -4689,6 +5111,7 @@ bool JavaScriptHost::InvokeCommand(const vn::Command& command) {
         m_impl->Error("command:" + command.type,
                       "command created an engine wait without returning an async Promise");
     JS_FreeValue(m_impl->context, result);
+    JS_FreeValue(m_impl->context, abort);
     return true;
 }
 
@@ -4718,7 +5141,10 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
                     "PXJS7420", "JavaScript action callback is missing",
                     invocation.action))};
     }
-    auto [arguments, actionContext] = m_impl->ActionArguments(invocation);
+    Impl::EntryScope entry(*m_impl);
+    auto [signal, abort] = m_impl->CreateCancellation();
+    auto [arguments, actionContext] = m_impl->ActionArguments(invocation, signal);
+    JS_FreeValue(m_impl->context, signal);
     JSValue parameters[] = {arguments, actionContext};
     EngineOperationJournal journal;
     Impl::JournalScope journalScope(*m_impl, journal);
@@ -4734,6 +5160,7 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
         const auto error = m_impl->Exception();
         m_impl->Error("action:" + invocation.action, error);
         JS_FreeValue(m_impl->context, result);
+        JS_FreeValue(m_impl->context, abort);
         return {.status = Status::Fail(ScriptDiagnostic(
                     "PXJS7421", "JavaScript action failed", error))};
     }
@@ -4747,6 +5174,7 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
             const std::uint64_t handle = m_impl->nextActionHandle++;
             Impl::PendingActionContinuation pending;
             pending.continuation = result;
+            pending.abort = abort;
             pending.id = handle;
             pending.invocation = invocation;
             pending.yieldIndex = 1;
@@ -4756,6 +5184,7 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
             return {.status = Status::Ok(), .handle = handle, .pending = true};
         }
         JS_FreeValue(m_impl->context, result);
+        JS_FreeValue(m_impl->context, abort);
         if (step == Impl::StepResult::Failed)
             return {.status = Status::Fail(ScriptDiagnostic(
                         "PXJS7422", "JavaScript Action continuation failed",
@@ -4764,15 +5193,18 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
     }
     if (JS_IsPromise(result)) {
         JSValue resume = JS_UNDEFINED;
+        JSValue reject = JS_UNDEFINED;
         Impl::WaitToken wait;
         const auto step = m_impl->ObservePromise(
-            result, resume, wait, "action:" + invocation.action);
+            result, resume, reject, wait, "action:" + invocation.action);
         if (step == Impl::StepResult::Yielded) {
             const std::uint64_t handle = m_impl->nextActionHandle++;
             Impl::PendingActionContinuation pending;
             pending.flavor = Impl::ContinuationFlavor::Promise;
             pending.continuation = result;
             pending.resume = resume;
+            pending.reject = reject;
+            pending.abort = abort;
             pending.id = handle;
             pending.invocation = invocation;
             pending.yieldIndex = 1;
@@ -4782,7 +5214,9 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
             return {.status = Status::Ok(), .handle = handle, .pending = true};
         }
         JS_FreeValue(m_impl->context, resume);
+        JS_FreeValue(m_impl->context, reject);
         JS_FreeValue(m_impl->context, result);
+        JS_FreeValue(m_impl->context, abort);
         if (step == Impl::StepResult::Failed)
             return {.status = Status::Fail(ScriptDiagnostic(
                         "PXJS7423", "JavaScript async Action failed",
@@ -4793,6 +5227,7 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
     m_impl->EndPromiseCapture();
     m_impl->DiscardCreatedPromiseWait();
     JS_FreeValue(m_impl->context, result);
+    JS_FreeValue(m_impl->context, abort);
     if (orphanedWait)
         return {.status = Status::Fail(ScriptDiagnostic(
                     "PXJS7424",
@@ -4803,11 +5238,11 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
 
 ui::ActionExecutionState JavaScriptHost::ActionState(
     const std::uint64_t handle) const {
-    if (std::ranges::any_of(m_impl->pendingActions,
-                           [handle](const auto& pending) {
-                               return pending.id == handle;
-                           }))
-        return ui::ActionExecutionState::Running;
+    const auto pending = std::ranges::find(m_impl->pendingActions, handle,
+                                           &Impl::PendingActionContinuation::id);
+    if (pending != m_impl->pendingActions.end())
+        return pending->cancelRequested ? ui::ActionExecutionState::Cancelled
+                                        : ui::ActionExecutionState::Running;
     if (const auto found = m_impl->actionTerminalStates.find(handle);
         found != m_impl->actionTerminalStates.end())
         return found->second;
@@ -4818,27 +5253,35 @@ ui::ActionExecutionState JavaScriptHost::ActionState(
     return ui::ActionExecutionState::Unknown;
 }
 
-void JavaScriptHost::CancelAction(const std::uint64_t handle) {
-    const auto found = std::ranges::find_if(
-        m_impl->pendingActions,
-        [handle](const auto& pending) { return pending.id == handle; });
-    const bool local = found != m_impl->pendingActions.end();
-    if (local) {
-        m_impl->FreeContinuation(*found);
-        m_impl->pendingActions.erase(found);
-        m_impl->actionTerminalStates[handle] =
-            ui::ActionExecutionState::Cancelled;
+void JavaScriptHost::CancelAction(const std::uint64_t handle,
+                                  const CancellationReason reason) {
+    const auto found = std::ranges::find(m_impl->pendingActions, handle,
+                                         &Impl::PendingActionContinuation::id);
+    if (found != m_impl->pendingActions.end()) {
+        if (found->cancelRequested) return;
+        found->cancelRequested = reason;
+        m_impl->actionTerminalStates[handle] = ui::ActionExecutionState::Cancelled;
+        m_impl->cancellationsQueued = true;
+        FlushCancellations();
         return;
     }
     for (const auto& realm : m_impl->extensionRealms)
         if (realm->ActionState(handle) != ui::ActionExecutionState::Unknown) {
-            realm->CancelAction(handle);
+            realm->CancelAction(handle, reason);
             return;
         }
 }
 
+std::size_t JavaScriptHost::ListenerCount(const std::string_view event) const {
+    std::size_t count = m_impl->CountListeners(event);
+    for (const auto& realm : m_impl->extensionRealms)
+        count += realm->ListenerCount(event);
+    return count;
+}
+
 void JavaScriptHost::Update(const float deltaSeconds) {
     if (!m_impl->runtime) return;
+    Impl::EntryScope entry(*m_impl);
 
     for (const auto& realm : m_impl->extensionRealms)
         realm->Update(deltaSeconds);
@@ -4887,7 +5330,7 @@ void JavaScriptHost::Update(const float deltaSeconds) {
 
     for (auto iterator = m_impl->pendingCommands.begin();
          iterator != m_impl->pendingCommands.end();) {
-        if (!ready(iterator->wait)) {
+        if (iterator->cancelRequested || !ready(iterator->wait)) {
             ++iterator;
             continue;
         }
@@ -4900,7 +5343,7 @@ void JavaScriptHost::Update(const float deltaSeconds) {
                             : iterator->flavor == Impl::ContinuationFlavor::Promise
                                 ? m_impl->StepPromise(
                                       iterator->continuation, iterator->resume,
-                                      iterator->wait, source)
+                                      iterator->reject, iterator->wait, source)
                                 : m_impl->StepGenerator(
                                       iterator->continuation, iterator->wait,
                                       source);
@@ -4915,7 +5358,7 @@ void JavaScriptHost::Update(const float deltaSeconds) {
 
     for (auto iterator = m_impl->pendingActions.begin();
          iterator != m_impl->pendingActions.end();) {
-        if (!ready(iterator->wait)) {
+        if (iterator->cancelRequested || !ready(iterator->wait)) {
             ++iterator;
             continue;
         }
@@ -4927,7 +5370,7 @@ void JavaScriptHost::Update(const float deltaSeconds) {
                             : iterator->flavor == Impl::ContinuationFlavor::Promise
                                 ? m_impl->StepPromise(
                                       iterator->continuation, iterator->resume,
-                                      iterator->wait, source)
+                                      iterator->reject, iterator->wait, source)
                                 : m_impl->StepGenerator(
                                       iterator->continuation, iterator->wait,
                                       source);
@@ -4961,7 +5404,7 @@ bool JavaScriptHost::AdvanceDialogueWait(vn::Dialogue& dialogue) {
     for (const auto& realm : m_impl->extensionRealms)
         if (realm->AdvanceDialogueWait(dialogue)) return true;
     for (auto& pending : m_impl->pendingCommands) {
-        if (pending.wait.kind != "dialogue") continue;
+        if (pending.cancelRequested || pending.wait.kind != "dialogue") continue;
         if (!dialogue.Finished()) dialogue.ShowAll();
         else pending.wait.remainingSeconds = 1.0f;
         return true;
@@ -4984,14 +5427,20 @@ void JavaScriptHost::RenderRetained(const RenderPhase phase) {
 }
 
 bool JavaScriptHost::HasPendingCommand() const {
-    return !m_impl->pendingCommands.empty() ||
+    return std::ranges::any_of(m_impl->pendingCommands,
+                               [](const auto& pending) {
+                                   return !pending.cancelRequested;
+                               }) ||
            std::ranges::any_of(m_impl->extensionRealms, [](const auto& realm) {
                return realm->HasPendingCommand();
            });
 }
 
 bool JavaScriptHost::HasPendingAction() const {
-    return !m_impl->pendingActions.empty() ||
+    return std::ranges::any_of(m_impl->pendingActions,
+                               [](const auto& pending) {
+                                   return !pending.cancelRequested;
+                               }) ||
            std::ranges::any_of(m_impl->extensionRealms, [](const auto& realm) {
                return realm->HasPendingAction();
            });
@@ -5001,6 +5450,7 @@ PendingCommandsState JavaScriptHost::CapturePending() const {
     PendingCommandsState state;
     state.reserve(m_impl->pendingCommands.size());
     for (const auto& pending : m_impl->pendingCommands) {
+        if (pending.cancelRequested) continue;
         state.push_back({.sourceId = m_impl->extensionId,
                          .command = pending.command,
                          .yieldIndex = pending.yieldIndex,
@@ -5021,6 +5471,7 @@ PendingActionsState JavaScriptHost::CapturePendingActions() const {
     PendingActionsState state;
     state.reserve(m_impl->pendingActions.size());
     for (const auto& pending : m_impl->pendingActions) {
+        if (pending.cancelRequested) continue;
         state.push_back({.sourceId = m_impl->extensionId,
                          .id = pending.id,
                          .invocation = pending.invocation,
@@ -5070,6 +5521,7 @@ Status JavaScriptHost::RestorePending(const PendingCommandsState& state) {
 
 Status JavaScriptHost::RestorePendingInCurrentRealm(
     const PendingCommandsState& state) {
+    Impl::EntryScope entry(*m_impl);
     std::vector<Impl::PendingCommandContinuation> candidate;
     candidate.reserve(state.size());
 
@@ -5102,19 +5554,26 @@ Status JavaScriptHost::RestorePendingInCurrentRealm(
                         saved.command.type);
         }
 
-        JSValue arguments = m_impl->CommandArguments(saved.command);
+        auto [signal, abort] = m_impl->CreateCancellation();
+        JSValue parameters[] = {m_impl->CommandArguments(saved.command),
+                                m_impl->CommandContext(signal)};
+        JS_FreeValue(m_impl->context, signal);
         Impl::CommandScope commandScope(*m_impl, &saved.command);
         auto replayed = m_impl->ReplayToBoundary(
-            callback->second, 1, &arguments, saved.yieldIndex,
+            callback->second, 2, parameters, saved.yieldIndex,
             "restore-command:" + saved.command.type, saved.journal);
-        JS_FreeValue(m_impl->context, arguments);
+        JS_FreeValue(m_impl->context, parameters[0]);
+        JS_FreeValue(m_impl->context, parameters[1]);
         if (!replayed) {
+            JS_FreeValue(m_impl->context, abort);
             return fail("PXJS7503", "JavaScript command checkpoint replay failed",
                         saved.command.type);
         }
         if (replayed->wait.kind != saved.waitKind) {
             JS_FreeValue(m_impl->context, replayed->continuation);
             JS_FreeValue(m_impl->context, replayed->resume);
+            JS_FreeValue(m_impl->context, replayed->reject);
+            JS_FreeValue(m_impl->context, abort);
             return fail("PXJS7504", "JavaScript command await structure changed",
                         saved.command.type);
         }
@@ -5123,6 +5582,8 @@ Status JavaScriptHost::RestorePendingInCurrentRealm(
         pending.flavor = replayed->flavor;
         pending.continuation = replayed->continuation;
         pending.resume = replayed->resume;
+        pending.reject = replayed->reject;
+        pending.abort = abort;
         pending.command = saved.command;
         pending.yieldIndex = saved.yieldIndex;
         pending.wait = {.kind = saved.waitKind,
@@ -5133,8 +5594,14 @@ Status JavaScriptHost::RestorePendingInCurrentRealm(
         pending.journal = saved.journal;
         candidate.push_back(std::move(pending));
     }
-    for (auto& pending : m_impl->pendingCommands)
-        m_impl->FreeContinuation(pending);
+    for (auto& pending : m_impl->pendingCommands) {
+        if (pending.cancelRequested) {
+            const auto reason = *pending.cancelRequested;
+            m_impl->retiredCommands.emplace_back(std::move(pending), reason);
+        } else {
+            m_impl->FreeContinuation(pending);
+        }
+    }
     m_impl->pendingCommands = std::move(candidate);
     return Status::Ok();
 }
@@ -5171,6 +5638,7 @@ Status JavaScriptHost::RestorePendingActions(const PendingActionsState& state) {
 
 Status JavaScriptHost::RestorePendingActionsInCurrentRealm(
     const PendingActionsState& state) {
+    Impl::EntryScope entry(*m_impl);
     std::vector<Impl::PendingActionContinuation> candidate;
     candidate.reserve(state.size());
 
@@ -5202,8 +5670,10 @@ Status JavaScriptHost::RestorePendingActionsInCurrentRealm(
                         saved.invocation.action);
         }
 
+        auto [signal, abort] = m_impl->CreateCancellation();
         auto [arguments, actionContext] =
-            m_impl->ActionArguments(saved.invocation);
+            m_impl->ActionArguments(saved.invocation, signal);
+        JS_FreeValue(m_impl->context, signal);
         JSValue parameters[] = {arguments, actionContext};
         auto replayed = m_impl->ReplayToBoundary(
             callback->second, 2, parameters, saved.yieldIndex,
@@ -5211,12 +5681,15 @@ Status JavaScriptHost::RestorePendingActionsInCurrentRealm(
         JS_FreeValue(m_impl->context, arguments);
         JS_FreeValue(m_impl->context, actionContext);
         if (!replayed) {
+            JS_FreeValue(m_impl->context, abort);
             return fail("PXJS7512", "JavaScript Action checkpoint replay failed",
                         saved.invocation.action);
         }
         if (replayed->wait.kind != saved.waitKind) {
             JS_FreeValue(m_impl->context, replayed->continuation);
             JS_FreeValue(m_impl->context, replayed->resume);
+            JS_FreeValue(m_impl->context, replayed->reject);
+            JS_FreeValue(m_impl->context, abort);
             return fail("PXJS7513", "JavaScript Action await structure changed",
                         saved.invocation.action);
         }
@@ -5225,6 +5698,8 @@ Status JavaScriptHost::RestorePendingActionsInCurrentRealm(
         pending.flavor = replayed->flavor;
         pending.continuation = replayed->continuation;
         pending.resume = replayed->resume;
+        pending.reject = replayed->reject;
+        pending.abort = abort;
         pending.id = saved.id;
         pending.invocation = saved.invocation;
         pending.yieldIndex = saved.yieldIndex;
@@ -5236,8 +5711,14 @@ Status JavaScriptHost::RestorePendingActionsInCurrentRealm(
         pending.journal = saved.journal;
         candidate.push_back(std::move(pending));
     }
-    for (auto& pending : m_impl->pendingActions)
-        m_impl->FreeContinuation(pending);
+    for (auto& pending : m_impl->pendingActions) {
+        if (pending.cancelRequested) {
+            const auto reason = *pending.cancelRequested;
+            m_impl->retiredActions.emplace_back(std::move(pending), reason);
+        } else {
+            m_impl->FreeContinuation(pending);
+        }
+    }
     m_impl->pendingActions = std::move(candidate);
     m_impl->actionTerminalStates.clear();
     for (const auto& pending : m_impl->pendingActions)
@@ -5367,20 +5848,100 @@ Status JavaScriptHost::RestoreExtensionState(const ExtensionStates& state) {
     return restored;
 }
 
-void JavaScriptHost::CancelPending() {
-    for (const auto& realm : m_impl->extensionRealms) realm->CancelPending();
+void JavaScriptHost::CancelPending(const CancellationReason reason) {
+    for (const auto& realm : m_impl->extensionRealms) realm->CancelPending(reason);
     for (auto& pending : m_impl->pendingCommands)
-        m_impl->FreeContinuation(pending);
+        if (!pending.cancelRequested) pending.cancelRequested = reason;
     for (auto& pending : m_impl->pendingActions)
-        m_impl->FreeContinuation(pending);
-    m_impl->pendingCommands.clear();
-    m_impl->pendingActions.clear();
+        if (!pending.cancelRequested) pending.cancelRequested = reason;
     m_impl->actionTerminalStates.clear();
     m_impl->debug = {};
     JS_FreeValue(m_impl->context, m_impl->debugLocals);
     m_impl->debugLocals = JS_UNDEFINED;
     m_impl->debugPauseRequested = false;
     m_impl->debugStepRequested = false;
+    m_impl->cancellationsQueued = true;
+    FlushCancellations();
+}
+
+bool JavaScriptHost::CancelPendingCommands(const CancellationReason reason) {
+    bool cancelled = false;
+    for (const auto& realm : m_impl->extensionRealms)
+        cancelled = realm->CancelPendingCommands(reason) || cancelled;
+    for (auto& pending : m_impl->pendingCommands) {
+        if (pending.cancelRequested) continue;
+        pending.cancelRequested = reason;
+        cancelled = true;
+    }
+    if (cancelled) {
+        m_impl->cancellationsQueued = true;
+        FlushCancellations();
+    }
+    return cancelled;
+}
+
+// Ends every handler whose cancellation was requested: Story commands
+// first, then Actions, each in the order they started. Deferred while this
+// realm is running JavaScript, so the outermost host call does it last.
+void JavaScriptHost::FlushCancellations() {
+    if (!m_impl->Ready() || m_impl->entryDepth > 0 || !m_impl->cancellationsQueued)
+        return;
+    // A cancelled handler's finally may cancel another (bounded rounds).
+    for (int round = 0; round < 64 && m_impl->cancellationsQueued; ++round) {
+        m_impl->cancellationsQueued = false;
+        auto commands = std::move(m_impl->retiredCommands);
+        m_impl->retiredCommands.clear();
+        auto actions = std::move(m_impl->retiredActions);
+        m_impl->retiredActions.clear();
+        for (auto iterator = m_impl->pendingCommands.begin();
+             iterator != m_impl->pendingCommands.end();) {
+            if (!iterator->cancelRequested) {
+                ++iterator;
+                continue;
+            }
+            const auto reason = *iterator->cancelRequested;
+            commands.emplace_back(std::move(*iterator), reason);
+            iterator = m_impl->pendingCommands.erase(iterator);
+        }
+        for (auto iterator = m_impl->pendingActions.begin();
+             iterator != m_impl->pendingActions.end();) {
+            if (!iterator->cancelRequested) {
+                ++iterator;
+                continue;
+            }
+            const auto reason = *iterator->cancelRequested;
+            actions.emplace_back(std::move(*iterator), reason);
+            iterator = m_impl->pendingActions.erase(iterator);
+        }
+        for (auto& [pending, reason] : commands) {
+            const auto source = "command:" + pending.command.type;
+            m_impl->CancelContinuation(pending, reason, source,
+                                       "Story command '" + pending.command.type + "'",
+                                       &pending.command);
+        }
+        for (auto& [pending, reason] : actions) {
+            const auto source = "action:" + pending.invocation.action;
+            m_impl->CancelContinuation(pending, reason, source,
+                                       "Action '" + pending.invocation.action + "'");
+        }
+    }
+    if (m_impl->cancellationsQueued) {
+        // Handlers that keep cancelling each other are dropped silently.
+        for (auto& pending : m_impl->pendingCommands)
+            if (pending.cancelRequested) m_impl->FreeContinuation(pending);
+        std::erase_if(m_impl->pendingCommands,
+                      [](const auto& pending) { return pending.cancelRequested.has_value(); });
+        for (auto& pending : m_impl->pendingActions)
+            if (pending.cancelRequested) m_impl->FreeContinuation(pending);
+        std::erase_if(m_impl->pendingActions,
+                      [](const auto& pending) { return pending.cancelRequested.has_value(); });
+        for (auto& [pending, _] : m_impl->retiredCommands) m_impl->FreeContinuation(pending);
+        for (auto& [pending, _] : m_impl->retiredActions) m_impl->FreeContinuation(pending);
+        m_impl->retiredCommands.clear();
+        m_impl->retiredActions.clear();
+        m_impl->cancellationsQueued = false;
+        m_impl->Error("cancellation", "cancelled handlers kept cancelling each other; the rest were dropped");
+    }
 }
 
 std::vector<DebugBreakpoint> JavaScriptHost::SetDebugBreakpoints(

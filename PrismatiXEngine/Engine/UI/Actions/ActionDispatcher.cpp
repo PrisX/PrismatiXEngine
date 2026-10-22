@@ -88,7 +88,7 @@ Result<ActionExecutionId> ActionDispatcher::Start(ActionInvocation invocation,
         return Result<ActionExecutionId>::Success(running);
     if (running && reentry == ActionReentryPolicy::Restart) {
         for (const auto execution : runningExecutions) {
-            const Status cancelled = Cancel(execution);
+            const Status cancelled = Cancel(execution, ActionCancelReason::Restart);
             if (!cancelled)
                 return Result<ActionExecutionId>::Failure(cancelled.Diagnostics());
         }
@@ -149,12 +149,13 @@ Status ActionDispatcher::Failure(const ActionExecutionId execution) const {
     return found->second.failure;
 }
 
-Status ActionDispatcher::Cancel(const ActionExecutionId execution) {
+Status ActionDispatcher::Cancel(const ActionExecutionId execution,
+                                const ActionCancelReason reason) {
     const auto found = m_executions.find(execution);
     if (found == m_executions.end())
         return Status::Fail(DispatchError("PXUIACTION2025", "Unknown action execution"));
     if (found->second.state == ActionExecutionState::Running && found->second.provider)
-        found->second.provider->Cancel(found->second.providerHandle);
+        found->second.provider->CancelWithReason(found->second.providerHandle, reason);
     found->second.state = ActionExecutionState::Cancelled;
     return Status::Ok();
 }
@@ -162,7 +163,8 @@ Status ActionDispatcher::Cancel(const ActionExecutionId execution) {
 void ActionDispatcher::CancelAll() {
     for (auto& [_, execution] : m_executions) {
         if (execution.state == ActionExecutionState::Running && execution.provider)
-            execution.provider->Cancel(execution.providerHandle);
+            execution.provider->CancelWithReason(execution.providerHandle,
+                                                 ActionCancelReason::Closed);
     }
     m_executions.clear();
 }
@@ -176,7 +178,8 @@ void ActionDispatcher::CancelSource(const std::string_view sourceScene) {
             continue;
         }
         if (execution.state == ActionExecutionState::Running && execution.provider)
-            execution.provider->Cancel(execution.providerHandle);
+            execution.provider->CancelWithReason(execution.providerHandle,
+                                                 ActionCancelReason::Closed);
         iterator = m_executions.erase(iterator);
     }
 }

@@ -543,6 +543,12 @@ public:
         ++m_cancelCount;
         m_states[handle] = px::ui::ActionExecutionState::Cancelled;
     }
+    void CancelWithReason(const std::uint64_t handle,
+                          const px::ui::ActionCancelReason reason) override {
+        m_lastReason = reason;
+        Cancel(handle);
+    }
+    [[nodiscard]] px::ui::ActionCancelReason LastReason() const { return m_lastReason; }
     void Update(float) override {
         for (auto& [_, state] : m_states)
             if (state == px::ui::ActionExecutionState::Running) state = px::ui::ActionExecutionState::Completed;
@@ -556,6 +562,7 @@ private:
     std::unordered_map<std::uint64_t, px::ui::ActionExecutionState> m_states;
     std::uint64_t m_next = 1;
     std::size_t m_cancelCount = 0;
+    px::ui::ActionCancelReason m_lastReason = px::ui::ActionCancelReason::Cancelled;
 };
 
 void TestActionDispatcherReentryAndCancellation() {
@@ -617,7 +624,8 @@ void TestActionDispatcherReentryAndCancellation() {
                   px::ui::ActionExecutionState::Cancelled &&
               actions.State(restartSecond.Value()) ==
                   px::ui::ActionExecutionState::Running &&
-              provider->CancelCount() == 3,
+              provider->CancelCount() == 3 &&
+              provider->LastReason() == px::ui::ActionCancelReason::Restart,
           "restart should cancel the old execution while retaining its terminal state for awaiters");
     actions.Update(0.1f);
     Check(actions.State(restartSecond.Value()) ==
@@ -632,6 +640,8 @@ void TestActionDispatcherReentryAndCancellation() {
         invocation, {.reentryPolicy = px::ui::ActionReentryPolicy::Allow});
     const auto lifecycleCheckpoints = actions.CaptureState();
     actions.CancelAll();
+    Check(provider->LastReason() == px::ui::ActionCancelReason::Closed,
+          "closing every execution should tell the provider the scene closed");
     const bool providersCancelled = std::ranges::all_of(
         lifecycleCheckpoints, [&](const px::ui::ActionExecutionCheckpoint& checkpoint) {
             return provider->Poll(checkpoint.providerHandle) ==

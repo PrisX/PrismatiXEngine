@@ -5,6 +5,7 @@
 #include "Engine/Script/ScriptRenderTree.h"
 #include "Engine/UI/Actions/ActionDispatcher.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -52,6 +53,37 @@ enum class ConsoleLevel {
     Warning,
     Error,
 };
+
+// Why a running extension handler (a Story command or UI Action that is
+// waiting on an engine wait) is cancelled. The handler's abort signal fires
+// with an AbortError whose `kind` is CancellationKind(reason).
+enum class CancellationReason : std::uint8_t {
+    Cancelled,  // the engine cancelled the Action without a narrower reason
+    Restart,    // the Action was pressed again with reentry "restart"
+    Closed,     // the UI scene (route) that started the Action was replaced
+    Skip,       // Skip passed over a Story command that holds the Story
+    Rollback,   // rollback replaced the running handlers
+    Load,       // a save or checkpoint replaced the running handlers
+    Reset,      // the host restarted (Preview restart, explicit reset)
+    Reload,     // the extension was loaded again
+    Shutdown,   // the runtime is shutting down
+};
+
+[[nodiscard]] constexpr std::string_view CancellationKind(
+    const CancellationReason reason) noexcept {
+    switch (reason) {
+        case CancellationReason::Cancelled: return "cancelled";
+        case CancellationReason::Restart: return "restart";
+        case CancellationReason::Closed: return "closed";
+        case CancellationReason::Skip: return "skip";
+        case CancellationReason::Rollback: return "rollback";
+        case CancellationReason::Load: return "load";
+        case CancellationReason::Reset: return "reset";
+        case CancellationReason::Reload: return "reload";
+        case CancellationReason::Shutdown: return "shutdown";
+    }
+    return "cancelled";
+}
 
 struct ConsoleMessage {
     ConsoleLevel level = ConsoleLevel::Info;
@@ -155,12 +187,21 @@ public:
     virtual Status RestorePendingActions(const PendingActionsState& state) = 0;
     [[nodiscard]] virtual Result<ExtensionStates> CaptureExtensionState() = 0;
     virtual Status RestoreExtensionState(const ExtensionStates& state) = 0;
-    // Restores command and Action continuations as one checkpoint. If either
-    // replay fails, every realm is returned to the exact checkpoint that was
-    // active before this call.
+    // Restores command and Action continuations as one checkpoint. The
+    // handlers running before the call are cancelled first with `replaced`
+    // (their abort listeners and finally blocks run before the checkpoint is
+    // replayed, so whatever they write is overwritten by the restored state);
+    // nullopt drops them silently. If either replay fails, every realm is
+    // returned to the exact checkpoint that was active before this call.
     Status RestoreCheckpoint(const PendingCommandsState& commands,
-                             const PendingActionsState& actions);
-    virtual void CancelPending() = 0;
+                             const PendingActionsState& actions,
+                             std::optional<CancellationReason> replaced =
+                                 CancellationReason::Load);
+    // Cancels every running command and Action in every realm.
+    void CancelPending() { CancelPending(CancellationReason::Reset); }
+    virtual void CancelPending(CancellationReason reason) = 0;
+    // Cancels only the running Story commands; true when one was cancelled.
+    virtual bool CancelPendingCommands(CancellationReason reason) = 0;
     virtual std::vector<DebugBreakpoint> SetDebugBreakpoints(
         std::vector<DebugBreakpoint> breakpoints) = 0;
     virtual bool DebugPause() = 0;

@@ -40,7 +40,9 @@ public:
     Status RestorePendingActions(const PendingActionsState& state) override;
     [[nodiscard]] Result<ExtensionStates> CaptureExtensionState() override;
     Status RestoreExtensionState(const ExtensionStates& state) override;
-    void CancelPending() override;
+    using ScriptHost::CancelPending;
+    void CancelPending(CancellationReason reason) override;
+    bool CancelPendingCommands(CancellationReason reason) override;
     std::vector<DebugBreakpoint> SetDebugBreakpoints(
         std::vector<DebugBreakpoint> breakpoints) override;
     bool DebugPause() override;
@@ -54,7 +56,11 @@ public:
     Status InvokeAction(const ui::ActionInvocation& invocation);
     ui::ProviderActionStart StartAction(const ui::ActionInvocation& invocation);
     [[nodiscard]] ui::ActionExecutionState ActionState(std::uint64_t handle) const;
-    void CancelAction(std::uint64_t handle);
+    void CancelAction(std::uint64_t handle,
+                      CancellationReason reason = CancellationReason::Cancelled);
+    // Live native event listeners of this realm (all events when empty),
+    // including those of its extension realms.
+    [[nodiscard]] std::size_t ListenerCount(std::string_view event = {}) const;
 
 private:
     bool RunModuleFile(const std::string& vfsPath);
@@ -66,6 +72,7 @@ private:
     Status RestoreExtensionStateUnchecked(const ExtensionStates& state);
     Status DispatchEventInCurrentRealm(const std::string& event,
                                        const EventPayload& payload);
+    void FlushCancellations();
 
     class Impl;
     std::unique_ptr<Impl> m_impl;

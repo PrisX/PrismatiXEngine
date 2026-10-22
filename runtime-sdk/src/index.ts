@@ -9,6 +9,74 @@ export interface ResourceRef {
 
 export type VariableScope = "session" | "profile";
 
+/** Why a running handler was cancelled (`AbortError.kind`). */
+export type CancellationKind =
+  /** The engine cancelled the Action without a narrower reason. */
+  | "cancelled"
+  /** The Action was started again and its manifest says `reentry: "restart"`. */
+  | "restart"
+  /** The UI scene (route) that started the Action was replaced or closed. */
+  | "closed"
+  /** Skip passed over the Story command while it held the Story. */
+  | "skip"
+  /** Rollback replaced the running handlers. */
+  | "rollback"
+  /** A save (or a Preview checkpoint) was loaded over the running handlers. */
+  | "load"
+  /** The host restarted (Preview restart). */
+  | "reset"
+  /** The extension was loaded again. */
+  | "reload"
+  /** The game is shutting down. */
+  | "shutdown";
+
+/** What a cancelled handler's signal is aborted with, and what its pending engine wait rejects with. */
+export interface AbortError extends Error {
+  readonly name: "AbortError";
+  readonly code: "PXJS7301";
+  readonly kind: CancellationKind;
+}
+
+export interface CancellationEvent {
+  readonly type: "abort";
+  readonly target: CancellationSignal;
+}
+
+/**
+ * An AbortSignal-like token passed to every command and Action handler as
+ * `context.abortSignal`. When the handler is cancelled the signal aborts
+ * (`onabort`, then listeners in the order they were added, all synchronously),
+ * the engine wait it awaits rejects with `reason` (a generator gets `reason`
+ * thrown at its `yield`), and any engine wait it starts afterwards throws
+ * `reason` too, so `catch`/`finally` blocks run before the Player moves on.
+ * A handler that finishes on its own never sees its signal abort.
+ */
+export interface CancellationSignal {
+  readonly aborted: boolean;
+  /** The AbortError, once aborted. */
+  readonly reason: AbortError | undefined;
+  onabort: ((this: CancellationSignal, event: CancellationEvent) => void) | null;
+  /** Like AbortSignal: a listener added after the abort is never called. */
+  addEventListener(type: "abort", listener: (this: CancellationSignal, event: CancellationEvent) => void): void;
+  removeEventListener(type: "abort", listener: (this: CancellationSignal, event: CancellationEvent) => void): void;
+  /** Calls `listener` on abort (at once if already aborted); the result removes it. */
+  onAbort(listener: (reason: AbortError) => void): Unsubscribe;
+  /** Throws `reason` when aborted. */
+  throwIfAborted(): void;
+}
+
+/** True for the AbortError a cancelled handler sees (rethrow it, or let `finally` run). */
+export function isAbortError(value: unknown): value is AbortError {
+  return typeof value === "object" && value !== null &&
+    (value as {name?: unknown}).name === "AbortError";
+}
+
+/** What the Player passes as the second argument of every command handler. */
+export interface ScriptCommandContext {
+  /** Aborts when the Story command is cancelled (skip, rollback, load, reset, reload, shutdown). */
+  readonly abortSignal: CancellationSignal;
+}
+
 /** What the Player passes as the second argument of every Action handler. */
 export interface ScriptActionContext {
   /** True while Studio/Preview runs the Action; avoid irreversible work then. */
@@ -21,7 +89,13 @@ export interface ScriptActionContext {
   readonly signal?: string;
   /** The route that was current when the Action started. */
   readonly route?: string;
-  readonly [key: string]: RuntimeValue | undefined;
+  /**
+   * Aborts when the Action is cancelled: restarted (reentry "restart"), its
+   * scene closed, or the running handlers replaced by a load, rollback,
+   * reset, reload or shutdown.
+   */
+  readonly abortSignal: CancellationSignal;
+  readonly [key: string]: RuntimeValue | CancellationSignal | undefined;
 }
 
 /**
@@ -32,7 +106,7 @@ export interface ScriptActionContext {
 export type EngineWaitGenerator = Generator<EngineAwaitToken, void, unknown>;
 
 export type ScriptCommandHandler<TArgs extends Record<string, RuntimeValue> = Record<string, RuntimeValue>, TResult = unknown> =
-  (args: TArgs) => TResult | Promise<TResult> | EngineWaitGenerator;
+  (args: TArgs, context: ScriptCommandContext) => TResult | Promise<TResult> | EngineWaitGenerator;
 
 export type ScriptActionHandler<TArgs extends Record<string, RuntimeValue> = Record<string, RuntimeValue>> =
   (args: TArgs, context: ScriptActionContext) => void | Promise<void> | EngineWaitGenerator;
@@ -89,7 +163,7 @@ export type DeclaredActionArgs<K extends DeclaredActionId> =
   ExtensionActionDeclarations[K] extends {readonly args: infer A} ? A : Record<string, RuntimeValue>;
 
 export type DeclaredCommandHandler<K extends DeclaredCommandId, TResult = unknown> =
-  (args: DeclaredCommandArgs<K>) => TResult | Promise<TResult> | EngineWaitGenerator;
+  (args: DeclaredCommandArgs<K>, context: ScriptCommandContext) => TResult | Promise<TResult> | EngineWaitGenerator;
 export type DeclaredActionHandler<K extends DeclaredActionId> =
   (args: DeclaredActionArgs<K>, context: ScriptActionContext) => void | Promise<void> | EngineWaitGenerator;
 
@@ -596,11 +670,16 @@ export interface PrismatiXEngine {
   log(...values: unknown[]): void;
   RegisterCommand<TArgs extends Record<string, RuntimeValue> = Record<string, RuntimeValue>, TResult = unknown>(id: string, handler: ScriptCommandHandler<TArgs, TResult>): void;
   RegisterAction<TArgs extends Record<string, RuntimeValue> = Record<string, RuntimeValue>>(id: string, handler: ScriptActionHandler<TArgs>): void;
-  on<K extends EngineEventName>(event: K, handler: EngineEventHandler<K>): void;
-  on(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): void;
+  /** Subscribes; the result is the listener id that `off` takes. */
+  on<K extends EngineEventName>(event: K, handler: EngineEventHandler<K>): number;
+  on(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): number;
+  /** Removes the listener `on` returned; false when it was already gone. */
+  off(listener: number): boolean;
+  /** Live listeners of this extension for `event` (all events when omitted). */
+  listenerCount(event?: string): number;
   emit(event: string, payload?: RuntimeValue): Promise<void>;
   /** @deprecated Use on. */
-  On(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): void;
+  On(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): number;
   /** @deprecated Use emit. */
   Emit(event: string, payload?: RuntimeValue): Promise<void>;
 
@@ -779,6 +858,8 @@ export const ENGINE_HOST_BINDINGS = [
   "RegisterCommand",
   "RegisterAction",
   "on",
+  "off",
+  "listenerCount",
   "emit",
   "On",
   "Emit",
@@ -1065,7 +1146,7 @@ export interface PrismatiXContext {
     finish(handle: number, apply?: boolean): boolean;
     status(handle: number): AnimationStatus;
     error(handle: number): string;
-    onMarker(handler: (event: TimelineMarkerEvent) => void | Promise<void>): void;
+    onMarker(handler: (event: TimelineMarkerEvent) => void | Promise<void>): Unsubscribe;
     wait(handle: number): Promise<void>;
     token(handle: number): AnimationAwaitToken;
   };
@@ -1085,19 +1166,22 @@ export interface PrismatiXContext {
   };
   readonly events: {
     /**
-     * Subscribes for the rest of the session. The returned function stops
-     * delivery to this handler (the Player has no per-handler removal, so the
-     * facade gates delivery instead).
+     * Subscribes until the returned function is called, which removes the
+     * listener from the Player (it is never called again, even later in the
+     * event that is being delivered). Listeners are runtime state, not saved:
+     * subscribe while the extension entry runs, not inside a command/Action.
      */
     on<K extends EngineEventName>(event: K, handler: EngineEventHandler<K>): Unsubscribe;
     on(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): Unsubscribe;
-    /** Delivers the next occurrence only. */
+    /** Delivers the next occurrence only, then removes the listener. */
     once<K extends EngineEventName>(event: K, handler: EngineEventHandler<K>): Unsubscribe;
     once(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): Unsubscribe;
     emit(event: string, payload?: RuntimeValue): Promise<void>;
+    /** Live listeners of this extension for `event` (all events when omitted). */
+    listenerCount(event?: string): number;
   };
   readonly frame: {
-    /** Calls `handler` every frame with the elapsed seconds (`frame.update`). */
+    /** Calls `handler` every frame with the elapsed seconds (`frame.update`) until stopped. */
     onUpdate(handler: (deltaSeconds: number) => void): Unsubscribe;
   };
   /** Writes to the Player log (and the Studio/QA console). */
@@ -1239,6 +1323,12 @@ function audioHandle(engine: PrismatiXEngine, id: number): AudioHandle {
   });
 }
 
+// Removes a native listener. On a Player without Engine.off, `on` returns
+// nothing; delivery is also gated in the facade for that case.
+function removeListener(engine: PrismatiXEngine, listener: unknown): void {
+  if (typeof listener === "number" && typeof engine.off === "function") engine.off(listener);
+}
+
 function observeModel<T>(
   engine: PrismatiXEngine,
   read: () => T,
@@ -1255,23 +1345,33 @@ function observeModel<T>(
     subscriber(snapshot);
   };
   publish();
-  engine.on("frame.update", publish);
-  return () => { active = false; };
+  const listener: unknown = engine.on("frame.update", publish);
+  return () => {
+    if (!active) return;
+    active = false;
+    removeListener(engine, listener);
+  };
 }
 
-function gatedSubscription(
+function subscription(
   engine: PrismatiXEngine,
   event: string,
   handler: (payload: RuntimeValue) => void | Promise<void>,
   once: boolean,
 ): Unsubscribe {
   let active = true;
-  engine.on(event, (payload: RuntimeValue) => {
+  let listener: unknown;
+  const stop = () => {
+    if (!active) return;
+    active = false;
+    removeListener(engine, listener);
+  };
+  listener = engine.on(event, (payload: RuntimeValue) => {
     if (!active) return undefined;
-    if (once) active = false;
+    if (once) stop();
     return handler(payload);
   });
-  return () => { active = false; };
+  return stop;
 }
 
 function sandboxConsole(): Partial<SandboxConsole> {
@@ -1441,10 +1541,8 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       finish: (handle, apply) => engine.FinishAnimation(handle, apply),
       status: (handle) => engine.GetAnimationStatus(handle),
       error: (handle) => engine.GetAnimationError(handle),
-      onMarker: (handler) => engine.on(
-        "timeline.marker",
-        (payload) => handler(payload as unknown as TimelineMarkerEvent),
-      ),
+      onMarker: (handler) => subscription(engine, "timeline.marker",
+        (payload) => handler(payload as unknown as TimelineMarkerEvent), false),
       wait: (handle) => engine.WaitAnimation(handle),
       token: (handle) => engine.AwaitAnimation(handle),
     },
@@ -1464,13 +1562,14 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
     },
     events: {
       on: (event: string, handler: (payload: never) => void | Promise<void>) =>
-        gatedSubscription(engine, event, handler as (payload: RuntimeValue) => void, false),
+        subscription(engine, event, handler as (payload: RuntimeValue) => void, false),
       once: (event: string, handler: (payload: never) => void | Promise<void>) =>
-        gatedSubscription(engine, event, handler as (payload: RuntimeValue) => void, true),
+        subscription(engine, event, handler as (payload: RuntimeValue) => void, true),
       emit: (event, payload) => engine.emit(event, payload),
+      listenerCount: (event) => engine.listenerCount(event),
     },
     frame: {
-      onUpdate: (handler) => gatedSubscription(engine, "frame.update", (payload) => {
+      onUpdate: (handler) => subscription(engine, "frame.update", (payload) => {
         const delta = Number((payload as {delta?: unknown} | null)?.delta);
         handler(Number.isFinite(delta) ? delta : 0);
       }, false),

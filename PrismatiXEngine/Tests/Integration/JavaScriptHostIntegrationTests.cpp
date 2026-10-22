@@ -21,6 +21,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -1144,6 +1145,241 @@ void TestPhaseThreePublicRuntimeSurfaces(px::test::Suite& suite) {
                  "retained render checkpoint should round-trip exactly");
 }
 
+std::string VariableText(const px::vn::VariableStore& variables, const std::string_view name) {
+    const auto* value = variables.GetValue(name);
+    if (!value) return {};
+    if (const auto* text = value->TryGet<std::string>()) return *text;
+    if (const auto* integer = value->TryGet<std::int64_t>()) return std::to_string(*integer);
+    if (const auto* boolean = value->TryGet<bool>()) return *boolean ? "true" : "false";
+    return "<value>";
+}
+
+void TestCancellationAndEventListeners(px::test::Suite& suite) {
+    px::vn::VariableStore variables;
+    std::vector<px::script::ConsoleMessage> console;
+    px::script::JavaScriptHost* hostPointer = nullptr;
+    std::uint64_t cancelFromService = 0;
+    px::script::ScriptServices services;
+    services.variables = &variables;
+    services.console = [&console](const px::script::ConsoleMessage& message) {
+        console.push_back(message);
+    };
+    // A service that cancels an Action while that Action's JavaScript runs:
+    // the cancellation must wait until the host call returns.
+    services.advanceDialogue = [&] {
+        if (hostPointer && cancelFromService != 0)
+            hostPointer->CancelAction(cancelFromService,
+                                      px::script::CancellationReason::Closed);
+        return true;
+    };
+    auto host = std::make_unique<px::script::JavaScriptHost>(services);
+    hostPointer = host.get();
+    const auto text = [&](const std::string_view name) {
+        return VariableText(variables, name);
+    };
+    const auto errors = [&] {
+        return std::ranges::count_if(console, [](const auto& message) {
+            return message.level == px::script::ConsoleLevel::Error;
+        });
+    };
+
+    suite.Require(host->RunString(R"js(
+        const note = (name, value) => Engine.SetVariable(name, value, "session");
+        const bump = (name) => note(name, (Engine.GetVariable(name) ?? 0) + 1);
+        Engine.RegisterAction("cancel.async", async (args, context) => {
+            const signal = context.abortSignal;
+            if (signal.aborted || signal.reason !== undefined)
+                throw new Error("a fresh signal must not be aborted");
+            signal.addEventListener("abort", () =>
+                note(`${args.tag}.listener`, `${signal.aborted}:${signal.reason.kind}`));
+            signal.onAbort((reason) => note(`${args.tag}.onAbort`, reason.name));
+            try {
+                await Engine.WaitSeconds(10);
+                note(`${args.tag}.after`, true);
+            } catch (error) {
+                note(`${args.tag}.caught`, `${error.name}:${error.kind}:${error.code}`);
+                throw error;
+            } finally {
+                bump(`${args.tag}.finally`);
+                try { await Engine.WaitSeconds(1); note(`${args.tag}.rewaited`, true); }
+                catch (error) { note(`${args.tag}.rewait`, error.name); }
+            }
+        });
+        Engine.RegisterAction("cancel.generator", function* (args, context) {
+            try {
+                yield Engine.AwaitSeconds(10);
+                note("generator.after", true);
+            } finally {
+                note("generator.finally", context.abortSignal.reason.kind);
+            }
+        });
+        Engine.RegisterAction("cancel.deferred", async (args, context) => {
+            await Engine.WaitSeconds(0);
+            Engine.AdvanceDialogue();
+            note("deferred.sameCall", context.abortSignal.aborted);
+            try { await Engine.WaitSeconds(10); }
+            finally { note("deferred.finally", context.abortSignal.reason?.kind ?? "none"); }
+        });
+        Engine.RegisterCommand("cancel.command", async (args, context) => {
+            try { await Engine.WaitSeconds(args.seconds); note(`${args.tag}.done`, true); }
+            finally {
+                if (context.abortSignal.aborted)
+                    note(`${args.tag}.cancelled`, context.abortSignal.reason.kind);
+            }
+        });
+    )js", "cancellation-fixture"),
+                  "cancellation fixture should register");
+
+    // Reentry restart and scene close arrive through the production provider.
+    px::ui::ActionCatalog catalog;
+    for (const auto* id : {"cancel.async", "cancel.generator", "cancel.deferred"}) {
+        px::ui::ActionDescriptor descriptor;
+        descriptor.id = id;
+        descriptor.label = id;
+        descriptor.displayName = id;
+        descriptor.category = "Test";
+        descriptor.origin = px::ui::ActionOrigin::ScriptExtension;
+        descriptor.providerId = "script";
+        descriptor.reentryPolicy = px::ui::ActionReentryPolicy::Restart;
+        descriptor.allowAdditionalArguments = true;
+        suite.Require(static_cast<bool>(catalog.Register(std::move(descriptor))),
+                      "cancellation Action descriptor should register");
+    }
+    px::ui::ActionDispatcher actions(catalog);
+    suite.Require(static_cast<bool>(actions.RegisterProvider(host->CreateActionProvider())),
+                  "JavaScript provider should register");
+    px::ui::ActionInvocation restart;
+    restart.action = "cancel.async";
+    restart.arguments["tag"] = px::Variant(std::string("restart"));
+    restart.context.sourceScene = "scene-a";
+    const auto first = actions.Start(restart);
+    suite.Require(first && host->HasPendingAction(),
+                  "async Action should suspend on an engine wait");
+    const auto second = actions.Start(restart);
+    suite.Expect(second && actions.State(first.Value()) == px::ui::ActionExecutionState::Cancelled &&
+                     text("restart.listener") == "true:restart" &&
+                     text("restart.onAbort") == "AbortError" &&
+                     text("restart.caught") == "AbortError:restart:PXJS7301" &&
+                     text("restart.finally") == "1" && text("restart.rewait") == "AbortError" &&
+                     text("restart.after").empty() && text("restart.rewaited").empty() &&
+                     host->CapturePendingActions().size() == 1 && errors() == 0,
+                 "restart should abort the signal, reject the pending wait and run finally before the new run starts");
+    actions.CancelSource("scene-a");
+    suite.Expect(!host->HasPendingAction() && text("restart.finally") == "2" &&
+                     text("restart.listener") == "true:closed" && errors() == 0,
+                 "closing the scene should cancel its running Action with \"closed\"");
+
+    px::ui::ActionInvocation generator;
+    generator.action = "cancel.generator";
+    const auto generatorStart = host->StartAction(generator);
+    suite.Require(generatorStart.status && generatorStart.pending,
+                  "generator Action should suspend on a yielded token");
+    host->CancelAction(generatorStart.handle, px::script::CancellationReason::Restart);
+    host->Update(20.0f);
+    suite.Expect(text("generator.finally") == "restart" && text("generator.after").empty() &&
+                     host->ActionState(generatorStart.handle) ==
+                         px::ui::ActionExecutionState::Cancelled &&
+                     errors() == 0,
+                 "a cancelled generator should unwind through finally and never resume");
+
+    px::ui::ActionInvocation deferred;
+    deferred.action = "cancel.deferred";
+    const auto deferredStart = host->StartAction(deferred);
+    suite.Require(deferredStart.status && deferredStart.pending,
+                  "deferred cancellation fixture should start");
+    cancelFromService = deferredStart.handle;
+    host->Update(0.0f);
+    cancelFromService = 0;
+    suite.Expect(text("deferred.sameCall") == "false" &&
+                     text("deferred.finally") == "closed" && !host->HasPendingAction() &&
+                     host->ActionState(deferredStart.handle) ==
+                         px::ui::ActionExecutionState::Cancelled &&
+                     errors() == 0,
+                 "cancellation requested while the Action runs should end it once the host call returns");
+
+    px::vn::Command skipped;
+    skipped.type = "cancel.command";
+    skipped.typedArgs["seconds"] = px::Variant(5.0);
+    skipped.typedArgs["tag"] = px::Variant(std::string("skip"));
+    suite.Require(host->InvokeCommand(skipped) && host->HasPendingCommand(),
+                  "command should hold the Story on an engine wait");
+    suite.Expect(host->CancelPendingCommands(px::script::CancellationReason::Skip) &&
+                     !host->HasPendingCommand() && text("skip.cancelled") == "skip" &&
+                     text("skip.done").empty() &&
+                     !host->CancelPendingCommands(px::script::CancellationReason::Skip),
+                 "skip should cancel the waiting Story command");
+
+    px::vn::Command loaded = skipped;
+    loaded.typedArgs["seconds"] = px::Variant(0.5);
+    loaded.typedArgs["tag"] = px::Variant(std::string("load"));
+    suite.Require(host->InvokeCommand(loaded) && host->HasPendingCommand(),
+                  "checkpoint command should start");
+    const auto checkpoint = host->CapturePending();
+    suite.Expect(static_cast<bool>(host->RestoreCheckpoint(checkpoint, {},
+                                                           px::script::CancellationReason::Load)) &&
+                     text("load.cancelled") == "load" && host->HasPendingCommand(),
+                 "load should cancel the running handler, then replay the saved one with a fresh signal");
+    variables.SetValue("load.cancelled", px::Variant(std::string()));
+    host->Update(1.0f);
+    suite.Expect(!host->HasPendingCommand() && text("load.done") == "true" &&
+                     text("load.cancelled").empty() && errors() == 0,
+                 "the replayed handler should complete normally");
+    suite.Require(host->InvokeCommand(loaded), "rollback fixture should start");
+    suite.Expect(static_cast<bool>(host->RestoreCheckpoint(host->CapturePending(), {},
+                                                           std::nullopt)) &&
+                     text("load.cancelled").empty() && host->HasPendingCommand(),
+                 "a restore without a reason replaces handlers silently");
+    host->CancelPending();
+    suite.Expect(text("load.cancelled") == "reset" && !host->HasPendingCommand(),
+                 "CancelPending without a reason ends handlers with \"reset\"");
+
+    // Native listener removal.
+    suite.Require(host->RunString(R"js(
+        globalThis.calls = { kept: 0, removed: 0, once: 0, late: 0 };
+        globalThis.kept = Engine.on("tick", () => { calls.kept++; });
+        globalThis.removed = Engine.on("tick", () => { calls.removed++; });
+        globalThis.onceId = Engine.on("tick", () => {
+            calls.once++;
+            Engine.off(onceId);
+            Engine.off(removed);
+            Engine.on("tick", () => { calls.late++; });
+        });
+        if (typeof kept !== "number" || kept === removed) throw new Error("listener ids");
+    )js", "listener-fixture"),
+                  "listener fixture should subscribe");
+    suite.Expect(host->ListenerCount("tick") == 3, "three native listeners are registered");
+    suite.Require(static_cast<bool>(host->Emit("tick")), "tick should dispatch");
+    suite.Expect(host->ListenerCount("tick") == 2 &&
+                     host->RunString(R"js(
+        if (calls.kept !== 1 || calls.once !== 1 || calls.late !== 0)
+            throw new Error(`first dispatch ${JSON.stringify(calls)}`);
+        if (calls.removed !== 1 && calls.removed !== 0) throw new Error("removed");
+        globalThis.removedBefore = calls.removed;
+    )js", "listener-first"),
+                 "a listener removed during dispatch is skipped and one added waits for the next event");
+    suite.Require(static_cast<bool>(host->Emit("tick")), "second tick should dispatch");
+    suite.Expect(host->RunString(R"js(
+        if (calls.kept !== 2 || calls.once !== 1 || calls.late !== 1 ||
+            calls.removed !== removedBefore)
+            throw new Error(`second dispatch ${JSON.stringify(calls)}`);
+        if (!Engine.off(kept) || Engine.off(kept) || Engine.listenerCount("tick") !== 1)
+            throw new Error("off did not remove exactly once");
+    )js", "listener-second") &&
+                     host->ListenerCount("tick") == 1 && host->ListenerCount() == 1,
+                 "Engine.off removes the native listener and listenerCount reports it");
+
+    // Shutdown ends what is still running.
+    px::ui::ActionInvocation shutdown;
+    shutdown.action = "cancel.async";
+    shutdown.arguments["tag"] = px::Variant(std::string("shutdown"));
+    suite.Require(host->StartAction(shutdown).pending, "shutdown fixture should start");
+    hostPointer = nullptr;
+    host.reset();
+    suite.Expect(text("shutdown.listener") == "true:shutdown" &&
+                     text("shutdown.finally") == "1",
+                 "destroying the host should cancel running handlers with \"shutdown\"");
+}
+
 }  // namespace
 
 int main() {
@@ -1153,6 +1389,9 @@ int main() {
     });
     suite.Run("PhaseThreePublicRuntimeSurfaces", [&] {
         TestPhaseThreePublicRuntimeSurfaces(suite);
+    });
+    suite.Run("CancellationAndEventListeners", [&] {
+        TestCancellationAndEventListeners(suite);
     });
     return suite.Finish();
 }

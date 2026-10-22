@@ -2424,7 +2424,8 @@ bool PlayerApp::LoadSlot(int slot) {
     const auto rollbackPresentation = [this, &previousPending, &previousActions,
                                        &previousExtensionState, &previousUi] {
         if (m_scriptHost) {
-            (void)m_scriptHost->RestoreCheckpoint(previousPending, previousActions);
+            (void)m_scriptHost->RestoreCheckpoint(previousPending, previousActions,
+                                                  std::nullopt);
             (void)m_scriptHost->RestoreExtensionState(previousExtensionState);
         }
         (void)m_ui.RestoreRuntimeState(previousUi);
@@ -2440,7 +2441,8 @@ bool PlayerApp::LoadSlot(int slot) {
         }
         previousExtensionState = capturedExtensionState.TakeValue();
         const Status scriptStatus = m_scriptHost->RestoreCheckpoint(
-            snap->scriptPending, snap->scriptActions);
+            snap->scriptPending, snap->scriptActions,
+            script::CancellationReason::Load);
         if (!scriptStatus) {
             rollbackPresentation();
             return false;
@@ -2632,7 +2634,8 @@ bool PlayerApp::ApplyRollback(const RollbackEntry& entry) {
     const auto rollbackPresentation = [this, &previousPending, &previousActions,
                                        &previousExtensionState, &previousUi] {
         if (m_scriptHost) {
-            (void)m_scriptHost->RestoreCheckpoint(previousPending, previousActions);
+            (void)m_scriptHost->RestoreCheckpoint(previousPending, previousActions,
+                                                  std::nullopt);
             (void)m_scriptHost->RestoreExtensionState(previousExtensionState);
         }
         (void)m_ui.RestoreRuntimeState(previousUi);
@@ -2644,7 +2647,8 @@ bool PlayerApp::ApplyRollback(const RollbackEntry& entry) {
         if (!capturedExtensionState) return false;
         previousExtensionState = capturedExtensionState.TakeValue();
         const Status scriptStatus = m_scriptHost->RestoreCheckpoint(
-            s.scriptPending, s.scriptActions);
+            s.scriptPending, s.scriptActions,
+            script::CancellationReason::Rollback);
         if (!scriptStatus) { rollbackPresentation(); return false; }
         const Status extensionStatus =
             m_scriptHost->RestoreExtensionState(s.extensionState);
@@ -3760,6 +3764,13 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     }
     const bool skipping = !locked && !m_skipDisabled && (m_skipMode || ctrlSkip);
     m_session->VM().SetFastForward(skipping);
+    // Skip passes over a Story command that holds the Story: the command's
+    // handler is cancelled ("skip") and the Story moves on.
+    if (skipping && m_scriptHost &&
+        m_session->VM().State() == vn::VMState::WaitingExternal &&
+        m_scriptHost->CancelPendingCommands(script::CancellationReason::Skip) &&
+        !m_scriptHost->HasPendingCommand() && !m_scriptHost->HasPendingAction())
+        m_session->VM().NotifyExternalDone();
     const auto skippableWait = [this] {
         return m_session->VM().State() == vn::VMState::WaitingClick ||
                m_session->VM().State() == vn::VMState::WaitingTimer;

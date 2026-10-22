@@ -19,6 +19,13 @@ enum class ActionExecutionState : std::uint8_t {
     Unknown,
 };
 
+// Why a running Action is cancelled; providers pass it to the handler.
+enum class ActionCancelReason : std::uint8_t {
+    Cancelled,  // an explicit cancel without a narrower reason
+    Restart,    // pressed again with reentry "restart"
+    Closed,     // the scene (route) that started it was replaced or closed
+};
+
 struct ProviderActionStart {
     Status status;
     std::uint64_t handle = 0;
@@ -39,6 +46,11 @@ public:
         return ActionExecutionState::Completed;
     }
     virtual void Cancel(std::uint64_t) {}
+    // Providers that tell their handlers why override this; the default
+    // forwards to Cancel.
+    virtual void CancelWithReason(const std::uint64_t handle, ActionCancelReason) {
+        Cancel(handle);
+    }
     virtual void Update(float) {}
 };
 
@@ -71,7 +83,9 @@ public:
                                                    ActionDispatchOptions options = {});
     [[nodiscard]] ActionExecutionState State(ActionExecutionId execution) const;
     [[nodiscard]] Status Failure(ActionExecutionId execution) const;
-    Status Cancel(ActionExecutionId execution);
+    Status Cancel(ActionExecutionId execution,
+                  ActionCancelReason reason = ActionCancelReason::Cancelled);
+    // Cancels every execution (the scene closed).
     void CancelAll();
     void CancelSource(std::string_view sourceScene);
     void Forget(ActionExecutionId execution);

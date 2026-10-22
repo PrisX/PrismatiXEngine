@@ -6,10 +6,16 @@
 
 namespace px::script {
 
-Status ScriptHost::RestoreCheckpoint(const PendingCommandsState& commands,
-                                     const PendingActionsState& actions) {
+Status ScriptHost::RestoreCheckpoint(
+    const PendingCommandsState& commands, const PendingActionsState& actions,
+    const std::optional<CancellationReason> replaced) {
     const PendingCommandsState previousCommands = CapturePending();
     const PendingActionsState previousActions = CapturePendingActions();
+    // The running handlers end before the checkpoint replays: their abort
+    // listeners and finally blocks run now, and the restored state that
+    // follows overwrites whatever they wrote. If the restore then fails, the
+    // rollback below replays them from their own checkpoint.
+    if (replaced) CancelPending(*replaced);
     const auto rollback = [this, &previousCommands, &previousActions] {
         const Status commandsRestored = RestorePending(previousCommands);
         const Status actionsRestored = RestorePendingActions(previousActions);
