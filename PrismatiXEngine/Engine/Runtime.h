@@ -79,10 +79,15 @@ public:
         m_lifecycle.SetPersistHandler(std::move(handler));
     }
     [[nodiscard]] platform::AppLifecycle& Lifecycle() { return m_lifecycle; }
+    // Why the last Init returned false, in one sentence; empty after a
+    // successful Init.
+    [[nodiscard]] const std::string& InitFailure() const { return m_initFailure; }
 
 private:
     static bool LifecycleEventWatch(void* userdata, SDL_Event* event);
     void HandleEvent(SDL_Event& event, bool& resized);
+    // Logs and records why Init stopped.
+    void RecordInitFailure(std::string reason);
 
     RuntimeConfig m_config;
     Window m_window;
@@ -97,6 +102,7 @@ private:
     std::function<void()> m_composedFrame;
     platform::AppLifecycle m_lifecycle;
     bool m_lifecycleWatch = false;
+    std::string m_initFailure;
     bool m_initialized = false;
     bool m_running = false;
 };

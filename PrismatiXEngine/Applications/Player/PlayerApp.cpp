@@ -824,6 +824,14 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 .category = "Player.Graphics",
                 .message = "The required SDL_GPU effects tier could not initialize",
                 .details = "The device must support D3D12, Metal, or Vulkan and a packaged shader format"});
+        // Last, so a failed boot names this precise reason as its cause.
+        if (m_boot.valid)
+            diag::Emit(diag::Diagnostic{
+                .severity = diag::Severity::Fatal,
+                .code = "PXPLAYER5007",
+                .category = "Player.Boot",
+                .message = "The runtime could not start",
+                .details = m_runtime.InitFailure()});
         PX_LOG_CRITICAL("Failed to initialize runtime.");
         return false;
     }
@@ -4180,7 +4188,12 @@ void PlayerApp::Shutdown() {
     }
     SaveSettingsIfWritable();
     SaveProfileIfWritable();
+    ReleaseSubsystems();
+}
+
+void PlayerApp::ReleaseSubsystems() {
     // Subsystems referencing the runtime must go before Runtime::Shutdown.
+    // Every step tolerates a boot that stopped part way.
     m_scriptHost.reset();
     m_splash.reset();
     HarvestBackgroundSave(true);
@@ -4194,12 +4207,78 @@ void PlayerApp::Shutdown() {
 
 int PlayerApp::Run(int argc, char* argv[]) {
     WatchOwnerProcess();
-    if (!Init(argc, argv)) {
+    const std::size_t firstBootDiagnostic = diag::Global().Snapshot().size();
+    bool booted = false;
+    try {
+        booted = Init(argc, argv);
+    } catch (const std::exception& error) {
+        diag::Emit(diag::Diagnostic{.severity = diag::Severity::Fatal,
+                                    .code = "PXPLAYER5008",
+                                    .category = "Player.Boot",
+                                    .message = "Boot stopped on an unexpected error",
+                                    .details = error.what()});
+    } catch (...) {
+        diag::Emit(diag::Diagnostic{.severity = diag::Severity::Fatal,
+                                    .code = "PXPLAYER5008",
+                                    .category = "Player.Boot",
+                                    .message = "Boot stopped on an unexpected error"});
+    }
+    if (!booted) {
+        FailBoot(firstBootDiagnostic);
         return 1;
     }
     MainLoop();
     Shutdown();
     return 0;
+}
+
+namespace {
+
+std::string Shortened(std::string text, const std::size_t limit) {
+    if (text.size() <= limit) return text;
+    std::size_t cut = limit;
+    // Never split a UTF-8 sequence.
+    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0u) == 0x80u) --cut;
+    text.resize(cut);
+    return text + "...";
+}
+
+}  // namespace
+
+void PlayerApp::FailBoot(const std::size_t firstDiagnostic) {
+    // The cause is the last error the boot reported: what made Init stop.
+    const auto diagnostics = diag::Global().Snapshot();
+    std::optional<diag::Diagnostic> cause;
+    for (std::size_t index = firstDiagnostic; index < diagnostics.size(); ++index)
+        if (diagnostics[index].BlocksBuild()) cause = diagnostics[index];
+    diag::Emit(diag::Diagnostic{
+        .severity = diag::Severity::Fatal,
+        .code = "PXPLAYER5031",
+        .category = "Player.Boot",
+        .message = "The game could not start",
+        .details = cause ? diag::Describe(*cause)
+                         : std::string("the Player log names the step that failed")});
+    Logger::Flush();
+    // Nothing of a partial boot may outlive this call: no event reaches the
+    // extensions and nothing is persisted, since settings and profile may
+    // not even have been read.
+    ReleaseSubsystems();
+    if (kQaHooks || !m_bootFailureDialog) return;
+    const std::string title = m_boot.config.title.empty() ? std::string("PrismatiX Player")
+                                                          : m_boot.config.title;
+    std::string text = title + " could not start.\n\n";
+    if (cause) {
+        text += cause->message;
+        if (!cause->details.empty()) text += ":\n" + Shortened(cause->details, 600);
+        text += "\n\n(" + cause->code + ")\n\n";
+    }
+    std::error_code ignored;
+    auto log = std::filesystem::absolute(Logger::CurrentLogPath(), ignored);
+    log.make_preferred();
+    if (!log.empty()) text += "Details are in the log:\n" + PathToUtf8(log);
+    if (!SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, (title + " could not start").c_str(),
+                                  text.c_str(), nullptr))
+        PX_LOG_WARN("Boot failure dialog could not be shown: {}", SDL_GetError());
 }
 
 }

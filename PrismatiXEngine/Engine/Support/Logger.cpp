@@ -52,6 +52,11 @@ bool Initialize(const std::string& application,
 void Shutdown() {
     std::lock_guard lock(g_mutex);
     spdlog::shutdown();
+    // spdlog::shutdown() leaves no default logger, and PX_LOG_* would then
+    // dereference null: an object torn down after this point (a static, or
+    // an owner that outlives main's Logger scope) must not crash by logging.
+    // A logger without sinks drops those lines instead.
+    spdlog::set_default_logger(std::make_shared<spdlog::logger>(std::string{}));
 }
 
 void Flush() {

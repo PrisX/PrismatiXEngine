@@ -28,6 +28,9 @@
 #endif
 #include <windows.h>
 #include <io.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -218,6 +221,29 @@ void ConnectConsole(const bool requested) {
     std::cin.clear();
 }
 #endif
+
+// A double-clicked game that cannot start must say so in a message box; the
+// shipped Player has no console. Tools read its log and output instead and
+// must never wait on a modal dialog: `prismatix run`
+// (PRISMATIX_EXIT_WITH_PROCESS), output redirected to a pipe or file (the
+// CLI, tests, CI) and PRISMATIX_NO_ERROR_DIALOG=1.
+bool BootFailureDialogWanted() {
+    for (const char* name : {"PRISMATIX_EXIT_WITH_PROCESS", "PRISMATIX_NO_ERROR_DIALOG"})
+        if (const char* value = SDL_getenv(name); value && *value) return false;
+#ifdef _WIN32
+    const HANDLE output = GetStdHandle(STD_ERROR_HANDLE);
+    if (output != nullptr && output != INVALID_HANDLE_VALUE) {
+        const DWORD type = GetFileType(output);
+        if (type == FILE_TYPE_PIPE || type == FILE_TYPE_DISK) return false;
+    }
+#elif !defined(__ANDROID__)
+    struct stat output{};
+    if (fstat(STDERR_FILENO, &output) == 0 &&
+        (S_ISFIFO(output.st_mode) || S_ISREG(output.st_mode)))
+        return false;
+#endif
+    return true;
+}
 }
 
 int main(int argc, char* argv[]) {
@@ -272,8 +298,15 @@ int main(int argc, char* argv[]) {
         }
     }
     if (!Logger::Initialize("PrismatiXPlayer", logDirectory)) return 1;
-    px::player::PlayerApp app;
-    const int result = app.Run(argc, argv);
+    int result = 1;
+    {
+        // The Player is destroyed inside the logger's lifetime: after a
+        // failed boot its members still release the runtime, and that
+        // teardown logs.
+        px::player::PlayerApp app;
+        app.SetBootFailureDialog(BootFailureDialogWanted());
+        result = app.Run(argc, argv);
+    }
     Logger::Shutdown();
     return result;
 }

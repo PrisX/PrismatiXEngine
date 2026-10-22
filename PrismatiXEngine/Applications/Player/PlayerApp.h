@@ -42,7 +42,14 @@ namespace px::player {
 class PlayerApp {
 public:
     ~PlayerApp();
+    // Returns 0 after a normal exit and 1 when the game could not start; a
+    // failed boot logs PXPLAYER5031 with its cause and releases what it built.
     int Run(int argc, char* argv[]);
+    // Whether a failed boot also tells the player in a message box. The host
+    // decides: a desktop launch has nowhere else to show it, while tools read
+    // the log and must not be blocked by a modal dialog. The QA Player never
+    // shows one.
+    void SetBootFailureDialog(const bool enabled) { m_bootFailureDialog = enabled; }
 
 private:
     enum class AppState { BootSplash, Title, Game };
@@ -87,6 +94,12 @@ private:
     void MainLoop();
     void WatchOwnerProcess();
     void Shutdown();
+    // Releases the script host, splash, video, session and runtime in
+    // dependency order; safe after a boot that stopped at any step.
+    void ReleaseSubsystems();
+    // Reports a boot that stopped (diagnostics emitted from firstDiagnostic
+    // on name the cause) and tears it down.
+    void FailBoot(std::size_t firstDiagnostic);
     bool SaveProfileIfWritable();
     // Progress writes are coalesced: unlocks flush within a few seconds,
     // read-state marks at the next safe point or after a longer interval.
@@ -478,6 +491,7 @@ private:
     std::optional<int> m_pendingScriptLoad;
 
     bool m_quitRequested = false;
+    bool m_bootFailureDialog = false;
     // PRISMATIX_EXIT_WITH_PROCESS=<pid>: `prismatix run` sets it so the game
     // closes when the CLI (an editor's Play/Stop) goes away.
     std::atomic<bool> m_ownerProcessExited{false};

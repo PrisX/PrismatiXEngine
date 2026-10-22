@@ -23,11 +23,17 @@ namespace px {
 
 Runtime::~Runtime() { Shutdown(); }
 
+void Runtime::RecordInitFailure(std::string reason) {
+    PX_LOG_ERROR("Runtime initialization failed: {}", reason);
+    m_initFailure = std::move(reason);
+}
+
 bool Runtime::Init(const RuntimeConfig& config) {
     m_config = config;
+    m_initFailure.clear();
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS)) {
-        PX_LOG_ERROR("SDL_Init failed: {}", SDL_GetError());
+        RecordInitFailure(std::string("SDL could not start: ") + SDL_GetError());
         return false;
     }
     // Android and iOS deliver lifecycle events synchronously from inside
@@ -41,7 +47,7 @@ bool Runtime::Init(const RuntimeConfig& config) {
     // the main Asyncify frame is suspended. Web lifecycle persistence instead
     // runs at the normal frame boundary when document visibility changes.
     if (!TTF_Init()) {
-        PX_LOG_ERROR("TTF_Init failed: {}", SDL_GetError());
+        RecordInitFailure(std::string("the font engine could not start: ") + SDL_GetError());
         SDL_Quit();
         return false;
     }
@@ -52,6 +58,7 @@ bool Runtime::Init(const RuntimeConfig& config) {
             : graphics::GraphicsTier::Basic;
     if (!m_window.Create(m_config.title, m_config.width, m_config.height,
                          m_config.resizable, graphicsTier)) {
+        RecordInitFailure(std::string("the game window could not be created: ") + SDL_GetError());
         TTF_Quit();
         SDL_Quit();
         return false;
@@ -76,7 +83,7 @@ bool Runtime::Init(const RuntimeConfig& config) {
     for (const std::string& archive : m_config.mountArchives) {
 #if defined(PRISMATIX_PREVIEW_WASM)
         (void)archive;
-        PX_LOG_ERROR("Runtime initialization rejected an archive mount in WASM preview");
+        RecordInitFailure("WASM preview does not mount archives");
         Shutdown();
         return false;
 #else
@@ -89,7 +96,7 @@ bool Runtime::Init(const RuntimeConfig& config) {
             mounted = m_vfs.MountArchive(archive, &key);
         }
         if (!mounted) {
-            PX_LOG_ERROR("Runtime initialization failed: content group '{}' could not be mounted", archive);
+            RecordInitFailure("game content '" + archive + "' could not be opened; it is missing, damaged or not for this version");
             Shutdown();
             return false;
         }
@@ -100,15 +107,14 @@ bool Runtime::Init(const RuntimeConfig& config) {
         if (!m_vfs.MountArchive(overlay.archive, nullptr,
                                 io::ArchiveMountPriority::Overlay,
                                 overlay.tombstones)) {
-            PX_LOG_ERROR("Runtime initialization failed: verified overlay '{}' could not be mounted",
-                         overlay.archive);
+            RecordInitFailure("verified update '" + overlay.archive + "' could not be opened");
             Shutdown();
             return false;
         }
     }
 #else
     if (!m_config.overlays.empty()) {
-        PX_LOG_ERROR("Runtime initialization rejected an overlay in WASM preview");
+        RecordInitFailure("WASM preview does not mount updates");
         Shutdown();
         return false;
     }
@@ -119,12 +125,12 @@ bool Runtime::Init(const RuntimeConfig& config) {
         m_window.Renderer(), *m_assets,
         graphicsTier == graphics::GraphicsTier::GpuEffects);
     if (!m_renderer->Ready()) {
-        PX_LOG_ERROR("Runtime initialization failed: required GPU compositor shader is unavailable");
+        RecordInitFailure("the GPU compositor shader is unavailable on this device");
         Shutdown();
         return false;
     }
     if (!m_renderer->LoadCustomEffects(config.customEffects, m_vfs)) {
-        PX_LOG_ERROR("Runtime initialization failed: packaged custom effect artifacts are invalid or unsupported");
+        RecordInitFailure("the packaged custom effects are invalid or unsupported on this device");
         Shutdown();
         return false;
     }
