@@ -766,6 +766,37 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "manifest": {
               "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
             },
+            "nativeKey": {
+              "description": "SHA-256 of the native signing public key accepted with --allow-native; an update signed by another key asks again.",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "platforms": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "sha256": {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  "size": {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "sha256",
+                  "size"
+                ],
+                "type": "object"
+              },
+              "description": "The native pack installed for each platform: SHA-256 and size of its .pxext.",
+              "maxProperties": 8,
+              "propertyNames": {
+                "$ref": "https://prismatix.dev/contracts/extension.schema.json#/$defs/nativePlatform"
+              },
+              "type": "object"
+            },
             "range": {
               "maxLength": 256,
               "minLength": 1,
@@ -1031,8 +1062,14 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           "name": {
             "type": "string"
           },
+          "native": {
+            "type": "boolean"
+          },
           "owner": {
             "type": "string"
+          },
+          "platforms": {
+            "$ref": "#/$defs/platforms"
           },
           "repository": {
             "$ref": "#/$defs/urlReference"
@@ -1063,6 +1100,74 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "id": {
         "$ref": "https://prismatix.dev/contracts/extension-package.schema.json#/$defs/packageId"
       },
+      "platformDownload": {
+        "properties": {
+          "download": {
+            "$ref": "#/$defs/urlReference"
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "size": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "download",
+          "sha256",
+          "size"
+        ],
+        "type": "object"
+      },
+      "platformPackage": {
+        "additionalProperties": false,
+        "properties": {
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "size": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sha256",
+          "size"
+        ],
+        "type": "object"
+      },
+      "platforms": {
+        "description": "The platforms an extension runs on; absent means every platform (a JavaScript-only extension).",
+        "items": {
+          "$ref": "https://prismatix.dev/contracts/extension.schema.json#/$defs/platform"
+        },
+        "maxItems": 8,
+        "type": "array",
+        "uniqueItems": true
+      },
+      "platformUpload": {
+        "properties": {
+          "uploadHeaders": {
+            "additionalProperties": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "maxProperties": 32,
+            "type": "object"
+          },
+          "uploadMethod": {
+            "const": "PUT"
+          },
+          "uploadUrl": {
+            "$ref": "#/$defs/urlReference"
+          }
+        },
+        "required": [
+          "uploadUrl"
+        ],
+        "type": "object"
+      },
       "publishRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1074,6 +1179,16 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           },
           "metadata": {
             "$ref": "https://prismatix.dev/contracts/extension-package.schema.json"
+          },
+          "platformPackages": {
+            "additionalProperties": {
+              "$ref": "#/$defs/platformPackage"
+            },
+            "maxProperties": 8,
+            "propertyNames": {
+              "$ref": "https://prismatix.dev/contracts/extension.schema.json#/$defs/nativePlatform"
+            },
+            "type": "object"
           },
           "sha256": {
             "$ref": "#/$defs/sha256"
@@ -1100,6 +1215,17 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "properties": {
           "expiresAt": {
             "$ref": "#/$defs/timestamp"
+          },
+          "platformUploads": {
+            "additionalProperties": {
+              "$ref": "#/$defs/platformUpload"
+            },
+            "description": "Where to PUT each announced native pack (same rules as uploadUrl).",
+            "maxProperties": 8,
+            "propertyNames": {
+              "$ref": "https://prismatix.dev/contracts/extension.schema.json#/$defs/nativePlatform"
+            },
+            "type": "object"
           },
           "uploadHeaders": {
             "additionalProperties": {
@@ -1196,8 +1322,14 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           "name": {
             "type": "string"
           },
+          "native": {
+            "type": "boolean"
+          },
           "owner": {
             "type": "string"
+          },
+          "platforms": {
+            "$ref": "#/$defs/platforms"
           },
           "requiredEngineVersion": {
             "maxLength": 128,
@@ -1243,6 +1375,20 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           "metadata": {
             "$ref": "https://prismatix.dev/contracts/extension-package.schema.json"
           },
+          "platformDownloads": {
+            "additionalProperties": {
+              "$ref": "#/$defs/platformDownload"
+            },
+            "description": "The native pack of each platform, for an extension with native libraries.",
+            "maxProperties": 8,
+            "propertyNames": {
+              "$ref": "https://prismatix.dev/contracts/extension.schema.json#/$defs/nativePlatform"
+            },
+            "type": "object"
+          },
+          "platforms": {
+            "$ref": "#/$defs/platforms"
+          },
           "publishedAt": {
             "$ref": "#/$defs/timestamp"
           },
@@ -1285,6 +1431,9 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       },
       "versionSummary": {
         "properties": {
+          "platforms": {
+            "$ref": "#/$defs/platforms"
+          },
           "publishedAt": {
             "$ref": "#/$defs/timestamp"
           },
@@ -1338,6 +1487,105 @@ export const contractSchemas: Readonly<Record<string, object>> = {
   },
   "extension.schema.json": {
     "$defs": {
+      "native": {
+        "additionalProperties": false,
+        "properties": {
+          "abi": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "libraries": {
+            "additionalProperties": {
+              "$ref": "#/$defs/nativeLibrary"
+            },
+            "minProperties": 1,
+            "propertyNames": {
+              "$ref": "#/$defs/nativePlatform"
+            },
+            "type": "object"
+          },
+          "publicKey": {
+            "pattern": "^04[0-9a-f]{128}$",
+            "type": "string"
+          },
+          "services": {
+            "items": {
+              "maxLength": 128,
+              "pattern": "^[a-z0-9][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$",
+              "type": "string"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "abi",
+          "services",
+          "libraries"
+        ],
+        "type": "object"
+      },
+      "nativeFile": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "nativeLibrary": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/$defs/nativeFile"
+            },
+            "maxItems": 32,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "path": {
+            "allOf": [
+              {
+                "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+              },
+              {
+                "pattern": "\\.(?:dll|so|dylib)$",
+                "type": "string"
+              }
+            ]
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "signature": {
+            "pattern": "^[0-9a-f]{128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "nativePlatform": {
+        "enum": [
+          "win32-x64",
+          "linux-x64",
+          "darwin-x64",
+          "darwin-arm64"
+        ]
+      },
       "parameter": {
         "additionalProperties": false,
         "properties": {
@@ -1428,6 +1676,16 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         ],
         "type": "object"
       },
+      "platform": {
+        "enum": [
+          "win32-x64",
+          "linux-x64",
+          "darwin-x64",
+          "darwin-arm64",
+          "android-arm64",
+          "web"
+        ]
+      },
       "safety": {
         "additionalProperties": false,
         "properties": {
@@ -1451,6 +1709,10 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           "rollbackSafe"
         ],
         "type": "object"
+      },
+      "sha256": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
       }
     },
     "$id": "https://prismatix.dev/contracts/extension.schema.json",
@@ -1520,7 +1782,11 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "video",
             "persistence",
             "input",
-            "render"
+            "render",
+            "raw.mesh",
+            "raw.texture",
+            "raw.target",
+            "native"
           ]
         },
         "maxItems": 64,
@@ -1622,6 +1888,18 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           ]
         },
         "maxItems": 1024,
+        "type": "array",
+        "uniqueItems": true
+      },
+      "native": {
+        "$ref": "#/$defs/native"
+      },
+      "platforms": {
+        "items": {
+          "$ref": "#/$defs/platform"
+        },
+        "maxItems": 8,
+        "minItems": 1,
         "type": "array",
         "uniqueItems": true
       },
@@ -5600,10 +5878,10 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "character.schema.json": "2b93da553f2247c29d20e3365b313f29185a30d7ada1375be92004e6eb8f771b",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
   "effect.schema.json": "8707b1b1d75154000786f797b06561643a5f9881df968708a0994546e3f782bd",
-  "extension-lock.schema.json": "8b3f8661b0b80f23b04e0ae0241ba0782c823957ab49076800eef4c673c7d998",
+  "extension-lock.schema.json": "842ae4c71560b8913c76ae1e03def3c416760edf93d3c522ebad7a570b18415f",
   "extension-package.schema.json": "bd7baa339d7a1b89d9cbd7d1db82aaabd104776712a6f270948220e6ec806ff5",
-  "extension-registry.schema.json": "47ab90d86c1368629261c7813796994b96aaf860e02536b872f15b720f7624db",
-  "extension.schema.json": "62e1a93e20d9514aad911352665057ab9774ca48c4d9a8f23ae18f5bfeb88aee",
+  "extension-registry.schema.json": "9493fdcd55ae7e656fca16082cb8816fde36aee26816687753f26fbb2c096fcc",
+  "extension.schema.json": "4080153f3c2b2f5a9af513cdc27e0f7a416556d8ef1301f040037443202425df",
   "game.schema.json": "a2614c48076fc5e7554934e446f37319c556adb9f13a28f24c8592813f0dfd23",
   "locale.schema.json": "391e4abe7616d74554af376e2ae3563961215b1631cdd04faf5034016aaff774",
   "motion.schema.json": "6cc663c16bc82c6d966609bb2410bb2873ae43a16d5da3611234bec041d54268",

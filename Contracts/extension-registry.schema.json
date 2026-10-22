@@ -10,6 +10,24 @@
     "timestamp":{"type":"string","maxLength":64},
     "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
     "capabilities":{"type":"array","uniqueItems":true,"maxItems":64,"items":{"type":"string","maxLength":64}},
+    "platforms":{"type":"array","uniqueItems":true,"maxItems":8,"items":{"$ref":"https://prismatix.dev/contracts/extension.schema.json#/$defs/platform"},
+      "description":"The platforms an extension runs on; absent means every platform (a JavaScript-only extension)."},
+    "platformDownload":{
+      "type":"object","required":["download","sha256","size"],
+      "properties":{"download":{"$ref":"#/$defs/urlReference"},"sha256":{"$ref":"#/$defs/sha256"},"size":{"type":"integer","minimum":1}}
+    },
+    "platformPackage":{
+      "type":"object","additionalProperties":false,"required":["sha256","size"],
+      "properties":{"sha256":{"$ref":"#/$defs/sha256"},"size":{"type":"integer","minimum":1}}
+    },
+    "platformUpload":{
+      "type":"object","required":["uploadUrl"],
+      "properties":{
+        "uploadUrl":{"$ref":"#/$defs/urlReference"},
+        "uploadMethod":{"const":"PUT"},
+        "uploadHeaders":{"type":"object","maxProperties":32,"additionalProperties":{"type":"string","maxLength":4096}}
+      }
+    },
     "searchResult":{
       "type":"object","required":["id","latestVersion","requiredEngineVersion","capabilities"],
       "properties":{
@@ -20,6 +38,8 @@
         "latestVersion":{"$ref":"#/$defs/versionNumber"},
         "requiredEngineVersion":{"type":"string","minLength":1,"maxLength":128},
         "capabilities":{"$ref":"#/$defs/capabilities"},
+        "platforms":{"$ref":"#/$defs/platforms"},
+        "native":{"type":"boolean"},
         "keywords":{"type":"array","items":{"type":"string","maxLength":32}},
         "icon":{"$ref":"#/$defs/urlReference"},
         "downloads":{"type":"integer","minimum":0},
@@ -44,6 +64,7 @@
         "yanked":{"type":"boolean"},
         "sha256":{"$ref":"#/$defs/sha256"},
         "size":{"type":"integer","minimum":0},
+        "platforms":{"$ref":"#/$defs/platforms"},
         "publishedAt":{"$ref":"#/$defs/timestamp"}
       }
     },
@@ -62,6 +83,8 @@
         "icon":{"$ref":"#/$defs/urlReference"},
         "screenshots":{"type":"array","items":{"$ref":"#/$defs/urlReference"}},
         "capabilities":{"$ref":"#/$defs/capabilities"},
+        "platforms":{"$ref":"#/$defs/platforms"},
+        "native":{"type":"boolean"},
         "latestVersion":{"oneOf":[{"$ref":"#/$defs/versionNumber"},{"type":"null"}]},
         "versions":{"type":"array","items":{"$ref":"#/$defs/versionSummary"}},
         "downloads":{"type":"integer","minimum":0},
@@ -80,6 +103,9 @@
         "download":{"$ref":"#/$defs/urlReference"},
         "manifest":{"$ref":"https://prismatix.dev/contracts/extension.schema.json"},
         "metadata":{"$ref":"https://prismatix.dev/contracts/extension-package.schema.json"},
+        "platforms":{"$ref":"#/$defs/platforms"},
+        "platformDownloads":{"type":"object","maxProperties":8,"propertyNames":{"$ref":"https://prismatix.dev/contracts/extension.schema.json#/$defs/nativePlatform"},"additionalProperties":{"$ref":"#/$defs/platformDownload"},
+          "description":"The native pack of each platform, for an extension with native libraries."},
         "yanked":{"type":"boolean"},
         "yankedReason":{"type":"string","maxLength":1024},
         "publishedAt":{"$ref":"#/$defs/timestamp"}
@@ -93,7 +119,8 @@
         "sha256":{"$ref":"#/$defs/sha256"},
         "size":{"type":"integer","minimum":1},
         "manifest":{"$ref":"https://prismatix.dev/contracts/extension.schema.json"},
-        "metadata":{"$ref":"https://prismatix.dev/contracts/extension-package.schema.json"}
+        "metadata":{"$ref":"https://prismatix.dev/contracts/extension-package.schema.json"},
+        "platformPackages":{"type":"object","maxProperties":8,"propertyNames":{"$ref":"https://prismatix.dev/contracts/extension.schema.json#/$defs/nativePlatform"},"additionalProperties":{"$ref":"#/$defs/platformPackage"}}
       }
     },
     "publishResponse":{
@@ -103,7 +130,9 @@
         "uploadUrl":{"$ref":"#/$defs/urlReference"},
         "uploadMethod":{"const":"PUT"},
         "uploadHeaders":{"type":"object","maxProperties":32,"additionalProperties":{"type":"string","maxLength":4096}},
-        "expiresAt":{"$ref":"#/$defs/timestamp"}
+        "expiresAt":{"$ref":"#/$defs/timestamp"},
+        "platformUploads":{"type":"object","maxProperties":8,"propertyNames":{"$ref":"https://prismatix.dev/contracts/extension.schema.json#/$defs/nativePlatform"},"additionalProperties":{"$ref":"#/$defs/platformUpload"},
+          "description":"Where to PUT each announced native pack (same rules as uploadUrl)."}
       }
     },
     "yankRequest":{

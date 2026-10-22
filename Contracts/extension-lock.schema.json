@@ -21,7 +21,17 @@
           "source":{"type":"string","minLength":1,"maxLength":4096},
           "range":{"type":"string","minLength":1,"maxLength":256},
           "manifest":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
-          "files":{"type":"string","pattern":"^[0-9a-f]{64}$"}
+          "files":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+          "nativeKey":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"SHA-256 of the native signing public key accepted with --allow-native; an update signed by another key asks again."},
+          "platforms":{
+            "type":"object","maxProperties":8,
+            "description":"The native pack installed for each platform: SHA-256 and size of its .pxext.",
+            "propertyNames":{"$ref":"https://prismatix.dev/contracts/extension.schema.json#/$defs/nativePlatform"},
+            "additionalProperties":{
+              "type":"object","additionalProperties":false,"required":["sha256","size"],
+              "properties":{"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"size":{"type":"integer","minimum":0}}
+            }
+          }
         }
       }
     }

@@ -13,7 +13,7 @@
 // docs/extensions-sharing.md specifies the format and the registry API.
 
 import {validateContractDefinition, validateDocument} from "./contracts.js";
-import type {AuthoringDiagnostic, ExtensionManifest} from "./types.js";
+import type {AuthoringDiagnostic, ExtensionManifest, ExtensionPlatform, NativeExtensionPlatform} from "./types.js";
 import {compareSemVer, isExactVersion, isVersionRange, parseSemVer, satisfiesVersionRange} from "./version-range.js";
 
 export const EXTENSION_PACKAGE_FORMAT = "PrismatiXExtensionPackage";
@@ -136,6 +136,176 @@ function comparePaths(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+// Platforms and native libraries ---------------------------------------------
+// An extension with `native` libraries is shared as its main package (every
+// file but the libraries) plus one native pack per platform holding only
+// `native/<platform>/**`. The main package's manifest pins every library and
+// file by SHA-256 and carries an ECDSA P-256 signature of each platform's
+// descriptor, so a native pack is checked against it before it is written,
+// and the Player checks the same signature before it loads a library.
+
+export const extensionPlatforms: readonly ExtensionPlatform[] =
+  ["win32-x64", "linux-x64", "darwin-x64", "darwin-arm64", "android-arm64", "web"];
+export const nativeExtensionPlatforms: readonly NativeExtensionPlatform[] =
+  ["win32-x64", "linux-x64", "darwin-x64", "darwin-arm64"];
+/** The PxHostApi major ABI version this engine's Player provides (PX_PLUGIN_ABI_MAJOR). */
+export const NATIVE_PLUGIN_ABI = 1;
+/** The first line of every signed native descriptor. */
+export const NATIVE_SIGNATURE_DOMAIN = "PrismatiX native plugin v1";
+/** At most this much per native pack. */
+export const nativePackBytes = 64 * 1024 * 1024;
+
+export function isNativeExtensionPlatform(value: string): value is NativeExtensionPlatform {
+  return (nativeExtensionPlatforms as readonly string[]).includes(value);
+}
+
+/**
+ * The platforms an extension runs on: its `platforms`, else the platforms of
+ * its native libraries, else every platform.
+ */
+export function manifestPlatforms(manifest: Pick<ExtensionManifest, "platforms" | "native">): readonly ExtensionPlatform[] {
+  if (manifest.platforms !== undefined) return manifest.platforms;
+  if (manifest.native !== undefined)
+    return nativeExtensionPlatforms.filter((platform) => manifest.native!.libraries[platform] !== undefined);
+  return extensionPlatforms;
+}
+
+/** True when a manifest (or a registry `platforms` list, undefined meaning all) runs on `platform`. */
+export function supportsPlatform(platforms: readonly string[] | undefined, platform: string): boolean {
+  return platforms === undefined || platforms.includes(platform);
+}
+
+/** The package file name of a platform's native pack: `<owner>-<name>-<version>-native-<platform>.pxext`. */
+export function nativePackFileName(id: string, version: string, platform: NativeExtensionPlatform): string {
+  return extensionPackageFileName(id, version).replace(/\.pxext$/u, `-native-${platform}${EXTENSION_PACKAGE_SUFFIX}`);
+}
+
+/** Every file a platform's native pack holds (the library first), by path relative to the manifest. */
+export function nativePlatformFiles(manifest: ExtensionManifest, platform: NativeExtensionPlatform):
+  readonly {readonly path: string; readonly sha256?: string}[] {
+  const library = manifest.native?.libraries[platform];
+  if (library === undefined) return [];
+  return [{path: library.path, ...(library.sha256 === undefined ? {} : {sha256: library.sha256})},
+    ...[...library.files ?? []].sort((left, right) => comparePaths(left.path, right.path))];
+}
+
+/**
+ * The text a platform's library signature covers (UTF-8, "\n" after every
+ * line). The Player rebuilds it from the manifest it loads, so the signature
+ * binds the extension id, version, platform, ABI, services and every file's
+ * SHA-256 together:
+ *
+ *     PrismatiX native plugin v1
+ *     id <manifest id>
+ *     version <version>
+ *     platform <platform>
+ *     abi <abi>
+ *     services <services, sorted, comma-separated>
+ *     file <sha256> <path>          (the library, then its files by path)
+ */
+export function nativeSignatureMessage(manifest: ExtensionManifest, platform: NativeExtensionPlatform): string {
+  const native = manifest.native;
+  if (native === undefined || native.libraries[platform] === undefined)
+    throw new RangeError(`${manifest.id} has no native library for ${platform}`);
+  const files = nativePlatformFiles(manifest, platform);
+  for (const file of files)
+    if (file.sha256 === undefined) throw new RangeError(`${file.path} has no sha256; pack fills it`);
+  return [NATIVE_SIGNATURE_DOMAIN, `id ${manifest.id}`, `version ${manifest.version}`, `platform ${platform}`,
+    `abi ${native.abi}`, `services ${[...native.services].sort().join(",")}`,
+    ...files.map((file) => `file ${file.sha256} ${file.path}`)].map((line) => `${line}\n`).join("");
+}
+
+function hexBytes(value: string): Uint8Array {
+  const bytes = new Uint8Array(value.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+  return bytes;
+}
+
+/** True when `signature` (hex r||s) is the ECDSA P-256 SHA-256 signature of `message` by `publicKey` (hex SEC1). */
+export async function verifyNativeSignature(message: string, signature: string, publicKey: string): Promise<boolean> {
+  if (!/^[0-9a-f]{128}$/u.test(signature) || !/^04[0-9a-f]{128}$/u.test(publicKey)) return false;
+  try {
+    const key = await globalThis.crypto.subtle.importKey("raw", hexBytes(publicKey) as Uint8Array<ArrayBuffer>,
+      {name: "ECDSA", namedCurve: "P-256"}, false, ["verify"]);
+    return await globalThis.crypto.subtle.verify({name: "ECDSA", hash: "SHA-256"}, key,
+      hexBytes(signature) as Uint8Array<ArrayBuffer>, new TextEncoder().encode(message));
+  } catch { return false; }
+}
+
+/** SHA-256 of a native signing public key: what the lock records and installs show. */
+export async function nativeKeyFingerprint(publicKey: string): Promise<string> {
+  return sha256Hex(hexBytes(publicKey));
+}
+
+/**
+ * Checks a manifest's `platforms` and `native` fields. `packaged` also
+ * requires what pack fills: the public key and every SHA-256 and signature.
+ */
+export function nativeManifestDiagnostics(manifest: ExtensionManifest, path: string, packaged: boolean): AuthoringDiagnostic[] {
+  const diagnostics: AuthoringDiagnostic[] = [];
+  const native = manifest.native;
+  const declared = manifest.platforms;
+  const hasCapability = manifest.capabilities.includes("native");
+  if (native === undefined) {
+    if (hasCapability)
+      diagnostics.push(error("PXEXTNAT1001", "The \"native\" capability needs a \"native\" section with the libraries", path));
+    return diagnostics;
+  }
+  if (!hasCapability)
+    diagnostics.push(error("PXEXTNAT1001", "An extension with native libraries declares the \"native\" capability", path));
+  if (native.abi !== NATIVE_PLUGIN_ABI)
+    diagnostics.push(error("PXEXTNAT1002", `native.abi ${native.abi} is not the ABI this engine provides (${NATIVE_PLUGIN_ABI})`, path));
+  const libraries = nativeExtensionPlatforms.filter((platform) => native.libraries[platform] !== undefined);
+  if (declared !== undefined) {
+    if (declared.includes("web"))
+      diagnostics.push(error("PXEXTNAT1003", "An extension with native libraries cannot run on the Web; remove \"web\" from platforms", path));
+    for (const platform of declared)
+      if (platform !== "web" && !libraries.includes(platform as NativeExtensionPlatform))
+        diagnostics.push(error("PXEXTNAT1003", `platforms lists ${platform}, which has no native library`, path, platform));
+    for (const platform of libraries)
+      if (!declared.includes(platform))
+        diagnostics.push(error("PXEXTNAT1003", `native.libraries has ${platform}, which platforms does not list`, path, platform));
+  }
+  for (const platform of libraries) {
+    const library = native.libraries[platform]!;
+    const files = nativePlatformFiles(manifest, platform);
+    const folder = `native/${platform}/`;
+    const seen = new Set<string>();
+    for (const file of files) {
+      if (!file.path.startsWith(folder))
+        diagnostics.push(error("PXEXTNAT1004", `Native files of ${platform} live in ${folder}`, path, file.path));
+      if (seen.has(file.path.toLowerCase())) diagnostics.push(error("PXEXTNAT1004", "A native file is listed twice", path, file.path));
+      seen.add(file.path.toLowerCase());
+      if (packaged && file.sha256 === undefined)
+        diagnostics.push(error("PXEXTNAT1005", "A packaged native file has its sha256", path, file.path));
+    }
+    const expected = platform === "win32-x64" ? ".dll" : platform.startsWith("darwin") ? ".dylib" : ".so";
+    if (!library.path.endsWith(expected))
+      diagnostics.push(error("PXEXTNAT1004", `The ${platform} library is a ${expected} file`, path, library.path));
+    if (packaged && library.signature === undefined)
+      diagnostics.push(error("PXEXTNAT1005", `The ${platform} library of a package is signed (pack --signing-key)`, path, library.path));
+  }
+  if (packaged && native.publicKey === undefined)
+    diagnostics.push(error("PXEXTNAT1005", "A package with native libraries names its signing publicKey", path));
+  return diagnostics;
+}
+
+/** Checks every platform's signature in a packaged manifest. */
+export async function nativeSignatureDiagnostics(manifest: ExtensionManifest, path: string): Promise<AuthoringDiagnostic[]> {
+  const native = manifest.native;
+  if (native?.publicKey === undefined) return [];
+  const diagnostics: AuthoringDiagnostic[] = [];
+  for (const platform of nativeExtensionPlatforms) {
+    const library = native.libraries[platform];
+    if (library?.signature === undefined) continue;
+    let message: string;
+    try { message = nativeSignatureMessage(manifest, platform); } catch { continue; }
+    if (!await verifyNativeSignature(message, library.signature, native.publicKey))
+      diagnostics.push(error("PXEXTNAT1006", `The ${platform} library's signature does not verify with the manifest's publicKey`, path, library.path));
+  }
+  return diagnostics;
+}
+
 // ZIP ------------------------------------------------------------------------
 
 const crcTable = (() => {
@@ -240,10 +410,10 @@ class PackageFormatError extends Error {
 }
 
 /** The files of a canonical .pxext ZIP; throws PackageFormatError for anything else. */
-function readZip(bytes: Uint8Array): Map<string, Uint8Array> {
+function readZip(bytes: Uint8Array, packageBytes: number = extensionPackageLimits.packageBytes): Map<string, Uint8Array> {
   const limits = extensionPackageLimits;
-  if (bytes.length > limits.packageBytes)
-    throw new PackageFormatError("PXEXTPKG1002", `The package is larger than ${limits.packageBytes / 1024 / 1024} MiB`);
+  if (bytes.length > packageBytes)
+    throw new PackageFormatError("PXEXTPKG1002", `The package is larger than ${packageBytes / 1024 / 1024} MiB`);
   if (bytes.length < 22) throw new PackageFormatError("PXEXTPKG1001", "Not a .pxext package (too short to be a ZIP archive)");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const end = bytes.length - 22;
@@ -451,6 +621,7 @@ export function readExtensionPackage(bytes: Uint8Array): ExtensionPackageContent
         diagnostics.push(error("PXEXTPKG1010", "The entry and modules of a packaged manifest are .js files in dist/", manifestPath, script));
       else if (!files.has(script)) diagnostics.push(error("PXEXTPKG1010", `The package has no ${script}`, manifestPath, script));
     }
+    diagnostics.push(...nativeManifestDiagnostics(manifest, manifestPath!, true));
   }
 
   let distBytes = 0;
@@ -473,6 +644,10 @@ export function readExtensionPackage(bytes: Uint8Array): ExtensionPackageContent
     if (path.startsWith("screenshots/") && !path.slice(12).includes("/") && screenshots.has(path)) {
       if (data.length > limits.screenshotBytes || imageKind(path, data) === undefined)
         diagnostics.push(error("PXEXTPKG1012", `A screenshot must be a PNG, JPEG or WebP of at most ${limits.screenshotBytes / 1024 / 1024} MiB`, path));
+      continue;
+    }
+    if (path.startsWith("native/")) {
+      diagnostics.push(error("PXEXTPKG1011", "Native libraries go in each platform's native pack, not the main package", path));
       continue;
     }
     diagnostics.push(error("PXEXTPKG1011", "A package holds pxext.json, the manifest, dist/*.js, types/*.d.ts, README.md, " +
@@ -507,10 +682,55 @@ export function readExtensionPackage(bytes: Uint8Array): ExtensionPackageContent
  * runs anything from the package.
  */
 export async function validateExtensionPackage(bytes: Uint8Array): Promise<ExtensionPackageValidation> {
-  const contents = readExtensionPackage(bytes);
+  let contents = readExtensionPackage(bytes);
+  if (contents.manifest !== undefined && contents.manifestPath !== undefined) {
+    const signatures = await nativeSignatureDiagnostics(contents.manifest, contents.manifestPath);
+    if (signatures.length > 0) contents = {...contents, diagnostics: [...contents.diagnostics, ...signatures], valid: false};
+  }
   return {...contents, sha256: await sha256Hex(bytes), size: bytes.length,
     ...(contents.metadata === undefined ? {} : {id: contents.metadata.id}),
     ...(contents.metadata?.version === undefined ? {} : {version: contents.metadata.version})};
+}
+
+export interface ExtensionNativePack {
+  readonly platform: NativeExtensionPlatform;
+  /** Every file, by package path (`native/<platform>/...`). Empty when invalid. */
+  readonly files: ReadonlyMap<string, Uint8Array>;
+  readonly diagnostics: readonly AuthoringDiagnostic[];
+  readonly valid: boolean;
+}
+
+/**
+ * Reads a platform's native pack against the main package's manifest: the
+ * canonical archive form, exactly the files the manifest lists for that
+ * platform, each with the SHA-256 the manifest pins.
+ */
+export async function readExtensionNativePack(bytes: Uint8Array, manifest: ExtensionManifest,
+  platform: NativeExtensionPlatform): Promise<ExtensionNativePack> {
+  const failed = (diagnostic: AuthoringDiagnostic): ExtensionNativePack =>
+    ({platform, files: new Map(), diagnostics: [diagnostic], valid: false});
+  if (bytes.length > nativePackBytes)
+    return failed(error("PXEXTPKG1002", `A native pack is at most ${nativePackBytes / 1024 / 1024} MiB`));
+  let files: Map<string, Uint8Array>;
+  try { files = readZip(bytes, nativePackBytes); }
+  catch (cause) {
+    if (!(cause instanceof PackageFormatError)) throw cause;
+    return failed(error(cause.code, cause.message, cause.details));
+  }
+  const expected = nativePlatformFiles(manifest, platform);
+  if (expected.length === 0) return failed(error("PXEXTPKG1015", `${manifest.id} has no native library for ${platform}`));
+  const diagnostics: AuthoringDiagnostic[] = [];
+  const listed = new Set(expected.map((file) => file.path));
+  for (const path of files.keys())
+    if (!listed.has(path)) diagnostics.push(error("PXEXTPKG1015", `The ${platform} native pack holds a file its manifest does not list`, path));
+  for (const file of expected) {
+    const data = files.get(file.path);
+    if (data === undefined) diagnostics.push(error("PXEXTPKG1015", `The ${platform} native pack has no ${file.path}`, file.path));
+    else if (file.sha256 === undefined || await sha256Hex(data) !== file.sha256)
+      diagnostics.push(error("PXEXTPKG1016", `${file.path} does not match the SHA-256 the manifest pins`, file.path));
+  }
+  const valid = diagnostics.length === 0;
+  return {platform, files: valid ? files : new Map(), diagnostics, valid};
 }
 
 // Registry -------------------------------------------------------------------
@@ -525,6 +745,10 @@ export interface RegistrySearchResult {
   readonly latestVersion: string;
   readonly requiredEngineVersion: string;
   readonly capabilities: readonly string[];
+  /** Absent: every platform. */
+  readonly platforms?: readonly ExtensionPlatform[];
+  /** True when it loads native libraries (installing needs --allow-native). */
+  readonly native?: boolean;
   readonly keywords?: readonly string[];
   readonly icon?: string;
   readonly downloads?: number;
@@ -545,6 +769,8 @@ export interface RegistryVersionSummary {
   readonly yanked: boolean;
   readonly sha256?: string;
   readonly size?: number;
+  /** Absent: every platform. */
+  readonly platforms?: readonly ExtensionPlatform[];
   readonly publishedAt?: string;
 }
 
@@ -562,6 +788,8 @@ export interface RegistryExtension {
   readonly icon?: string;
   readonly screenshots?: readonly string[];
   readonly capabilities: readonly string[];
+  readonly platforms?: readonly ExtensionPlatform[];
+  readonly native?: boolean;
   readonly latestVersion?: string | null;
   /** Newest first. */
   readonly versions: readonly RegistryVersionSummary[];
@@ -580,9 +808,18 @@ export interface RegistryVersion {
   readonly download: string;
   readonly manifest: ExtensionManifest;
   readonly metadata?: ExtensionPackageMetadata;
+  readonly platforms?: readonly ExtensionPlatform[];
+  /** The native pack of each platform (absolute URLs, or relative to this document). */
+  readonly platformDownloads?: Readonly<Partial<Record<NativeExtensionPlatform, RegistryPlatformDownload>>>;
   readonly yanked: boolean;
   readonly yankedReason?: string;
   readonly publishedAt?: string;
+}
+
+export interface RegistryPlatformDownload {
+  readonly download: string;
+  readonly sha256: string;
+  readonly size: number;
 }
 
 export interface RegistryPublishRequest {
@@ -592,14 +829,21 @@ export interface RegistryPublishRequest {
   readonly size: number;
   readonly manifest: ExtensionManifest;
   readonly metadata: ExtensionPackageMetadata;
+  /** The native packs uploaded with the main package. */
+  readonly platformPackages?: Readonly<Partial<Record<NativeExtensionPlatform, {readonly sha256: string; readonly size: number}>>>;
 }
 
-export interface RegistryPublishResponse {
-  readonly uploadId: string;
+export interface RegistryUpload {
   readonly uploadUrl: string;
   readonly uploadMethod?: "PUT";
   readonly uploadHeaders?: Readonly<Record<string, string>>;
+}
+
+export interface RegistryPublishResponse extends RegistryUpload {
+  readonly uploadId: string;
   readonly expiresAt?: string;
+  /** Where each announced native pack goes. */
+  readonly platformUploads?: Readonly<Partial<Record<NativeExtensionPlatform, RegistryUpload>>>;
 }
 
 export interface RegistryError {
@@ -618,8 +862,11 @@ export interface ExtensionVersionResolution<T extends RegistryVersionSummary = R
   /** The newest version that matches the range and the engine. */
   readonly version?: T;
   /** Why there is none. */
-  readonly problem?: "invalid-range" | "no-match" | "engine";
-  /** With problem "engine": the versions that match the range but need another engine. */
+  readonly problem?: "invalid-range" | "no-match" | "engine" | "platform";
+  /**
+   * With problem "engine": the versions that match the range but need another
+   * engine; with "platform": the ones for this engine that lack the platform.
+   */
   readonly incompatible?: readonly T[];
 }
 
@@ -628,9 +875,11 @@ export interface ExtensionVersionResolution<T extends RegistryVersionSummary = R
  * the newest version that satisfies `range` and whose requiredEngineVersion
  * accepts `engineVersion`. Yanked versions are left out unless `range` names
  * that exact version; prereleases only match a range that mentions one.
+ * With `platform`, only versions that run there (their `platforms` list it,
+ * or they list none).
  */
 export function resolveExtensionVersion<T extends RegistryVersionSummary>(versions: readonly T[], range: string,
-  engineVersion?: string): ExtensionVersionResolution<T> {
+  engineVersion?: string, platform?: string): ExtensionVersionResolution<T> {
   if (!isVersionRange(range)) return {problem: "invalid-range"};
   const exact = isExactVersion(range);
   const matching = versions.filter((item) => satisfiesVersionRange(item.version, range) === true && (exact || !item.yanked));
@@ -638,5 +887,7 @@ export function resolveExtensionVersion<T extends RegistryVersionSummary>(versio
   const compatible = engineVersion === undefined ? matching
     : matching.filter((item) => satisfiesVersionRange(engineVersion, item.requiredEngineVersion, {includePrerelease: true}) === true);
   if (compatible.length === 0) return {problem: "engine", incompatible: matching};
-  return {version: compatible.reduce((best, item) => compareSemVer(item.version, best.version) > 0 ? item : best)};
+  const supported = platform === undefined ? compatible : compatible.filter((item) => supportsPlatform(item.platforms, platform));
+  if (supported.length === 0) return {problem: "platform", incompatible: compatible};
+  return {version: supported.reduce((best, item) => compareSemVer(item.version, best.version) > 0 ? item : best)};
 }

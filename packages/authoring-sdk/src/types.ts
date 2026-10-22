@@ -166,10 +166,52 @@ export interface ExtensionManifest {
   readonly entry: string;
   /** ES modules that the entry is allowed to import, relative to this manifest. */
   readonly modules?: readonly string[];
-  readonly capabilities: readonly ("runtime" | "animation" | "ui" | "audio" | "video" | "persistence" | "input" | "render")[];
+  readonly capabilities: readonly ExtensionCapability[];
+  /**
+   * The platforms the extension runs on; omitted means every platform. An
+   * extension with `native` libraries runs only where it has one, never on
+   * the Web.
+   */
+  readonly platforms?: readonly ExtensionPlatform[];
+  /** Signed C ABI libraries (layer 2); see docs/native-extensions.md. */
+  readonly native?: ExtensionNative;
   readonly safety?: ExtensionSafety;
   readonly commands: readonly ExtensionCommand[];
   readonly actions: readonly ExtensionAction[];
+}
+
+export type ExtensionCapability = "runtime" | "animation" | "ui" | "audio" | "video" | "persistence" | "input" | "render" |
+  "raw.mesh" | "raw.texture" | "raw.target" | "native";
+
+export type ExtensionPlatform = "win32-x64" | "linux-x64" | "darwin-x64" | "darwin-arm64" | "android-arm64" | "web";
+/** The platforms a native library can be built for. */
+export type NativeExtensionPlatform = "win32-x64" | "linux-x64" | "darwin-x64" | "darwin-arm64";
+
+export interface ExtensionNativeFile {
+  readonly path: string;
+  /** Filled by pack. */
+  readonly sha256?: string;
+}
+
+export interface ExtensionNativeLibrary {
+  /** The .dll, .so or .dylib, relative to the manifest (`native/<platform>/<file>`). */
+  readonly path: string;
+  /** Filled by pack. */
+  readonly sha256?: string;
+  /** ECDSA P-256 over the native descriptor (`nativeSignatureMessage`), filled by pack. */
+  readonly signature?: string;
+  /** Libraries it loads from its own folder (pinned by SHA-256 and covered by the signature). */
+  readonly files?: readonly ExtensionNativeFile[];
+}
+
+export interface ExtensionNative {
+  /** The major PxHostApi ABI version the libraries are built against. */
+  readonly abi: number;
+  /** Service names the libraries register; the extension's script may call only these. */
+  readonly services: readonly string[];
+  /** Uncompressed P-256 public key (hex), filled by pack from --signing-key. */
+  readonly publicKey?: string;
+  readonly libraries: Readonly<Partial<Record<NativeExtensionPlatform, ExtensionNativeLibrary>>>;
 }
 
 export interface CharacterExpression {
