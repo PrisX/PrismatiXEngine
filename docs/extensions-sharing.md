@@ -393,7 +393,8 @@ ones it uploaded.
 
 A registry can start as plain files: the GET routes, each as
 `<route>/index.json`. The client asks for the route first; on a 404 without a
-JSON error body it fetches `<route>/index.json`, resolves versions itself from
+JSON error body, or an HTML page (a host listing the route's folder), it
+fetches `<route>/index.json`, resolves versions itself from
 the extension document (the rule above), and filters the search file by `q`
 and `capability` (a static search lists each extension's latest version and
 does not filter by engine; installing still resolves a compatible version).

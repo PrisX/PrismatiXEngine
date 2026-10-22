@@ -180,6 +180,12 @@ class MockRegistry {
           return;
         } catch { /* a folder */ }
       }
+      // Some static hosts list a folder instead (python -m http.server).
+      if (request.method === "GET" && existsSync(path)) {
+        response.writeHead(200, {"content-type": "text/html; charset=utf-8"});
+        response.end("<ul><li>index.json</li></ul>");
+        return;
+      }
       response.writeHead(404, {"content-type": "text/html"});
       response.end("<h1>404</h1>");
       return;

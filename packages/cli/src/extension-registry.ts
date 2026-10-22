@@ -184,14 +184,16 @@ export class RegistryClient {
   }
 
   /**
-   * GETs a /v1 route. A 404 without a JSON error body means a static index,
-   * so the route's `index.json` file is tried next.
+   * GETs a /v1 route. A 404 without a JSON error body, or an HTML page (a
+   * static host listing the route's folder), means a static index, so the
+   * route's `index.json` file is tried next.
    */
   async get<T>(route: string, kind: RegistryDocumentKind, query?: URLSearchParams): Promise<Located<T>> {
     const url = `${this.base}${route}${query === undefined || [...query].length === 0 ? "" : `?${query}`}`;
     const response = await this.#request(url, {headers: {accept: "application/json"}});
-    if (response.ok) return {value: await this.#json<T>(response, url, kind), url: response.url || url, static: false};
-    if (response.status !== 404) return this.#failure(response, url);
+    const html = /^text\/html\b/iu.test(response.headers.get("content-type") ?? "");
+    if (response.ok && !html) return {value: await this.#json<T>(response, url, kind), url: response.url || url, static: false};
+    if (!response.ok && response.status !== 404) return this.#failure(response, url);
     const text = new TextDecoder().decode(await readLimited(response, 64 * 1024, url).catch(() => new Uint8Array()));
     const body = errorBody(text);
     if (body !== undefined) throw new RegistryRequestError(`${body.message} (${body.code}, 404)`, 404, body.code);
