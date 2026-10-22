@@ -4150,7 +4150,20 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         return error ? Fail(request, eventSink, "PXPKG1314", "Cancellation occurred and prior output restoration failed", true) : Cancel(request, eventSink, "Packaging was cancelled before output promotion");
     }
     error.clear();
-    std::filesystem::rename(staging, request.outputDir, error);
+    // On Windows a directory cannot be renamed while a scanner (Defender,
+    // the search indexer) still has a freshly written file in it open, as
+    // happens to a large Player executable; wait for it briefly.
+    for (int attempt = 0;; ++attempt) {
+        error.clear();
+        std::filesystem::rename(staging, request.outputDir, error);
+#ifdef _WIN32
+        if (error == std::errc::permission_denied && attempt < 20 && !Cancelled(request)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            continue;
+        }
+#endif
+        break;
+    }
     if (error) {
         if (previousOutput) {
             std::error_code restoreError;
