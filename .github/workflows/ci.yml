@@ -206,6 +206,17 @@ jobs:
           build-dir: out/ci/sdk-msvc
           prefix: out/ci/runtime-windows
           project-name: "繁中 專案 測試"
+      # cross-platform-pack packs Windows builds from Linux and Linux builds from Windows with it.
+      - name: Archive the Windows runtime for cross-platform-pack
+        shell: bash
+        run: tar -czf out/ci/runtime-windows.tar.gz -C out/ci/runtime-windows .
+      - name: Publish the Windows runtime for cross-platform-pack
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: PrismatiX-Runtime-Windows-${{ github.run_id }}
+          path: out/ci/runtime-windows.tar.gz
+          if-no-files-found: error
+          retention-days: 3
       - name: Native Preview UI gate
         shell: pwsh
         run: |
@@ -258,6 +269,17 @@ jobs:
           node scripts/check-desktop-layout.mjs
           --packager out/ci/runtime-macos/bin/PrismatiXPackager
           --player out/ci/runtime-macos/bin/PrismatiXPlayer
+      - name: Archive the Apple silicon runtime for cross-platform-pack
+        if: matrix.architecture == 'arm64'
+        run: tar -czf out/ci/runtime-macos-arm64.tar.gz -C out/ci/runtime-macos .
+      - name: Publish the Apple silicon runtime for cross-platform-pack
+        if: matrix.architecture == 'arm64'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: PrismatiX-Runtime-macOS-arm64-${{ github.run_id }}
+          path: out/ci/runtime-macos-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 3
       - name: Publish macOS GPU visual matrix
         if: always() && matrix.exclude-labels == ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -266,6 +288,71 @@ jobs:
           path: out/ci/visual/macos
           if-no-files-found: error
           retention-days: 14
+
+  # Packing for other platforms (docs/shipping.md, Packing for other
+  # platforms): the Linux runtime packs Samples/Starter for Windows and
+  # Apple silicon, the Windows runtime packs it for Linux, each with the
+  # other jobs' runtime bundles installed through `prismatix add platform
+  # --from`. check-desktop-layout.mjs checks every archive with the target's
+  # layout rules (PE resources and checksum, Info.plist, icns, Mach-O code
+  # signature, executable bits, rpath) and verify-package checks the content.
+  cross-platform-pack-linux:
+    name: Cross-platform pack from Linux (Windows, Apple silicon)
+    needs: [linux-clang-sanitizer, windows-msvc-sdk, macos-apple-clang-sdk]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: ./.github/actions/setup-js
+      - name: Install Linux libraries for the native Packager
+        run: bash .github/scripts/install-linux-dependencies.sh
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: PrismatiX-Runtime-Linux-${{ github.run_id }}
+          path: out/ci/runtime-archives/linux
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: PrismatiX-Runtime-Windows-${{ github.run_id }}
+          path: out/ci/runtime-archives/windows
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: PrismatiX-Runtime-macOS-arm64-${{ github.run_id }}
+          path: out/ci/runtime-archives/macos-arm64
+      - name: Pack Samples/Starter for win32-x64 and darwin-arm64 and check both layouts
+        run: |
+          mkdir -p out/ci/runtime-linux
+          tar -xzf out/ci/runtime-archives/linux/runtime-linux.tar.gz -C out/ci/runtime-linux
+          node scripts/check-desktop-layout.mjs \
+            --packager out/ci/runtime-linux/bin/PrismatiXPackager \
+            --player out/ci/runtime-linux/bin/PrismatiXPlayer \
+            --cross win32-x64=out/ci/runtime-archives/windows/runtime-windows.tar.gz \
+            --cross darwin-arm64=out/ci/runtime-archives/macos-arm64/runtime-macos-arm64.tar.gz
+
+  cross-platform-pack-windows:
+    name: Cross-platform pack from Windows (Linux)
+    needs: [linux-clang-sanitizer, windows-msvc-sdk]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: ./.github/actions/setup-js
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: PrismatiX-Runtime-Windows-${{ github.run_id }}
+          path: out/ci/runtime-archives/windows
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: PrismatiX-Runtime-Linux-${{ github.run_id }}
+          path: out/ci/runtime-archives/linux
+      - name: Pack Samples/Starter for linux-x64 and check the layout and executable bits
+        shell: bash
+        run: |
+          mkdir -p out/ci/runtime-windows
+          tar -xzf out/ci/runtime-archives/windows/runtime-windows.tar.gz -C out/ci/runtime-windows
+          node scripts/check-desktop-layout.mjs \
+            --packager out/ci/runtime-windows/bin/PrismatiXPackager.exe \
+            --player out/ci/runtime-windows/bin/PrismatiXPlayer.exe \
+            --cross linux-x64=out/ci/runtime-archives/linux/runtime-linux.tar.gz
 
   emscripten-preview:
     runs-on: ubuntu-latest
