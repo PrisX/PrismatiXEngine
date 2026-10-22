@@ -16,7 +16,7 @@ import {
   checkoutRuntimeFile, discoverQaPlayer, discoverRuntimeTool, discoverRuntimeBundle, nativePackageFile, RuntimeDiscoveryFailure,
   runtimeDiscoveryHint, type RuntimeDiscoveryOptions,
 } from "./runtime-discovery.js";
-import {fingerprintFile, publishDirectory, publishedInputs, retainPublishedDirectoryIfMatching,
+import {fingerprintFile, outputOwnershipMarker, publishDirectory, publishedInputs, retainPublishedDirectoryIfMatching,
   retirePublishedDirectory,
   verifiedPublishedInputs, type PublishedInput} from "./output-safety.js";
 import {glyphWarnings} from "./glyph-coverage.js";
@@ -35,7 +35,13 @@ import {packageContentKey, packageRetentionKey, refreshRuntimePackageIfMatching,
   retainPackageIfMatching, reusedArchiveInputs, runtimeOutputsMatch,
   runtimeReplacementFiles, writePackageProvenance} from "./package-retain.js";
 import {debugPackagerHint} from "./package-tool-hint.js";
-import {distributionDataRoot, finishMacAppBundle} from "./distribution-layout.js";
+import {distributionDataRoot, finishMacAppBundle, machOCodeSignature, machOForeignDependencies,
+  machOSlices} from "./distribution-layout.js";
+import {addPlatformCommand, addPlatformRuntime, hostPlatform, locatePlatformRuntime, parsePlatformList,
+  platformLabels, platformOs, platformRuntimeStatus, PlatformRuntimeMissing,
+  type DesktopPlatform} from "./platform-runtime.js";
+import {archiveDistribution, archiveExtension} from "./distribution-archive.js";
+import {signMacAppBundle} from "./macos-signing.js";
 import {distributionCoversLineage, distributionLineage, readReleaseLineage,
   recordReleaseLineage, releaseLineageFile, saveCompatibilityWarning} from "./release-lineage.js";
 import {addCharacter, addScene} from "./scaffold.js";
@@ -113,7 +119,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   dev: {values: "runtime preview-host debounce ui-registry at route", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space no-transcode"},
-  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target android-player gradle android-sdk web-player web-renderer web-package ffmpeg", flags: "encrypt ignore-disk-space check verify-media debug no-transcode"},
+  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target platform android-player gradle android-sdk web-player web-renderer web-package ffmpeg", flags: "encrypt ignore-disk-space check verify-media debug no-transcode archive"},
   run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: "check"},
@@ -147,7 +153,9 @@ function parseOptions(command: string, args: readonly string[]): Options {
     if (!argument.startsWith("--")) { positional.push(argument); continue; }
     const equals = argument.indexOf("=");
     const name = argument.slice(2, equals < 0 ? undefined : equals);
-    if (values.has(name) || flags.has(name)) throw new Error(`Duplicate option: --${name}`);
+    // --platform may repeat; its values join into one list.
+    const repeatable = name === "platform" && values.has(name);
+    if ((values.has(name) && !repeatable) || flags.has(name)) throw new Error(`Duplicate option: --${name}`);
     if (flagNames.has(name)) {
       if (equals >= 0) throw new Error(`--${name} is a flag and does not accept a value`);
       flags.add(name); continue;
@@ -155,7 +163,7 @@ function parseOptions(command: string, args: readonly string[]): Options {
     if (!valueNames.has(name)) throw new Error(`Unknown option for ${command}: --${name}`);
     const value = equals >= 0 ? argument.slice(equals + 1) : args[++index];
     if (value === undefined || value.length === 0 || value.startsWith("--")) throw new Error(`--${name} requires a value`);
-    values.set(name, value);
+    values.set(name, repeatable ? `${values.get(name)!},${value}` : value);
   }
   if (command === "eject" && !flags.has("help")) {
     if (positional.length !== 2 || positional[0] !== "ui")
@@ -168,11 +176,19 @@ function parseOptions(command: string, args: readonly string[]): Options {
     return {values, flags, positional};
   }
   if (command === "add" && !flags.has("help")) {
+    if (positional[0] === "platform") {
+      if (positional.length === 1 && !flags.has("check"))
+        throw new Error("Use prismatix add platform <win32-x64|linux-x64|darwin-x64|darwin-arm64|all> [--from <tarball|dir>], " +
+          "or prismatix add platform --check to list what is installed");
+      if (positional.length > 1) parsePlatformList(positional.slice(1));
+      if (values.has("from") && positional.length !== 2) throw new Error("--from installs exactly one platform");
+      return {values, flags, positional};
+    }
     if (positional[0] === "web-player" ? positional.length !== 1
       : positional.length !== 2 || !["character", "scene"].includes(positional[0]!))
-      throw new Error("Use prismatix add character <alias> [--from <folder>], prismatix add scene <id> " +
-        "or prismatix add web-player [--check]");
-    if (flags.has("check") && positional[0] !== "web-player") throw new Error("--check only applies to add web-player");
+      throw new Error("Use prismatix add character <alias> [--from <folder>], prismatix add scene <id>, " +
+        "prismatix add web-player [--check] or prismatix add platform <platform>");
+    if (flags.has("check") && positional[0] !== "web-player") throw new Error("--check only applies to add web-player and add platform");
     return {values, flags, positional};
   }
   if (command === "extension" && !flags.has("help")) {
@@ -226,6 +242,11 @@ function parseOptions(command: string, args: readonly string[]): Options {
   if (android && flags.has("check")) throw new Error("--check cannot be combined with --target android");
   if (android && values.has("previous-package"))
     throw new Error("--previous-package cannot be combined with --target android");
+  if ((web || android) && (values.has("platform") || flags.has("archive")))
+    throw new Error("--platform and --archive apply to desktop packs (--target desktop)");
+  if (command === "pack" && values.has("platform") &&
+      parsePlatformList([values.get("platform")!]).length > 1 && values.has("previous-package"))
+    throw new Error("--previous-package names one distribution; pack one platform at a time with it");
   if (values.has("artifact") && values.has("ui-registry")) throw new Error("--ui-registry requires a fresh build; it cannot be combined with --artifact");
   if (values.has("compression") && !["none", "fast", "balanced", "maximum"].includes(values.get("compression")!))
     throw new Error("--compression must be none, fast, balanced, or maximum");
@@ -2039,22 +2060,44 @@ async function applyDistributionDefaults(options: Options): Promise<void> {
     if (value !== undefined && !options.values.has(name)) options.values.set(name, value);
 }
 
+/** A compiled artifact `pack --platform` builds once and packs for every platform. */
+interface PrebuiltArtifact {
+  readonly root: string;
+  readonly artifactRoot: string;
+  readonly project: ProjectDocument;
+  readonly startScript: string;
+  readonly sourceMap: string;
+  readonly protectedPaths: readonly string[];
+}
+
 async function packProject(options: Options, settings: {
   /** A local development pack (`run --dev`): never records release lineage in the project. */
   readonly development?: boolean;
   /** A package another target converts (Android, Web): always the plain flat layout. */
   readonly intermediate?: boolean;
+  /** The desktop platform to pack for (`pack --platform`); the host's when absent. */
+  readonly platform?: DesktopPlatform;
+  /** Content already compiled for this pack; nothing is built. */
+  readonly prebuilt?: PrebuiltArtifact;
 } = {}): Promise<{output: string; player: string;
-  validatedOnly?: boolean; deferredMediaCount?: number; retained?: boolean}> {
+  validatedOnly?: boolean; deferredMediaCount?: number; retained?: boolean;
+  /** The distribution's name: its executable name, else the game id. */
+  name: string; platform?: DesktopPlatform; signature?: "developer-id" | "adhoc" | "none"; notarized?: boolean}> {
   await applyDistributionDefaults(options);
   let packager: string;
   let player: string;
+  const foreign = settings.platform !== undefined && settings.platform !== hostPlatform;
   try {
-    const bundle = await discoverRuntimeBundle(["packager", "player"] as const, runtimeOptions(options));
-    packager = bundle.packager.path;
-    player = bundle.player.path;
-    progress({severity: "information", code: "PXCLI1205",
-      message: "Using Runtime tools", packagerSource: bundle.packager.source, playerSource: bundle.player.source});
+    if (foreign) {
+      packager = (await discoverRuntimeTool("packager", runtimeOptions(options))).path;
+      player = "";
+    } else {
+      const bundle = await discoverRuntimeBundle(["packager", "player"] as const, runtimeOptions(options));
+      packager = bundle.packager.path;
+      player = bundle.player.path;
+      progress({severity: "information", code: "PXCLI1205",
+        message: "Using Runtime tools", packagerSource: bundle.packager.source, playerSource: bundle.player.source});
+    }
   } catch (error) {
     if (error instanceof RuntimeDiscoveryFailure) {
       throw new PackagerFailure([discoveryDiagnostic("PXCLI1204",
@@ -2062,16 +2105,35 @@ async function packProject(options: Options, settings: {
     }
     throw error;
   }
+  if (foreign) {
+    // Another platform's Player: the host's Packager lays it out.
+    const location = await resolveProjectPath(options.positional[0]);
+    try {
+      const runtime = await locatePlatformRuntime(location.root, settings.platform!);
+      player = runtime.player;
+      progress({severity: "information", code: "PXCLI1205", message: `Using the ${platformLabels[settings.platform!]} runtime`,
+        platform: settings.platform, packagerSource: "host runtime", playerSource: runtime.source});
+    } catch (error) {
+      if (error instanceof PlatformRuntimeMissing)
+        throw new PackagerFailure([diagnostic("PXCLI1270", error.message, options.positional[0],
+          `Run \`${addPlatformCommand(settings.platform!)}\` once in this project. Checked: ${error.attempts.join("; ")}`)]);
+      throw error;
+    }
+  }
+  const targetOs: string = settings.platform === undefined ? process.platform : platformOs(settings.platform);
   const temp = await mkdtemp(join(tmpdir(), "prismatix-pack-"));
   try {
-    const suppliedArtifact = options.values.get("artifact");
+    const suppliedArtifact = settings.prebuilt === undefined ? options.values.get("artifact") : undefined;
     let root: string;
     let artifactRoot: string;
     let project: ProjectDocument;
     let protectedPaths: string[];
     let startScript = "Runtime/main.pxir";
     let sourceMap = "Runtime/main.pxmap";
-    if (suppliedArtifact === undefined) {
+    if (settings.prebuilt !== undefined) {
+      ({root, artifactRoot, project, startScript, sourceMap} = settings.prebuilt);
+      protectedPaths = [...settings.prebuilt.protectedPaths];
+    } else if (suppliedArtifact === undefined) {
       const built = await buildProject(options.positional[0], join(temp, "artifact"),
         undefined, options.values.get("ui-registry"), options.values.get("runtime"),
         packager, undefined, undefined, transcodeToolFor(options, packager), settings.development);
@@ -2167,13 +2229,17 @@ async function packProject(options: Options, settings: {
     const branding = await packageBranding(options.positional[0]);
     const packagedPlayer = branding.executableName === undefined ? basename(player)
       : branding.executableName + extname(player);
+    const distributionName = branding.executableName ?? project.id;
+    const platformField = settings.platform === undefined ? {} : {platform: settings.platform};
+    let signature: "developer-id" | "adhoc" | "none" | undefined;
+    let notarized = false;
     // Shipped distributions use the platform's layout (a macOS .app, Linux
     // lib/ + .desktop) and the author's Windows layout; run --dev and the
     // packages Android and Web convert stay flat.
     const plainLayout = settings.development === true || settings.intermediate === true;
     // Windows distributions keep only the executable at the top level unless
     // the author asks for "flat"; other platforms have their own layouts.
-    const layout = plainLayout || process.platform !== "win32" ? "flat" : branding.layout ?? "bundled";
+    const layout = plainLayout || targetOs !== "win32" ? "flat" : branding.layout ?? "bundled";
     const platformLayout = !plainLayout;
     // Version information defaults to the project's version.
     const version = branding.version ??
@@ -2191,6 +2257,7 @@ async function packProject(options: Options, settings: {
       ...(layout === "bundled" ? {layout, engineFolder: branding.engineFolder ?? "Engine"} : {}),
       ...(platformLayout ? {platformLayout} : {}),
       ...(branding.bundleIdentifier === undefined ? {} : {bundleIdentifier: branding.bundleIdentifier}),
+      ...(settings.platform === undefined ? {} : {targetPlatform: settings.platform}),
       width: project.resolution.width, height: project.resolution.height,
       startScript, sourceMap,
       startRoute: project.entry.ui,
@@ -2237,7 +2304,7 @@ async function packProject(options: Options, settings: {
         message: `Package preflight passed: ${inputs.length} inputs, ` +
           `${deferredMediaCount} media hashes deferred; no distribution written`});
       return {output, player: join(output, packagedPlayer), validatedOnly: true,
-        deferredMediaCount};
+        deferredMediaCount, name: distributionName, ...platformField};
     }
     // The icon's bytes, not only its path, decide whether a package is reusable.
     const keyedPlan = branding.iconSha256 === undefined ? requestPlan
@@ -2251,7 +2318,7 @@ async function packProject(options: Options, settings: {
     // at least) and moves libraries for the platform layouts, so only a plain
     // non-Windows package can be refreshed that way.
     const branded = branding.executableName !== undefined || branding.icon !== undefined ||
-      process.platform === "win32" || platformLayout;
+      targetOs === "win32" || platformLayout;
     const runtimeSources = contentKey === undefined || branded ? undefined :
       await runtimeReplacementFiles(player);
     const publication = {output, projectRoot: root,
@@ -2280,7 +2347,7 @@ async function packProject(options: Options, settings: {
         phase: "retain-package", current: inputs.length, total: inputs.length,
         message: `Retained verified unchanged distribution: ${output}`});
       await recordLineage();
-      return {output, player: join(output, packagedPlayer), retained: true};
+      return {output, player: join(output, packagedPlayer), retained: true, name: distributionName, ...platformField};
     }
     if (previousPackage === undefined && lineageCovered && planKey !== undefined &&
         contentKey !== undefined &&
@@ -2293,7 +2360,7 @@ async function packProject(options: Options, settings: {
         phase: "refresh-runtime", current: runtimeSources.size, total: runtimeSources.size,
         message: `Updated Player runtime without rebuilding packaged content: ${output}`});
       await recordLineage();
-      return {output, player: join(output, packagedPlayer), retained: true};
+      return {output, player: join(output, packagedPlayer), retained: true, name: distributionName, ...platformField};
     }
     const inputBytes = inputs.reduce((sum, input) => sum + BigInt(input.size), 0n);
     const performanceHint = debugPackagerHint(packager, inputBytes);
@@ -2378,14 +2445,42 @@ async function packProject(options: Options, settings: {
       if (laidOut.length > 0 && !laidOut.startsWith("..") && !isAbsolute(laidOut))
         packagedPlayerPath = laidOut;
     }
-    if (process.platform === "darwin" && !scriptTool) {
-      const app = /^(.+?\.app)\/Contents\/MacOS\//u.exec(packagedPlayerPath)?.[1];
-      if (app !== undefined) {
+    // Script stand-ins for the Packager (tests) produce no real bundle for codesign.
+    const app = targetOs === "darwin" && !(scriptTool && process.platform === "darwin")
+      ? /^(.+?\.app)[\\/]Contents[\\/]MacOS[\\/]/u.exec(packagedPlayerPath)?.[1] : undefined;
+    if (app !== undefined) {
+      const run = (command: string, args: readonly string[]) => runProcess(command, args);
+      if (process.platform === "darwin") {
         progress({severity: "information", code: "PXCLI1226",
           message: `Signing ${app} ad hoc (codesign --sign -)`});
-        for (const warning of await finishMacAppBundle(join(staging, app), join(staging, packagedPlayerPath),
-          (command, args) => runProcess(command, args)))
+        const warnings = await finishMacAppBundle(join(staging, app), join(staging, packagedPlayerPath), run);
+        for (const warning of warnings)
           progress({severity: "warning", code: "PXCLI1227", message: `Warning: ${warning}`});
+        signature = warnings.some(warning => warning.startsWith("codesign")) ? "none" : "adhoc";
+      } else {
+        // Without Apple's tools nothing can be relinked: the shipped runtime
+        // links only macOS and @rpath libraries, which this checks.
+        for (const file of [packagedPlayerPath, ...(await readdir(join(staging, app, "Contents", "Frameworks"))
+          .catch(() => [] as string[])).map(name => join(app, "Contents", "Frameworks", name))]) {
+          const slices = machOSlices(await readFile(join(staging, file)));
+          const foreignLibraries = slices === undefined ? [] : machOForeignDependencies(slices);
+          if (foreignLibraries.length > 0)
+            progress({severity: "warning", code: "PXCLI1276", message: `Warning: ${file} loads libraries from ` +
+              `outside macOS and the app (${foreignLibraries.join(", ")}); pack this platform on a Mac to relink them`});
+        }
+      }
+      const playerSignature = machOCodeSignature(await readFile(join(staging, packagedPlayerPath)));
+      const outcome = await signMacAppBundle(join(staging, app), run, {macHost: process.platform === "darwin",
+        label: join(output, app), playerSigned: playerSignature?.state === "valid",
+        onProgress: (message) => progress({severity: "information", code: "PXCLI1226", message})});
+      if (outcome !== undefined) {
+        signature = outcome.signature;
+        notarized = outcome.notarized;
+        for (const warning of outcome.warnings)
+          progress({severity: "warning", code: "PXCLI1227", message: `Warning: ${warning}`});
+        if (outcome.signature !== "none" &&
+            machOCodeSignature(await readFile(join(staging, packagedPlayerPath)))?.state !== "valid")
+          throw new Error(`${join(output, packagedPlayerPath)} has no valid signature after signing`);
       }
     }
     if (!scriptTool) {
@@ -2406,7 +2501,8 @@ async function packProject(options: Options, settings: {
     }
     });
     await recordLineage();
-    return {output, player: join(output, packagedPlayerPath)};
+    return {output, player: join(output, packagedPlayerPath), name: distributionName, ...platformField,
+      ...(signature === undefined ? {} : {signature}), ...(notarized ? {notarized} : {})};
   } finally {
     await rm(temp, {recursive: true, force: true});
   }
@@ -2470,9 +2566,39 @@ async function addWebPlayerCommand(root: string, check: boolean): Promise<number
   return 0;
 }
 
+/**
+ * `add platform <platform...>`: installs other platforms' runtimes into the
+ * project for `pack --platform`; with --check (or for the host) it only
+ * reports which platforms the project can pack for.
+ */
+async function addPlatformsCommand(root: string, options: Options): Promise<number> {
+  const requested = options.positional.length > 1 ? parsePlatformList(options.positional.slice(1)) : [];
+  const added = [];
+  if (!options.flags.has("check")) {
+    for (const platform of requested) {
+      if (platform === hostPlatform) continue;
+      if (!machineOutput) process.stderr.write(`Adding the ${platformLabels[platform]} runtime (${platform})…\n`);
+      const from = options.values.get("from");
+      added.push(await addPlatformRuntime(root, platform, {...(from === undefined ? {} : {from}),
+        onProgress: (message) => progress({severity: "information", code: "PXCLI1274", platform, message})}));
+    }
+  }
+  const status = await platformRuntimeStatus(root, async () => {
+    const found = await discoverRuntimeTool("player");
+    return {source: found.source, path: found.path};
+  });
+  const shown = requested.length === 0 ? status : status.filter(item => requested.includes(item.platform));
+  process.stdout.write(machineOutput ? `${JSON.stringify({added: added.map(item => item.platform), platforms: status})}\n`
+    : shown.map(item => `${item.installed ? "installed" : "missing  "}  ${item.platform.padEnd(13)}${item.label}` +
+      `${item.host ? " (this computer)" : ""}${item.installed ? `  ${item.source ?? ""}` : `  add it: ${item.install}`}` +
+      `${item.problem === undefined ? "" : `\n             ${item.problem}`}\n`).join(""));
+  return requested.length > 0 && shown.some(item => !item.installed) && !options.flags.has("check") ? 1 : 0;
+}
+
 async function addCommand(options: Options): Promise<number> {
   try {
     const location = await resolveProjectPath(options.values.get("project"));
+    if (options.positional[0] === "platform") return await addPlatformsCommand(location.root, options);
     if (options.positional[0] === "web-player") return await addWebPlayerCommand(location.root, options.flags.has("check"));
     const [kind, name] = options.positional as [string, string];
     const result = kind === "character"
@@ -2487,7 +2613,8 @@ async function addCommand(options: Options): Promise<number> {
         ...result.updated.map((path) => `Updated ${path}`), ""].join("\n"));
     return 0;
   } catch (error) {
-    printDiagnostics([diagnostic("PXCLI1240", "add failed", options.values.get("project"), String(error))]);
+    printDiagnostics([diagnostic(options.positional[0] === "platform" ? "PXCLI1275" : "PXCLI1240", "add failed",
+      options.values.get("project"), String(error))]);
     return 1;
   }
 }
@@ -2617,18 +2744,129 @@ async function androidPackCommand(options: Options): Promise<number> {
   }
 }
 
+/**
+ * Writes the archive a packed distribution ships in, beside its folder:
+ * <name>-<platform>.zip (Windows, macOS) or .tar.gz (Linux).
+ */
+async function archivePackedDistribution(output: string, name: string, platform: DesktopPlatform) {
+  const archive = join(dirname(output), `${name}-${platform}${archiveExtension(platform)}`);
+  progress({severity: "information", code: "PXCLI1272", platform, message: `Archiving ${output} as ${archive}`});
+  return archiveDistribution(output, archive, platform, platformOs(platform) === "darwin" ? undefined : name);
+}
+
+/** A macOS or Linux distribution written on Windows has lost its executable bits in the folder; its archive has them. */
+function archiveRequired(platform: DesktopPlatform): boolean {
+  return process.platform === "win32" && platformOs(platform) !== "win32";
+}
+
+/**
+ * `pack --platform`: compiles the project once, then packs it for each
+ * platform into <output>/<platform> (default dist/<platform>) with the
+ * host's Packager and that platform's Player. Every platform's runtime is
+ * checked before anything is built.
+ */
+async function packPlatforms(options: Options, platforms: readonly DesktopPlatform[]) {
+  // distribution.output names the one folder of a plain pack; platform
+  // folders go into --output or dist/.
+  const explicitOutput = options.values.get("output");
+  await applyDistributionDefaults(options);
+  const location = await resolveProjectPath(options.positional[0]);
+  const base = resolve(explicitOutput ?? join(location.root, "dist"));
+  if ((await lstat(join(base, outputOwnershipMarker)).catch(() => undefined)) !== undefined)
+    throw new PackagerFailure([diagnostic("PXCLI1271", `${base} is itself a packed distribution`, base,
+      "With --platform, --output names the folder that holds one folder per platform; choose a different folder")]);
+  const missing: AuthoringDiagnostic[] = [];
+  for (const platform of platforms) {
+    if (platform === hostPlatform) continue;
+    try { await locatePlatformRuntime(location.root, platform, {verify: false}); }
+    catch (error) {
+      if (!(error instanceof PlatformRuntimeMissing)) throw error;
+      missing.push(diagnostic("PXCLI1270", error.message, location.root,
+        `Run \`${addPlatformCommand(platform)}\` once in this project. Checked: ${error.attempts.join("; ")}`));
+    }
+  }
+  if (missing.length > 0) throw new PackagerFailure(missing);
+  let temporary: string | undefined;
+  try {
+    let prebuilt: PrebuiltArtifact | undefined;
+    if (!options.values.has("artifact")) {
+      let packager: string;
+      try { packager = (await discoverRuntimeTool("packager", runtimeOptions(options))).path; }
+      catch (error) {
+        if (error instanceof RuntimeDiscoveryFailure)
+          throw new PackagerFailure([discoveryDiagnostic("PXCLI1204",
+            `PrismatiX ${error.tool} could not be discovered`, error, options.positional[0])]);
+        throw error;
+      }
+      temporary = await mkdtemp(join(tmpdir(), "prismatix-platforms-"));
+      const built = await buildProject(options.positional[0], join(temporary, "artifact"), undefined,
+        options.values.get("ui-registry"), options.values.get("runtime"), packager, undefined, undefined,
+        transcodeToolFor(options, packager));
+      prebuilt = {root: built.root, artifactRoot: built.output, project: built.artifact.project,
+        startScript: built.artifact.runtimeIrPath, sourceMap: built.artifact.sourceMapPath,
+        protectedPaths: [...built.protectedPaths, built.output]};
+    }
+    const results = [];
+    for (const platform of platforms) {
+      progress({severity: "information", code: "PXCLI1271", platform,
+        message: `Packing for ${platformLabels[platform]} (${platform})`});
+      const values = new Map(options.values);
+      values.delete("platform");
+      values.set("output", join(base, platform));
+      const result = await packProject({values, flags: options.flags, positional: options.positional},
+        {platform, ...(prebuilt === undefined ? {} : {prebuilt})});
+      let archive: string | undefined;
+      if (result.validatedOnly !== true && (options.flags.has("archive") || archiveRequired(platform))) {
+        archive = (await archivePackedDistribution(result.output, result.name, platform)).path;
+        if (!options.flags.has("archive"))
+          progress({severity: "warning", code: "PXCLI1273", platform, message: `Warning: ${result.output} was ` +
+            "written on Windows, whose file system does not keep the executable bit; ship " +
+            `${archive}, which keeps it`});
+      }
+      results.push({...result, ...(archive === undefined ? {} : {archive})});
+    }
+    return results;
+  } finally {
+    if (temporary !== undefined) await rm(temporary, {recursive: true, force: true});
+  }
+}
+
 async function packCommand(options: Options): Promise<number> {
   if (options.values.get("target") === "android") return androidPackCommand(options);
   if (options.values.get("target") === "web") return webPackCommand(options);
-  try { const result = await packProject(options); process.stdout.write(machineOutput
+  try {
+    const platformOption = options.values.get("platform");
+    if (platformOption !== undefined) {
+      const results = await packPlatforms(options, parsePlatformList([platformOption]));
+      const checked = results.every(result => result.validatedOnly === true);
+      process.stdout.write(machineOutput
+        ? `${JSON.stringify(checked ? {validated: true, packed: false, platforms: results}
+          : {packed: true, platforms: results})}\n`
+        : results.map(result => result.validatedOnly === true
+          ? `Package preflight passed for ${result.platform}; no distribution was written.\n`
+          : `Packaged playable game for ${result.platform}: ${result.output}\n` +
+            (result.archive === undefined ? "" : `  archive: ${result.archive}\n`) +
+            (result.signature === undefined ? "" : `  macOS signature: ${result.signature}` +
+              `${result.notarized === true ? " (notarized)" : ""}\n`)).join(""));
+      return 0;
+    }
+    const result = await packProject(options);
+    let archive: string | undefined;
+    if (result.validatedOnly !== true && options.flags.has("archive")) {
+      const platforms = parsePlatformList(["host"]);
+      archive = (await archivePackedDistribution(result.output, result.name, platforms[0]!)).path;
+    }
+    process.stdout.write(machineOutput
     ? `${JSON.stringify(result.validatedOnly
       ? {validated: true, packed: false,
         deferredMediaCount: result.deferredMediaCount}
-      : {packed: true, ...result})}\n`
+      : {packed: true, ...result, ...(archive === undefined ? {} : {archive})})}\n`
     : result.validatedOnly
       ? `Package preflight passed; no distribution was written ` +
         `(${result.deferredMediaCount} media hashes deferred).\n`
-      : `Packaged playable game: ${result.output}\n`); return 0; }
+      : `Packaged playable game: ${result.output}\n${archive === undefined ? "" : `  archive: ${archive}\n`}`);
+    return 0;
+  }
   catch (error) {
     printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure ? error.diagnostics :
       [diagnostic("PXCLI1201", "Pack failed", options.positional[0], String(error))]);
@@ -3742,6 +3980,13 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "prismatix pack [project] --artifact <dir> [--output <dir>] [--runtime <dir>]",
     "prismatix pack [project] [--output <dir>] [--no-transcode]   builds first; see build --help for distribution.transcode",
     "prismatix pack [project] --artifact <dir> --check [--verify-media]",
+    "prismatix pack [project] --platform <win32-x64|linux-x64|darwin-x64|darwin-arm64|all>[,...] [--archive]",
+    "    packs for other desktop platforms too: compiles once, then writes <output>/<platform> (default",
+    "    dist/<platform>) for each; --platform may repeat. Another platform's runtime comes from",
+    "    `prismatix add platform <platform>`. --archive also writes <name>-<platform>.zip (.tar.gz for Linux)",
+    "    beside each folder; a macOS or Linux pack made on Windows always gets one, since only the archive",
+    "    keeps the executable bit. macOS .apps are signed ad hoc (codesign on a Mac, rcodesign elsewhere)",
+    "    or with PRISMATIX_MACOS_P12 by Developer ID; see docs/shipping.md, Packing for other platforms",
     "prismatix pack [project] --target android --android-player <arm64-v8a dir> [--artifact <dir>] [--output <dir>]",
     "    [--gradle <gradle>] [--android-sdk <dir>] [--debug]   APK, plus an AAB when distribution.android.keystore is set;",
     "    needs JAVA_HOME (JDK 17+), Gradle 8.9+ and an Android SDK with platform 35 (ANDROID_HOME)",
@@ -3775,6 +4020,10 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "prismatix add character <alias> [--from <folder>] [--name <display name>] [--project <dir>]",
     "normal.png (or default/neutral) becomes the default expression; without --from the character has no sprite.",
     "prismatix add scene <id> [--chapter <chapter-id>] [--title <title>] [--project <dir>]",
+    "prismatix add platform <platform...|all> [--from <tarball|dir>] [--project <dir>]   installs other platforms'",
+    "    runtimes (@prismatix/native-<platform> at exactly this CLI's version, checked against the npm registry's",
+    "    integrity) into .prismatix/platforms/ for pack --platform; --from installs a downloaded package",
+    "    tarball (npm pack) or runtime instead. add platform --check lists what the project can pack for",
     "prismatix add web-player [--check] [--project <dir>]   adds @prismatix/web-player at exactly this CLI's version",
     "    with the project's package manager, for pack --target web; --check only reports whether it is there"],
   extension: extensionHelp,

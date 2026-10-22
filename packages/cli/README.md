@@ -34,9 +34,10 @@ lockfile with your source and upgrade deliberately.
 | `dev [project]` | Live Preview that replays after every saved edit; `--at chapter2:120` starts at a line or label |
 | `validate [project]` | Checks Story, UI, characters, resources and extensions |
 | `build [project]` | A desktop distribution including the Player |
-| `pack [project]` | Packs content with the Player; `--target web` and `--target android` (experimental) |
+| `pack [project]` | Packs content with the Player; `--platform` packs for other desktop platforms; `--target web` and `--target android` (experimental) |
 | `release [project]` | Validate, build, pack and verify in one step |
 | `add character`, `add scene` | Adds project content |
+| `add platform <platform>` | Adds another desktop platform's runtime (this CLI's exact version, integrity-checked) for `pack --platform`; `--check` lists them |
 | `add web-player` | Adds `@prismatix/web-player` (this CLI's exact version) for `pack --target web`; `--check` only reports |
 | `extension create <id>` | A TypeScript (or `--lang js`) runtime extension |
 | `eject ui <route>` | Copies a built-in screen into the project as TSX |

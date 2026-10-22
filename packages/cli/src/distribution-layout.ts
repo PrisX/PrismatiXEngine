@@ -2,6 +2,7 @@
 // finish an .app bundle after the native Packager laid it out
 // (Engine/SDK/PackageBranding.h describes the layouts themselves).
 
+import {createHash} from "node:crypto";
 import {lstat, readdir} from "node:fs/promises";
 import {basename, join} from "node:path";
 
@@ -87,6 +88,147 @@ export function macBundleFixups(executable: MacBundleFile, libraries: readonly M
     args.push("-add_rpath", "@executable_path/../Frameworks");
   if (args.length > 0) commands.push(["install_name_tool", ...args, executable.path]);
   return commands;
+}
+
+/** One architecture slice of a Mach-O file: its libraries and LC_RPATH entries. */
+export interface MachOSlice {
+  readonly cpu: "arm64" | "x86_64" | "other";
+  readonly dependencies: readonly string[];
+  readonly rpaths: readonly string[];
+  /** Whether it carries a code signature (LC_CODE_SIGNATURE), e.g. the linker's ad hoc one. */
+  readonly signed: boolean;
+}
+
+/**
+ * Reads the load commands of a Mach-O file (thin or universal) without
+ * Apple's tools, so any host can check a macOS distribution. Undefined for
+ * anything else.
+ */
+export function machOSlices(bytes: Buffer): MachOSlice[] | undefined {
+  if (bytes.length < 32) return undefined;
+  const magic = bytes.readUInt32BE(0);
+  if (magic === 0xcafebabe || magic === 0xcafebabf) {
+    const wide = magic === 0xcafebabf;
+    const count = bytes.readUInt32BE(4);
+    if (count === 0 || count > 16) return undefined;
+    const slices: MachOSlice[] = [];
+    for (let index = 0; index < count; index++) {
+      const at = 8 + index * (wide ? 32 : 20);
+      if (at + (wide ? 32 : 20) > bytes.length) return undefined;
+      const offset = wide ? Number(bytes.readBigUInt64BE(at + 8)) : bytes.readUInt32BE(at + 8);
+      const size = wide ? Number(bytes.readBigUInt64BE(at + 16)) : bytes.readUInt32BE(at + 12);
+      if (offset + size > bytes.length) return undefined;
+      const slice = machOSlices(bytes.subarray(offset, offset + size));
+      if (slice === undefined) return undefined;
+      slices.push(...slice);
+    }
+    return slices;
+  }
+  if (bytes.readUInt32LE(0) !== 0xfeedfacf) return undefined;
+  const cpuType = bytes.readUInt32LE(4);
+  const commands = bytes.readUInt32LE(16);
+  const dependencies: string[] = [];
+  const rpaths: string[] = [];
+  let signed = false;
+  let at = 32;
+  for (let index = 0; index < commands && at + 8 <= bytes.length; index++) {
+    const command = bytes.readUInt32LE(at);
+    const size = bytes.readUInt32LE(at + 4);
+    if (size < 8 || at + size > bytes.length) return undefined;
+    const text = (offset: number) => {
+      const start = at + bytes.readUInt32LE(at + offset);
+      const end = bytes.indexOf(0, start);
+      return bytes.toString("utf8", start, end < 0 || end > at + size ? at + size : end);
+    };
+    // LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, LC_REEXPORT_DYLIB, LC_LAZY_LOAD_DYLIB, LC_LOAD_UPWARD_DYLIB
+    if ([0xc, 0x80000018, 0x8000001f, 0x20, 0x80000023].includes(command)) dependencies.push(text(8));
+    else if (command === 0x8000001c) rpaths.push(text(8));
+    else if (command === 0x1d) signed = true;
+    at += size;
+  }
+  return [{cpu: cpuType === 0x0100000c ? "arm64" : cpuType === 0x01000007 ? "x86_64" : "other",
+    dependencies, rpaths, signed}];
+}
+
+/**
+ * Checks the code signature embedded in each slice of a Mach-O file the way
+ * the kernel does before running it: the CodeDirectory's page hashes must
+ * match the file. "unsigned" when a slice has no signature, "invalid" when
+ * a hash differs (the file changed after signing), else "valid". `adhoc`
+ * says whether every signature is ad hoc (no certificate).
+ */
+export function machOCodeSignature(bytes: Buffer): {state: "valid" | "invalid" | "unsigned"; adhoc: boolean} | undefined {
+  const magic = bytes.length >= 8 ? bytes.readUInt32BE(0) : 0;
+  const slices: Buffer[] = [];
+  if (magic === 0xcafebabe || magic === 0xcafebabf) {
+    const wide = magic === 0xcafebabf;
+    for (let index = 0; index < Math.min(bytes.readUInt32BE(4), 16); index++) {
+      const at = 8 + index * (wide ? 32 : 20);
+      if (at + (wide ? 32 : 20) > bytes.length) return undefined;
+      const offset = wide ? Number(bytes.readBigUInt64BE(at + 8)) : bytes.readUInt32BE(at + 8);
+      const size = wide ? Number(bytes.readBigUInt64BE(at + 16)) : bytes.readUInt32BE(at + 12);
+      if (offset + size > bytes.length) return undefined;
+      slices.push(bytes.subarray(offset, offset + size));
+    }
+  } else if (bytes.length >= 32 && bytes.readUInt32LE(0) === 0xfeedfacf) slices.push(bytes);
+  else return undefined;
+  let adhoc = true;
+  for (const slice of slices) {
+    const commands = slice.readUInt32LE(16);
+    let signature: {offset: number; size: number} | undefined;
+    for (let at = 32, index = 0; index < commands && at + 16 <= slice.length; index++) {
+      const size = slice.readUInt32LE(at + 4);
+      if (size < 8) return undefined;
+      if (slice.readUInt32LE(at) === 0x1d) signature = {offset: slice.readUInt32LE(at + 8), size: slice.readUInt32LE(at + 12)};
+      at += size;
+    }
+    if (signature === undefined) return {state: "unsigned", adhoc: false};
+    const blob = slice.subarray(signature.offset, signature.offset + signature.size);
+    if (blob.length < 12 || blob.readUInt32BE(0) !== 0xfade0cc0) return {state: "invalid", adhoc: false};
+    let checked = false;
+    for (let index = 0; index < blob.readUInt32BE(8) && 12 + index * 8 + 8 <= blob.length; index++) {
+      const type = blob.readUInt32BE(12 + index * 8);
+      const offset = blob.readUInt32BE(16 + index * 8);
+      // The primary CodeDirectory (slot 0) and alternates (0x1000+).
+      if (type !== 0 && (type < 0x1000 || type > 0x1004)) continue;
+      const directory = blob.subarray(offset);
+      if (directory.length < 44 || directory.readUInt32BE(0) !== 0xfade0c02) return {state: "invalid", adhoc: false};
+      const flags = directory.readUInt32BE(12);
+      const hashOffset = directory.readUInt32BE(16);
+      const codeSlots = directory.readUInt32BE(28);
+      const codeLimit = directory.readUInt32BE(32);
+      const hashSize = directory[36]!;
+      const hashType = directory[37]!;
+      const pageSize = directory[39] === 0 ? codeLimit : 2 ** directory[39]!;
+      const algorithm = hashType === 1 ? "sha1" : hashType === 2 || hashType === 3 ? "sha256" : hashType === 4 ? "sha384" : undefined;
+      if (algorithm === undefined || codeLimit > slice.length) return {state: "invalid", adhoc: false};
+      if ((flags & 0x2) === 0) adhoc = false;
+      for (let page = 0; page < codeSlots; page++) {
+        const start = page * pageSize;
+        const digest = createHash(algorithm).update(slice.subarray(start, Math.min(start + pageSize, codeLimit))).digest();
+        if (!digest.subarray(0, hashSize).equals(directory.subarray(hashOffset + page * hashSize, hashOffset + (page + 1) * hashSize)))
+          return {state: "invalid", adhoc};
+      }
+      checked = true;
+    }
+    if (!checked) return {state: "invalid", adhoc: false};
+  }
+  return {state: "valid", adhoc};
+}
+
+/**
+ * Libraries a bundled Mach-O file loads from outside macOS and the bundle:
+ * absolute paths other than /usr/lib and /System. Such a Player only runs
+ * on the machine that built it; on a Mac the CLI relinks it, elsewhere this
+ * is reported.
+ */
+export function machOForeignDependencies(slices: readonly MachOSlice[]): string[] {
+  const foreign = new Set<string>();
+  for (const slice of slices)
+    for (const dependency of slice.dependencies)
+      if (!dependency.startsWith("@") && !dependency.startsWith("/usr/lib/") && !dependency.startsWith("/System/"))
+        foreign.add(dependency);
+  return [...foreign].sort();
 }
 
 type Run = (command: string, args: readonly string[]) => Promise<{code: number; stdout: string; stderr: string}>;

@@ -73,14 +73,37 @@ const RUNTIME_LINE = CLI_VERSION.split(".").slice(0, 2).join(".");
 const RUNTIME_LINE_PATTERN = RUNTIME_LINE.replaceAll(".", String.raw`\.`);
 const RUNTIME_RELEASE = new RegExp(String.raw`^${RUNTIME_LINE_PATTERN}\.(0|[1-9]\d*)(?:\+[0-9A-Za-z.-]+)?$`);
 const RUNTIME_PRERELEASE = new RegExp(String.raw`^${RUNTIME_LINE_PATTERN}\.(0|[1-9]\d*)-[0-9A-Za-z.-]+(?:\+[0-9A-Za-z.-]+)?$`);
-function targetMatches(target: unknown): boolean {
-  const targets: Record<string, string> = {
-    "win32-x64": "x86_64-pc-windows-msvc", "linux-x64": "x86_64-unknown-linux-gnu",
-    "linux-arm64": "aarch64-unknown-linux-gnu", "darwin-x64": "x86_64-apple-darwin",
-    "darwin-arm64": "aarch64-apple-darwin",
-  };
-  const host = `${process.platform}-${process.arch}`;
-  return target === host || (targets[host] !== undefined && target === targets[host]);
+const targetTriples: Readonly<Record<string, string>> = {
+  "win32-x64": "x86_64-pc-windows-msvc", "linux-x64": "x86_64-unknown-linux-gnu",
+  "linux-arm64": "aarch64-unknown-linux-gnu", "darwin-x64": "x86_64-apple-darwin",
+  "darwin-arm64": "aarch64-apple-darwin",
+};
+function targetMatches(target: unknown, platform = `${process.platform}-${process.arch}`): boolean {
+  return target === platform || (targetTriples[platform] !== undefined && target === targetTriples[platform]);
+}
+/** This CLI's version: a runtime it uses, the host's or another platform's, is exactly this version. */
+export const cliRuntimeVersion = CLI_VERSION;
+/**
+ * Checks a runtime manifest (share/PrismatiX/runtime-manifest.json) for
+ * `platform` (Node's `${platform}-${arch}`): format, target, a relative
+ * binDir and tool file names. A release runtime is exactly this CLI's
+ * version; `developer` also accepts a pre-release of the same line.
+ */
+export function checkRuntimeManifest(value: unknown, platform: string, developer: boolean):
+  {version: string; binDir: string; tools: Partial<Record<RuntimeTool, string>>} {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid manifest object");
+  const source = value as Record<string, unknown>;
+  if (source.format !== "PrismatiXRuntimeManifest" || source.schemaRevision !== 1) throw new Error("expected runtime manifest schema revision 1");
+  if (source.version !== CLI_VERSION &&
+      (!developer || typeof source.version !== "string" || !RUNTIME_PRERELEASE.test(source.version)))
+    throw new Error(`runtime version ${String(source.version)} is not ${CLI_VERSION}, the version of this CLI`);
+  if (!targetMatches(source.target, platform)) throw new Error(`runtime target ${String(source.target)} is not ${platform}`);
+  if (typeof source.binDir !== "string" || !source.binDir || isAbsolute(source.binDir) || /^[A-Za-z]:/.test(source.binDir)) throw new Error("invalid relative runtime binDir");
+  if (!source.tools || typeof source.tools !== "object" || Array.isArray(source.tools)) throw new Error("invalid runtime tools");
+  for (const filename of Object.values(source.tools)) {
+    if (typeof filename !== "string" || !filename || filename === "." || filename === ".." || /[\\/:]/.test(filename)) throw new Error("runtime tool must be a filename inside binDir");
+  }
+  return source as {version: string; binDir: string; tools: Partial<Record<RuntimeTool, string>>};
 }
 function validateManifest(value: unknown, developer: boolean): RuntimeManifest {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid manifest object");
