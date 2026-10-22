@@ -488,6 +488,15 @@ function decodeMappings(mappings: string): Mapping[][] {
  */
 export function remapExtensionStack(text: string, root: string,
   manifestPaths: readonly string[]): string {
+  return extensionRemapper(root, manifestPaths)(text);
+}
+
+/**
+ * `remapExtensionStack` with the source maps read once: for a stream of
+ * Player output. Positions without a map stay as they are.
+ */
+export function extensionRemapper(root: string,
+  manifestPaths: readonly string[]): (text: string) => string {
   const maps = new Map<string, {sources: string[]; lines: Mapping[][]}>();
   for (const manifestPath of manifestPaths) {
     let entry: CacheEntry;
@@ -502,8 +511,8 @@ export function remapExtensionStack(text: string, root: string,
         lines: decodeMappings(map.mappings)});
     } catch { /* An unreadable map leaves positions as they are. */ }
   }
-  if (maps.size === 0) return text;
-  return text.replace(/([\w./@-]+\.js):(\d+)(?::(\d+))?/gu, (match, file: string, line: string, column?: string) => {
+  if (maps.size === 0) return (text) => text;
+  return (text) => text.replace(/([\w./@-]+\.js):(\d+)(?::(\d+))?/gu, (match, file: string, line: string, column?: string) => {
     const map = maps.get(file);
     const segments = map?.lines[Number(line) - 1];
     if (map === undefined || segments === undefined || segments.length === 0) return match;
@@ -513,4 +522,19 @@ export function remapExtensionStack(text: string, root: string,
     if (source === undefined) return match;
     return `${source}:${segment.sourceLine + 1}:${segment.sourceColumn + 1}`;
   });
+}
+
+/** The remapper for the extensions a project declares (`prismatix.json` or `project.pxproject`). */
+export async function projectExtensionRemapper(projectRoot: string): Promise<(text: string) => string> {
+  for (const name of ["prismatix.json", "project.pxproject"]) {
+    let project: unknown;
+    try { project = JSON.parse(await readFile(join(projectRoot, name), "utf8")); }
+    catch { continue; }
+    if (typeof project !== "object" || project === null || Array.isArray(project)) continue;
+    const declared = (project as {extensions?: unknown}).extensions;
+    const extensions = Array.isArray(declared)
+      ? declared.filter((path): path is string => typeof path === "string") : [];
+    return extensions.length === 0 ? (text) => text : extensionRemapper(projectRoot, extensions);
+  }
+  return (text) => text;
 }

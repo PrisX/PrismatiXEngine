@@ -14,7 +14,7 @@ import {basename, dirname, extname, join, resolve} from "node:path";
 import {pathToFileURL} from "node:url";
 
 import {PlayerTestClient, type Journey, type JourneyContext} from "./qa-client.js";
-import {remapExtensionStack} from "./extension-build.js";
+import {projectExtensionRemapper} from "./extension-build.js";
 
 export interface TestCommandOptions {
   readonly values: ReadonlyMap<string, string>;
@@ -178,11 +178,7 @@ export async function waitForPort(portFile: string, child: ChildProcess, exited:
 
 /** Player log positions in bundled TypeScript extensions, mapped back to their .ts lines. */
 async function remapLog(text: string, projectRoot: string): Promise<string> {
-  const project = await readJsonObject(join(projectRoot, "prismatix.json")) ??
-    await readJsonObject(join(projectRoot, "project.pxproject"));
-  const extensions = Array.isArray(project?.extensions)
-    ? project.extensions.filter((path): path is string => typeof path === "string") : [];
-  return extensions.length === 0 ? text : remapExtensionStack(text, projectRoot, extensions);
+  return (await projectExtensionRemapper(projectRoot))(text);
 }
 
 async function logTail(dataRoot: string, lines = 40): Promise<string | undefined> {

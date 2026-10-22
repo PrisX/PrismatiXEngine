@@ -9,7 +9,8 @@ import test from "node:test";
 
 import {ENGINE_HOST_BINDINGS} from "@prismatix/runtime";
 
-import {buildTypeScriptExtensions, remapExtensionStack} from "../src/extension-build.js";
+import {buildTypeScriptExtensions, extensionRemapper, remapExtensionStack} from "../src/extension-build.js";
+import {PlayerOutput, type ExtensionLogRecord} from "../src/player-output.js";
 import {createExtension} from "../src/extension-scaffold.js";
 
 const cli = resolve("dist/src/cli.js");
@@ -176,6 +177,28 @@ test("build bundles a TypeScript extension into deterministic JavaScript the Pla
       .findIndex((text) => text.includes("Hi, ${name}")) + 1;
     assert.match(remapExtensionStack(`at greeting (Content/Extensions/fx-kit/main.js:${line}:30)`, root,
       ["Content/Extensions/fx-kit/fx-kit.pxextension"]), /at greeting \(Content\/Extensions\/fx-kit\/lib\/format\.ts:1:\d+\)/u);
+
+    // While `run` plays, the Player's extension log lines become records at
+    // their TypeScript source; terminal lines are remapped as they pass.
+    const printed: string[] = [];
+    const logged: ExtensionLogRecord[] = [];
+    const playerOutput = new PlayerOutput(extensionRemapper(root, ["Content/Extensions/fx-kit/fx-kit.pxextension"]),
+      (text) => printed.push(text), (record) => logged.push(record));
+    playerOutput.push("[09:10:02.124] [error] [4242] [javascript] Error: boom\n    at greeting (Content/Extensions/fx-");
+    playerOutput.push(`kit/main.js:${line}:30)\r\n    at <anonymous> (<prismatix-sandbox>:3:73)\n`);
+    playerOutput.push("[09:10:02.125] [error] [4242] [diagnostic] PXJS7001 [Script.JavaScript] JavaScript execution failed\n");
+    playerOutput.push("[09:10:02.126] [info] [4242] [javascript] hello 2\n[09:10:02.127] [warning] [4242] [javascript] careful");
+    playerOutput.end();
+    assert.equal(logged.length, 3);
+    assert.equal(logged[0]!.severity, "error");
+    assert.equal(logged[0]!.message, "Error: boom");
+    assert.equal(logged[0]!.path, "Content/Extensions/fx-kit/lib/format.ts");
+    assert.equal(logged[0]!.line, 1);
+    assert.match(logged[0]!.details ?? "", /at greeting \(Content\/Extensions\/fx-kit\/lib\/format\.ts:1:\d+\)/u);
+    assert.deepEqual(logged.slice(1).map((record) => [record.severity, record.message, record.path]),
+      [["information", "hello 2", undefined], ["warning", "careful", undefined]]);
+    assert.ok(printed.some((text) => /lib\/format\.ts:1:\d+/u.test(text)), "terminal lines are remapped");
+    assert.equal(printed.length, 6);
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 

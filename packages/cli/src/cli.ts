@@ -52,7 +52,8 @@ import {transcodeMedia, type TranscodedFile} from "./media-transcode.js";
 import {testCommand, testHelp, waitForPort} from "./test-command.js";
 import {PlayerTestClient} from "./qa-client.js";
 import {reachStoryPosition} from "./run-at.js";
-import {buildTypeScriptExtensions, type ExtensionBundle} from "./extension-build.js";
+import {buildTypeScriptExtensions, projectExtensionRemapper, type ExtensionBundle} from "./extension-build.js";
+import {PlayerOutput, type ExtensionLogRecord} from "./player-output.js";
 import {extensionCommand, extensionHelp} from "./extension-scaffold.js";
 
 import {
@@ -457,6 +458,15 @@ function printDiagnostics(values: readonly AuthoringDiagnostic[]): void {
       if (value.hint ?? value.details) process.stderr.write(`  ${value.hint ?? value.details}\n`);
     }
   }
+}
+
+// An extension log line the Player wrote while `run` plays the game.
+function extensionRecord(record: ExtensionLogRecord): void {
+  process.stderr.write(`${JSON.stringify({event: "run.extension", severity: record.severity,
+    code: record.severity === "error" ? "PXJS7001" : "PXCLI1317", message: record.message,
+    ...(record.path === undefined ? {} : {path: record.path, span: {path: record.path,
+      start: {line: record.line, column: record.column}, end: {line: record.line, column: record.column}}}),
+    ...(record.details === undefined ? {} : {details: record.details})})}\n`);
 }
 
 function progress(value: Readonly<Record<string, unknown>>): void {
@@ -2758,9 +2768,33 @@ async function runCommand(options: Options): Promise<number> {
       Object.assign(environment, {PRISMATIX_QA_IPC: "127.0.0.1:0", PRISMATIX_QA_IPC_PORT_FILE: portFile});
     }
     const started = Date.now();
+    // The Player's output goes through the CLI so extension positions name
+    // the authored TypeScript lines; --json turns extension log lines into
+    // records an editor shows at their source.
+    const remap = await projectExtensionRemapper(location.root);
     const player = spawn(result.player, [], {cwd: result.output, env: environment, windowsHide: false,
-      stdio: ["ignore", machineOutput ? "ignore" : "inherit", machineOutput ? "ignore" : "inherit"]});
+      stdio: ["ignore", "pipe", "pipe"]});
     child = player;
+    const forwardOutput = (stream: NodeJS.ReadableStream, terminal: NodeJS.WriteStream): Promise<void> => {
+      const output = new PlayerOutput(remap,
+        (line) => { if (!machineOutput) terminal.write(`${line}\n`); },
+        (record) => { if (machineOutput) extensionRecord(record); });
+      let idle: NodeJS.Timeout | undefined;
+      stream.setEncoding("utf8");
+      stream.on("data", (chunk: string) => {
+        output.push(chunk);
+        clearTimeout(idle);
+        // A message and its stack arrive together; a pause ends it.
+        idle = setTimeout(() => output.flush(), 60);
+      });
+      return new Promise((accept) => stream.once("close", () => {
+        clearTimeout(idle);
+        output.end();
+        accept();
+      }));
+    };
+    const forwarded = Promise.all([forwardOutput(player.stdout, process.stdout),
+      forwardOutput(player.stderr, process.stderr)]);
     let exitCode: number | null | undefined;
     const exited = new Promise<number>((accept) => {
       player.once("exit", (code, signal) => {
@@ -2805,7 +2839,10 @@ async function runCommand(options: Options): Promise<number> {
           options.positional[0], String(error))]);
       } finally { client?.close(); }
     }
-    return await exited;
+    const code = await exited;
+    // Lines the Player wrote just before it exited.
+    await Promise.race([forwarded, new Promise((accept) => setTimeout(accept, 2_000))]);
+    return code;
   } catch (error) {
     child?.kill();
     printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure ? error.diagnostics :
