@@ -15,6 +15,23 @@ The packages always carry the same version and pin each other exactly.
 
 ### Added
 
+- Two lower extension layers ([docs/native-extensions.md](docs/native-extensions.md)).
+  Layer 1, `@prismatix/runtime/raw` (experimental, every Player including the
+  WebGL2 and WebGPU Web Players): `createPrismatiXRaw()` over the new
+  `EngineRaw` global draws meshes from typed-array vertices and indices with
+  blend modes and masks, writes pixels into textures and draws into render
+  targets, under the new `raw.mesh`, `raw.texture` and `raw.target`
+  capabilities, per-frame vertex and upload budgets, and never in saves or
+  rollback. Layer 2: signed C ABI libraries (`PxPluginAbi.h`,
+  `px_plugin_init(const PxHostApi*)` with ABI version checks) register named
+  services that scripts call with bytes (`@prismatix/runtime/native`, the
+  `native` capability). Manifests gain `platforms` and `native`; packs write a
+  native pack per platform, `extension keygen` and `pack --signing-key` sign
+  them, `extension add --allow-native [--platform]` installs them with
+  per-platform hashes in the lock, registries and the static index serve
+  `platformDownloads` and filter search and resolve by `platform`, and
+  `pack --target web` / `validate --target web` refuse native extensions.
+
 - Sharing extensions ([docs/extensions-sharing.md](docs/extensions-sharing.md)).
   `prismatix extension pack [--owner <owner>] [--include-source]` writes a
   reproducible `<owner>-<name>-<version>.pxext` (a canonical stored ZIP with

@@ -16,6 +16,11 @@ implements, the static index layout, the lock file and the security model.
 - [Static index](#static-index)
 - [Security model](#security-model)
 
+An extension with native libraries also ships one native pack per platform,
+installs only with `--allow-native` and never builds for the Web:
+[Low-level and native extensions](native-extensions.md) covers what that
+adds to every section below.
+
 ## Authoring and packing
 
 A shared extension has an id `owner/name`. The owner is your registry user or
@@ -252,6 +257,8 @@ files}`. Errors are `PXEXTPKG1xxx`, warnings `PXEXTPKG2xxx`:
 | PXEXTPKG1012 | A bad icon or screenshot |
 | PXEXTPKG1013 | `requiredEngineVersion` is not a SemVer range |
 | PXEXTPKG1014 | Entries are not in path order |
+| PXEXTPKG1015 | A native pack is missing a file its manifest lists, or holds one it does not |
+| PXEXTPKG1016 | A native pack's file does not match the SHA-256 its manifest pins |
 | PXEXTPKG2001 / 2002 / 2003 | No README.md / no LICENSE file / no `license` in `pxext.json` |
 | PXEXTPKG2004 | A `dist/` script the manifest does not load |
 
@@ -456,6 +463,11 @@ re-runs the script, which fails on any invalid package.
 - **Consent.** Before installing, the CLI (and Studio) shows the
   capabilities the extension declares and its commands and Actions; an
   update that adds a capability asks again.
+- **Native code** ([details](native-extensions.md)) is the exception: a
+  library runs in the game process with the player's permissions, so it
+  installs only with `--allow-native`, is signed per platform, is pinned by
+  SHA-256 in the lock and the packaged manifest, and is checked again by the
+  Player before it loads.
 - **At run time** an extension's script runs only inside the game's sandboxed
   JavaScript host (QuickJS): no Node.js, no file system or network, no
   `Date` or `Math.random`, and the Player refuses host calls outside the
