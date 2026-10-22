@@ -40,6 +40,8 @@ lockfile with your source and upgrade deliberately.
 | `add platform <platform>` | Adds another desktop platform's runtime (this CLI's exact version, integrity-checked) for `pack --platform`; `--check` lists them |
 | `add web-player` | Adds `@prismatix/web-player` (this CLI's exact version) for `pack --target web`; `--check` only reports |
 | `extension create <id>` | A TypeScript (or `--lang js`) runtime extension |
+| `extension pack`, `extension publish` | A reproducible `.pxext` package of an extension, and publishing it to a registry |
+| `extension add <owner/name \| file.pxext \| url \| npm:pkg>` | Installs a shared extension into `Extensions/` after checking its SHA-256 and showing its capabilities; `update`, `outdated`, `verify`, `remove`, `search` |
 | `eject ui <route>` | Copies a built-in screen into the project as TSX |
 | `import artemis <extracted> [project]` | Converts an Artemis game |
 | `ids --sync` | Reviews stable save identities after adding or removing Story lines |

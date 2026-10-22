@@ -61,6 +61,8 @@ import {reachStoryPosition} from "./run-at.js";
 import {buildTypeScriptExtensions, projectExtensionRemapper, type ExtensionBundle} from "./extension-build.js";
 import {PlayerOutput, type ExtensionLogRecord} from "./player-output.js";
 import {extensionCommand, extensionHelp} from "./extension-scaffold.js";
+import {installedStatus} from "./extension-install.js";
+import {extensionSharingCommand, projectlessSubcommands, sharingArity, sharingHelp, sharingSubcommands} from "./extension-sharing.js";
 
 import {
   assertLocalBuildFresh,
@@ -123,7 +125,8 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: "check"},
-  extension: {values: "project lang command action dir", flags: "no-register await"},
+  extension: {values: "project lang command action dir owner output registry sha256 to capability page reason",
+    flags: "no-register await yes include-source undo"},
   eject: {values: "project runtime", flags: "force"},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync accept-removals"},
@@ -193,10 +196,12 @@ function parseOptions(command: string, args: readonly string[]): Options {
   }
   if (command === "extension" && !flags.has("help")) {
     const counts: Readonly<Record<string, readonly number[]>> = {create: [2], "add-command": [3], "add-action": [3],
-      types: [1, 2], list: [1]};
+      types: [1, 2], list: [1], ...sharingArity};
     if (!(counts[positional[0] ?? ""] ?? []).includes(positional.length))
       throw new Error("Use prismatix extension create <id> | add-command <extension> <id> | " +
-        "add-action <extension> <id> | types [extension] | list");
+        "add-action <extension> <id> | types [extension] | list | pack [extension] | add <source> | remove <id> | " +
+        "update [id] | outdated | verify | inspect <source> | search [query] | info <id> | publish [file] | " +
+        "yank <id@version> | registry [url]; see prismatix extension --help");
     return {values, flags, positional};
   }
   if (command === "import" && !flags.has("help")) {
@@ -2620,9 +2625,22 @@ async function addCommand(options: Options): Promise<number> {
 }
 
 async function extensionCliCommand(options: Options): Promise<number> {
+  const subcommand = options.positional[0] ?? "";
   try {
+    if (sharingSubcommands.has(subcommand)) {
+      let root: string | undefined;
+      try { root = (await resolveProjectPath(options.values.get("project"))).root; }
+      catch (error) { if (!projectlessSubcommands.has(subcommand) || options.values.has("project")) throw error; }
+      const result = await extensionSharingCommand(root, options, machineOutput, (message) =>
+        progress({severity: "information", code: "PXCLI1246", message}));
+      if (result.warnings !== undefined && result.warnings.length > 0)
+        printDiagnostics(result.warnings.filter((item) => item.severity === "warning"));
+      process.stdout.write(result.text);
+      return result.status;
+    }
     const location = await resolveProjectPath(options.values.get("project"));
-    process.stdout.write(await extensionCommand(location.root, options, machineOutput));
+    const installed = subcommand === "list" ? await installedStatus(location.root) : undefined;
+    process.stdout.write(await extensionCommand(location.root, options, machineOutput, installed));
     return 0;
   } catch (error) {
     printDiagnostics([diagnostic("PXCLI1245", "extension failed", options.values.get("project"),
@@ -4026,7 +4044,7 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "    tarball (npm pack) or runtime instead. add platform --check lists what the project can pack for",
     "prismatix add web-player [--check] [--project <dir>]   adds @prismatix/web-player at exactly this CLI's version",
     "    with the project's package manager, for pack --target web; --check only reports whether it is there"],
-  extension: extensionHelp,
+  extension: [...extensionHelp, ...sharingHelp],
   eject: ["Copy a built-in Player screen into the project as editable TSX and register it.",
     "prismatix eject ui <title|hud|backlog|save|load|gallery|settings|video|all> [--force] [--runtime <dir>]"],
   augment: ["Add declared files to a built artifact without editing ownership by hand.",
@@ -4477,8 +4495,11 @@ async function projectTool(command: string, options: Options, args: string[]): P
     .includes(command)) return undefined;
   // `import <format> <source> [project]` delegates to the target project's CLI.
   const location = command === "ui" ? await uiProject(options)
+    : command === "extension" && projectlessSubcommands.has(options.positional[0] ?? "") && !options.values.has("project")
+      ? await resolveProjectPath(undefined).catch(() => undefined)
     : command === "extension" || command === "add" ? await resolveProjectPath(options.values.get("project"))
     : await resolveProjectPath(command === "import" ? options.positional[2] : options.positional[0]);
+  if (location === undefined) return undefined;
   const manifestPath = join(location.root, "package.json");
   if (!await regularFile(manifestPath)) return launcherStopRequested ? 130 : undefined;
   const manifest = object(await readJson(manifestPath));

@@ -192,7 +192,7 @@ const tsconfig = `${JSON.stringify({
   include: ["**/*.ts"],
 }, null, 2)}\n`;
 
-async function readObject(path: string): Promise<Json> {
+export async function readObject(path: string): Promise<Json> {
   const text = await readFile(path, "utf8");
   const value = JSON.parse(text.startsWith("﻿") ? text.slice(1) : text) as unknown;
   if (value === null || typeof value !== "object" || Array.isArray(value))
@@ -201,7 +201,7 @@ async function readObject(path: string): Promise<Json> {
 }
 
 /** Adds one path to a JSON manifest's `extensions` array, keeping the rest of its text. */
-function registerText(text: string, manifestPath: string): string {
+export function registerText(text: string, manifestPath: string): string {
   const value = JSON.parse(text) as Json;
   const registered = Array.isArray(value.extensions) ? value.extensions as unknown[] : undefined;
   if (registered?.includes(manifestPath)) return text;
@@ -226,7 +226,7 @@ function registerText(text: string, manifestPath: string): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-async function projectManifest(root: string): Promise<string> {
+export async function projectManifest(root: string): Promise<string> {
   for (const name of ["prismatix.json", "project.pxproject"])
     if (existsSync(join(root, name))) return name;
   throw new Error(`${root} has no prismatix.json or project.pxproject`);
@@ -252,12 +252,12 @@ async function pinRuntime(root: string): Promise<string | undefined> {
   return "package.json";
 }
 
-interface LocatedExtension {
+export interface LocatedExtension {
   readonly manifestPath: string;
   readonly manifest: ExtensionManifest;
 }
 
-async function projectExtensions(root: string): Promise<LocatedExtension[]> {
+export async function projectExtensions(root: string): Promise<LocatedExtension[]> {
   const project = await readObject(join(root, await projectManifest(root)));
   const located: LocatedExtension[] = [];
   for (const path of Array.isArray(project.extensions) ? project.extensions : []) {
@@ -268,7 +268,7 @@ async function projectExtensions(root: string): Promise<LocatedExtension[]> {
   return located;
 }
 
-async function findExtension(root: string, reference: string): Promise<LocatedExtension> {
+export async function findExtension(root: string, reference: string): Promise<LocatedExtension> {
   const all = await projectExtensions(root);
   const found = all.find((item) => item.manifestPath === reference || item.manifest.id === reference);
   if (found === undefined)
@@ -276,7 +276,7 @@ async function findExtension(root: string, reference: string): Promise<LocatedEx
   return found;
 }
 
-function directoryOf(manifestPath: string): string {
+export function directoryOf(manifestPath: string): string {
   const index = manifestPath.lastIndexOf("/");
   return index < 0 ? "" : manifestPath.slice(0, index);
 }
@@ -439,7 +439,12 @@ interface CommandOptions {
 }
 
 /** Runs `prismatix extension <subcommand>` in `root`; returns what it printed. */
-export async function extensionCommand(root: string, options: CommandOptions, json: boolean): Promise<string> {
+/** Lock details of an installed package, keyed by its manifest path, for `list`. */
+export type InstalledPackages = ReadonlyMap<string, {readonly id: string; readonly status: string;
+  readonly entry: {readonly version: string; readonly source: string; readonly range?: string; readonly sha256: string}}>;
+
+export async function extensionCommand(root: string, options: CommandOptions, json: boolean,
+  installed: InstalledPackages = new Map()): Promise<string> {
   const [subcommand, first, second] = options.positional;
   if (subcommand === "create") {
     const result = await createExtension(root, first!, {
@@ -471,9 +476,14 @@ export async function extensionCommand(root: string, options: CommandOptions, js
     if (json) return `${JSON.stringify({extensions: all.map((item) => ({manifest: item.manifestPath, id: item.manifest.id,
       language: extensionUsesTypeScript(item.manifest) ? "typescript" : "javascript", entry: item.manifest.entry,
       commands: (item.manifest.commands ?? []).map((command) => command.id),
-      actions: (item.manifest.actions ?? []).map((action) => action.id)}))})}\n`;
+      actions: (item.manifest.actions ?? []).map((action) => action.id),
+      ...(installed.has(item.manifestPath) ? {package: (({id, status, entry}) => ({id, version: entry.version,
+        source: entry.source, ...(entry.range === undefined ? {} : {range: entry.range}), sha256: entry.sha256, lock: status}))(
+        installed.get(item.manifestPath)!)} : {})}))})}\n`;
     if (all.length === 0) return "No extensions are registered.\n";
-    return `${all.map((item) => [`${item.manifest.id} (${extensionUsesTypeScript(item.manifest) ? "TypeScript" : "JavaScript"}) ${item.manifestPath}`,
+    return `${all.map((item) => [`${item.manifest.id} (${extensionUsesTypeScript(item.manifest) ? "TypeScript" : "JavaScript"}) ${item.manifestPath}` +
+      (installed.has(item.manifestPath) ? ` [${installed.get(item.manifestPath)!.id}@${installed.get(item.manifestPath)!.entry.version}, ` +
+        `${installed.get(item.manifestPath)!.entry.source}, lock ${installed.get(item.manifestPath)!.status}]` : ""),
       ...(item.manifest.commands ?? []).map((command) => `  command ${command.id}`),
       ...(item.manifest.actions ?? []).map((action) => `  action  ${action.id}`)].join("\n")).join("\n")}\n`;
   }

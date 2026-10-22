@@ -244,7 +244,7 @@ const contextMemberCapabilities: Readonly<Record<string, string>> = {
   "renderer.upsert": "render", "renderer.remove": "render", "renderer.clear": "render",
   "input.actionPressed": "input", "input.actionDown": "input",
 };
-function engineCapability(name: string): string {
+export function engineCapability(name: string): string {
   if (/^(?:PushRoute|ReplaceRoute|BackRoute|ShowModal|CloseModal|SetRouteTransition|RegisterAction)$/u.test(name)) return "ui";
   if (/^(?:PlaySE|PlayVoice|StopVoice|PlayBGM|StopBGM|PlayAmbience|StopAmbience|AwaitAudio|WaitAudio)$/u.test(name) ||
       /^Set(?:BGM|SE|Voice|Ambience)Volume$/u.test(name) || /Audio(?:Status|Playback)?$/u.test(name)) return "audio";
