@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "Engine/Core/Result.h"
@@ -101,6 +102,29 @@ struct AffineTransform2D {
     float d = 1.0f;
     float tx = 0.0f;
     float ty = 0.0f;
+};
+
+// Layer-1 extension drawing (@prismatix/runtime/raw). The same calls work on
+// every SDL renderer the Player uses (Direct3D, Metal, OpenGL, the WebGL2 Web
+// Player and SDL_GPU on WebGPU), because they reduce to SDL geometry,
+// streaming textures and texture render targets.
+struct RawVertex {
+    float x = 0.0f;
+    float y = 0.0f;
+    float u = 0.0f;
+    float v = 0.0f;
+    float r = 1.0f;
+    float g = 1.0f;
+    float b = 1.0f;
+    float a = 1.0f;
+};
+
+enum class RawBlendMode : std::uint8_t {
+    Normal,
+    Premultiplied,
+    Additive,
+    Multiply,
+    Replace,
 };
 
 class Renderer2D {
@@ -345,6 +369,36 @@ public:
 
     [[nodiscard]] SDL_Renderer* Handle() const { return m_renderer; }
 
+    // Raw extension resources. A writable texture is RGBA8 (rows top to
+    // bottom); a render target starts transparent. Both are empty when the
+    // backend cannot create them.
+    [[nodiscard]] TextureResource CreateRawTexture(int width, int height,
+                                                   bool linear);
+    [[nodiscard]] TextureResource CreateRawTarget(int width, int height,
+                                                  bool linear);
+    // Replaces `region` (texture pixels) with `pixels`, `pitchBytes` per row.
+    [[nodiscard]] bool UpdateRawTexture(TextureResource& texture,
+                                        const Rect& region,
+                                        const std::uint8_t* pixels,
+                                        std::size_t pitchBytes);
+    // Redirects drawing into `target` until EndRawTarget, with an identity
+    // transform and no clip; `clear` fills it first. Not nestable.
+    [[nodiscard]] bool BeginRawTarget(TextureHandle target,
+                                      std::optional<Color> clear);
+    void EndRawTarget();
+    // Draws a triangle list (`indices` may be null) with `texture` (or vertex
+    // colors only), `transform` applied to the positions. On the screen the
+    // renderer's own transform and modulation apply too.
+    void DrawRawGeometry(TextureHandle texture, const RawVertex* vertices,
+                         int vertexCount, const int* indices, int indexCount,
+                         RawBlendMode blend,
+                         const AffineTransform2D& transform);
+    [[nodiscard]] std::string BackendName() const;
+    // A packaged image as a texture (loaded on first use), or empty.
+    [[nodiscard]] TextureHandle AssetTexture(const std::string& path) {
+        return m_assets.Texture(path);
+    }
+
 private:
     bool RenderGeometry(SDL_Texture* texture, const SDL_Vertex* vertices,
                          int count, const int* indices, int indexCount);
@@ -435,6 +489,14 @@ private:
     bool m_presentationHoldActive = false;
     std::uint64_t m_geometryBatchCount = 0;
     std::uint64_t m_geometryBatchItems = 0;
+    struct RawTargetState {
+        SDL_Texture* previousTarget = nullptr;
+        std::vector<TransformState> transforms;
+        std::vector<Rect> clips;
+    };
+    std::optional<RawTargetState> m_rawTarget;
+    // The camera offset while drawing into a raw target (always zero).
+    std::pair<int, int> m_rawTargetCamera{0, 0};
 };
 
 }  // namespace px::graphics

@@ -27,4 +27,14 @@ GenerateOverlaySigningKeyPair();
     std::string_view metadata, std::string_view signatureHex,
     std::string_view pinnedPublicKeyHex);
 
+// Plain ECDSA P-256 over SHA-256(message), raw r||s in hex: the form Web
+// Crypto and Node's `dsaEncoding: "ieee-p1363"` use. Native extension
+// libraries are signed this way (their message carries its own domain line).
+[[nodiscard]] bool VerifyEcdsaP256Signature(std::string_view message,
+                                            std::string_view signatureHex,
+                                            std::string_view publicKeyHex);
+// Test and tooling helper: signs `message` with a 32-byte hex private key.
+[[nodiscard]] std::optional<std::string> SignEcdsaP256(
+    std::string_view message, std::string_view privateKeyHex);
+
 }  // namespace px::io

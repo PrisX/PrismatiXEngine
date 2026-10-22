@@ -1062,6 +1062,13 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_scriptServices.vfs = &m_runtime.VFS();
     m_scriptServices.renderer = &m_runtime.Renderer();
     m_scriptServices.audio = &m_runtime.Audio();
+    // Native extension libraries sit beside Package/ (the working directory
+    // is the distribution's data root), in Plugins/<extension id>/.
+    {
+        std::error_code error;
+        const auto root = std::filesystem::current_path(error);
+        if (!error) m_scriptServices.nativePluginDirectories = {PathToUtf8(root / "Plugins")};
+    }
     m_scriptServices.profile = &m_profile;
     m_scriptServices.input = &m_runtime.GetInput();
     m_scriptServices.stage = &m_session->Stage();

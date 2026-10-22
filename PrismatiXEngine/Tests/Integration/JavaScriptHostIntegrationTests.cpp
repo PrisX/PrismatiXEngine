@@ -2,10 +2,14 @@
 #include "Engine/Audio/AudioEngine.h"
 #include "Engine/Graphics/AssetCache.h"
 #include "Engine/Graphics/Renderer2D.h"
+#include "Engine/IO/Crypto.h"
+#include "Engine/IO/OverlaySignature.h"
 #include "Engine/IO/VFS.h"
+#include "Engine/Native/NativePluginHost.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Script/JavaScriptHost.h"
+#include "Engine/Script/ScriptRawGraphics.h"
 #include "Engine/UI/Actions/ActionCatalog.h"
 #include "Engine/UI/Actions/ActionDispatcher.h"
 #include "Engine/UI/Control.h"
@@ -21,6 +25,8 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <optional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -1382,8 +1388,249 @@ void TestCancellationAndEventListeners(px::test::Suite& suite) {
 
 }  // namespace
 
+std::string ExtensionManifest(const std::string_view id, const std::string_view entry,
+                              const std::string_view capabilities,
+                              const std::string_view extra = {}) {
+    return std::string("{\"format\":\"PrismatiXExtension\",\"schemaRevision\":1,") +
+        "\"language\":\"javascript\",\"id\":\"" + std::string(id) +
+        "\",\"version\":\"1.0.0\",\"requiredEngineVersion\":\"^0.1.0\"," +
+        "\"entry\":\"" + std::string(entry) + "\",\"capabilities\":[" +
+        std::string(capabilities) + "]," + std::string(extra) +
+        "\"commands\":[],\"actions\":[]}";
+}
+
+void TestRawGraphicsBudgets(px::test::Suite& suite) {
+    px::script::ScriptRawGraphics::Limits limits;
+    limits.verticesPerFrame = 6;
+    limits.uploadsPerFrame = 2;
+    px::script::ScriptRawGraphics raw(nullptr, limits);
+    const std::vector<float> triangle(3 * 8, 0.5f);
+    suite.Require(!raw.CreateMesh("a", nullptr) && !raw.CreateMesh("b", nullptr) &&
+                      !raw.CreateMesh("c", nullptr),
+                  "raw meshes should be created");
+    raw.BeginFrame();
+    suite.Require(!raw.UploadVertices("a", triangle.data(), triangle.size(), std::nullopt) &&
+                      !raw.UploadVertices("b", triangle.data(), triangle.size(), std::nullopt),
+                  "two uploads fit the frame budget");
+    const auto third = raw.UploadVertices("c", triangle.data(), triangle.size(), std::nullopt);
+    suite.Expect(third && third->range && third->code == "PXJS7801",
+                 "an upload past the frame budget throws PXJS7801");
+    raw.BeginFrame();
+    suite.Require(!raw.UploadVertices("c", triangle.data(), triangle.size(), std::nullopt),
+                  "the upload budget restarts each frame");
+    const auto number = [&raw](const char* key) {
+        const auto stats = raw.StatsValue();
+        const auto* value = stats.AsObject() ? stats.AsObject()->at(key).TryGet<std::int64_t>() : nullptr;
+        return value ? *value : -1;
+    };
+    raw.Render(px::script::RenderPhase::AfterStage, {}, {});
+    suite.Expect(number("vertices") == 6 && number("skippedMeshes") == 1,
+                 "a mesh past the per-frame vertex budget is skipped, not drawn");
+    raw.Render(px::script::RenderPhase::AfterUI, {}, {});
+    suite.Expect(number("vertices") == 6, "later phases of the same frame share its budget");
+    raw.Render(px::script::RenderPhase::AfterStage, {}, {});
+    suite.Expect(number("vertices") == 6 && number("skippedMeshes") == 1,
+                 "a new rendered frame restarts the draw budget");
+    const auto self = raw.CreateMesh("d", nullptr);
+    px::script::ScriptRawGraphics::Region region{0, 0, 2, 2};
+    suite.Expect(!self && raw.CreateTexture("t", 4, 4, nullptr) == std::nullopt &&
+                     raw.UploadTexture("t", nullptr, 15, region).has_value(),
+                 "texture uploads must be exactly region width x height x 4 bytes");
+    const px::Variant masked(px::VariantObject{{"mask", "d"}, {"target", "rt"}});
+    const auto invalid = raw.CreateMesh("e", &masked);
+    suite.Expect(invalid && !invalid->range,
+                 "a mesh drawn into a target cannot be masked");
+}
+
+void TestNativeSignatureInterop(px::test::Suite& suite) {
+    // Signed by Node.js the way `prismatix extension pack` signs (ECDSA P-256,
+    // SHA-256, ieee-p1363); the descriptor is the SDK's nativeSignatureMessage.
+    px::native::NativeLibrarySpec spec;
+    spec.extensionId = "glow";
+    spec.version = "1.2.0";
+    spec.platform = "win32-x64";
+    spec.abi = 1;
+    spec.services = {"glow.b", "glow.a"};
+    std::string digest;
+    for (int index = 0; index < 32; ++index) digest += "ab";
+    spec.files = {{"native/win32-x64/glow.dll", digest}};
+    const std::string publicKey =
+        "04a89c77a91034f5c232a2e3b1e71474fc7aaa14f71312e9b796419839aa76d195b11cf5f4fd186f56246fc1abc82472b20a5213e813d6d805b5654693de3d4372";
+    const std::string signature =
+        "b8450e2a93c9a1d96dde5a949deb5e61f1bd3ce1f88656f59976813b5a821d154551e0105378880c97083083d449810c6a6c04a9b1fc9c46901ffe49ee9d1e58";
+    suite.Expect(px::native::SignatureMessage(spec) ==
+                     "PrismatiX native plugin v1\nid glow\nversion 1.2.0\nplatform win32-x64\nabi 1\n"
+                     "services glow.a,glow.b\nfile " + spec.files[0].sha256 + " native/win32-x64/glow.dll\n",
+                 "the Player builds the same descriptor as the SDK");
+    suite.Expect(px::io::VerifyEcdsaP256Signature(px::native::SignatureMessage(spec), signature, publicKey),
+                 "a signature made by Node.js verifies in the Player");
+    spec.version = "1.2.1";
+    suite.Expect(!px::io::VerifyEcdsaP256Signature(px::native::SignatureMessage(spec), signature, publicKey),
+                 "the signature binds the version");
+}
+
+void TestRawAndNativeExtensions(px::test::Suite& suite) {
+    px::test::TempDirectory temp("javascript-raw-native");
+    const auto extensions = temp.path / "Content" / "Extensions";
+    std::filesystem::create_directories(extensions);
+    const auto safety = std::string_view(
+        "\"safety\":{\"previewSafe\":true,\"deterministic\":true,\"seekSafe\":true,\"rollbackSafe\":true},");
+    Write(extensions / "raw-denied.js", R"js(
+        try { EngineRaw.CreateMesh("x"); Engine.SetVariable("raw.denied", "allowed", "session"); }
+        catch (error) { Engine.SetVariable("raw.denied", `${error.name}:${error.code}`, "session"); }
+    )js");
+    Write(extensions / "raw-denied.pxextension",
+          ExtensionManifest("raw-denied", "raw-denied.js", "\"runtime\"", safety));
+    Write(extensions / "raw.js", R"js(
+        const note = (name, value) => Engine.SetVariable(name, value, "session");
+        const code = (run) => { try { run(); return "ok"; } catch (error) { return `${error.name}:${error.code}`; } };
+        EngineRaw.CreateMesh("quad", { blend: "additive", order: 2, phase: "after-ui" });
+        EngineRaw.UploadVertices("quad", new Float32Array([
+            0, 0, 0, 0, 1, 1, 1, 1,   10, 0, 1, 0, 1, 1, 1, 1,
+            10, 10, 1, 1, 1, 1, 1, 1,   0, 10, 0, 1, 1, 1, 1, 1]));
+        EngineRaw.UploadIndices("quad", new Uint16Array([0, 1, 2, 0, 2, 3]));
+        note("raw.badIndex", code(() => EngineRaw.UploadIndices("quad", new Uint16Array([0, 1, 9]))));
+        note("raw.badVertices", code(() => EngineRaw.UploadVertices("quad", new Float32Array(7))));
+        note("raw.unknown", code(() => EngineRaw.UploadVertices("ghost", new Float32Array(8))));
+        note("raw.badBlend", code(() => EngineRaw.UpdateMesh("quad", { blend: "screen" })));
+        EngineRaw.CreateTexture("noise", 4, 4, { filter: "nearest" });
+        EngineRaw.UploadTexture("noise", new Uint8Array(64));
+        EngineRaw.UploadTexture("noise", new Uint8Array(16), { x: 2, y: 2, w: 2, h: 2 });
+        note("raw.badPixels", code(() => EngineRaw.UploadTexture("noise", new Uint8Array(10))));
+        EngineRaw.CreateTarget("glow", 64, 32, { clear: { r: 0, g: 0, b: 0, a: 0 } });
+        EngineRaw.CreateMesh("into", { target: "glow", texture: { kind: "texture", id: "noise" } });
+        note("raw.selfSample", code(() => EngineRaw.UpdateMesh("into", { texture: { kind: "target", id: "glow" } })));
+        const limits = EngineRaw.Limits();
+        let budget = "ok";
+        for (let index = 0; index < limits.maxUploadsPerFrame + 2 && budget === "ok"; index += 1)
+            budget = code(() => EngineRaw.UploadIndices("quad", new Uint16Array([0, 1, 2])));
+        note("raw.budget", budget);
+        const stats = EngineRaw.Stats();
+        note("raw.stats", `${stats.meshes}/${stats.textures}/${stats.targets}/${stats.uploads === limits.maxUploadsPerFrame}`);
+        note("raw.frozen", code(() => { "use strict"; EngineRaw.CreateMesh = null; }));
+    )js");
+    Write(extensions / "raw.pxextension",
+          ExtensionManifest("raw", "raw.js", "\"runtime\",\"raw.mesh\",\"raw.texture\",\"raw.target\"", safety));
+
+    px::io::VFS vfs;
+    vfs.MountDirectory(temp.path.string());
+    px::vn::VariableStore variables;
+    std::vector<px::script::ConsoleMessage> console;
+    px::script::ScriptServices services;
+    services.vfs = &vfs;
+    services.variables = &variables;
+    services.console = [&console](const px::script::ConsoleMessage& message) { console.push_back(message); };
+
+    // Layer 2: the test library, signed for this platform.
+    const auto platform = std::string(px::native::CurrentPlatform());
+    const bool native = !platform.empty();
+    if (native) {
+        const std::filesystem::path library(PRISMATIX_TEST_NATIVE_PLUGIN);
+        const auto name = library.filename().string();
+        const auto plugins = temp.path / "Plugins" / "native-demo";
+        std::filesystem::create_directories(plugins);
+        std::filesystem::copy_file(library, plugins / name);
+        std::ifstream stream(plugins / name, std::ios::binary);
+        const std::string bytes((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+        const auto key = px::io::GenerateOverlaySigningKeyPair();
+        suite.Require(key.has_value(), "a P-256 key should be generated");
+        px::native::NativeLibrarySpec spec;
+        spec.extensionId = "native-demo";
+        spec.version = "1.0.0";
+        spec.platform = platform;
+        spec.abi = 1;
+        spec.services = {"test.fail", "test.echo"};
+        spec.files = {{"native/" + platform + "/" + name, px::crypto::Sha256Hex(bytes)}};
+        const auto signature = px::io::SignEcdsaP256(px::native::SignatureMessage(spec), key->privateKeyHex);
+        suite.Require(signature.has_value(), "the library descriptor should be signed");
+        const auto nativeSection = [&](const std::string& signed_) {
+            return "\"native\":{\"abi\":1,\"services\":[\"test.echo\",\"test.fail\"],\"publicKey\":\"" +
+                key->publicKeyHex + "\",\"libraries\":{\"" + platform + "\":{\"path\":\"" + spec.files[0].path +
+                "\",\"sha256\":\"" + spec.files[0].sha256 + "\",\"signature\":\"" + signed_ + "\"}}},";
+        };
+        Write(extensions / "native-demo.js", R"js(
+            const note = (name, value) => Engine.SetVariable(name, value, "session");
+            const code = (run) => { try { run(); return "ok"; } catch (error) { return `${error.name}:${error.code}`; } };
+            note("native.has", EngineNative.Has("test.echo"));
+            note("native.services", EngineNative.Services().join(","));
+            note("native.echo", Array.from(EngineNative.Request("test.echo", new Uint8Array([1, 2, 3]))).join(","));
+            note("native.fail", code(() => EngineNative.Request("test.fail", new Uint8Array(0))));
+            note("native.undeclared", code(() => EngineNative.Request("test.undeclared", new Uint8Array(0))));
+            note("native.messages", EngineNative.TakeMessages("test.echo").map((bytes) => String.fromCharCode(...bytes)).join(","));
+        )js");
+        Write(extensions / "native-demo.pxextension",
+              ExtensionManifest("native-demo", "native-demo.js", "\"runtime\",\"native\"",
+                                std::string(safety) + nativeSection(*signature)));
+        // The same library under a manifest whose signature does not verify.
+        std::string forged = *signature;
+        forged[0] = forged[0] == '0' ? '1' : '0';
+        Write(extensions / "native-forged.js", R"js(
+            Engine.SetVariable("forged.has", EngineNative.Has("test.echo"), "session");
+            try { EngineNative.Request("test.echo", new Uint8Array(1)); Engine.SetVariable("forged.request", "ok", "session"); }
+            catch (error) { Engine.SetVariable("forged.request", error.code, "session"); }
+        )js");
+        auto forgedManifest = ExtensionManifest("native-demo", "native-forged.js", "\"runtime\",\"native\"",
+                                                std::string(safety) + nativeSection(forged));
+        Write(extensions / "native-forged.pxextension", forgedManifest);
+        services.nativePluginDirectories = {(temp.path / "Plugins").string()};
+    }
+
+    {
+        px::script::JavaScriptHost host(services);
+        suite.Require(host.LoadExtensionManifest("Content/Extensions/raw-denied.pxextension"),
+                      "an extension without raw capabilities still loads");
+        suite.Expect(VariableText(variables, "raw.denied") == "PermissionError:PXJS7101",
+                     "EngineRaw calls without a raw.* capability are refused (PXJS7101)");
+        suite.Require(host.LoadExtensionManifest("Content/Extensions/raw.pxextension"),
+                      "a raw extension loads");
+        suite.Expect(VariableText(variables, "raw.badIndex") == "RangeError:PXJS7802" &&
+                         VariableText(variables, "raw.badVertices") == "TypeError:PXJS7803" &&
+                         VariableText(variables, "raw.unknown") == "RangeError:PXJS7802" &&
+                         VariableText(variables, "raw.badBlend") == "TypeError:PXJS7803" &&
+                         VariableText(variables, "raw.badPixels") == "TypeError:PXJS7803" &&
+                         VariableText(variables, "raw.selfSample") == "TypeError:PXJS7803",
+                     "raw arguments are checked: indices in range, 8 floats per vertex, RGBA8 sizes, blend names, no self-sampling targets");
+        suite.Expect(VariableText(variables, "raw.budget") == "RangeError:PXJS7801",
+                     "uploads past the per-frame budget throw PXJS7801");
+        suite.Expect(VariableText(variables, "raw.stats") == "2/1/1/true",
+                     "Stats reports the extension's meshes, textures, targets and uploads");
+        suite.Expect(VariableText(variables, "raw.frozen") == "TypeError:undefined",
+                     "EngineRaw is frozen");
+        const auto state = host.CaptureExtensionState();
+        suite.Expect(state && state.Value().empty(),
+                     "raw resources are not part of saved extension state");
+    }
+    if (!native) return;
+    {
+        px::script::JavaScriptHost host(services);
+        suite.Require(host.LoadExtensionManifest("Content/Extensions/native-demo.pxextension"),
+                      "a signed native extension loads");
+        suite.Expect(VariableText(variables, "native.has") == "true" &&
+                         VariableText(variables, "native.services") == "test.echo,test.fail",
+                     "the library registers its declared services");
+        suite.Expect(VariableText(variables, "native.echo") == "3,2,1",
+                     "a request carries bytes to the library and its response back");
+        suite.Expect(VariableText(variables, "native.fail") == "RangeError:PXJS7902" &&
+                         VariableText(variables, "native.undeclared") == "RangeError:PXJS7901",
+                     "a failing service throws PXJS7902 and an undeclared one PXJS7901");
+        suite.Expect(VariableText(variables, "native.messages") == "hi",
+                     "messages the library posts reach the script");
+    }
+    {
+        px::script::JavaScriptHost host(services);
+        suite.Require(host.LoadExtensionManifest("Content/Extensions/native-forged.pxextension"),
+                      "a native extension whose signature fails still loads its script");
+        suite.Expect(VariableText(variables, "forged.has") == "false" &&
+                         VariableText(variables, "forged.request") == "PXJS7901",
+                     "a library whose signature does not verify is never loaded");
+    }
+}
+
 int main() {
     px::test::Suite suite("JavaScriptHostIntegration");
+    suite.Run("RawGraphicsBudgets", [&] { TestRawGraphicsBudgets(suite); });
+    suite.Run("RawAndNativeExtensions", [&] { TestRawAndNativeExtensions(suite); });
+    suite.Run("NativeSignatureInterop", [&] { TestNativeSignatureInterop(suite); });
     suite.Run("SandboxAndImmediateParity", [&] {
         TestSandboxAndImmediateParity(suite);
     });

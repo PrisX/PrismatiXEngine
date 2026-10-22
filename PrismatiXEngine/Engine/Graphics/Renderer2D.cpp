@@ -14,6 +14,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -1643,5 +1644,156 @@ void Renderer2D::DrawTextInRect(const std::string& text, const Rect& bounds,
 }
 
 void Renderer2D::SetTextSupersampleAuto(){if(m_textSamplingMode==TextSamplingMode::Auto)return;m_textSamplingMode=TextSamplingMode::Auto;SetLogicalSize(m_logicalW,m_logicalH);}
+
+// Raw extension drawing ------------------------------------------------------
+
+namespace {
+
+SDL_BlendMode RawNativeBlend(const RawBlendMode mode) {
+    switch (mode) {
+    case RawBlendMode::Premultiplied: return PremultipliedBlendMode();
+    case RawBlendMode::Additive: return SDL_BLENDMODE_ADD;
+    case RawBlendMode::Multiply: return SDL_BLENDMODE_MUL;
+    case RawBlendMode::Replace: return SDL_BLENDMODE_NONE;
+    case RawBlendMode::Normal: break;
+    }
+    return SDL_BLENDMODE_BLEND;
+}
+
+}  // namespace
+
+TextureResource Renderer2D::CreateRawTexture(const int width, const int height,
+                                             const bool linear) {
+    if (!m_renderer || width <= 0 || height <= 0) return {};
+    auto texture = TextureResource::CreateStreaming(
+        TextureBackend::SdlRenderer, m_renderer, StreamingTextureFormat::Rgba32,
+        width, height);
+    if (!texture) return {};
+    (void)texture.SetLinearSampling(linear);
+    (void)texture.SetAlphaBlend(true);
+    // A new streaming texture's contents are undefined: start transparent.
+    const std::vector<std::uint8_t> clear(
+        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u, 0);
+    (void)texture.Update(clear.data(), static_cast<std::size_t>(width) * 4u);
+    return texture;
+}
+
+TextureResource Renderer2D::CreateRawTarget(const int width, const int height,
+                                            const bool linear) {
+    if (!m_renderer || width <= 0 || height <= 0) return {};
+    SDL_Texture* native = SDL_CreateTexture(m_renderer, kTargetFormat,
+                                            SDL_TEXTUREACCESS_TARGET, width, height);
+    auto texture = TextureResource::Adopt(TextureBackend::SdlRenderer, native,
+                                          width, height);
+    if (!texture) return {};
+    (void)texture.SetLinearSampling(linear);
+    (void)SDL_SetTextureBlendMode(native, PremultipliedBlendMode());
+    SDL_Texture* previous = SDL_GetRenderTarget(m_renderer);
+    if (SDL_SetRenderTarget(m_renderer, native)) {
+        (void)SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 0);
+        (void)SDL_RenderClear(m_renderer);
+    }
+    (void)SDL_SetRenderTarget(m_renderer, previous);
+    return texture;
+}
+
+bool Renderer2D::UpdateRawTexture(TextureResource& texture, const Rect& region,
+                                  const std::uint8_t* pixels,
+                                  const std::size_t pitchBytes) {
+    auto* native = static_cast<SDL_Texture*>(
+        texture.Native(TextureBackend::SdlRenderer));
+    if (!native || !pixels || pitchBytes == 0 ||
+        pitchBytes > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        return false;
+    const SDL_Rect rect{static_cast<int>(region.x), static_cast<int>(region.y),
+                        static_cast<int>(region.w), static_cast<int>(region.h)};
+    if (rect.x < 0 || rect.y < 0 || rect.w <= 0 || rect.h <= 0 ||
+        rect.x > texture.Handle().Width() - rect.w ||
+        rect.y > texture.Handle().Height() - rect.h)
+        return false;
+    return SDL_UpdateTexture(native, &rect, pixels, static_cast<int>(pitchBytes));
+}
+
+bool Renderer2D::BeginRawTarget(const TextureHandle target,
+                                const std::optional<Color> clear) {
+    auto* native = NativeTexture(target);
+    if (!m_renderer || !native || m_rawTarget) return false;
+    SDL_Texture* previous = SDL_GetRenderTarget(m_renderer);
+    if (!SDL_SetRenderTarget(m_renderer, native)) return false;
+    // SDL keeps viewport and clip per target; the renderer's own transform,
+    // camera and clip stack describe the screen, so they are set aside.
+    m_rawTarget = RawTargetState{previous, std::move(m_transformStack),
+                                 std::move(m_clipStack)};
+    m_transformStack = {TransformState{}};
+    m_clipStack.clear();
+    std::swap(m_camX, m_rawTargetCamera.first);
+    std::swap(m_camY, m_rawTargetCamera.second);
+    (void)SDL_SetRenderClipRect(m_renderer, nullptr);
+    if (clear) {
+        (void)SDL_SetRenderDrawColor(m_renderer, clear->r, clear->g, clear->b,
+                                     clear->a);
+        (void)SDL_RenderClear(m_renderer);
+    }
+    return true;
+}
+
+void Renderer2D::EndRawTarget() {
+    if (!m_rawTarget) return;
+    (void)SDL_SetRenderTarget(m_renderer, m_rawTarget->previousTarget);
+    m_transformStack = std::move(m_rawTarget->transforms);
+    m_clipStack = std::move(m_rawTarget->clips);
+    std::swap(m_camX, m_rawTargetCamera.first);
+    std::swap(m_camY, m_rawTargetCamera.second);
+    m_rawTarget.reset();
+}
+
+void Renderer2D::DrawRawGeometry(const TextureHandle texture,
+                                 const RawVertex* vertices, const int vertexCount,
+                                 const int* indices, const int indexCount,
+                                 const RawBlendMode blend,
+                                 const AffineTransform2D& transform) {
+    if (!m_renderer || !vertices || vertexCount <= 0) return;
+    SDL_Texture* native = NativeTexture(texture);
+    if (texture && !native) return;
+    const Color modulate = TransformColor({255, 255, 255, 255});
+    const float mr = modulate.r / 255.0f, mg = modulate.g / 255.0f,
+                mb = modulate.b / 255.0f, ma = modulate.a / 255.0f;
+    std::vector<SDL_Vertex> converted(static_cast<std::size_t>(vertexCount));
+    for (int index = 0; index < vertexCount; ++index) {
+        const auto& source = vertices[index];
+        const Vec2 local{transform.a * source.x + transform.c * source.y + transform.tx,
+                         transform.b * source.x + transform.d * source.y + transform.ty};
+        const Vec2 point = TransformPoint(local);
+        auto& out = converted[static_cast<std::size_t>(index)];
+        out.position = SDL_FPoint{point.x, point.y};
+        out.color = SDL_FColor{std::clamp(source.r, 0.0f, 1.0f) * mr,
+                               std::clamp(source.g, 0.0f, 1.0f) * mg,
+                               std::clamp(source.b, 0.0f, 1.0f) * mb,
+                               std::clamp(source.a, 0.0f, 1.0f) * ma};
+        out.tex_coord = SDL_FPoint{source.u, source.v};
+    }
+    const SDL_BlendMode mode = RawNativeBlend(blend);
+    if (native) {
+        SDL_BlendMode previous = SDL_BLENDMODE_BLEND;
+        if (!SDL_GetTextureBlendMode(native, &previous) ||
+            !SDL_SetTextureBlendMode(native, mode))
+            return;
+        (void)RenderGeometry(native, converted.data(), vertexCount, indices,
+                             indexCount);
+        (void)SDL_SetTextureBlendMode(native, previous);
+    } else {
+        (void)SDL_SetRenderDrawBlendMode(m_renderer, mode);
+        (void)RenderGeometry(nullptr, converted.data(), vertexCount, indices,
+                             indexCount);
+        (void)SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+    }
+    ++m_geometryBatchCount;
+    m_geometryBatchItems += static_cast<std::uint64_t>(vertexCount);
+}
+
+std::string Renderer2D::BackendName() const {
+    const char* name = m_renderer ? SDL_GetRendererName(m_renderer) : nullptr;
+    return name ? name : "none";
+}
 
 }  // namespace px::graphics

@@ -2,6 +2,7 @@
 #include "Engine/Graphics/AssetCache.h"
 #include "Engine/Graphics/GraphicsDevice.h"
 #include "Engine/Graphics/Renderer2D.h"
+#include "Engine/Script/ScriptRawGraphics.h"
 #include "Engine/Graphics/Screenshot.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Platform/Input.h"
@@ -182,6 +183,51 @@ int main() {
         px::graphics::AssetCache assets(device.Renderer(), vfs);
         px::graphics::Renderer2D renderer(device.Renderer(), assets, true);
         renderer.SetLogicalSize(640, 360);
+        // Layer-1 raw drawing: a render target sampled on screen, a mesh
+        // masked by another mesh and a writable texture.
+        {
+            px::script::ScriptRawGraphics raw(&renderer);
+            const auto quad = [](const float x, const float y, const float w, const float h,
+                                 const float r, const float g, const float b, const float a) {
+                return std::vector<float>{x, y, 0, 0, r, g, b, a,  x + w, y, 1, 0, r, g, b, a,
+                                          x + w, y + h, 1, 1, r, g, b, a,  x, y + h, 0, 1, r, g, b, a};
+            };
+            const std::uint16_t indices[6]{0, 1, 2, 0, 2, 3};
+            const auto mesh = [&](const std::string& id, const px::VariantObject& options,
+                                  const std::vector<float>& vertices) {
+                const px::Variant value(options);
+                return !raw.CreateMesh(id, &value) &&
+                       !raw.UploadVertices(id, vertices.data(), vertices.size(), std::nullopt) &&
+                       !raw.UploadIndices(id, indices, nullptr, 6);
+            };
+            raw.BeginFrame();
+            const px::Variant clear(px::VariantObject{{"clear", px::Variant(px::VariantObject{{"a", 0}})}});
+            const std::uint8_t blue[16]{0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255};
+            const bool built = !raw.CreateTarget("rt", 64, 64, &clear) &&
+                mesh("fill", {{"target", "rt"}}, quad(0, 0, 64, 64, 1, 0, 0, 1)) &&
+                mesh("show", {{"texture", px::Variant(px::VariantObject{{"kind", "target"}, {"id", "rt"}})},
+                              {"blend", "premultiplied"}}, quad(100, 100, 64, 64, 1, 1, 1, 1)) &&
+                mesh("cover", {{"visible", false}}, quad(300, 100, 50, 100, 1, 1, 1, 1)) &&
+                mesh("green", {{"mask", "cover"}}, quad(300, 100, 100, 100, 0, 1, 0, 1)) &&
+                !raw.CreateTexture("tex", 2, 2, nullptr) &&
+                !raw.UploadTexture("tex", blue, sizeof blue, std::nullopt) &&
+                mesh("tile", {{"texture", px::Variant(px::VariantObject{{"kind", "texture"}, {"id", "tex"}})}},
+                     quad(500, 100, 60, 60, 1, 1, 1, 1));
+            ClearFrame(device.Renderer());
+            raw.Render(px::script::RenderPhase::AfterStage, {}, {});
+            SaveVisualArtifact(device.Renderer(), "raw-layer-one");
+            SDL_Surface* pixels = SDL_RenderReadPixels(device.Renderer(), nullptr);
+            const auto at = [&](const int x, const int y) { return ReadLogicalPixel(pixels, x, y, 640, 360); };
+            const bool sampled = pixels && at(132, 132).r > 200 && at(132, 132).g < 60;
+            const bool masked = pixels && at(325, 150).g > 200 && at(375, 150).g < 60;
+            const bool textured = pixels && at(530, 130).b > 200 && at(530, 130).r < 60;
+            if (pixels) SDL_DestroySurface(pixels);
+            if (!built || !sampled || !masked || !textured) {
+                std::cerr << "FAIL: raw drawing (built " << built << ", target " << sampled
+                          << ", mask " << masked << ", texture " << textured << ")\n";
+                result = 1;
+            }
+        }
         // Nine-slice: a 30px image with a 10px red border around a blue
         // middle keeps its border at patchMargins * patchScale on screen,
         // for an image (NinePatchRect) and for a TextureButton's states.

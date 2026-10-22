@@ -45,8 +45,8 @@ std::string Hex(const std::uint8_t* data, const std::size_t size) {
 }
 
 std::optional<std::array<std::uint8_t, 32>> MetadataDigest(
-    const std::string_view metadata) {
-    const auto domain = kSignatureDomain;
+    const std::string_view metadata,
+    const std::string_view domain = kSignatureDomain) {
     if (psa_crypto_init() != PSA_SUCCESS) return std::nullopt;
     psa_hash_operation_t operation = PSA_HASH_OPERATION_INIT;
     if (psa_hash_setup(&operation, PSA_ALG_SHA_256) != PSA_SUCCESS)
@@ -149,12 +149,14 @@ std::optional<std::string> SignOverlayMetadata(
     return Hex(signature.data(), signature.size());
 }
 
-bool VerifyOverlayMetadataSignature(
-    const std::string_view metadata, const std::string_view signatureHex,
+namespace {
+
+bool VerifyDigestSignature(
+    const std::optional<std::array<std::uint8_t, 32>>& digest,
+    const std::string_view signatureHex,
     const std::string_view pinnedPublicKeyHex) {
     const auto signature = DecodeHex(signatureHex, 64);
     const auto publicKey = DecodeHex(pinnedPublicKeyHex, 65);
-    const auto digest = MetadataDigest(metadata);
     if (!signature || !publicKey || !digest || publicKey->front() != 0x04)
         return false;
     auto attributes = KeyAttributes(false);
@@ -168,6 +170,45 @@ bool VerifyOverlayMetadataSignature(
         signature->data(), signature->size());
     psa_destroy_key(keyId);
     return verified == PSA_SUCCESS;
+}
+
+}  // namespace
+
+bool VerifyOverlayMetadataSignature(
+    const std::string_view metadata, const std::string_view signatureHex,
+    const std::string_view pinnedPublicKeyHex) {
+    return VerifyDigestSignature(MetadataDigest(metadata), signatureHex,
+                                 pinnedPublicKeyHex);
+}
+
+bool VerifyEcdsaP256Signature(const std::string_view message,
+                              const std::string_view signatureHex,
+                              const std::string_view publicKeyHex) {
+    return VerifyDigestSignature(MetadataDigest(message, {}), signatureHex,
+                                 publicKeyHex);
+}
+
+std::optional<std::string> SignEcdsaP256(const std::string_view message,
+                                         const std::string_view privateKeyHex) {
+    auto privateKey = DecodeHex(privateKeyHex, 32);
+    const auto digest = MetadataDigest(message, {});
+    if (!privateKey || !digest) return std::nullopt;
+    auto attributes = KeyAttributes(true);
+    mbedtls_svc_key_id_t keyId = MBEDTLS_SVC_KEY_ID_INIT;
+    const auto imported = psa_import_key(&attributes, privateKey->data(),
+                                         privateKey->size(), &keyId);
+    std::fill(privateKey->begin(), privateKey->end(), 0);
+    psa_reset_key_attributes(&attributes);
+    if (imported != PSA_SUCCESS) return std::nullopt;
+    std::array<std::uint8_t, 64> signature{};
+    std::size_t length = 0;
+    const auto signedStatus = psa_sign_hash(
+        keyId, PSA_ALG_ECDSA(PSA_ALG_SHA_256), digest->data(), digest->size(),
+        signature.data(), signature.size(), &length);
+    psa_destroy_key(keyId);
+    if (signedStatus != PSA_SUCCESS || length != signature.size())
+        return std::nullopt;
+    return Hex(signature.data(), signature.size());
 }
 
 }  // namespace px::io

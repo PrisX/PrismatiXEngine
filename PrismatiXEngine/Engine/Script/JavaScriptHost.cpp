@@ -6,6 +6,8 @@
 #include "Engine/Animation/Timeline.h"
 #include "Engine/Audio/AudioEngine.h"
 #include "Engine/Graphics/Renderer2D.h"
+#include "Engine/Native/NativePluginHost.h"
+#include "Engine/Script/ScriptRawGraphics.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Platform/PlatformInfo.h"
@@ -26,6 +28,7 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <SDL3/SDL_stdinc.h>
 #include <deque>
 #include <limits>
 #include <iterator>
@@ -148,7 +151,89 @@ bool SupportedCapability(const std::string_view capability) {
     return capability == "runtime" || capability == "animation" ||
            capability == "ui" || capability == "audio" ||
            capability == "video" || capability == "persistence" ||
-           capability == "input" || capability == "render";
+           capability == "input" || capability == "render" ||
+           capability == "raw.mesh" || capability == "raw.texture" ||
+           capability == "raw.target" || capability == "native";
+}
+
+// EngineRaw (layer 1) and EngineNative (layer 2) methods, by magic number.
+enum class RawOp : int {
+    Limits, Stats, CreateMesh, UpdateMesh, UploadVertices, UploadIndices,
+    DestroyMesh, CreateTexture, UploadTexture, DestroyTexture, CreateTarget,
+    UpdateTarget, DestroyTarget, Clear,
+};
+constexpr std::pair<RawOp, const char*> kRawMethods[] = {
+    {RawOp::Limits, "Limits"}, {RawOp::Stats, "Stats"},
+    {RawOp::CreateMesh, "CreateMesh"}, {RawOp::UpdateMesh, "UpdateMesh"},
+    {RawOp::UploadVertices, "UploadVertices"}, {RawOp::UploadIndices, "UploadIndices"},
+    {RawOp::DestroyMesh, "DestroyMesh"}, {RawOp::CreateTexture, "CreateTexture"},
+    {RawOp::UploadTexture, "UploadTexture"}, {RawOp::DestroyTexture, "DestroyTexture"},
+    {RawOp::CreateTarget, "CreateTarget"}, {RawOp::UpdateTarget, "UpdateTarget"},
+    {RawOp::DestroyTarget, "DestroyTarget"}, {RawOp::Clear, "Clear"},
+};
+
+// The capability a raw call needs; limits, stats and Clear need none.
+std::string_view RawCapability(const RawOp op) {
+    switch (op) {
+        case RawOp::CreateMesh: case RawOp::UpdateMesh: case RawOp::UploadVertices:
+        case RawOp::UploadIndices: case RawOp::DestroyMesh: return "raw.mesh";
+        case RawOp::CreateTexture: case RawOp::UploadTexture:
+        case RawOp::DestroyTexture: return "raw.texture";
+        case RawOp::CreateTarget: case RawOp::UpdateTarget:
+        case RawOp::DestroyTarget: return "raw.target";
+        case RawOp::Limits: case RawOp::Stats: case RawOp::Clear: break;
+    }
+    return {};
+}
+
+enum class NativeOp : int { Services, Has, Request, TakeMessages };
+constexpr std::pair<NativeOp, const char*> kNativeMethods[] = {
+    {NativeOp::Services, "Services"}, {NativeOp::Has, "Has"},
+    {NativeOp::Request, "Request"}, {NativeOp::TakeMessages, "TakeMessages"},
+};
+
+std::string HexBytes(const std::uint8_t* data, const std::size_t size) {
+    constexpr char digits[] = "0123456789abcdef";
+    std::string text(size * 2, '0');
+    for (std::size_t index = 0; index < size; ++index) {
+        text[index * 2] = digits[data[index] >> 4];
+        text[index * 2 + 1] = digits[data[index] & 15];
+    }
+    return text;
+}
+
+std::vector<std::uint8_t> BytesFromHex(const std::string_view text) {
+    const auto nibble = [](const char value) {
+        return value >= 'a' ? value - 'a' + 10 : value - '0';
+    };
+    std::vector<std::uint8_t> bytes(text.size() / 2);
+    for (std::size_t index = 0; index < bytes.size(); ++index)
+        bytes[index] = static_cast<std::uint8_t>((nibble(text[index * 2]) << 4) |
+                                                 nibble(text[index * 2 + 1]));
+    return bytes;
+}
+
+// Directories that may hold `<extension id>/<library>`: PRISMATIX_NATIVE_PLUGIN_PATH
+// (a path list, for development) first, then the host's own.
+std::vector<std::string> NativePluginDirectories(const std::vector<std::string>& hosted) {
+    std::vector<std::string> directories;
+    if (const char* configured = SDL_getenv("PRISMATIX_NATIVE_PLUGIN_PATH")) {
+#if defined(_WIN32)
+        constexpr char separator = ';';
+#else
+        constexpr char separator = ':';
+#endif
+        std::string_view list(configured);
+        while (!list.empty()) {
+            const auto end = list.find(separator);
+            const auto item = list.substr(0, end);
+            if (!item.empty()) directories.emplace_back(item);
+            if (end == std::string_view::npos) break;
+            list.remove_prefix(end + 1);
+        }
+    }
+    directories.insert(directories.end(), hosted.begin(), hosted.end());
+    return directories;
 }
 
 bool IsJsonValue(const Variant& value, const int depth = 0) {
@@ -3352,8 +3437,310 @@ public:
         return self->RuntimeOperation(*operation, count - 1, values + 1);
     }
 
+    // Throws `TypeError` or `RangeError` carrying `code`.
+    JSValue ThrowCoded(const bool range, const std::string_view code,
+                       const std::string& message) const {
+        JSValue error = JS_NewError(context);
+        JS_SetPropertyStr(context, error, "name",
+                          JS_NewString(context, range ? "RangeError" : "TypeError"));
+        JS_SetPropertyStr(context, error, "code",
+                          JS_NewStringLen(context, code.data(), code.size()));
+        JS_SetPropertyStr(context, error, "message",
+                          JS_NewStringLen(context, message.data(), message.size()));
+        return JS_Throw(context, error);
+    }
+
+    // The bytes of a typed array of `elementSize`-byte elements (`allowed`
+    // typed array kinds only), or nullptr.
+    const std::uint8_t* TypedArrayBytes(JSValueConst value,
+                                        std::initializer_list<int> allowed,
+                                        std::size_t& bytes, int& kind) const {
+        kind = JS_GetTypedArrayType(value);
+        if (kind < 0 || std::ranges::find(allowed, kind) == allowed.end())
+            return nullptr;
+        std::size_t offset = 0, length = 0, element = 0;
+        JSValue buffer = JS_GetTypedArrayBuffer(context, value, &offset, &length, &element);
+        if (JS_IsException(buffer)) return nullptr;
+        std::size_t size = 0;
+        const std::uint8_t* data = JS_GetArrayBuffer(context, &size, buffer);
+        JS_FreeValue(context, buffer);
+        if (!data || offset > size || length > size - offset) return nullptr;
+        bytes = length;
+        return data + offset;
+    }
+
+    JSValue RawOperation(const RawOp op, const int count, JSValueConst* values) {
+        if (insideStateProviderCallback)
+            return JS_ThrowTypeError(
+                context, "Engine operations are forbidden inside a state provider callback");
+        const auto capability = RawCapability(op);
+        const auto name = std::ranges::find(kRawMethods, op, &std::pair<RawOp, const char*>::first)->second;
+        if (!capability.empty() && !HasCapability(capability))
+            return PermissionDenied(capability, std::string("raw.") + name);
+        const auto failed = [this](const ScriptRawGraphics::Outcome& outcome) {
+            return ThrowCoded(outcome->range, outcome->code, outcome->message);
+        };
+        // Raw calls are presentation: they bypass the operation journal, so
+        // a replayed handler draws again instead of replaying recorded results.
+        std::string id;
+        const bool hasId = StringArgument(count, values, 0, id);
+        const auto options = [&](const int index) -> std::optional<Variant> {
+            if (index >= count || JS_IsUndefined(values[index])) return Variant{};
+            return FromJavaScript(values[index]);
+        };
+        switch (op) {
+            case RawOp::Limits: return ToJavaScript(raw.LimitsValue());
+            case RawOp::Stats: return ToJavaScript(raw.StatsValue());
+            case RawOp::Clear: raw.Clear(); return JS_UNDEFINED;
+            default: break;
+        }
+        if (!hasId) return ThrowCoded(false, "PXJS7803", std::string(name) + " requires an id");
+        switch (op) {
+            case RawOp::CreateMesh:
+            case RawOp::UpdateMesh: {
+                const auto parsed = options(1);
+                if (!parsed) return ThrowCoded(false, "PXJS7803", "raw mesh options are not JSON-compatible");
+                if (op == RawOp::CreateMesh) {
+                    if (auto outcome = raw.CreateMesh(id, &*parsed)) return failed(outcome);
+                    return JS_TRUE;
+                }
+                bool found = false;
+                if (auto outcome = raw.UpdateMesh(id, *parsed, found)) return failed(outcome);
+                return JS_NewBool(context, found);
+            }
+            case RawOp::UploadVertices: {
+                std::size_t bytes = 0;
+                int kind = -1;
+                const auto* data = count > 1 ? TypedArrayBytes(values[1], {JS_TYPED_ARRAY_FLOAT32}, bytes, kind) : nullptr;
+                if (!data) return ThrowCoded(false, "PXJS7803", "UploadVertices takes a Float32Array");
+                std::optional<std::size_t> first;
+                if (count > 2 && !JS_IsUndefined(values[2])) {
+                    std::int64_t value = -1;
+                    if (!IntegerArgument(count, values, 2, value) || value < 0)
+                        return ThrowCoded(false, "PXJS7803", "firstVertex must be a non-negative integer");
+                    first = static_cast<std::size_t>(value);
+                }
+                if (auto outcome = raw.UploadVertices(id, reinterpret_cast<const float*>(data),
+                                                      bytes / sizeof(float), first))
+                    return failed(outcome);
+                return JS_UNDEFINED;
+            }
+            case RawOp::UploadIndices: {
+                std::size_t bytes = 0;
+                int kind = -1;
+                const auto* data = count > 1 ? TypedArrayBytes(values[1],
+                    {JS_TYPED_ARRAY_UINT16, JS_TYPED_ARRAY_UINT32}, bytes, kind) : nullptr;
+                if (!data) return ThrowCoded(false, "PXJS7803", "UploadIndices takes a Uint16Array or Uint32Array");
+                const bool wide = kind == JS_TYPED_ARRAY_UINT32;
+                if (auto outcome = raw.UploadIndices(
+                        id, wide ? nullptr : reinterpret_cast<const std::uint16_t*>(data),
+                        wide ? reinterpret_cast<const std::uint32_t*>(data) : nullptr,
+                        bytes / (wide ? 4U : 2U)))
+                    return failed(outcome);
+                return JS_UNDEFINED;
+            }
+            case RawOp::DestroyMesh: return JS_NewBool(context, raw.DestroyMesh(id));
+            case RawOp::CreateTexture:
+            case RawOp::CreateTarget: {
+                std::int64_t width = 0, height = 0;
+                if (!IntegerArgument(count, values, 1, width) || !IntegerArgument(count, values, 2, height) ||
+                    width > std::numeric_limits<int>::max() || height > std::numeric_limits<int>::max())
+                    return ThrowCoded(false, "PXJS7803", std::string(name) + " requires an integer width and height");
+                const auto parsed = options(3);
+                if (!parsed) return ThrowCoded(false, "PXJS7803", "raw options are not JSON-compatible");
+                const auto outcome = op == RawOp::CreateTexture
+                    ? raw.CreateTexture(id, static_cast<int>(width), static_cast<int>(height), &*parsed)
+                    : raw.CreateTarget(id, static_cast<int>(width), static_cast<int>(height), &*parsed);
+                if (outcome) return failed(outcome);
+                return JS_TRUE;
+            }
+            case RawOp::UploadTexture: {
+                std::size_t bytes = 0;
+                int kind = -1;
+                const auto* data = count > 1 ? TypedArrayBytes(values[1],
+                    {JS_TYPED_ARRAY_UINT8, JS_TYPED_ARRAY_UINT8C}, bytes, kind) : nullptr;
+                if (!data) return ThrowCoded(false, "PXJS7803", "UploadTexture takes a Uint8Array or Uint8ClampedArray");
+                std::optional<ScriptRawGraphics::Region> region;
+                if (count > 2 && !JS_IsUndefined(values[2]) && !JS_IsNull(values[2])) {
+                    const auto parsed = FromJavaScript(values[2]);
+                    const auto* object = parsed ? parsed->AsObject() : nullptr;
+                    ScriptRawGraphics::Region area;
+                    int* fields[4]{&area.x, &area.y, &area.w, &area.h};
+                    const char* keys[4]{"x", "y", "w", "h"};
+                    for (int index = 0; object && index < 4; ++index) {
+                        const auto found = object->find(keys[index]);
+                        const auto* integer = found == object->end() ? nullptr : found->second.TryGet<std::int64_t>();
+                        if (!integer || *integer < 0 || *integer > std::numeric_limits<int>::max()) {
+                            object = nullptr;
+                            break;
+                        }
+                        *fields[index] = static_cast<int>(*integer);
+                    }
+                    if (!object) return ThrowCoded(false, "PXJS7803", "the region is {x, y, w, h} in whole pixels");
+                    region = area;
+                }
+                if (auto outcome = raw.UploadTexture(id, data, bytes, region)) return failed(outcome);
+                return JS_UNDEFINED;
+            }
+            case RawOp::DestroyTexture: return JS_NewBool(context, raw.DestroyTexture(id));
+            case RawOp::UpdateTarget: {
+                const auto parsed = options(1);
+                if (!parsed) return ThrowCoded(false, "PXJS7803", "raw target options are not JSON-compatible");
+                bool found = false;
+                if (auto outcome = raw.UpdateTarget(id, *parsed, found)) return failed(outcome);
+                return JS_NewBool(context, found);
+            }
+            case RawOp::DestroyTarget: return JS_NewBool(context, raw.DestroyTarget(id));
+            default: break;
+        }
+        return JS_ThrowRangeError(context, "unknown raw operation");
+    }
+
+    static JSValue RawMethod(JSContext* context, JSValueConst, const int count,
+                             JSValueConst* values, const int magic) {
+        return From(context)->RawOperation(static_cast<RawOp>(magic), count, values);
+    }
+
+    [[nodiscard]] bool DeclaresNativeService(const std::string_view service) const {
+        return std::ranges::find(nativeServices, service) != nativeServices.end();
+    }
+
+    JSValue NativeOperation(const NativeOp op, const int count, JSValueConst* values) {
+        if (insideStateProviderCallback)
+            return JS_ThrowTypeError(
+                context, "Engine operations are forbidden inside a state provider callback");
+        const auto name = std::ranges::find(kNativeMethods, op, &std::pair<NativeOp, const char*>::first)->second;
+        if (!HasCapability("native")) return PermissionDenied("native", std::string("native.") + name);
+        if (op == NativeOp::Services) {
+            JSValue list = JS_NewArray(context);
+            std::uint32_t index = 0;
+            if (nativeHost)
+                for (const auto& service : nativeHost->Services())
+                    JS_SetPropertyUint32(context, list, index++, JS_NewStringLen(context, service.data(), service.size()));
+            return list;
+        }
+        std::string service;
+        if (!StringArgument(count, values, 0, service))
+            return ThrowCoded(false, "PXJS7803", std::string(name) + " requires a service name");
+        if (!DeclaresNativeService(service))
+            return ThrowCoded(true, "PXJS7901", "'" + service + "' is not in this extension's native.services");
+        switch (op) {
+            case NativeOp::Has: return JS_NewBool(context, nativeHost && nativeHost->Has(service));
+            case NativeOp::TakeMessages: {
+                JSValue list = JS_NewArray(context);
+                if (!nativeHost) return list;
+                std::uint32_t index = 0;
+                for (const auto& message : nativeHost->TakeMessages(service))
+                    JS_SetPropertyUint32(context, list, index++,
+                                         JS_NewUint8ArrayCopy(context, message.data(), message.size()));
+                return list;
+            }
+            case NativeOp::Request: {
+                std::size_t bytes = 0;
+                int kind = -1;
+                const std::uint8_t* data = count > 1 ? TypedArrayBytes(values[1],
+                    {JS_TYPED_ARRAY_UINT8, JS_TYPED_ARRAY_UINT8C}, bytes, kind) : nullptr;
+                if (!data) return ThrowCoded(false, "PXJS7803", "Request takes a Uint8Array");
+                // A request is journaled like an engine operation: a load or
+                // rollback replays the recorded response instead of calling
+                // the library again.
+                const VariantArray arguments{Variant(service), Variant(HexBytes(data, bytes))};
+                if (replayJournal) {
+                    if (replayJournalCursor >= replayJournal->size())
+                        return JS_ThrowInternalError(context, "engine operation journal ended before replay");
+                    const auto& expected = (*replayJournal)[replayJournalCursor++];
+                    const auto* recorded = expected.result.TryGet<std::string>();
+                    if (expected.operation != "native.request" || expected.arguments != arguments || !recorded)
+                        return JS_ThrowInternalError(context, "engine operation journal diverged at operation native.request");
+                    const auto response = BytesFromHex(*recorded);
+                    return JS_NewUint8ArrayCopy(context, response.data(), response.size());
+                }
+                if (!nativeHost)
+                    return ThrowCoded(true, "PXJS7901", "The native service '" + service + "' is not available" +
+                                                            (nativeUnavailable.empty() ? std::string{} : ": " + nativeUnavailable));
+                native::NativeFailure failure;
+                const auto response = nativeHost->Request(service, data, bytes, failure);
+                if (!response) return ThrowCoded(true, failure.code, failure.message);
+                if (recordingJournal)
+                    recordingJournal->push_back({.operation = "native.request", .arguments = arguments,
+                                                 .result = Variant(HexBytes(response->data(), response->size())),
+                                                 .resultUndefined = false});
+                return JS_NewUint8ArrayCopy(context, response->data(), response->size());
+            }
+            default: break;
+        }
+        return JS_ThrowRangeError(context, "unknown native operation");
+    }
+
+    static JSValue NativeMethod(JSContext* context, JSValueConst, const int count,
+                                JSValueConst* values, const int magic) {
+        return From(context)->NativeOperation(static_cast<NativeOp>(magic), count, values);
+    }
+
+    // Loads the manifest's native library for this platform, if it has one.
+    // A library that is missing, unsigned or altered leaves its services
+    // unavailable (requests throw PXJS7901); it never stops the game.
+    void LoadNative(const nlohmann::json& manifest) {
+        nativeHost.reset();
+        nativeServices.clear();
+        nativeUnavailable.clear();
+        const auto found = manifest.find("native");
+        if (found == manifest.end() || !found->is_object()) return;
+        for (const auto& service : found->value("services", nlohmann::json::array()))
+            if (service.is_string()) nativeServices.push_back(service.get<std::string>());
+        const auto platform = native::CurrentPlatform();
+        const auto libraries = found->find("libraries");
+        if (platform.empty() || libraries == found->end() || !libraries->is_object() ||
+            !libraries->contains(std::string(platform))) {
+            nativeUnavailable = platform.empty() ? "this Player does not load native libraries"
+                                                 : "the extension has no library for " + std::string(platform);
+            Console(ConsoleLevel::Warning, "Extension '" + extensionId + "': " + nativeUnavailable, {});
+            return;
+        }
+        const auto& library = libraries->at(std::string(platform));
+        native::NativeLibrarySpec spec;
+        spec.extensionId = extensionId;
+        spec.version = manifest.value("version", std::string{});
+        spec.platform = std::string(platform);
+        spec.abi = found->value("abi", 0U);
+        spec.services = nativeServices;
+        spec.publicKey = found->value("publicKey", std::string{});
+        spec.signature = library.value("signature", std::string{});
+        spec.files.push_back({library.value("path", std::string{}), library.value("sha256", std::string{})});
+        std::vector<native::NativeLibrarySpec::File> extra;
+        for (const auto& file : library.value("files", nlohmann::json::array()))
+            if (file.is_object())
+                extra.push_back({file.value("path", std::string{}), file.value("sha256", std::string{})});
+        std::ranges::sort(extra, {}, &native::NativeLibrarySpec::File::path);
+        spec.files.insert(spec.files.end(), extra.begin(), extra.end());
+        native::NativeFailure failure;
+        nativeHost = native::NativePluginHost::Load(
+            spec, NativePluginDirectories(services.nativePluginDirectories),
+            [this](const int level, const std::string& message) {
+                Console(level >= 2 ? ConsoleLevel::Error : level == 1 ? ConsoleLevel::Warning
+                                                                       : ConsoleLevel::Info, message, {});
+            },
+            failure);
+        if (!nativeHost) {
+            nativeUnavailable = failure.message;
+            Console(ConsoleLevel::Error, failure.code + " " + failure.message, {});
+        }
+    }
+
     void BindEngine() {
         JSValue global = JS_GetGlobalObject(context);
+        JSValue rawObject = JS_NewObject(context);
+        for (const auto& [op, method] : kRawMethods)
+            JS_SetPropertyStr(context, rawObject, method,
+                              JS_NewCFunctionMagic(context, &RawMethod, method, 1,
+                                                   JS_CFUNC_generic_magic, static_cast<int>(op)));
+        JS_SetPropertyStr(context, global, "EngineRaw", rawObject);
+        JSValue nativeObject = JS_NewObject(context);
+        for (const auto& [op, method] : kNativeMethods)
+            JS_SetPropertyStr(context, nativeObject, method,
+                              JS_NewCFunctionMagic(context, &NativeMethod, method, 1,
+                                                   JS_CFUNC_generic_magic, static_cast<int>(op)));
+        JS_SetPropertyStr(context, global, "EngineNative", nativeObject);
         JSValue engine = JS_NewObject(context);
         JS_SetPropertyStr(context, engine, "log",
                           JS_NewCFunction(context, &Log, "log", 1));
@@ -3566,6 +3953,8 @@ public:
                 configurable: false
             });
             Object.freeze(Engine);
+            Object.freeze(EngineRaw);
+            Object.freeze(EngineNative);
             Object.freeze(console);
         )js";
         BeginExecution();
@@ -4337,6 +4726,12 @@ public:
     JavaScriptHost& host;
     ScriptServices services;
     ScriptRenderTree renderTree;
+    // Layer-1 drawing (EngineRaw): presentation only, never saved or journaled.
+    ScriptRawGraphics raw{services.renderer};
+    // Layer-2 native services (EngineNative) of this extension's library.
+    std::unique_ptr<native::NativePluginHost> nativeHost;
+    std::vector<std::string> nativeServices;
+    std::string nativeUnavailable;
     JSRuntime* runtime = nullptr;
     JSContext* context = nullptr;
     std::unordered_map<std::string, JSValue> commands;
@@ -4648,6 +5043,9 @@ bool JavaScriptHost::LoadExtensionManifestIntoCurrentRealm(
                 throw std::invalid_argument("unsupported or duplicate capability: " + name);
         }
         m_impl->capabilities = capabilities;
+        // Only an extension that declares "native" may load its library; it
+        // is verified and initialized before the entry script runs.
+        if (capabilities.contains("native")) m_impl->LoadNative(json);
 
         std::vector<vn::CommandDescriptor> commands;
         std::unordered_set<std::string> commandIds;
@@ -5282,6 +5680,7 @@ std::size_t JavaScriptHost::ListenerCount(const std::string_view event) const {
 void JavaScriptHost::Update(const float deltaSeconds) {
     if (!m_impl->runtime) return;
     Impl::EntryScope entry(*m_impl);
+    m_impl->raw.BeginFrame();
 
     for (const auto& realm : m_impl->extensionRealms)
         realm->Update(deltaSeconds);
@@ -5422,6 +5821,7 @@ void JavaScriptHost::RenderRetained(const RenderPhase phase) {
             ? m_impl->services.routes->CurrentModalRoute()
             : std::string_view{};
     m_impl->renderTree.Render(*m_impl->services.renderer, phase, route, modal);
+    m_impl->raw.Render(phase, route, modal);
     for (const auto& realm : m_impl->extensionRealms)
         realm->RenderRetained(phase);
 }

@@ -161,6 +161,11 @@ install(DIRECTORY Engine/SDK
     COMPONENT PrismatiXSDK
     FILES_MATCHING PATTERN "*.h"
 )
+# The C ABI native extension libraries build against (docs/native-extensions.md).
+install(FILES Engine/Native/PxPluginAbi.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/PrismatiX
+    COMPONENT PrismatiXSDK
+)
 install(FILES
     "${PRISMATIX_GENERATED_INCLUDE_DIR}/Engine/SDK/ContractVersions.h"
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/PrismatiX/Engine/SDK
@@ -312,6 +317,10 @@ target_link_libraries(PrismatiXRuntimeCore PUBLIC
     PrismatiXRuntimeContracts
 )
 target_link_libraries(PrismatiXRuntimeCore PRIVATE qjs)
+# Native extension libraries (Engine/Native) load with dlopen outside Windows.
+if(NOT EMSCRIPTEN AND CMAKE_DL_LIBS)
+    target_link_libraries(PrismatiXRuntimeCore PUBLIC ${CMAKE_DL_LIBS})
+endif()
 if(EMSCRIPTEN)
     target_link_libraries(PrismatiXRuntimeCore PRIVATE
         utf8proc::utf8proc
@@ -1257,6 +1266,17 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
         PrismatiX.Integration.Runtime.JavaScriptHost
         "integration;runtime;script;javascript"
         PrismatiXRuntime)
+    # A native extension library (layer 2) the test signs and loads.
+    add_library(PrismatiXTestNativePlugin SHARED
+        Tests/Fixtures/NativePlugin/TestNativePlugin.c)
+    target_include_directories(PrismatiXTestNativePlugin PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_target_properties(PrismatiXTestNativePlugin PROPERTIES
+        C_VISIBILITY_PRESET hidden PREFIX "")
+    add_dependencies(PrismatiXJavaScriptHostIntegrationTests
+        PrismatiXTestNativePlugin)
+    target_compile_definitions(PrismatiXJavaScriptHostIntegrationTests PRIVATE
+        PRISMATIX_TEST_NATIVE_PLUGIN="$<TARGET_FILE:PrismatiXTestNativePlugin>")
     prismatix_add_simple_test(
         PrismatiXAnimationIntegrationTests
         Tests/Integration/AnimationIntegrationTests.cpp

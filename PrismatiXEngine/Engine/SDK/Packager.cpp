@@ -2536,7 +2536,7 @@ ValidationResult Validate(const PackageRequest& request,
                     } else {
                         for (const auto& capability : *capabilities) {
                             if (!capability.is_string() ||
-                                !std::set<std::string>{"runtime", "animation", "ui", "audio",
+                                !std::set<std::string>{"runtime", "animation", "ui", "audio", "raw.mesh", "raw.texture", "raw.target", "native",
                                                        "video", "persistence", "input", "render"}
                                      .contains(capability.get<std::string>()) ||
                                 !declaredCapabilities.insert(

@@ -137,6 +137,9 @@ struct ScriptServices {
     std::function<std::string(std::uint64_t handle)> videoStatus;
     std::function<std::string(std::uint64_t handle)> videoError;
     std::function<void(const ConsoleMessage&)> console;
+    // Folders holding `<extension id>/<library>` for native extensions (the
+    // distribution's Plugins folder). PRISMATIX_NATIVE_PLUGIN_PATH comes first.
+    std::vector<std::string> nativePluginDirectories;
 };
 
 struct DebugBreakpoint {
