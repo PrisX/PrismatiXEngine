@@ -32,6 +32,14 @@
       "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js"
     },
+    "./raw": {
+      "types": "./dist/src/raw.d.ts",
+      "import": "./dist/src/raw.js"
+    },
+    "./native": {
+      "types": "./dist/src/native.d.ts",
+      "import": "./dist/src/native.js"
+    },
     "./sandbox": {
       "types": "./sandbox.d.ts"
     }
