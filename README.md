@@ -101,6 +101,9 @@ and Ogg as Opus in builds, which can make a game's media several times smaller.
 - [Shipping reference](docs/shipping.md): distributions and releases, saves
   across versions, patches and overlays, user data, play tests, importers,
   Android.
+- [Sharing extensions](docs/extensions-sharing.md): pack an extension as a
+  `.pxext`, publish it to a registry or a static index, install, update and
+  verify shared extensions; the registry HTTP API and the security model.
 - [Web export](docs/web-export.md): export a game with the WebGL2 or WebGPU
   renderer (both experimental), preview it locally, deploy offline-capable
   browser versions and build the WASM Player.

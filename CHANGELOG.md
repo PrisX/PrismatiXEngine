@@ -15,6 +15,30 @@ The packages always carry the same version and pin each other exactly.
 
 ### Added
 
+- Sharing extensions ([docs/extensions-sharing.md](docs/extensions-sharing.md)).
+  `prismatix extension pack [--owner <owner>] [--include-source]` writes a
+  reproducible `<owner>-<name>-<version>.pxext` (a canonical stored ZIP with
+  `pxext.json`, the manifest, the bundled `dist/` script, generated types,
+  README and LICENSE), type-checking and checking capabilities and size limits.
+  `prismatix extension add <owner/name[@range] | file.pxext | https URL |
+  npm:<package>>` resolves the newest version for the project's engine,
+  checks the SHA-256, size, archive form, engine range and command/Action id
+  conflicts, shows the capabilities and asks (`--yes` in scripts), installs
+  into `Extensions/<owner>/<name>/`, registers it and records it in
+  `prismatix-extensions.lock`; nothing in a package runs at install time.
+  `remove`, `update [id] [--to <range>]`, `outdated`, `verify` (re-hashes the
+  installed files against the lock), `inspect`, `search`, `info`, `publish`
+  (presigned upload; token from `PRISMATIX_REGISTRY_TOKEN`), `yank` and
+  `registry [<url>]`. The registry comes from `--registry`,
+  `PRISMATIX_EXTENSION_REGISTRY` or the project's
+  `settings["extensions.registry"]`; there is no default. The client also
+  works against a static index, which `scripts/extension-index.mjs` builds
+  from entry files. `@prismatix/authoring-sdk` exports
+  `validateExtensionPackage` (also as the Node-free subpath
+  `@prismatix/authoring-sdk/extension-package`), `writeExtensionPackage`,
+  `resolveExtensionVersion`, SemVer range helpers and the registry document
+  types; new contracts `extension-package`, `extension-lock` and
+  `extension-registry`.
 - Packing for other platforms: `prismatix pack --platform
   <win32-x64|linux-x64|darwin-x64|darwin-arm64|all>` (a comma list, may
   repeat) compiles the project once and packs it for each platform into

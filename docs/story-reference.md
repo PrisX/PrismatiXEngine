@@ -1324,6 +1324,10 @@ whatever they write is then overwritten by the restored state. While the game
 runs from `prismatix run` (and Studio's 試玩), an error or log line of the
 extension is shown at its `.ts` file and line.
 
+To share an extension, or use one someone else published, see
+[Sharing extensions](extensions-sharing.md): `prismatix extension pack`
+makes a `.pxext` and `prismatix extension add owner/name` installs one.
+
 ## Command schema for editors
 
 Tools that edit Story scripts (the VS Code extension, PrismatiX Studio, your
