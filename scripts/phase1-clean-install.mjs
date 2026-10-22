@@ -128,7 +128,7 @@ async function run(command, args, options = {}) {
 
 function requireSuccess(result, label) {
   if (result.code !== 0) {
-    throw new Error(`${label} failed (${result.code})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    throw new Error(`${label} failed (${result.code}${result.signal ? `, ${result.signal}` : ""})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
   }
   return result;
 }
@@ -192,6 +192,24 @@ function pnpmInvocation() {
 async function pnpm(args, options = {}) {
   const invocation = pnpmInvocation();
   return run(invocation.command, [...invocation.prefix, ...args], options);
+}
+
+/**
+ * Corepack picks the newest pnpm for a directory whose package.json files name
+ * none, and a pnpm that new downloads its own platform binary from the npm
+ * registry on first use, in the middle of the install under test. So the
+ * clean room names the pnpm this repository pins (already in Corepack's cache
+ * from the workspace install): returns that `packageManager` value when the
+ * pnpm on PATH is Corepack's, otherwise undefined (a pnpm the author installed
+ * stays what it is).
+ */
+async function corepackPnpmPin() {
+  const invocation = pnpmInvocation();
+  const entry = invocation.prefix[0] ?? invocation.command;
+  const resolved = await realpath(entry).catch(() => entry);
+  if (!/[\\/]corepack[\\/]/u.test(resolved)) return undefined;
+  const pinned = JSON.parse(await readFile(join(repositoryRoot, "package.json"), "utf8")).packageManager;
+  return typeof pinned === "string" && pinned.startsWith("pnpm@") ? pinned : undefined;
 }
 
 async function npm(args, options = {}) {
@@ -591,6 +609,13 @@ async function main() {
     const pnpmHome = join(temporaryRoot, "pnpm-home");
     if (usePnpm) {
       await mkdir(pnpmHome, {recursive: true});
+      // Corepack looks up the directory tree, so this reaches the author
+      // machine, the project and the portable game folders below.
+      const pinned = await corepackPnpmPin();
+      if (pinned !== undefined) {
+        await writeFile(join(temporaryRoot, "package.json"), `${JSON.stringify({private: true, packageManager: pinned})}\n`);
+        log(`pnpm comes from Corepack; the clean room pins ${pinned}`, temporaryRoot);
+      }
       const setting = (key, path) => `${key}=${path.replaceAll("\\", "/")}\n`;
       await appendFile(npmrc, setting("store-dir", join(temporaryRoot, "pnpm-store")) +
         setting("cache-dir", join(temporaryRoot, "pnpm-cache")) +
@@ -613,8 +638,10 @@ async function main() {
     Object.assign(toolEnvironment, {npm_config_prefix: prefix, npm_config_cache: cache, npm_config_userconfig: npmrc});
     let installedPackages;
     if (usePnpm) {
+      const pnpmEntry = pnpmInvocation();
       requireSuccess(await pnpm(["add", "--global", "@prismatix/cli", "--ignore-scripts"],
-        {cwd: installRoot, env: toolEnvironment, timeoutMs: 300_000}), "pnpm add --global @prismatix/cli (isolated candidate registry)");
+        {cwd: installRoot, env: toolEnvironment, timeoutMs: 300_000}),
+      `pnpm add --global @prismatix/cli (isolated candidate registry; ${[pnpmEntry.command, ...pnpmEntry.prefix].join(" ")})`);
       const globalRoot = requireSuccess(await pnpm(["root", "--global"], {cwd: installRoot, env: toolEnvironment}), "pnpm root --global");
       // pnpm 10 reports the global node_modules itself; newer pnpm reports the
       // global directory whose isolated installs each have their own node_modules.
