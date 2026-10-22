@@ -92,6 +92,10 @@ struct PackageRequest {
     bool platformLayout = false;
     // macOS CFBundleIdentifier; derived from gameId when empty.
     std::string bundleIdentifier;
+    // The desktop platform the distribution is for (win32-x64, linux-x64,
+    // darwin-x64 or darwin-arm64): its layout, runtime libraries and shader
+    // formats, with playerExecutable that platform's Player. Empty: the host.
+    std::string targetPlatform;
     std::string title;
     int width = 1280;
     int height = 720;

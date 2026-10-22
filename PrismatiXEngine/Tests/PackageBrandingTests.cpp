@@ -5,6 +5,7 @@
 // Windows resource round trip runs on Windows against the built Players.
 
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -82,6 +83,79 @@ std::string Lines(const std::vector<std::string>& values) {
     std::string text;
     for (const auto& value : values) text += value + "\n";
     return text;
+}
+
+void Put16(Bytes& bytes, const std::size_t at, const std::uint32_t value) {
+    bytes[at] = static_cast<std::uint8_t>(value & 0xff);
+    bytes[at + 1] = static_cast<std::uint8_t>((value >> 8) & 0xff);
+}
+void Put32(Bytes& bytes, const std::size_t at, const std::uint32_t value) {
+    Put16(bytes, at, value & 0xffff);
+    Put16(bytes, at + 2, value >> 16);
+}
+
+// A minimal PE32+ image the way MSVC lays one out: .text, an empty .rsrc
+// and a .reloc block after it, then `overlay` bytes. No host can run it, but
+// every host can rewrite its resources.
+constexpr std::size_t kSyntheticOptional = 0x98;
+constexpr std::size_t kSyntheticDirectories = kSyntheticOptional + 112;
+constexpr std::size_t kSyntheticSections = kSyntheticOptional + 240;
+Bytes SyntheticPe(const std::string_view overlay = {}) {
+    Bytes image(0xA00, 0);
+    image[0] = 'M';
+    image[1] = 'Z';
+    Put32(image, 0x3C, 0x80);
+    std::memcpy(&image[0x80], "PE\0\0", 4);
+    Put16(image, 0x84, 0x8664);
+    Put16(image, 0x86, 3);
+    Put16(image, 0x94, 240);
+    Put16(image, 0x96, 0x22);
+    Put16(image, kSyntheticOptional, 0x20b);
+    Put32(image, kSyntheticOptional + 8, 0x400);       // SizeOfInitializedData
+    Put32(image, kSyntheticOptional + 16, 0x1000);     // AddressOfEntryPoint
+    Put32(image, kSyntheticOptional + 28, 0x1);        // ImageBase 0x140000000 (high half)
+    Put32(image, kSyntheticOptional + 24, 0x40000000);
+    Put32(image, kSyntheticOptional + 32, 0x1000);     // SectionAlignment
+    Put32(image, kSyntheticOptional + 36, 0x200);      // FileAlignment
+    Put32(image, kSyntheticOptional + 56, 0x4000);     // SizeOfImage
+    Put32(image, kSyntheticOptional + 60, 0x400);      // SizeOfHeaders
+    Put16(image, kSyntheticOptional + 68, 2);          // GUI subsystem
+    Put32(image, kSyntheticOptional + 108, 16);
+    Put32(image, kSyntheticDirectories + 8 * 5, 0x3000);  // base relocations
+    Put32(image, kSyntheticDirectories + 8 * 5 + 4, 12);
+    const auto section = [&](const std::size_t index, const char* name, const std::uint32_t address,
+                             const std::uint32_t pointer, const std::uint32_t characteristics) {
+        const std::size_t at = kSyntheticSections + 40 * index;
+        std::memcpy(&image[at], name, std::strlen(name));
+        Put32(image, at + 8, 0x200);
+        Put32(image, at + 12, address);
+        Put32(image, at + 16, 0x200);
+        Put32(image, at + 20, pointer);
+        Put32(image, at + 36, characteristics);
+    };
+    section(0, ".text", 0x1000, 0x400, 0x60000020);
+    section(1, ".rsrc", 0x2000, 0x600, 0x40000040);
+    section(2, ".reloc", 0x3000, 0x800, 0x42000040);
+    image[0x400] = 0xC3;  // ret
+    // One relocation block for the .text page, then a recognisable tail.
+    Put32(image, 0x800, 0x1000);
+    Put32(image, 0x804, 12);
+    Put16(image, 0x808, 0xA010);
+    std::memcpy(&image[0x9F0], "RELOC-TAIL", 10);
+    image.insert(image.end(), overlay.begin(), overlay.end());
+    return image;
+}
+
+struct SyntheticSection {
+    std::uint32_t virtualSize, address, rawSize, pointer;
+};
+SyntheticSection SectionOf(const Bytes& image, const std::size_t index) {
+    const std::size_t at = kSyntheticSections + 40 * index;
+    return {U32(image, at + 8), U32(image, at + 12), U32(image, at + 16), U32(image, at + 20)};
+}
+
+std::string Text(const std::optional<Bytes>& bytes) {
+    return bytes ? std::string(bytes->begin(), bytes->end()) : std::string{};
 }
 
 }  // namespace
@@ -345,6 +419,138 @@ int main(int argc, char** argv) {
         const auto icon48 = branding::DecodePng(ReadBytes(staging / "icons/hicolor/48x48/apps/hikari.png"), decodeError);
         suite.Expect(icon48 && icon48->width == 48, "hicolor sizes are resampled", decodeError);
         suite.Expect(px::sdk::DistributionDataRoot(staging) == staging, "Linux data stays at the root");
+    });
+
+    suite.Run("PeResourceEditorOnAnyHost", [&] {
+        const branding::PeResourceKey manifestType{24, {}}, rcData{10, {}}, one{1, {}};
+        std::string error;
+        const std::string manifestText =
+            "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>\r\n"
+            "<assembly xmlns='urn:schemas-microsoft-com:asm.v1' manifestVersion='1.0'>\r\n</assembly>\r\n";
+        // The authored overlay survives; a signature over the old bytes does not.
+        Bytes base = SyntheticPe("OVERLAY!SIGNATURE");
+        Put32(base, kSyntheticDirectories + 8 * 4, static_cast<std::uint32_t>(base.size() - 9));
+        Put32(base, kSyntheticDirectories + 8 * 4 + 4, 9);
+        const auto none = branding::ReadPeResources(base, error);
+        suite.Require(none && none->empty(), "an image without a resource directory has no resources", error);
+        const auto withManifest = branding::ReplacePeResources(
+            base, {{manifestType, one, 0x0409, Bytes(manifestText.begin(), manifestText.end())},
+                   {rcData, {0, u"Zeta"}, 0, Bytes{'z'}}, {rcData, {0, u"alpha"}, 0, Bytes{'a'}}},
+            error);
+        suite.Require(withManifest.has_value(), "resources are written into the empty .rsrc", error);
+        const auto read = branding::ReadPeResources(*withManifest, error);
+        suite.Require(read && read->size() == 3, "three resources read back", error);
+        suite.Equal(manifestText, Text(branding::FindPeResource(*read, manifestType, one)), "the manifest round trips");
+        suite.Equal("a", Text(branding::FindPeResource(*read, rcData, {0, u"alpha"})), "named resources round trip");
+        suite.Expect(std::string(withManifest->end() - 8, withManifest->end()) == "OVERLAY!" &&
+                         U32(*withManifest, kSyntheticDirectories + 8 * 4) == 0,
+                     "the overlay is kept and the stale signature dropped");
+
+        const auto staging = fixture.path / "windows-any-host";
+        std::filesystem::create_directories(staging);
+        WriteBytes(staging / "Hikari.exe", *withManifest);
+        Write(staging / "SDL3.dll", "dll");
+        Write(staging / "Content.pdx", "pdx");
+        Write(staging / "Package/manifest.json", "{}");
+        branding::LayoutOutcome outcome;
+        const branding::LayoutRequest request{
+            .platform = branding::LayoutPlatform::Windows, .playerFile = "Hikari.exe", .displayName = "光之軌跡",
+            .version = "1.2.0", .companyName = "Hikari Works", .engineFolder = "Engine", .icon = iconPath};
+        suite.Require(branding::ApplyLayout(staging, request, outcome, error), "the bundled layout applies on any host",
+                      error);
+        // Twice: replaced icons, version and manifest stay single.
+        for (const char* name : {"SDL3.dll", "Content.pdx", "Package"})
+            std::filesystem::rename(staging / "Engine" / name, staging / name);
+        std::filesystem::remove_all(staging / "Engine");
+        suite.Require(branding::ApplyLayout(staging, request, outcome, error), "the layout applies again", error);
+        const Bytes branded = ReadBytes(staging / "Hikari.exe");
+        const auto resources = branding::ReadPeResources(branded, error);
+        suite.Require(resources.has_value(), "the branded executable's resources read back", error);
+        const auto count = [&](const std::uint16_t type) {
+            return std::ranges::count_if(*resources, [&](const auto& item) { return item.type.id == type; });
+        };
+        suite.Expect(count(3) == 7 && count(14) == 1 && count(16) == 1 && count(24) == 1,
+                     "seven icon images, one icon group, one version and one manifest");
+        suite.Expect(Text(branding::FindPeResource(*resources, {14, {}}, one)).size() == 6 + 14 * 7,
+                     "the icon group lists seven sizes");
+        const auto version =
+            branding::ParseVersionResource(branding::FindPeResource(*resources, {16, {}}, one).value_or(Bytes{}));
+        const std::pair<std::string, std::string> product{"ProductName", "光之軌跡"};
+        suite.Expect(version && std::ranges::find(version->strings, product) != version->strings.end(),
+                     "the version resource names the product");
+        const std::string merged = Text(branding::FindPeResource(*resources, manifestType, one));
+        suite.Expect(merged.find("name=\"Engine\"") != std::string::npos &&
+                         merged.find("name=\"Engine\"") == merged.rfind("name=\"Engine\""),
+                     "the manifest depends on the engine folder once");
+        suite.Equal("Engine",
+                    branding::LayoutDataDirectory(
+                        Text(branding::FindPeResource(*resources, rcData, {0, u"PRISMATIX_LAYOUT"})))
+                        .value_or(""),
+                    "PRISMATIX_LAYOUT names the engine folder");
+
+        const auto rsrc = SectionOf(branded, 1);
+        const auto reloc = SectionOf(branded, 2);
+        suite.Expect(rsrc.address == 0x2000 && rsrc.pointer == 0x600 && rsrc.virtualSize > 0x200 &&
+                         rsrc.rawSize % 0x200 == 0 && rsrc.rawSize >= rsrc.virtualSize,
+                     ".rsrc keeps its address and grows");
+        suite.Expect(reloc.address % 0x1000 == 0 && reloc.address >= rsrc.address + rsrc.virtualSize &&
+                         reloc.pointer == rsrc.pointer + rsrc.rawSize &&
+                         U32(branded, kSyntheticDirectories + 8 * 5) == reloc.address,
+                     ".reloc moves up behind it and its directory follows");
+        suite.Expect(U32(branded, reloc.pointer) == 0x1000 && U16(branded, reloc.pointer + 8) == 0xA010 &&
+                         std::memcmp(&branded[reloc.pointer + 0x1F0], "RELOC-TAIL", 10) == 0,
+                     "the relocation table is carried over byte for byte");
+        suite.Expect(U32(branded, kSyntheticOptional + 56) == reloc.address + 0x1000, "SizeOfImage covers .reloc");
+        suite.Expect(branding::PeChecksum(branded) == U32(branded, kSyntheticOptional + 64), "the checksum is valid");
+        suite.Expect(branding::PeArchitecture(branded) == "amd64" && branding::PeSubsystem(branded) == std::uint16_t{2},
+                     "the machine and subsystem are untouched");
+
+        Bytes trailing = SyntheticPe();
+        std::memcpy(&trailing[kSyntheticSections + 40 * 2], ".tls\0\0\0\0", 8);
+        Put32(trailing, kSyntheticDirectories + 8 * 5, 0);
+        suite.Expect(!branding::ReplacePeResources(trailing, {}, error) && error.find(".tls") != std::string::npos,
+                     "a section that cannot move behind .rsrc is refused", error);
+        suite.Expect(!branding::ReadPeResources(Bytes{'M', 'Z'}, error), "truncated images are rejected");
+    });
+
+    suite.Run("TargetPlatforms", [&] {
+        using branding::LayoutPlatform;
+        suite.Expect(branding::TargetLayoutPlatform("win32-x64") == LayoutPlatform::Windows &&
+                         branding::TargetLayoutPlatform("linux-x64") == LayoutPlatform::Linux &&
+                         branding::TargetLayoutPlatform("darwin-arm64") == LayoutPlatform::MacOS &&
+                         branding::TargetLayoutPlatform("darwin-x64") == LayoutPlatform::MacOS &&
+                         !branding::TargetLayoutPlatform("linux-arm64") && !branding::TargetLayoutPlatform("win32"),
+                     "the four desktop platforms");
+        const Bytes pe = SyntheticPe();
+        suite.Expect(!branding::ExecutableTargetMismatch(pe, "win32-x64"), "an x64 PE is a win32-x64 Player");
+        suite.Expect(branding::ExecutableTargetMismatch(pe, "linux-x64").value_or("").find("Windows") != std::string::npos,
+                     "a PE is not a Linux Player");
+        Bytes elf(64, 0);
+        elf[0] = 0x7F;
+        elf[1] = 'E';
+        elf[2] = 'L';
+        elf[3] = 'F';
+        elf[4] = 2;
+        elf[5] = 1;
+        Put16(elf, 18, 0x3E);
+        suite.Expect(!branding::ExecutableTargetMismatch(elf, "linux-x64") &&
+                         branding::ExecutableTargetMismatch(elf, "darwin-arm64"),
+                     "an x86-64 ELF is only a linux-x64 Player");
+        Bytes macho(32, 0);
+        Put32(macho, 0, 0xFEEDFACF);
+        Put32(macho, 4, 0x0100000C);
+        suite.Expect(!branding::ExecutableTargetMismatch(macho, "darwin-arm64") &&
+                         branding::ExecutableTargetMismatch(macho, "darwin-x64"),
+                     "an arm64 Mach-O is only a darwin-arm64 Player");
+        Bytes universal{0xCA, 0xFE, 0xBA, 0xBE, 0, 0, 0, 2, 1, 0, 0, 7};
+        universal.resize(8 + 20, 0);
+        universal.insert(universal.end(), {1, 0, 0, 12});
+        universal.resize(8 + 40, 0);
+        suite.Expect(!branding::ExecutableTargetMismatch(universal, "darwin-x64") &&
+                         !branding::ExecutableTargetMismatch(universal, "darwin-arm64"),
+                     "a universal binary serves both Macs");
+        suite.Expect(branding::ExecutableTargetMismatch(Bytes{'#', '!'}, "linux-x64").has_value(),
+                     "a script is no Player");
     });
 
 #ifdef _WIN32

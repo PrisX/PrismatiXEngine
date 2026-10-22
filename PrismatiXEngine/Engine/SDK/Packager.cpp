@@ -164,7 +164,13 @@ std::filesystem::path PackagedPlayerName(const PackageRequest& request) {
     return Utf8Path(request.executableName + px::PathToUtf8(request.playerExecutable.extension()));
 }
 
-// How this host lays out the distribution (PackageBranding.h).
+// The platform a request packs for: its targetPlatform, else this host.
+branding::LayoutPlatform TargetPlatform(const PackageRequest& request) {
+    if (request.targetPlatform.empty()) return branding::HostLayoutPlatform();
+    return branding::TargetLayoutPlatform(request.targetPlatform).value_or(branding::LayoutPlatform::Other);
+}
+
+// How the target platform lays out the distribution (PackageBranding.h).
 branding::LayoutRequest DistributionLayout(const PackageRequest& request) {
     const std::string player = px::PathToUtf8(PackagedPlayerName(request));
     const std::string displayName = request.productName.empty() ? request.title : request.productName;
@@ -172,7 +178,7 @@ branding::LayoutRequest DistributionLayout(const PackageRequest& request) {
     if (appName.empty())
         appName = PortableExecutableName(displayName) ? displayName
                                                       : px::PathToUtf8(Utf8Path(player).stem());
-    return {.platform = branding::HostLayoutPlatform(),
+    return {.platform = TargetPlatform(request),
             .playerFile = player,
             .displayName = displayName,
             .version = request.version,
@@ -1480,7 +1486,8 @@ struct CompiledEffects {
     std::vector<PackageDiagnostic> diagnostics;
 };
 
-CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
+CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries,
+                                     const branding::LayoutPlatform target) {
     CompiledEffects result;
     const ArchiveEntry* projectEntry = FindArchiveEntry(entries, "project.pxproject");
     if (!projectEntry) return result;
@@ -1506,6 +1513,18 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
                       "Custom effects require graphicsTier gpu-effects");
         return result;
     }
+#ifdef __APPLE__
+    // Windows Players fall back to Direct3D 12, which needs DXIL; the DirectX
+    // Shader Compiler does not exist for macOS.
+    if (!effects->empty() && target == branding::LayoutPlatform::Windows) {
+        AddDiagnostic(result.diagnostics, "PXPKG1511",
+                      "Custom effects for Windows need DXIL shaders, which the macOS Packager cannot compile; "
+                      "pack the Windows distribution on Windows or Linux");
+        return result;
+    }
+#else
+    (void)target;
+#endif
     if (!effects->empty() && !ShaderCrossReady()) {
         AddDiagnostic(result.diagnostics, "PXPKG1502",
                       std::string("Offline shader compiler failed to initialize: ") +
@@ -1799,7 +1818,7 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
     return manifest;
 }
 
-bool RuntimeLibrary(const std::filesystem::path& path) {
+bool RuntimeLibrary(const std::filesystem::path& path, const branding::LayoutPlatform platform) {
     const std::string filename = Lower(px::PathToUtf8(path.filename()));
     // Sanitizer runtimes sit beside instrumented test builds; no shipped
     // binary loads them.
@@ -1808,13 +1827,13 @@ bool RuntimeLibrary(const std::filesystem::path& path) {
         filename.starts_with("clang_rt."))
         return false;
     const std::string extension = Lower(px::PathToUtf8(path.extension()));
-#ifdef _WIN32
-    return extension == ".dll";
-#elif defined(__APPLE__)
-    return extension == ".dylib";
-#else
-    return extension == ".so" || px::PathToUtf8(path.filename()).find(".so.") != std::string::npos;
-#endif
+    switch (platform) {
+        case branding::LayoutPlatform::Windows: return extension == ".dll";
+        case branding::LayoutPlatform::MacOS: return extension == ".dylib";
+        case branding::LayoutPlatform::Linux:
+            return extension == ".so" || px::PathToUtf8(path.filename()).find(".so.") != std::string::npos;
+        default: return false;
+    }
 }
 
 bool Cancelled(const PackageRequest& request) {
@@ -1962,6 +1981,15 @@ ValidationResult Validate(const PackageRequest& request,
     const auto player = WeakCanonical(request.playerExecutable, error);
     if (error || !std::filesystem::is_regular_file(player, error)) {
         AddDiagnostic(diagnostics, "PXPKG1209", "playerExecutable is not a readable file", true);
+    } else if (!request.targetPlatform.empty()) {
+        // A Player for another platform is easy to pick by mistake; its
+        // executable format says which platform it runs on.
+        std::ifstream input(player, std::ios::binary);
+        Bytes head(64 * 1024);
+        input.read(reinterpret_cast<char*>(head.data()), static_cast<std::streamsize>(head.size()));
+        head.resize(static_cast<std::size_t>(input.gcount()));
+        if (const auto mismatch = branding::ExecutableTargetMismatch(head, request.targetPlatform))
+            AddDiagnostic(diagnostics, "PXPKG1278", "playerExecutable does not match targetPlatform: " + *mismatch);
     }
     if (!request.icon.empty()) {
         std::error_code iconError;
@@ -3052,6 +3080,13 @@ PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
         else
             result.request.platformLayout = platformLayout->get<bool>();
     }
+    if (const auto target = root.find("targetPlatform"); target != root.end()) {
+        if (!target->is_string() || !branding::TargetLayoutPlatform(target->get<std::string>()))
+            AddDiagnostic(result.diagnostics, "PXPKG1277",
+                          "targetPlatform must be win32-x64, linux-x64, darwin-x64 or darwin-arm64");
+        else
+            result.request.targetPlatform = target->get<std::string>();
+    }
     if (const auto identifier = root.find("bundleIdentifier"); identifier != root.end()) {
         if (!identifier->is_string() || !branding::ValidBundleIdentifier(identifier->get<std::string>()))
             AddDiagnostic(result.diagnostics, "PXPKG1276",
@@ -3529,7 +3564,7 @@ bool PreparePackageContent(const PackageRequest& request,
                                            Lower(input.input.fingerprint)});
         identityMaterial += "|" + input.input.uri + "|" + contentFingerprint;
     }
-    auto customEffects = CompileCustomEffects(entries);
+    auto customEffects = CompileCustomEffects(entries, TargetPlatform(request));
     if (!customEffects.diagnostics.empty()) {
         const auto& first = customEffects.diagnostics.front();
         return reject(first.code, first.message, first.retryable);
@@ -3914,7 +3949,7 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     error.clear();
     for (std::filesystem::directory_iterator iterator(request.playerExecutable.parent_path(), error); !error && iterator != std::filesystem::directory_iterator(); iterator.increment(error)) {
         std::error_code entryError;
-        if (iterator->is_regular_file(entryError) && RuntimeLibrary(iterator->path())) {
+        if (iterator->is_regular_file(entryError) && RuntimeLibrary(iterator->path(), TargetPlatform(request))) {
             libraries.push_back(iterator->path());
         }
     }

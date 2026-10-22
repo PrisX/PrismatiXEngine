@@ -127,6 +127,36 @@ inline constexpr wchar_t kLayoutResourceName[] = L"PRISMATIX_LAYOUT";
 [[nodiscard]] std::string LayoutResource(std::string_view dataDirectory);
 [[nodiscard]] std::optional<std::string> LayoutDataDirectory(std::string_view resource);
 
+// One resource of a PE image: type, name (an integer id, or a string when
+// `name` is not empty) and language, as the Win32 resource API sees them.
+struct PeResourceKey {
+    std::uint16_t id = 0;
+    std::u16string name;
+    friend bool operator==(const PeResourceKey&, const PeResourceKey&) = default;
+};
+struct PeResource {
+    PeResourceKey type;
+    PeResourceKey name;
+    std::uint16_t language = 0;
+    Bytes data;
+    std::uint32_t codePage = 0;
+};
+// Every resource of a PE image, read from its resource directory without the
+// Win32 loader. An image without resources yields an empty list.
+[[nodiscard]] std::optional<std::vector<PeResource>> ReadPeResources(const Bytes& image, std::string& error);
+// The image with its resource section rebuilt to hold exactly `resources`.
+// The section keeps its address; a base relocation section after it moves
+// up, the headers (sizes, data directories, checksum) follow and an
+// Authenticode signature, which no longer matches, is dropped. Images whose
+// resource section is followed by anything else are refused.
+[[nodiscard]] std::optional<Bytes> ReplacePeResources(const Bytes& image, const std::vector<PeResource>& resources,
+                                                      std::string& error);
+// The data of the first resource with this type and name (any language).
+[[nodiscard]] std::optional<Bytes> FindPeResource(const std::vector<PeResource>& resources, const PeResourceKey& type,
+                                                  const PeResourceKey& name);
+// The PE checksum (IMAGE_OPTIONAL_HEADER.CheckSum) of an image.
+[[nodiscard]] std::optional<std::uint32_t> PeChecksum(const Bytes& image);
+
 struct WindowsResources {
     Bytes ico;                       // empty: keep the existing icons
     Bytes version;                   // empty: keep any existing version resource
@@ -134,13 +164,22 @@ struct WindowsResources {
     std::string architecture;        // with engineFolder
 };
 
-// Rewrites the given resources of a PE file in one update. Implemented on
-// Windows only; elsewhere it fails with an explanatory error.
+// Rewrites the given resources of a PE file in one update, on any host
+// (ReplacePeResources), the way UpdateResource would: replaced icons and
+// version information are removed in every language first.
 [[nodiscard]] bool WriteWindowsResources(const std::filesystem::path& executable,
                                          const WindowsResources& resources, std::string& error);
 
 enum class LayoutPlatform { Windows, MacOS, Linux, Other };
 [[nodiscard]] LayoutPlatform HostLayoutPlatform();
+
+// The desktop platforms a distribution can be packed for, as Node names them
+// (`${process.platform}-${process.arch}`): win32-x64, linux-x64, darwin-x64
+// and darwin-arm64. nullopt for anything else.
+[[nodiscard]] std::optional<LayoutPlatform> TargetLayoutPlatform(std::string_view target);
+// Why `executable` cannot be the Player of `target` (a PE image of the wrong
+// machine, an ELF file for macOS, ...), or nullopt when it can.
+[[nodiscard]] std::optional<std::string> ExecutableTargetMismatch(const Bytes& executable, std::string_view target);
 
 // Turns a flat staged distribution (Player, runtime libraries, archives,
 // Package/ and Notices/ side by side) into the platform's shipping layout.

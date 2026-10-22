@@ -15,13 +15,6 @@
 #include <string>
 #include <utility>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
-
 namespace px::sdk::branding {
 namespace {
 
@@ -747,6 +740,8 @@ std::optional<std::string> AddAssemblyDependency(const std::string_view manifest
         return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
                "<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\n" +
                dependency + "</assembly>\n";
+    // Branding an already branded Player keeps a single dependency.
+    if (manifest.find(dependency) != std::string_view::npos) return std::string(manifest);
     // The root element may carry a namespace prefix (<asmv1:assembly>).
     const auto close = manifest.rfind("assembly>");
     if (close == std::string_view::npos) return std::nullopt;
@@ -792,47 +787,434 @@ std::optional<std::string> LayoutDataDirectory(const std::string_view resource) 
     return found->get<std::string>();
 }
 
-#ifdef _WIN32
 namespace {
-struct ExistingResource {
-    LPCWSTR type;
-    std::wstring name;
-    WORD id;
-    WORD language;
+
+// Section and header fields of a PE image this editor reads and rewrites.
+struct PeSection {
+    std::size_t header = 0;  // file offset of the 40-byte section header
+    std::string name;
+    std::uint32_t virtualSize = 0;
+    std::uint32_t virtualAddress = 0;
+    std::uint32_t rawSize = 0;
+    std::uint32_t rawPointer = 0;
+    std::uint32_t characteristics = 0;
+};
+struct PeLayout {
+    std::size_t optional = 0;      // file offset of the optional header
+    std::size_t directories = 0;   // file offset of the data directory array
+    std::uint32_t directoryCount = 0;
+    std::uint32_t sectionAlignment = 0;
+    std::uint32_t fileAlignment = 0;
+    std::vector<PeSection> sections;  // in address order
 };
 
-std::vector<ExistingResource> EnumerateResources(HMODULE module, const std::vector<LPCWSTR>& types) {
-    struct Context { std::vector<ExistingResource>* out; LPCWSTR type; std::wstring name; WORD id; };
-    std::vector<ExistingResource> existing;
-    for (const LPCWSTR type : types) {
-        Context context{&existing, type, {}, 0};
-        EnumResourceNamesW(module, type,
-            [](HMODULE handle, LPCWSTR resourceType, LPWSTR name, LONG_PTR parameter) -> BOOL {
-                auto& owner = *reinterpret_cast<Context*>(parameter);
-                owner.name = IS_INTRESOURCE(name) ? std::wstring{} : std::wstring(name);
-                owner.id = IS_INTRESOURCE(name) ? static_cast<WORD>(reinterpret_cast<std::uintptr_t>(name)) : 0;
-                EnumResourceLanguagesW(handle, resourceType, name,
-                    [](HMODULE, LPCWSTR, LPCWSTR, WORD language, LONG_PTR inner) -> BOOL {
-                        auto& target = *reinterpret_cast<Context*>(inner);
-                        target.out->push_back({target.type, target.name, target.id, language});
-                        return TRUE;
-                    }, parameter);
-                return TRUE;
-            }, reinterpret_cast<LONG_PTR>(&context));
-    }
-    return existing;
+constexpr std::size_t kResourceDirectory = 2;
+constexpr std::size_t kSecurityDirectory = 4;
+constexpr std::size_t kRelocationDirectory = 5;
+constexpr std::size_t kDebugDirectory = 6;
+
+void SetU32(Bytes& out, const std::size_t at, const std::uint32_t value) {
+    SetU16(out, at, value & 0xffff);
+    SetU16(out, at + 2, value >> 16);
 }
+
+std::uint32_t AlignUp(const std::uint64_t value, const std::uint32_t alignment) {
+    return static_cast<std::uint32_t>((value + alignment - 1) / alignment * alignment);
+}
+
+std::optional<PeLayout> ParsePeLayout(const Bytes& image, std::string& error) {
+    error = "not a PE image";
+    if (image.size() < 0x40 || image[0] != 'M' || image[1] != 'Z') return std::nullopt;
+    const std::size_t pe = U32(image, 0x3C);
+    if (pe > image.size() || image.size() - pe < 24 || std::memcmp(&image[pe], "PE\0\0", 4) != 0) return std::nullopt;
+    PeLayout layout;
+    const std::uint16_t sectionCount = U16(image, pe + 6);
+    const std::uint16_t optionalSize = U16(image, pe + 20);
+    layout.optional = pe + 24;
+    if (image.size() < layout.optional + optionalSize || optionalSize < 96) return std::nullopt;
+    const std::uint16_t magic = U16(image, layout.optional);
+    if (magic != 0x10b && magic != 0x20b) return std::nullopt;
+    const std::size_t countAt = layout.optional + (magic == 0x20b ? 108 : 92);
+    layout.directories = countAt + 4;
+    if (countAt + 4 > layout.optional + optionalSize) return std::nullopt;
+    layout.directoryCount = std::min<std::uint32_t>(U32(image, countAt), 16);
+    if (layout.directories + 8ull * layout.directoryCount > layout.optional + optionalSize) return std::nullopt;
+    layout.sectionAlignment = U32(image, layout.optional + 32);
+    layout.fileAlignment = U32(image, layout.optional + 36);
+    const auto powerOfTwo = [](const std::uint32_t value) { return value != 0 && (value & (value - 1)) == 0; };
+    if (!powerOfTwo(layout.sectionAlignment) || !powerOfTwo(layout.fileAlignment) || sectionCount == 0 ||
+        sectionCount > 96) {
+        error = "the PE headers are invalid";
+        return std::nullopt;
+    }
+    const std::size_t table = layout.optional + optionalSize;
+    if (table + 40ull * sectionCount > image.size()) return std::nullopt;
+    for (std::uint16_t index = 0; index < sectionCount; ++index) {
+        const std::size_t at = table + 40ull * index;
+        PeSection section;
+        section.header = at;
+        section.name.assign(reinterpret_cast<const char*>(&image[at]), 8);
+        section.name.erase(std::find(section.name.begin(), section.name.end(), '\0'), section.name.end());
+        section.virtualSize = U32(image, at + 8);
+        section.virtualAddress = U32(image, at + 12);
+        section.rawSize = U32(image, at + 16);
+        section.rawPointer = U32(image, at + 20);
+        section.characteristics = U32(image, at + 36);
+        if (section.rawSize != 0 &&
+            (section.rawPointer > image.size() || section.rawSize > image.size() - section.rawPointer)) {
+            error = "a PE section lies outside the file";
+            return std::nullopt;
+        }
+        layout.sections.push_back(std::move(section));
+    }
+    std::ranges::sort(layout.sections, {}, &PeSection::virtualAddress);
+    error.clear();
+    return layout;
+}
+
+std::pair<std::uint32_t, std::uint32_t> Directory(const Bytes& image, const PeLayout& layout, const std::size_t index) {
+    if (index >= layout.directoryCount) return {0, 0};
+    const std::size_t at = layout.directories + 8 * index;
+    return {U32(image, at), U32(image, at + 4)};
+}
+
+// The file offset of `size` bytes at `rva`, when they lie in one section's raw data.
+std::optional<std::size_t> RvaOffset(const PeLayout& layout, const std::uint32_t rva, const std::uint32_t size) {
+    for (const auto& section : layout.sections) {
+        if (rva < section.virtualAddress) continue;
+        const std::uint64_t within = rva - section.virtualAddress;
+        if (within + size <= section.rawSize) return section.rawPointer + static_cast<std::size_t>(within);
+    }
+    return std::nullopt;
+}
+
+bool ReadResourceTree(const Bytes& image, const PeLayout& layout, const std::uint32_t base, const std::uint32_t limit,
+                      const std::uint32_t directory, const int level, const PeResource& partial,
+                      std::vector<PeResource>& out, std::string& error) {
+    const auto at = RvaOffset(layout, base + directory, 16);
+    if (!at || directory >= limit) {
+        error = "a resource directory lies outside the resource section";
+        return false;
+    }
+    const std::uint32_t count = static_cast<std::uint32_t>(U16(image, *at + 12)) + U16(image, *at + 14);
+    if (count > 4096 || !RvaOffset(layout, base + directory + 16, 8 * count)) {
+        error = "a resource directory is too large";
+        return false;
+    }
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const std::size_t entry = *at + 16 + 8ull * index;
+        const std::uint32_t name = U32(image, entry);
+        const std::uint32_t offset = U32(image, entry + 4);
+        PeResourceKey key;
+        if ((name & 0x80000000u) != 0) {
+            const std::uint32_t stringOffset = name & 0x7fffffffu;
+            const auto length = RvaOffset(layout, base + stringOffset, 2);
+            const std::uint16_t characters = length ? U16(image, *length) : 0;
+            const auto text = length ? RvaOffset(layout, base + stringOffset + 2, 2u * characters) : std::nullopt;
+            if (!text || characters == 0) {
+                error = "a resource name lies outside the resource section";
+                return false;
+            }
+            for (std::uint16_t character = 0; character < characters; ++character)
+                key.name.push_back(static_cast<char16_t>(U16(image, *text + 2ull * character)));
+        } else {
+            key.id = static_cast<std::uint16_t>(name & 0xffff);
+        }
+        PeResource next = partial;
+        if (level == 0) next.type = key;
+        else if (level == 1) next.name = key;
+        else next.language = key.id;
+        const bool subdirectory = (offset & 0x80000000u) != 0;
+        if (level < 2) {
+            if (!subdirectory) {
+                error = "a resource directory entry is not a directory";
+                return false;
+            }
+            if (!ReadResourceTree(image, layout, base, limit, offset & 0x7fffffffu, level + 1, next, out, error))
+                return false;
+            continue;
+        }
+        const auto dataEntry = subdirectory ? std::nullopt : RvaOffset(layout, base + offset, 16);
+        if (!dataEntry) {
+            error = "a resource data entry lies outside the resource section";
+            return false;
+        }
+        const std::uint32_t dataRva = U32(image, *dataEntry);
+        const std::uint32_t size = U32(image, *dataEntry + 4);
+        const auto data = size > 256u * 1024u * 1024u ? std::nullopt : RvaOffset(layout, dataRva, size);
+        if (!data) {
+            error = "resource data lies outside the image";
+            return false;
+        }
+        next.data.assign(image.begin() + static_cast<std::ptrdiff_t>(*data),
+                         image.begin() + static_cast<std::ptrdiff_t>(*data + size));
+        next.codePage = U32(image, *dataEntry + 8);
+        out.push_back(std::move(next));
+        if (out.size() > 65536) {
+            error = "the image has too many resources";
+            return false;
+        }
+    }
+    return true;
+}
+
+// Named entries first, ordered case-insensitively (the loader's binary
+// search order), then ids in ascending order.
+bool KeyBefore(const PeResourceKey& left, const PeResourceKey& right) {
+    if (left.name.empty() != right.name.empty()) return !left.name.empty();
+    if (left.name.empty()) return left.id < right.id;
+    const auto upper = [](const char16_t c) { return c >= u'a' && c <= u'z' ? static_cast<char16_t>(c - 32) : c; };
+    return std::ranges::lexicographical_compare(left.name, right.name, {}, upper, upper);
+}
+
+// A resource section for `resources` at `baseRva`: the directory tables
+// breadth first, then the names, the data entries and the 8-byte aligned data.
+Bytes BuildResourceSection(const std::vector<PeResource>& resources, const std::uint32_t baseRva) {
+    struct Language { std::uint16_t id; const PeResource* resource; };
+    struct Name { PeResourceKey key; std::vector<Language> languages; };
+    struct Type { PeResourceKey key; std::vector<Name> names; };
+    std::vector<Type> types;
+    for (const auto& resource : resources) {
+        auto type = std::ranges::find(types, resource.type, &Type::key);
+        if (type == types.end()) type = types.insert(types.end(), Type{resource.type, {}});
+        auto name = std::ranges::find(type->names, resource.name, &Name::key);
+        if (name == type->names.end()) name = type->names.insert(type->names.end(), Name{resource.name, {}});
+        name->languages.push_back({resource.language, &resource});
+    }
+    std::ranges::sort(types, KeyBefore, &Type::key);
+    for (auto& type : types) {
+        std::ranges::sort(type.names, KeyBefore, &Name::key);
+        for (auto& name : type.names) std::ranges::sort(name.languages, {}, &Language::id);
+    }
+    const auto directorySize = [](const std::size_t entries) { return 16 + 8 * entries; };
+    std::size_t size = directorySize(types.size());
+    std::vector<std::size_t> typeDirectories;
+    for (const auto& type : types) {
+        typeDirectories.push_back(size);
+        size += directorySize(type.names.size());
+    }
+    std::vector<std::vector<std::size_t>> nameDirectories;
+    for (const auto& type : types) {
+        nameDirectories.emplace_back();
+        for (const auto& name : type.names) {
+            nameDirectories.back().push_back(size);
+            size += directorySize(name.languages.size());
+        }
+    }
+    std::vector<std::pair<const PeResourceKey*, std::size_t>> strings;
+    const auto addString = [&](const PeResourceKey& key) {
+        if (key.name.empty()) return;
+        strings.emplace_back(&key, size);
+        size += 2 + 2 * key.name.size();
+    };
+    for (const auto& type : types) {
+        addString(type.key);
+        for (const auto& name : type.names) addString(name.key);
+    }
+    size = (size + 3) & ~std::size_t{3};
+    const std::size_t dataEntries = size;
+    size += 16 * resources.size();
+    Bytes out(size, 0);
+    const auto keyField = [&](const PeResourceKey& key) {
+        if (key.name.empty()) return std::uint32_t{key.id};
+        for (const auto& [candidate, offset] : strings)
+            if (candidate == &key) return 0x80000000u | static_cast<std::uint32_t>(offset);
+        return std::uint32_t{0};
+    };
+    const auto header = [&](const std::size_t at, const std::size_t named, const std::size_t ids) {
+        SetU16(out, at + 12, static_cast<std::uint32_t>(named));
+        SetU16(out, at + 14, static_cast<std::uint32_t>(ids));
+    };
+    const auto namedCount = [](const auto& entries) {
+        return static_cast<std::size_t>(std::ranges::count_if(entries, [](const auto& entry) { return !entry.key.name.empty(); }));
+    };
+    header(0, namedCount(types), types.size() - namedCount(types));
+    std::size_t nextData = 0;
+    for (std::size_t typeIndex = 0; typeIndex < types.size(); ++typeIndex) {
+        const auto& type = types[typeIndex];
+        SetU32(out, 16 + 8 * typeIndex, keyField(type.key));
+        SetU32(out, 16 + 8 * typeIndex + 4, 0x80000000u | static_cast<std::uint32_t>(typeDirectories[typeIndex]));
+        const std::size_t typeAt = typeDirectories[typeIndex];
+        header(typeAt, namedCount(type.names), type.names.size() - namedCount(type.names));
+        for (std::size_t nameIndex = 0; nameIndex < type.names.size(); ++nameIndex) {
+            const auto& name = type.names[nameIndex];
+            const std::size_t nameAt = nameDirectories[typeIndex][nameIndex];
+            SetU32(out, typeAt + 16 + 8 * nameIndex, keyField(name.key));
+            SetU32(out, typeAt + 16 + 8 * nameIndex + 4, 0x80000000u | static_cast<std::uint32_t>(nameAt));
+            header(nameAt, 0, name.languages.size());
+            for (std::size_t index = 0; index < name.languages.size(); ++index) {
+                const std::size_t entry = dataEntries + 16 * nextData++;
+                SetU32(out, nameAt + 16 + 8 * index, name.languages[index].id);
+                SetU32(out, nameAt + 16 + 8 * index + 4, static_cast<std::uint32_t>(entry));
+                const PeResource& resource = *name.languages[index].resource;
+                out.resize((out.size() + 7) & ~std::size_t{7}, 0);
+                SetU32(out, entry, baseRva + static_cast<std::uint32_t>(out.size()));
+                SetU32(out, entry + 4, static_cast<std::uint32_t>(resource.data.size()));
+                SetU32(out, entry + 8, resource.codePage);
+                out.insert(out.end(), resource.data.begin(), resource.data.end());
+            }
+        }
+    }
+    for (const auto& [key, offset] : strings) {
+        SetU16(out, offset, static_cast<std::uint32_t>(key->name.size()));
+        for (std::size_t index = 0; index < key->name.size(); ++index)
+            SetU16(out, offset + 2 + 2 * index, key->name[index]);
+    }
+    return out;
+}
+
 }  // namespace
+
+std::optional<std::vector<PeResource>> ReadPeResources(const Bytes& image, std::string& error) {
+    const auto layout = ParsePeLayout(image, error);
+    if (!layout) return std::nullopt;
+    const auto [rva, size] = Directory(image, *layout, kResourceDirectory);
+    std::vector<PeResource> resources;
+    if (rva == 0 || size == 0) return resources;
+    if (!ReadResourceTree(image, *layout, rva, size, 0, 0, {}, resources, error)) return std::nullopt;
+    return resources;
+}
+
+std::optional<std::uint32_t> PeChecksum(const Bytes& image) {
+    std::string ignored;
+    const auto layout = ParsePeLayout(image, ignored);
+    if (!layout) return std::nullopt;
+    const std::size_t field = layout->optional + 64;
+    std::uint64_t sum = 0;
+    for (std::size_t at = 0; at < image.size(); at += 2) {
+        if (at == field || at == field + 2) continue;
+        sum += at + 1 < image.size() ? U16(image, at) : image[at];
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    sum = (sum & 0xffff) + (sum >> 16);
+    return static_cast<std::uint32_t>(sum + image.size());
+}
+
+std::optional<Bytes> ReplacePeResources(const Bytes& image, const std::vector<PeResource>& resources,
+                                        std::string& error) {
+    const auto parsed = ParsePeLayout(image, error);
+    if (!parsed) return std::nullopt;
+    const PeLayout& layout = *parsed;
+    if (layout.directoryCount <= kDebugDirectory) {
+        error = "the PE image has too few data directories";
+        return std::nullopt;
+    }
+    const auto [resourceRva, resourceSize] = Directory(image, layout, kResourceDirectory);
+    std::size_t index = layout.sections.size();
+    for (std::size_t candidate = 0; candidate < layout.sections.size(); ++candidate) {
+        const auto& section = layout.sections[candidate];
+        if (resourceRva != 0 && resourceSize != 0 ? section.virtualAddress == resourceRva : section.name == ".rsrc")
+            index = candidate;
+    }
+    if (index == layout.sections.size()) {
+        error = "the executable has no resource section";
+        return std::nullopt;
+    }
+    const PeSection& resource = layout.sections[index];
+    const auto [relocationRva, relocationSize] = Directory(image, layout, kRelocationDirectory);
+    // Only the base relocation table may follow: nothing refers to its
+    // address except its data directory, so it can move.
+    std::optional<PeSection> relocation;
+    for (std::size_t later = index + 1; later < layout.sections.size(); ++later) {
+        const auto& section = layout.sections[later];
+        const bool relocations = !relocation && relocationRva != 0 && relocationRva >= section.virtualAddress &&
+            std::uint64_t{relocationRva} + relocationSize <=
+                std::uint64_t{section.virtualAddress} + std::max(section.virtualSize, section.rawSize);
+        if (!relocations) {
+            error = "the executable's resource section is followed by " + section.name +
+                    ", which cannot be moved to make room for new resources";
+            return std::nullopt;
+        }
+        relocation = section;
+    }
+    for (const auto& section : layout.sections)
+        if (section.header != resource.header && (!relocation || section.header != relocation->header) &&
+            section.rawSize != 0 && section.rawPointer >= resource.rawPointer) {
+            error = "the executable stores " + section.name + " after its resources";
+            return std::nullopt;
+        }
+    if (relocation && relocation->rawSize != 0 &&
+        relocation->rawPointer < std::uint64_t{resource.rawPointer} + resource.rawSize) {
+        error = "the executable's relocations overlap its resources";
+        return std::nullopt;
+    }
+    // Debug data is addressed by file offset; it must not sit in what moves.
+    if (const auto [debugRva, debugSize] = Directory(image, layout, kDebugDirectory); debugRva != 0 && debugSize != 0) {
+        const auto debug = RvaOffset(layout, debugRva, debugSize);
+        if (!debug || debugSize % 28 != 0) {
+            error = "the executable's debug directory is invalid";
+            return std::nullopt;
+        }
+        for (std::size_t at = *debug; at < *debug + debugSize; at += 28) {
+            const std::uint32_t pointer = U32(image, at + 24);
+            if (pointer != 0 && pointer >= resource.rawPointer) {
+                error = "the executable stores debug data after its resources";
+                return std::nullopt;
+            }
+        }
+    }
+    std::uint64_t sectionsEnd = 0;
+    for (const auto& section : layout.sections)
+        sectionsEnd = std::max<std::uint64_t>(sectionsEnd, std::uint64_t{section.rawPointer} + section.rawSize);
+    // Bytes after the last section (an overlay) stay, without a signature.
+    Bytes overlay(image.begin() + static_cast<std::ptrdiff_t>(sectionsEnd), image.end());
+    const auto [certificate, certificateSize] = Directory(image, layout, kSecurityDirectory);
+    if (certificate != 0 && certificateSize != 0) {
+        if (certificate < sectionsEnd || std::uint64_t{certificate} + certificateSize > image.size()) {
+            error = "the executable's signature lies outside its overlay";
+            return std::nullopt;
+        }
+        const auto from = overlay.begin() + static_cast<std::ptrdiff_t>(certificate - sectionsEnd);
+        overlay.erase(from, from + static_cast<std::ptrdiff_t>(certificateSize));
+    }
+
+    const Bytes section = BuildResourceSection(resources, resource.virtualAddress);
+    const std::uint32_t rawSize = AlignUp(section.size(), layout.fileAlignment);
+    Bytes out(image.begin(), image.begin() + static_cast<std::ptrdiff_t>(resource.rawPointer));
+    out.insert(out.end(), section.begin(), section.end());
+    out.resize(std::size_t{resource.rawPointer} + rawSize, 0);
+    SetU32(out, resource.header + 8, static_cast<std::uint32_t>(section.size()));
+    SetU32(out, resource.header + 16, rawSize);
+    std::uint32_t imageEnd = AlignUp(std::uint64_t{resource.virtualAddress} + section.size(), layout.sectionAlignment);
+    if (relocation) {
+        const auto pointer = static_cast<std::uint32_t>(out.size());
+        out.insert(out.end(), image.begin() + static_cast<std::ptrdiff_t>(relocation->rawPointer),
+                   image.begin() + static_cast<std::ptrdiff_t>(std::size_t{relocation->rawPointer} + relocation->rawSize));
+        const std::uint32_t address = imageEnd;
+        SetU32(out, relocation->header + 12, address);
+        SetU32(out, relocation->header + 20, relocation->rawSize == 0 ? 0 : pointer);
+        SetU32(out, layout.directories + 8 * kRelocationDirectory, address + (relocationRva - relocation->virtualAddress));
+        imageEnd = AlignUp(std::uint64_t{address} + std::max(relocation->virtualSize, relocation->rawSize),
+                           layout.sectionAlignment);
+    }
+    out.insert(out.end(), overlay.begin(), overlay.end());
+    SetU32(out, layout.directories + 8 * kResourceDirectory, resource.virtualAddress);
+    SetU32(out, layout.directories + 8 * kResourceDirectory + 4, static_cast<std::uint32_t>(section.size()));
+    SetU32(out, layout.directories + 8 * kSecurityDirectory, 0);
+    SetU32(out, layout.directories + 8 * kSecurityDirectory + 4, 0);
+    SetU32(out, layout.optional + 56, imageEnd);  // SizeOfImage
+    if ((resource.characteristics & 0x40u) != 0) {  // IMAGE_SCN_CNT_INITIALIZED_DATA
+        const std::int64_t initialized =
+            std::int64_t{U32(out, layout.optional + 8)} + std::int64_t{rawSize} - std::int64_t{resource.rawSize};
+        SetU32(out, layout.optional + 8, static_cast<std::uint32_t>(std::max<std::int64_t>(0, initialized)));
+    }
+    SetU32(out, layout.optional + 64, PeChecksum(out).value_or(0));
+    return out;
+}
+
+std::optional<Bytes> FindPeResource(const std::vector<PeResource>& resources, const PeResourceKey& type,
+                                    const PeResourceKey& name) {
+    for (const auto& resource : resources)
+        if (resource.type == type && resource.name == name) return resource.data;
+    return std::nullopt;
+}
 
 bool WriteWindowsResources(const std::filesystem::path& executable, const WindowsResources& resources,
                            std::string& error) {
-    const LPCWSTR kIcon = MAKEINTRESOURCEW(3);
-    const LPCWSTR kGroupIcon = MAKEINTRESOURCEW(14);
-    const LPCWSTR kVersion = MAKEINTRESOURCEW(16);
-    const LPCWSTR kManifest = MAKEINTRESOURCEW(24);
-    const LPCWSTR kRcData = MAKEINTRESOURCEW(10);
-    const WORD neutral = MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL);
-    const WORD english = MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US);
+    const PeResourceKey icon{3, {}}, groupIcon{14, {}}, version{16, {}}, manifestType{24, {}}, rcData{10, {}};
+    const PeResourceKey layoutName{0, u"PRISMATIX_LAYOUT"};
+    constexpr std::uint16_t neutral = 0;
+    constexpr std::uint16_t english = 0x0409;
 
     struct Image { std::size_t entry, offset, size; };
     std::vector<Image> images;
@@ -853,99 +1235,87 @@ bool WriteWindowsResources(const std::filesystem::path& executable, const Window
             images.push_back({at, offset, size});
         }
     }
-
-    // Resources being replaced are removed first, so the written icon group
-    // is the executable's only one and there is a single version resource.
-    std::vector<LPCWSTR> replacedTypes;
-    if (!ico.empty()) { replacedTypes.push_back(kGroupIcon); replacedTypes.push_back(kIcon); }
-    if (!resources.version.empty()) replacedTypes.push_back(kVersion);
-    std::vector<ExistingResource> existing;
-    std::string manifest;
-    WORD manifestLanguage = english;
-    if (HMODULE module = LoadLibraryExW(executable.c_str(), nullptr,
-            LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE)) {
-        existing = EnumerateResources(module, replacedTypes);
-        if (!resources.engineFolder.empty()) {
-            for (const auto& item : EnumerateResources(module, {kManifest})) {
-                const LPCWSTR name = item.name.empty() ? MAKEINTRESOURCEW(item.id) : item.name.c_str();
-                if (item.id != 1) continue;
-                if (HRSRC found = FindResourceExW(module, kManifest, name, item.language)) {
-                    const DWORD size = SizeofResource(module, found);
-                    if (HGLOBAL loaded = LoadResource(module, found); loaded && size > 0)
-                        manifest.assign(static_cast<const char*>(LockResource(loaded)), size);
-                    manifestLanguage = item.language;
-                }
-                existing.push_back(item);
-            }
-        }
-        FreeLibrary(module);
-    } else {
+    std::error_code code;
+    const auto fileSize = std::filesystem::file_size(executable, code);
+    if (code || fileSize > 1024ull * 1024ull * 1024ull) {
         error = "executable resources could not be read";
         return false;
     }
-    std::optional<std::string> mergedManifest;
-    if (!resources.engineFolder.empty()) {
-        // A UTF-8 byte order mark is legal before the XML declaration.
-        if (manifest.starts_with("\xEF\xBB\xBF")) manifest.erase(0, 3);
-        mergedManifest = AddAssemblyDependency(manifest, resources.engineFolder, resources.architecture);
-        if (!mergedManifest) {
-            error = "the Player's application manifest has no closing assembly element";
+    Bytes image(static_cast<std::size_t>(fileSize));
+    {
+        std::ifstream input(executable, std::ios::binary);
+        input.read(reinterpret_cast<char*>(image.data()), static_cast<std::streamsize>(image.size()));
+        if (!input) {
+            error = "executable resources could not be read";
             return false;
         }
     }
-
-    HANDLE update = BeginUpdateResourceW(executable.c_str(), FALSE);
-    if (!update) {
-        error = "executable resources could not be opened";
+    std::string readError;
+    auto existing = ReadPeResources(image, readError);
+    if (!existing) {
+        error = "executable resources could not be read: " + readError;
         return false;
     }
-    bool ok = true;
-    for (const auto& item : existing) {
-        const LPCWSTR name = item.name.empty() ? MAKEINTRESOURCEW(item.id) : item.name.c_str();
-        ok = ok && UpdateResourceW(update, item.type, name, item.language, nullptr, 0);
-    }
+    std::string manifest;
+    std::uint16_t manifestLanguage = english;
+    // Resources being replaced are removed first, in every language, so the
+    // written icon group is the executable's only one and there is a single
+    // version resource.
+    std::erase_if(*existing, [&](const PeResource& resource) {
+        if (!ico.empty() && (resource.type == icon || resource.type == groupIcon)) return true;
+        if (!resources.version.empty() && resource.type == version) return true;
+        if (resources.engineFolder.empty()) return false;
+        if (resource.type == manifestType && resource.name == PeResourceKey{1, {}}) {
+            manifest.assign(resource.data.begin(), resource.data.end());
+            manifestLanguage = resource.language;
+            return true;
+        }
+        return resource.type == rcData && resource.name == layoutName;
+    });
     if (!ico.empty()) {
         // GRPICONDIR followed by one 14-byte GRPICONDIRENTRY per RT_ICON image.
         const auto count = static_cast<std::uint16_t>(images.size());
         Bytes group{0, 0, 1, 0, static_cast<std::uint8_t>(count & 0xff), static_cast<std::uint8_t>(count >> 8)};
-        for (std::uint16_t index = 0; index < count && ok; ++index) {
-            const auto& image = images[index];
-            const WORD id = static_cast<WORD>(index + 1);
-            ok = UpdateResourceW(update, kIcon, MAKEINTRESOURCEW(id), neutral,
-                                 const_cast<std::uint8_t*>(ico.data() + image.offset),
-                                 static_cast<DWORD>(image.size));
-            group.insert(group.end(), ico.begin() + static_cast<std::ptrdiff_t>(image.entry),
-                         ico.begin() + static_cast<std::ptrdiff_t>(image.entry + 12));
+        for (std::uint16_t index = 0; index < count; ++index) {
+            const auto& entry = images[index];
+            const auto id = static_cast<std::uint16_t>(index + 1);
+            existing->push_back({icon, {id, {}}, neutral,
+                                 Bytes(ico.begin() + static_cast<std::ptrdiff_t>(entry.offset),
+                                       ico.begin() + static_cast<std::ptrdiff_t>(entry.offset + entry.size))});
+            group.insert(group.end(), ico.begin() + static_cast<std::ptrdiff_t>(entry.entry),
+                         ico.begin() + static_cast<std::ptrdiff_t>(entry.entry + 12));
             group.push_back(static_cast<std::uint8_t>(id & 0xff));
             group.push_back(static_cast<std::uint8_t>(id >> 8));
         }
-        ok = ok && UpdateResourceW(update, kGroupIcon, MAKEINTRESOURCEW(1), neutral, group.data(),
-                                   static_cast<DWORD>(group.size()));
+        existing->push_back({groupIcon, {1, {}}, neutral, std::move(group)});
     }
-    if (!resources.version.empty()) {
-        Bytes version = resources.version;
-        ok = ok && UpdateResourceW(update, kVersion, MAKEINTRESOURCEW(1), english, version.data(),
-                                   static_cast<DWORD>(version.size()));
+    if (!resources.version.empty()) existing->push_back({version, {1, {}}, english, resources.version});
+    if (!resources.engineFolder.empty()) {
+        // A UTF-8 byte order mark is legal before the XML declaration.
+        if (manifest.starts_with("\xEF\xBB\xBF")) manifest.erase(0, 3);
+        const auto merged = AddAssemblyDependency(manifest, resources.engineFolder, resources.architecture);
+        if (!merged) {
+            error = "the Player's application manifest has no closing assembly element";
+            return false;
+        }
+        existing->push_back({manifestType, {1, {}}, manifestLanguage, Bytes(merged->begin(), merged->end())});
+        const std::string layout = LayoutResource(resources.engineFolder);
+        existing->push_back({rcData, layoutName, neutral, Bytes(layout.begin(), layout.end())});
     }
-    if (mergedManifest) {
-        ok = ok && UpdateResourceW(update, kManifest, MAKEINTRESOURCEW(1), manifestLanguage,
-                                   mergedManifest->data(), static_cast<DWORD>(mergedManifest->size()));
-        std::string layout = LayoutResource(resources.engineFolder);
-        ok = ok && UpdateResourceW(update, kRcData, kLayoutResourceName, neutral, layout.data(),
-                                   static_cast<DWORD>(layout.size()));
+    std::string replaceError;
+    const auto rewritten = ReplacePeResources(image, *existing, replaceError);
+    if (!rewritten) {
+        error = "executable resources could not be written: " + replaceError;
+        return false;
     }
-    if (!EndUpdateResourceW(update, ok ? FALSE : TRUE) || !ok) {
+    std::ofstream output(executable, std::ios::binary | std::ios::trunc);
+    output.write(reinterpret_cast<const char*>(rewritten->data()), static_cast<std::streamsize>(rewritten->size()));
+    if (!output) {
         error = "executable resources could not be written";
         return false;
     }
     return true;
 }
-#else
-bool WriteWindowsResources(const std::filesystem::path&, const WindowsResources&, std::string& error) {
-    error = "Windows executable resources can only be written on Windows";
-    return false;
-}
-#endif
 
 LayoutPlatform HostLayoutPlatform() {
 #if defined(_WIN32)
@@ -957,6 +1327,48 @@ LayoutPlatform HostLayoutPlatform() {
 #else
     return LayoutPlatform::Other;
 #endif
+}
+
+std::optional<LayoutPlatform> TargetLayoutPlatform(const std::string_view target) {
+    if (target == "win32-x64") return LayoutPlatform::Windows;
+    if (target == "linux-x64") return LayoutPlatform::Linux;
+    if (target == "darwin-x64" || target == "darwin-arm64") return LayoutPlatform::MacOS;
+    return std::nullopt;
+}
+
+std::optional<std::string> ExecutableTargetMismatch(const Bytes& executable, const std::string_view target) {
+    const std::string wanted(target);
+    if (executable.size() >= 2 && executable[0] == 'M' && executable[1] == 'Z') {
+        const auto architecture = PeArchitecture(executable);
+        if (target == "win32-x64" && architecture == "amd64") return std::nullopt;
+        return "the Player is a Windows " + architecture.value_or("unknown") + " executable, not a " + wanted + " one";
+    }
+    if (executable.size() >= 20 && U32BE(executable, 0) == 0x7F454C46) {  // ELF
+        const bool x64 = executable[4] == 2 && executable[5] == 1 && U16(executable, 18) == 0x3E;
+        if (target == "linux-x64" && x64) return std::nullopt;
+        return std::string("the Player is a Linux ") + (x64 ? "x64" : "non-x64") + " executable, not a " + wanted + " one";
+    }
+    if (executable.size() >= 8) {
+        const std::uint32_t magicBE = U32BE(executable, 0);
+        std::vector<std::uint32_t> cpus;
+        if (magicBE == 0xCAFEBABE || magicBE == 0xCAFEBABF) {
+            const bool wide = magicBE == 0xCAFEBABF;
+            const std::uint32_t count = U32BE(executable, 4);
+            const std::size_t stride = wide ? 32 : 20;
+            for (std::uint32_t index = 0; index < std::min<std::uint32_t>(count, 16); ++index)
+                if (8 + stride * (index + 1) <= executable.size()) cpus.push_back(U32BE(executable, 8 + stride * index));
+        } else if (U32(executable, 0) == 0xFEEDFACF) {
+            cpus.push_back(U32(executable, 4));
+        }
+        if (!cpus.empty()) {
+            const std::uint32_t wantedCpu = target == "darwin-arm64" ? 0x0100000Cu : 0x01000007u;  // ARM64, X86_64
+            const bool mac = target == "darwin-arm64" || target == "darwin-x64";
+            if (mac && std::ranges::find(cpus, wantedCpu) != cpus.end()) return std::nullopt;
+            return mac ? "the Player is a macOS executable without " + wanted + " code"
+                       : "the Player is a macOS executable, not a " + wanted + " one";
+        }
+    }
+    return "the Player is not a native executable for " + wanted;
 }
 
 namespace {
