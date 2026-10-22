@@ -4153,17 +4153,14 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     // On Windows a directory cannot be renamed while a scanner (Defender,
     // the search indexer) still has a freshly written file in it open, as
     // happens to a large Player executable; wait for it briefly.
-    for (int attempt = 0;; ++attempt) {
+    std::filesystem::rename(staging, request.outputDir, error);
+#ifdef _WIN32
+    for (int attempt = 0; attempt < 20 && error == std::errc::permission_denied && !Cancelled(request); ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
         error.clear();
         std::filesystem::rename(staging, request.outputDir, error);
-#ifdef _WIN32
-        if (error == std::errc::permission_denied && attempt < 20 && !Cancelled(request)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-            continue;
-        }
-#endif
-        break;
     }
+#endif
     if (error) {
         if (previousOutput) {
             std::error_code restoreError;
