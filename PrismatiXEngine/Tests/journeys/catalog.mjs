@@ -12,6 +12,20 @@ export default async function catalog(px) {
   const check = (condition, message) => {
     if (!condition) throw new Error(message);
   };
+  // The Player shows the result of an action over the next frames (a locale's
+  // voice, a filled save slot's thumbnail, the typed preview): wait for what
+  // the journey asserts instead of reading it in the frame of the action, and
+  // fail with what was last seen if it never shows.
+  const eventually = async (describe, probe, timeoutMs = 15_000) => {
+    const deadline = Date.now() + timeoutMs;
+    let seen;
+    for (;;) {
+      seen = await probe();
+      if (seen.ok) return seen.value;
+      if (Date.now() >= deadline) throw new Error(`${describe} (last seen: ${JSON.stringify(seen.value)})`);
+      await px.sleep(32);
+    }
+  };
 
   if (process.env.PRISMATIX_TEST_EXPECT_REMOVED_RESOURCE) {
     const hidden = !(await px.resourceExists("Content/Overlay/player-second.txt"));
@@ -78,8 +92,12 @@ export default async function catalog(px) {
   await px.waitFor({operation: ["not-an-operation", state.story.operationId]}, {timeoutMs: 5_000});
   if (state.locales.length > 1) {
     const locale = state.locales[1];
-    await px.setting("language", locale);
-    state = await px.state();
+    // The switch is synchronous, and the replay voice it starts is only on
+    // show until its playback ends (audio.voice is empty after that, a
+    // backlog voice only follows the line once it is read): read the state in
+    // the frame of the switch, not in a later round trip.
+    const [, switched] = await px.batch([{op: "setting", name: "language", value: locale}, {op: "state"}]);
+    state = switched;
     await px.log(`Player E2E locale switched locale=${locale} text=${state.dialogue.text}`);
     const voice = state.audio.voice || state.backlog.lastVoice;
     await px.log(`Player E2E localized media background=${state.story.background} voice=${voice}`);
@@ -109,47 +127,56 @@ export default async function catalog(px) {
     .filter((item) => !item.occupied && Number(item.argument) > 2).map((item) => item.argument);
   check(third !== undefined && (await slotItem(1))?.occupied && (await slotItem(2))?.occupied,
     "the save screen does not list slots 1 and 2 as saved and three free slots");
+  // A change shows in saveLoad.slots over the next frames: wait for it.
+  const slotsShow = async (describe, test) => {
+    await px.waitFor({frames: 3});
+    return await eventually(describe, async () => {
+      const slots = await px.uiData("saveLoad.slots");
+      const slot = (argument) => slots.find((item) => item.argument === String(argument));
+      const pending = {copy: await px.uiData("saveLoad.pending.copy"),
+        visible: await px.uiData("saveLoad.pending.visible")};
+      return {ok: test(slot, pending), value: {pending,
+        slots: slots.map(({argument, occupied, pending: waiting, image}) => ({argument, occupied, waiting, image}))}};
+    });
+  };
   await px.action("save.copy", 1);
-  check(await px.uiData("saveLoad.pending.copy") === true && (await slotItem(1)).pending === true,
-    "save.copy did not wait for its target slot");
+  await slotsShow("save.copy did not wait for its target slot",
+    (slot, pending) => pending.copy === true && slot(1)?.pending === true);
   await px.action("save.slot", first);
   await px.action("save.copy", 2);
   await px.action("save.copy", second);
-  await px.waitFor({frames: 3});
-  check((await slotItem(first)).occupied && (await slotItem(second)).occupied &&
-    await px.uiData("saveLoad.pending.visible") === false,
-    "save.copy did not copy into the slot picked next");
+  await slotsShow("save.copy did not copy into the slot picked next",
+    (slot, pending) => slot(first)?.occupied && slot(second)?.occupied && pending.visible === false);
   await px.action("save.move", first);
   await px.action("load.slot", second);
-  await px.waitFor({frames: 3});
-  check((await slotItem(first)).occupied && (await slotItem(second)).occupied,
-    "save.move onto a save did not swap the two");
+  await slotsShow("save.move onto a save did not swap the two",
+    (slot) => slot(first)?.occupied && slot(second)?.occupied);
   await px.action("save.move", second);
   await px.action("save.slot", third);
-  await px.waitFor({frames: 3});
-  check(!(await slotItem(second)).occupied && (await slotItem(third)).occupied,
-    "save.move into an empty slot did not move the save");
+  await slotsShow("save.move into an empty slot did not move the save",
+    (slot) => !slot(second)?.occupied && slot(third)?.occupied);
   // px.save outside a batch takes the next Stage frame as its thumbnail.
   await px.save(Number(second));
   await px.action("saveLoad.page", "1");
-  check((await slotItem(second)).image !== "", "px.save stored no thumbnail");
+  await slotsShow("px.save stored no thumbnail", (slot) => slot(second)?.image !== undefined && slot(second).image !== "");
   await px.action("save.delete", second);
   await px.action("save.delete", first);
   await px.action("save.delete", third);
-  check(!(await slotItem(first)).occupied && !(await slotItem(third)).occupied,
-    "save.delete left a slot occupied");
+  await slotsShow("save.delete left a slot occupied",
+    (slot) => !slot(first)?.occupied && !slot(second)?.occupied && !slot(third)?.occupied);
   await px.log("Player E2E save management copy, move and delete complete");
   await px.route("closeModal");
 
   // The settings screen types a sample line at the chosen text speed.
   await px.action("settings.open");
   await px.waitFor({modal: "settings"});
+  // Sampled until the length changes: a slow frame rate must not hide the typing.
   const lengths = new Set();
-  for (let sample = 0; sample < 12; ++sample) {
+  await eventually("settings.preview did not type", async () => {
     lengths.add(String(await px.uiData("settings.preview")).length);
     await px.waitFor({frames: 3});
-  }
-  check(lengths.size > 1, `settings.preview did not type (${[...lengths]})`);
+    return {ok: lengths.size > 1, value: [...lengths]};
+  });
   await px.log("Player E2E settings preview typed");
   await px.route("closeModal");
   await px.waitFor({modal: ""});
