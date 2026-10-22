@@ -38,7 +38,7 @@ Every command that builds the game (`validate`, `build`, `pack`, `run --dev` and
 - relative imports (`./lib/util` or `./lib/util.ts`) inside the project;
 - pure-JavaScript npm packages from the project's `node_modules`, inlined. A Node.js built-in (`fs`, `node:path`, ...) or `@prismatix/authoring-sdk` is a build error (`PXCLIEXT1001`), as is a syntax error or an unresolved import. A package that calls `Date`, timers, `fetch` or `Math.random` bundles but fails in the sandbox, so prefer small, pure ones.
 
-Output is deterministic (no machine paths) and cached in `.prismatix/cache/extensions` by the content hash of every input. Each build also type-checks the extension against this package, the sandbox globals (ES2023, no DOM or Node.js) and its manifest. Type errors are warnings (`PXCLIEXT2001`, with the `.ts` file and line), so a quick experiment still plays; using `Date`, `eval`, `Function` or `Math.random` is warning `PXCLIEXT2002`. `prismatix test` maps Player log positions in a bundle back to the `.ts` line through the cached source map.
+Output is deterministic (no machine paths) and cached in `.prismatix/cache/extensions` by the content hash of every input. Each build also type-checks the extension against this package, the sandbox globals (ES2023, no DOM or Node.js) and its manifest. Type errors are warnings (`PXCLIEXT2001`, with the `.ts` file and line), so a quick experiment still plays; using `Date`, `eval`, `Function` or `Math.random` is warning `PXCLIEXT2002`. `prismatix test` and `prismatix run` (so Studio's 試玩) map Player log positions in a bundle back to the `.ts` line through the cached source map.
 
 ### Typed handlers from the manifest
 
@@ -56,16 +56,54 @@ Parameter types map to `boolean`, `number` (integer/number), `string` (a string 
 
 ### Handlers, waits and cancellation
 
-- A command whose manifest says `"await": true` holds the Story until its handler finishes; `false` lets the Story go on at once. An Action's `reentry` decides what another press does while it runs: `allow`, `ignoreWhileRunning` or `restart` (the Player drops the running continuation).
+- A command whose manifest says `"await": true` holds the Story until its handler finishes; `false` lets the Story go on at once. An Action's `reentry` decides what another press does while it runs: `allow`, `ignoreWhileRunning` or `restart` (the running one is cancelled, see below, before the new one starts).
 - Await only Engine waits: `ctx.time.wait`, animation, screen-effect, video and audio handles, `ctx.session.say`. Each is a saved suspension point that survives save, load and rollback by replaying the handler to the same point (keep side effects in `ctx.state`). Awaiting any other Promise is rejected by the Player.
 - A handler may also be a generator that yields the matching tokens (`yield ctx.time.token(0.5)`, `yield ctx.audio.play(path).token()`).
-- There is no cancellation signal: a restarted or cancelled Action simply never resumes, so `finally` blocks do not run. Do clean-up at the start of the next run.
+- Every handler gets a cancellation signal as `context.abortSignal` (an Action's second argument; a command's second argument is `{abortSignal}`). See [Cancellation](#cancellation).
 - The entry runs once when the game loads; register handlers, events and state there, never inside a handler (the Player rejects registration from a running handler).
-- `ctx.events.on(name, handler)` returns a function that stops delivery; `once` delivers one event. Built-in events are typed: `engine.ready`, `engine.shutdown`, `frame.update` (`delta` seconds as a string; `ctx.frame.onUpdate` gives a number), `scenario.started`, `save.loaded`, `save.written` and `timeline.marker`.
+- `ctx.events.on(name, handler)` returns a function that removes the listener from the Player (it is not called again, not even later in the event being delivered); `once` delivers one event and then removes itself, and so do `ctx.frame.onUpdate`, `ctx.animation.onMarker` and the `observe*` functions. `ctx.events.listenerCount(name?)` counts this extension's live listeners. A listener added while an event is delivered first hears the next one. Listeners are not saved: a load or rollback keeps the listeners that exist; the Player releases all of an extension's listeners when it reloads the extension or shuts down. On the raw host, `Engine.on` returns the listener id that `Engine.off(id)` removes. Built-in events are typed: `engine.ready`, `engine.shutdown`, `frame.update` (`delta` seconds as a string; `ctx.frame.onUpdate` gives a number), `scenario.started`, `save.loaded`, `save.written` and `timeline.marker`.
 - `ctx.state.define(id, {initial, version, migrate})` returns a saved, rollback-aware value (`get`, `set`, `update`, `reset`) built on the state providers below. It needs the `persistence` capability.
 - `ctx.log.info/warn/error` write to the Player log, like the sandbox `console`.
 - The Player refuses a call whose capability the manifest's `capabilities` do not list: `ui` for `defineAction` and `ctx.ui` routes, `audio`, `video`, `animation`, `persistence` for `ctx.saves` and `ctx.state`, `render` for retained `ctx.renderer.upsert/remove/clear`, `input` for `ctx.input.actionPressed/actionDown`, and `runtime` for the rest. Builds warn about a call the manifest does not cover (`PXCLIEXT2004`).
-- Player log lines and errors that name a bundle position (`main.js:12:5`) are shown at the TypeScript line by `prismatix test`.
+- Player log lines and errors that name a bundle position (`main.js:12:5`) are shown at the TypeScript line by `prismatix test` and while `prismatix run` plays the game. With `--json`, `run` writes each extension log line (an error with its stack, a warning, `ctx.log`/`console` output) as a `run.extension` record whose `span` is the `.ts` file, line and column of the first authored frame; Studio's 試玩 console and its problems list show them there.
+
+### Cancellation
+
+A command or Action that is waiting is cancelled when:
+
+| `kind` | Handler | When |
+| --- | --- | --- |
+| `restart` | Action | it is started again and its `reentry` is `restart` (the old run ends before the new one starts) |
+| `closed` | Action | the UI scene (route) that started it is replaced or closed, including when the game starts from the title |
+| `cancelled` | Action | the engine cancels it without a narrower reason (a Behavior graph or host code) |
+| `skip` | command | Skip (the skip mode or held Ctrl) reaches a command that holds the Story; the Story then moves on |
+| `rollback` / `load` | both | rollback or loading a save (also a Preview checkpoint) replaces the running handlers |
+| `reset` | both | the host restarts them (Preview restart) |
+| `reload` | both | the extension is loaded again |
+| `shutdown` | both | the game closes while they run |
+
+Cancelling one handler runs, in order and synchronously: the signal's `onabort` and its `abort` listeners (in the order they were added, each called once; `signal.aborted` is `true` and `signal.reason` is the `AbortError`), then the handler itself: the engine wait it awaits rejects with that `AbortError` (a generator gets it thrown at its `yield`, then `return()` if it yields again), so its `catch` and `finally` blocks run before the Player continues. Any engine wait started while it unwinds (`ctx.time.wait` inside `finally`) throws the same error at once. A handler that lets the `AbortError` escape ends quietly; any other error is reported as usual. A handler that finishes on its own never sees its signal abort.
+
+```ts
+import {createPrismatiXContext, defineAction, isAbortError} from "@prismatix/runtime";
+
+const ctx = createPrismatiXContext();
+
+defineAction("myFx.charge", async (_args, {abortSignal}) => {
+  const hum = ctx.audio.play("Assets/SE/charge.ogg", {loop: true});
+  abortSignal.onAbort((reason) => ctx.log.info(`charge stopped: ${reason.kind}`));
+  try {
+    await ctx.time.wait(3);
+    ctx.ui.showModal("charged");
+  } catch (error) {
+    if (!isAbortError(error)) throw error;   // only the cancellation is expected here
+  } finally {
+    hum.stop(200);                            // runs on restart, on leaving the screen, ...
+  }
+});
+```
+
+The `AbortError` has `name: "AbortError"`, `code: "PXJS7301"` and `kind` from the table; `isAbortError(value)` tests for it and `signal.throwIfAborted()` rethrows it. Cancellation is deterministic: it happens at a fixed point (the press, the route change, the skip, the start of a load or rollback), and when the cancellation is requested while JavaScript of the same extension is running (an Action that changes the route it was started from), it runs as soon as that host call returns. For `load` and `rollback` the old handlers end before the saved ones are replayed, so whatever their `finally` writes (variables, `ctx.state`) is overwritten by the restored state; the replayed handlers get a fresh, unaborted signal.
 
 The facade deliberately wraps the existing host instead of defining a second scripting runtime. Native Player and WASM Preview therefore keep identical ScriptHost semantics.
 

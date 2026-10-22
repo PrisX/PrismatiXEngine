@@ -13,6 +13,30 @@ The packages always carry the same version and pin each other exactly.
 
 ## [Unreleased]
 
+### Added
+
+- Extension handlers can be cancelled cleanly. Every command and Action
+  handler gets `context.abortSignal` (a command's new second argument is
+  `{abortSignal}`), an AbortSignal-like token with `aborted`, `reason`,
+  `onabort`, `addEventListener("abort")`, `onAbort` and `throwIfAborted`.
+  When an Action is restarted (`reentry: "restart"`), its scene (route) is
+  replaced or closed, Skip reaches a command that holds the Story, or a load,
+  rollback, Preview restart, extension reload or shutdown replaces the running
+  handlers, the signal aborts, the engine wait the handler awaits rejects with
+  an `AbortError` (`code` `PXJS7301`, `kind` `restart`, `closed`, `skip`,
+  `load`, ...; a generator gets it thrown at its `yield`) and its `finally`
+  blocks run before the Player continues. `isAbortError` tests for it.
+- Native event listener removal: `Engine.on` returns a listener id and
+  `Engine.off(id)` removes it from the Player. The function `ctx.events.on`,
+  `once`, `ctx.frame.onUpdate`, `ctx.animation.onMarker` (which now returns
+  one) and the `observe*` functions return removes the native listener, and
+  `ctx.events.listenerCount(event?)` / `Engine.listenerCount` count the live
+  ones.
+- `prismatix run` (and so Studio's 試玩) passes the Player's output through
+  the CLI and shows extension errors, warnings and log lines at the `.ts`
+  file and line, using the build's source maps like `prismatix test`; with
+  `--json` each is a `run.extension` record with a `span`.
+
 ### Changed
 
 - The CLI no longer carries every platform's runtime (272 MB packed). Each

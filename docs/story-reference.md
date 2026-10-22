@@ -1313,6 +1313,17 @@ my-fx shout` declares another. See
 [runtime-sdk/README.md](../runtime-sdk/README.md) for handler rules, events
 and saved state.
 
+A command that holds the Story is cancelled when Skip reaches it (the skip
+mode or held Ctrl; the Story then moves on), when rollback or loading a save
+replaces it, and when the game closes. Its handler's second argument carries
+the signal, `defineCommand("myFx.charge", async (args, {abortSignal}) => ...)`:
+the signal aborts, the engine wait it awaits rejects with an `AbortError` whose
+`kind` says why (`skip`, `rollback`, `load`, `reset`, `reload`, `shutdown`),
+and its `finally` blocks run before the Story continues. For rollback and load
+whatever they write is then overwritten by the restored state. While the game
+runs from `prismatix run` (and Studio's 試玩), an error or log line of the
+extension is shown at its `.ts` file and line.
+
 ## Command schema for editors
 
 Tools that edit Story scripts (the VS Code extension, PrismatiX Studio, your
