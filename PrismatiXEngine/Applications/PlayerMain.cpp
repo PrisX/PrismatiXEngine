@@ -237,9 +237,11 @@ bool BootFailureDialogWanted() {
         if (type == FILE_TYPE_PIPE || type == FILE_TYPE_DISK) return false;
     }
 #elif !defined(__ANDROID__)
+    // A tool that reads the output holds a pipe (a FIFO, or the socket pair
+    // Node.js and other libuv hosts use for a child's output) or a file.
     struct stat output{};
     if (fstat(STDERR_FILENO, &output) == 0 &&
-        (S_ISFIFO(output.st_mode) || S_ISREG(output.st_mode)))
+        (S_ISFIFO(output.st_mode) || S_ISSOCK(output.st_mode) || S_ISREG(output.st_mode)))
         return false;
 #endif
     return true;
