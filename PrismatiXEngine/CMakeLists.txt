@@ -1025,6 +1025,19 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
                     --verifier $<TARGET_FILE:PrismatiXReleaseJourneyTests>)
         set_tests_properties(PrismatiX.SDK.ReleaseJourney PROPERTIES
             LABELS "sdk;e2e;packager;release;native" TIMEOUT 300 PROCESSORS 2)
+        # A throwing engine.ready handler, a missing start-route template and
+        # a damaged or missing Content.pdx: the packaged Player reports each
+        # (PXPLAYER5031) and exits with 1 instead of crashing, and `prismatix
+        # test` names the cause (scripts/test-player-boot-failure.mjs).
+        add_test(NAME PrismatiX.Player.BootFailure
+            COMMAND "${PRISMATIX_NODE_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test-player-boot-failure.mjs"
+                    --cli "${CMAKE_CURRENT_SOURCE_DIR}/../packages/cli/dist/src/cli.js"
+                    --packager $<TARGET_FILE:PrismatiXPackager>
+                    --player $<TARGET_FILE:PrismatiXPlayer>
+                    --player-qa $<TARGET_FILE:PrismatiXPlayerQA>)
+        set_tests_properties(PrismatiX.Player.BootFailure PROPERTIES
+            LABELS "native;e2e;player" TIMEOUT 300 PROCESSORS 2)
     endif()
     add_test(
         NAME PrismatiX.Player.CatalogNativeAcceptance
