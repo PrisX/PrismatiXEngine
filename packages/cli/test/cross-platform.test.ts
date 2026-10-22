@@ -389,7 +389,10 @@ test("pack --platform compiles once, packs each platform with its own Player and
   const linux = report.platforms.find(item => item.platform === "linux-x64");
   if (linux !== undefined) {
     const entries = await extractTarGz(linux.archive!, join(tools, "linux-extracted"));
-    assert.equal(entries.find(entry => entry.path === "cross-sample/PrismatiXPlayer")?.mode, 0o755);
+    // A foreign Linux pack holds the platform runtime's Player; on a Linux host
+    // the Packager stand-in lays out the host Player given by --player.
+    const playerName = linux.platform === hostPlatform ? basenameOf(hostPlayer) : "PrismatiXPlayer";
+    assert.equal(entries.find(entry => entry.path === `cross-sample/${playerName}`)?.mode, 0o755);
   }
 
   const nested = pack(["--platform", foreign[0]!, "--output", join(root, "dist", hostPlatform)],
