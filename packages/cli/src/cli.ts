@@ -126,7 +126,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: "check"},
   extension: {values: "project lang command action dir owner output registry sha256 to capability page reason",
-    flags: "no-register await yes include-source undo"},
+    flags: "no-register await yes include-source undo reinstall"},
   eject: {values: "project runtime", flags: "force"},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync accept-removals"},

@@ -60,7 +60,7 @@ export const sharingHelp = [
   "prismatix extension add <owner/name[@range] | ./file.pxext | https://.../file.pxext | npm:<package>[@range]>",
   "    [--yes] [--sha256 <hex>] [--registry <url>]",
   "prismatix extension remove <owner/name>",
-  "prismatix extension update [owner/name] [--to <range>] [--yes]",
+  "prismatix extension update [owner/name] [--to <range> | --reinstall] [--yes]",
   "prismatix extension outdated | verify",
   "prismatix extension inspect <source>",
   "prismatix extension search [query] [--capability <name>] [--page <n>]",
@@ -171,9 +171,10 @@ export async function extensionSharingCommand(root: string | undefined, options:
 
   if (subcommand === "update") {
     const outcomes = await updateExtensions(project(), first, {...installOptions(options, progress),
-      ...(options.values.has("to") ? {to: options.values.get("to")!} : {})});
+      ...(options.values.has("to") ? {to: options.values.get("to")!} : {}), reinstall: options.flags.has("reinstall")});
     return {status: 0, text: machine ? json({updates: outcomes}) : outcomes.length === 0 ? "No installed extensions.\n"
       : `${outcomes.map((item) => item.status === "updated" ? `Updated ${item.id} ${item.from} -> ${item.to}`
+        : item.status === "reinstalled" ? `Reinstalled ${item.id}@${item.to}`
         : item.status === "current" ? `${item.id} ${item.from} is current${item.reason ? ` (${item.reason})` : ""}`
           : `Skipped ${item.id}: ${item.reason}`).join("\n")}\n`};
   }

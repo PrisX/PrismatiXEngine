@@ -26,8 +26,8 @@ The packages always carry the same version and pin each other exactly.
   conflicts, shows the capabilities and asks (`--yes` in scripts), installs
   into `Extensions/<owner>/<name>/`, registers it and records it in
   `prismatix-extensions.lock`; nothing in a package runs at install time.
-  `remove`, `update [id] [--to <range>]`, `outdated`, `verify` (re-hashes the
-  installed files against the lock), `inspect`, `search`, `info`, `publish`
+  `remove`, `update [id] [--to <range> | --reinstall]`, `outdated`, `verify`
+  (re-hashes the installed files against the lock), `inspect`, `search`, `info`, `publish`
   (presigned upload; token from `PRISMATIX_REGISTRY_TOKEN`), `yank` and
   `registry [<url>]`. The registry comes from `--registry`,
   `PRISMATIX_EXTENSION_REGISTRY` or the project's

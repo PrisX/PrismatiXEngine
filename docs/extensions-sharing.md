@@ -147,6 +147,7 @@ prismatix extension outdated               # current, wanted (locked range) and 
 prismatix extension update                 # every registry and npm install, within its range
 prismatix extension update owen/glow --to ^2
 prismatix extension verify                 # re-hash installed files against the lock; exit 1 on a change
+prismatix extension update owen/glow --reinstall   # restore changed files: the locked version again
 prismatix extension remove owen/glow
 ```
 

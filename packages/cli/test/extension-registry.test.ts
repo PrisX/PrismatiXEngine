@@ -435,8 +435,11 @@ test("publish, search, resolve, add, verify, update, outdated and remove against
     assert.match(refused.stderr, /nothing was installed/u);
     assert.equal(await readFile(join(consumer, "Extensions/owen/fx-kit/dist/main.js"), "utf8"), "Engine.log('changed');\n");
     registry.tamper = undefined;
-    const restored = await run(["extension", "add", "owen/fx-kit@1.0.0", "--yes", "--project", consumer], {env});
+    const restored = await run(["extension", "update", "owen/fx-kit", "--reinstall", "--project", consumer, "--json"], {env});
     assert.equal(restored.status, 0, restored.stderr);
+    assert.deepEqual((last(restored.stdout).updates as {status: string}[]).map((item) => item.status), ["reinstalled"]);
+    assert.equal(JSON.parse(await readFile(join(consumer, "prismatix-extensions.lock"), "utf8")).extensions["owen/fx-kit"].range,
+      "~1.0.0", "a reinstall keeps the locked range");
     assert.equal((await run(["extension", "verify", "--project", consumer])).status, 0);
 
     // Command id conflicts with the project's own extensions are refused.

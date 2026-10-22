@@ -567,20 +567,26 @@ export interface UpdateOutcome {
   readonly id: string;
   readonly from: string;
   readonly to?: string;
-  readonly status: "updated" | "current" | "skipped";
+  readonly status: "updated" | "reinstalled" | "current" | "skipped";
   readonly reason?: string;
 }
 
-export async function updateExtensions(root: string, id: string | undefined, options: InstallOptions & {readonly to?: string} = {}):
-  Promise<UpdateOutcome[]> {
+/**
+ * Updates installed packages within their locked ranges (`to` replaces the
+ * range). `reinstall` installs the locked version again from its source,
+ * keeping the range: it restores files `verify` reports as changed.
+ */
+export async function updateExtensions(root: string, id: string | undefined,
+  options: InstallOptions & {readonly to?: string; readonly reinstall?: boolean} = {}): Promise<UpdateOutcome[]> {
   const lock = await readExtensionLock(root);
   if (id !== undefined && lock.extensions[id] === undefined) throw new Error(`${EXTENSION_LOCK_FILE} lists no ${id}`);
   if (options.to !== undefined && id === undefined) throw new Error("--to needs the id of the extension to update");
+  if (options.to !== undefined && options.reinstall === true) throw new Error("--reinstall keeps the locked version; it cannot be combined with --to");
   if (options.to !== undefined && !isVersionRange(options.to)) throw new Error(`Not a version range: ${options.to}`);
   const outcomes: UpdateOutcome[] = [];
   for (const [name, entry] of Object.entries(lock.extensions)) {
     if (id !== undefined && name !== id) continue;
-    const source = sourceOf(name, entry, options.to);
+    const source = sourceOf(name, entry, options.reinstall === true ? entry.version : options.to);
     if (source === undefined) {
       outcomes.push({id: name, from: entry.version, status: "skipped",
         reason: `installed from ${entry.source}; add the newer file or URL again to update it`});
@@ -589,6 +595,13 @@ export async function updateExtensions(root: string, id: string | undefined, opt
     const {sha256: _pin, ...unpinned} = options;
     const fetched = await fetchExtensionPackage(root, source, unpinned);
     const next = fetched.contents.metadata!.version!;
+    if (options.reinstall === true) {
+      if (fetched.sha256 !== entry.sha256)
+        throw new Error(`${name}@${entry.version} from ${entry.source} is not the package the lock records (SHA-256 ${fetched.sha256}, expected ${entry.sha256}); nothing was installed`);
+      await installFetchedPackage(root, {...fetched, ...(entry.range === undefined ? {} : {range: entry.range})} as FetchedPackage, {...options, yes: true});
+      outcomes.push({id: name, from: entry.version, to: next, status: "reinstalled"});
+      continue;
+    }
     if (fetched.sha256 === entry.sha256 && options.to === undefined) {
       outcomes.push({id: name, from: entry.version, status: "current"});
       continue;
@@ -667,7 +680,7 @@ export async function verifyExtensions(root: string): Promise<{entries: VerifyEn
     catch (cause) { entries.push({id, version: entry.version, status: "modified", details: String(cause)}); continue; }
     if (digest !== entry.files) {
       entries.push({id, version: entry.version, status: "modified",
-        details: `the files in ${installFolder(id)} differ from what was installed; run prismatix extension add ${id}@${entry.version} --yes to restore them`});
+        details: `the files in ${installFolder(id)} differ from what was installed; run prismatix extension update ${id} --reinstall to restore them`});
       continue;
     }
     if (!paths.has(entry.manifest)) {
