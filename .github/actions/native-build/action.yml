@@ -95,17 +95,27 @@ runs:
         echo "image=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
     # The key names everything that decides which ports are built (vcpkg
     # inputs, overlay ports and triplets, the vcpkg baseline) plus the runner
-    # image. The restore key falls back to the newest older entry for this OS,
-    # triplet and compiler; vcpkg itself checks each package's ABI hash, so a
-    # stale entry only ever supplies ports that are still valid.
+    # image, then the run id. Restore never finds the run's own key, so it
+    # takes the newest entry for the same inputs, or failing that the newest
+    # older one for this OS, triplet and compiler; vcpkg checks each package's
+    # ABI hash, so a stale entry only ever supplies ports that are still
+    # valid. The run id keeps an entry from being frozen: an exact key can be
+    # saved once, and a run that was cancelled or failed during the install
+    # (the save below runs after those too) would otherwise leave a partial
+    # set under it for good, rebuilding ffmpeg (20+ minutes) on every run.
     - name: Restore the vcpkg binary cache
       id: vcpkg-cache
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
       with:
         path: out/ci/vcpkg-binary-cache
-        key: vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-${{ steps.vcpkg-dir.outputs.image }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}
+        key: vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-${{ steps.vcpkg-dir.outputs.image }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}-${{ github.run_id }}
         restore-keys: |
+          vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-${{ steps.vcpkg-dir.outputs.image }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}-
           vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-
+    - name: Count the restored vcpkg binary packages
+      id: vcpkg-before
+      shell: bash
+      run: echo "count=$(find out/ci/vcpkg-binary-cache -name '*.zip' | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
     - name: Resolve dependencies
       if: runner.os != 'Windows'
       shell: bash
@@ -120,14 +130,26 @@ runs:
         & "$env:VCPKG_ROOT/vcpkg.exe" install --triplet "${{ inputs.triplet }}" "--x-install-root=$installRoot"
         if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency resolution failed" }
     # Saved right after the install, even if the install itself failed: the
-    # ports that did build are kept. An exact hit means there is nothing new.
+    # ports that did build are kept. Nothing is saved when every port came
+    # from the restored entry; the next run restores the newest entry, so a
+    # partial one is completed by the run after it.
+    - name: Check whether the install built new vcpkg ports
+      id: vcpkg-check
+      if: always() && inputs.cache-write == 'true'
+      shell: bash
+      env:
+        PX_BEFORE: ${{ steps.vcpkg-before.outputs.count }}
+      run: |
+        after="$(find out/ci/vcpkg-binary-cache -name '*.zip' | wc -l | tr -d ' ')"
+        echo "vcpkg binary packages: ${PX_BEFORE:-0} restored, $after now"
+        if [[ "$after" -gt "${PX_BEFORE:-0}" ]]; then echo "save=true" >> "$GITHUB_OUTPUT"; fi
     - name: Save the vcpkg binary cache
-      if: always() && inputs.cache-write == 'true' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+      if: always() && inputs.cache-write == 'true' && steps.vcpkg-check.outputs.save == 'true'
       continue-on-error: true
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
       with:
         path: out/ci/vcpkg-binary-cache
-        key: vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-${{ steps.vcpkg-dir.outputs.image }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}
+        key: vcpkg-bin-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.cxx-compiler || 'default' }}-${{ steps.vcpkg-dir.outputs.image }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}-${{ github.run_id }}
     # Compiler cache, pinned and checksum-verified where it is downloaded.
     # Linux uses the distribution's ccache. macOS and Windows download an
     # official prebuilt release instead of a package manager's: Homebrew's
