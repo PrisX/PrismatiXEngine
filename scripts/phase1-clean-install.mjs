@@ -195,21 +195,27 @@ async function pnpm(args, options = {}) {
 }
 
 /**
- * Corepack picks the newest pnpm for a directory whose package.json files name
- * none, and a pnpm that new downloads its own platform binary from the npm
- * registry on first use, in the middle of the install under test. So the
- * clean room names the pnpm this repository pins (already in Corepack's cache
- * from the workspace install): returns that `packageManager` value when the
- * pnpm on PATH is Corepack's, otherwise undefined (a pnpm the author installed
- * stays what it is).
+ * Corepack runs the newest pnpm for a directory whose package.json files name
+ * none, and pnpm 12 fetches its platform binary from the npm registry on first
+ * use. Left to the install under test that is a registry request in the middle
+ * of the journey (a 504 on it failed the Windows journey), so run pnpm once
+ * here, in the real environment and with a few tries: the download lands in
+ * Corepack's cache, which the clean room shares. A pnpm that needs nothing
+ * downloaded answers at once.
  */
-async function corepackPnpmPin() {
-  const invocation = pnpmInvocation();
-  const entry = invocation.prefix[0] ?? invocation.command;
-  const resolved = await realpath(entry).catch(() => entry);
-  if (!/[\\/]corepack[\\/]/u.test(resolved)) return undefined;
-  const pinned = JSON.parse(await readFile(join(repositoryRoot, "package.json"), "utf8")).packageManager;
-  return typeof pinned === "string" && pinned.startsWith("pnpm@") ? pinned : undefined;
+async function warmPnpm(directory, corepackHome) {
+  const environment = {...process.env, COREPACK_HOME: corepackHome, COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"};
+  let last;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    last = await pnpm(["--version"], {cwd: directory, env: environment, timeoutMs: 180_000});
+    if (last.code === 0) return last.stdout.trim();
+    await new Promise((accept) => setTimeout(accept, attempt * 5_000));
+  }
+  throw new Error(`pnpm --version failed (${last.code}${last.signal ? `, ${last.signal}` : ""}) after 4 tries
+stdout:
+${last.stdout}
+stderr:
+${last.stderr}`);
 }
 
 async function npm(args, options = {}) {
@@ -609,13 +615,6 @@ async function main() {
     const pnpmHome = join(temporaryRoot, "pnpm-home");
     if (usePnpm) {
       await mkdir(pnpmHome, {recursive: true});
-      // Corepack looks up the directory tree, so this reaches the author
-      // machine, the project and the portable game folders below.
-      const pinned = await corepackPnpmPin();
-      if (pinned !== undefined) {
-        await writeFile(join(temporaryRoot, "package.json"), `${JSON.stringify({private: true, packageManager: pinned})}\n`);
-        log(`pnpm comes from Corepack; the clean room pins ${pinned}`, temporaryRoot);
-      }
       const setting = (key, path) => `${key}=${path.replaceAll("\\", "/")}\n`;
       await appendFile(npmrc, setting("store-dir", join(temporaryRoot, "pnpm-store")) +
         setting("cache-dir", join(temporaryRoot, "pnpm-cache")) +
@@ -626,6 +625,7 @@ async function main() {
     const corepackHome = process.env.COREPACK_HOME ?? (process.platform === "win32"
       ? join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "node", "corepack")
       : join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "node", "corepack"));
+    if (usePnpm) log(`pnpm ${await warmPnpm(temporaryRoot, corepackHome)} ready`, pnpmInvocation().directory);
     const toolEnvironment = cleanToolEnvironment(undefined, {HOME: home, USERPROFILE: home,
       APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"),
       PRISMATIX_PHASE1_PREVIEW_LOG: previewLog,
