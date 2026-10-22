@@ -71,6 +71,24 @@ export function validateDocument<T>(contractId: string, value: unknown, path?: s
   return {diagnostics, valid: false};
 }
 
+/**
+ * Validates a value against a definition of a contract schema that is not a
+ * document of its own, by schema $id and JSON pointer, e.g.
+ * `validateContractDefinition("extension-registry.schema.json#/$defs/version", value)`.
+ */
+export function validateContractDefinition<T>(reference: string, value: unknown, path?: string): Result<T> {
+  const absolute = reference.startsWith("https://") ? reference : `https://prismatix.dev/contracts/${reference}`;
+  let validator = validators.get(absolute);
+  if (validator === undefined) {
+    validator = ajv.getSchema(absolute);
+    if (validator === undefined) throw new RangeError(`Unknown PrismatiX contract definition: ${reference}`);
+    validators.set(absolute, validator);
+  }
+  if (validator(value)) return {value: value as T, diagnostics: [], valid: true};
+  return {valid: false, diagnostics: (validator.errors ?? []).map((error) =>
+    diagnostic("PXSDKJSON1004", "Document does not match its canonical contract", path, formatAjvError(error)))};
+}
+
 export function validateUiDocument<T>(value: unknown, registry: UiTypeRegistryMetadata, path?: string): Result<T> {
   const base = validateDocument<T>("ui", value, path);
   if (!base.valid) return base;

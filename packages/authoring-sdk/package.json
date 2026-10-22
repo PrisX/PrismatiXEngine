@@ -32,6 +32,10 @@
       "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js"
     },
+    "./extension-package": {
+      "types": "./dist/src/extension-package.d.ts",
+      "import": "./dist/src/extension-package.js"
+    },
     "./jsx-runtime": {
       "types": "./dist/src/jsx-runtime.d.ts",
       "import": "./dist/src/jsx-runtime.js"

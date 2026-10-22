@@ -96,6 +96,18 @@ export const contractManifest: Readonly<Record<string, unknown>> = {
       "id": "effect",
       "schema": "effect.schema.json",
       "schemaRevision": 1
+    },
+    {
+      "extension": "pxext.json",
+      "id": "extensionPackage",
+      "schema": "extension-package.schema.json",
+      "schemaRevision": 1
+    },
+    {
+      "extension": "prismatix-extensions.lock",
+      "id": "extensionLock",
+      "schema": "extension-lock.schema.json",
+      "schemaRevision": 1
     }
   ],
   "format": "PrismatiXContractManifest",
@@ -736,6 +748,593 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "uniforms"
     ],
     "type": "object"
+  },
+  "extension-lock.schema.json": {
+    "$id": "https://prismatix.dev/contracts/extension-lock.schema.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "What `prismatix extension add` installed into Extensions/<owner>/<name>/, committed with the project.",
+    "properties": {
+      "extensions": {
+        "additionalProperties": {
+          "additionalProperties": false,
+          "properties": {
+            "files": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "manifest": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            },
+            "range": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "sha256": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "size": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "source": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            "version": {
+              "$ref": "https://prismatix.dev/contracts/extension-package.schema.json#/$defs/version"
+            }
+          },
+          "required": [
+            "version",
+            "sha256",
+            "size",
+            "source",
+            "manifest",
+            "files"
+          ],
+          "type": "object"
+        },
+        "maxProperties": 1024,
+        "propertyNames": {
+          "$ref": "https://prismatix.dev/contracts/extension-package.schema.json#/$defs/packageId"
+        },
+        "type": "object"
+      },
+      "format": {
+        "const": "PrismatiXExtensionLock"
+      },
+      "lockVersion": {
+        "const": 1
+      }
+    },
+    "required": [
+      "format",
+      "lockVersion",
+      "extensions"
+    ],
+    "title": "PrismatiX extension lock (prismatix-extensions.lock)",
+    "type": "object"
+  },
+  "extension-package.schema.json": {
+    "$defs": {
+      "author": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "maxLength": 254,
+            "pattern": "^[^\\s@]+@[^\\s@]+$",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "url": {
+            "$ref": "#/$defs/url"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "packageId": {
+        "maxLength": 104,
+        "pattern": "^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}/[a-z0-9][a-z0-9._-]{0,63}$",
+        "type": "string"
+      },
+      "packagePath": {
+        "maxLength": 200,
+        "minLength": 1,
+        "pattern": "^(?:[A-Za-z0-9_][A-Za-z0-9._-]*/)*[A-Za-z0-9_][A-Za-z0-9._-]*$",
+        "type": "string"
+      },
+      "url": {
+        "maxLength": 2048,
+        "pattern": "^https?://[^\\s]+$",
+        "type": "string"
+      },
+      "version": {
+        "maxLength": 64,
+        "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+        "type": "string"
+      }
+    },
+    "$id": "https://prismatix.dev/contracts/extension-package.schema.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "Written beside an extension's manifest by its author and at the root of every .pxext package. In a package, version and manifest are required; pack fills them from the manifest.",
+    "properties": {
+      "author": {
+        "$ref": "#/$defs/author"
+      },
+      "description": {
+        "maxLength": 1024,
+        "type": "string"
+      },
+      "displayName": {
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      },
+      "format": {
+        "const": "PrismatiXExtensionPackage"
+      },
+      "formatVersion": {
+        "const": 1
+      },
+      "homepage": {
+        "$ref": "#/$defs/url"
+      },
+      "icon": {
+        "$ref": "#/$defs/packagePath"
+      },
+      "id": {
+        "$ref": "#/$defs/packageId"
+      },
+      "keywords": {
+        "items": {
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "maxItems": 16,
+        "type": "array",
+        "uniqueItems": true
+      },
+      "license": {
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      },
+      "manifest": {
+        "$ref": "#/$defs/packagePath"
+      },
+      "repository": {
+        "$ref": "#/$defs/url"
+      },
+      "screenshots": {
+        "items": {
+          "$ref": "#/$defs/packagePath"
+        },
+        "maxItems": 8,
+        "type": "array",
+        "uniqueItems": true
+      },
+      "version": {
+        "$ref": "#/$defs/version"
+      }
+    },
+    "required": [
+      "format",
+      "formatVersion",
+      "id"
+    ],
+    "title": "PrismatiX extension package metadata (pxext.json)",
+    "type": "object"
+  },
+  "extension-registry.schema.json": {
+    "$defs": {
+      "capabilities": {
+        "items": {
+          "maxLength": 64,
+          "type": "string"
+        },
+        "maxItems": 64,
+        "type": "array",
+        "uniqueItems": true
+      },
+      "error": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "maxLength": 128,
+                "type": "string"
+              },
+              "message": {
+                "maxLength": 4096,
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "extension": {
+        "properties": {
+          "author": {
+            "$ref": "https://prismatix.dev/contracts/extension-package.schema.json#/$defs/author"
+          },
+          "capabilities": {
+            "$ref": "#/$defs/capabilities"
+          },
+          "createdAt": {
+            "$ref": "#/$defs/timestamp"
+          },
+          "description": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "displayName": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "downloads": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "homepage": {
+            "$ref": "#/$defs/urlReference"
+          },
+          "icon": {
+            "$ref": "#/$defs/urlReference"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "keywords": {
+            "items": {
+              "maxLength": 32,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "latestVersion": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/versionNumber"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "license": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "repository": {
+            "$ref": "#/$defs/urlReference"
+          },
+          "screenshots": {
+            "items": {
+              "$ref": "#/$defs/urlReference"
+            },
+            "type": "array"
+          },
+          "updatedAt": {
+            "$ref": "#/$defs/timestamp"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/$defs/versionSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "capabilities",
+          "versions"
+        ],
+        "type": "object"
+      },
+      "id": {
+        "$ref": "https://prismatix.dev/contracts/extension-package.schema.json#/$defs/packageId"
+      },
+      "publishRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "manifest": {
+            "$ref": "https://prismatix.dev/contracts/extension.schema.json"
+          },
+          "metadata": {
+            "$ref": "https://prismatix.dev/contracts/extension-package.schema.json"
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "size": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "version": {
+            "$ref": "#/$defs/versionNumber"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "sha256",
+          "size",
+          "manifest",
+          "metadata"
+        ],
+        "type": "object"
+      },
+      "publishResponse": {
+        "properties": {
+          "expiresAt": {
+            "$ref": "#/$defs/timestamp"
+          },
+          "uploadHeaders": {
+            "additionalProperties": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "maxProperties": 32,
+            "type": "object"
+          },
+          "uploadId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._~-]+$",
+            "type": "string"
+          },
+          "uploadMethod": {
+            "const": "PUT"
+          },
+          "uploadUrl": {
+            "$ref": "#/$defs/urlReference"
+          }
+        },
+        "required": [
+          "uploadId",
+          "uploadUrl"
+        ],
+        "type": "object"
+      },
+      "searchResponse": {
+        "properties": {
+          "page": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "pageSize": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/$defs/searchResult"
+            },
+            "type": "array"
+          },
+          "total": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "results",
+          "total",
+          "page",
+          "pageSize"
+        ],
+        "type": "object"
+      },
+      "searchResult": {
+        "properties": {
+          "capabilities": {
+            "$ref": "#/$defs/capabilities"
+          },
+          "description": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "displayName": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "downloads": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "icon": {
+            "$ref": "#/$defs/urlReference"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "keywords": {
+            "items": {
+              "maxLength": 32,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "latestVersion": {
+            "$ref": "#/$defs/versionNumber"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "requiredEngineVersion": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updatedAt": {
+            "$ref": "#/$defs/timestamp"
+          }
+        },
+        "required": [
+          "id",
+          "latestVersion",
+          "requiredEngineVersion",
+          "capabilities"
+        ],
+        "type": "object"
+      },
+      "sha256": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "timestamp": {
+        "maxLength": 64,
+        "type": "string"
+      },
+      "urlReference": {
+        "maxLength": 2048,
+        "minLength": 1,
+        "type": "string"
+      },
+      "version": {
+        "properties": {
+          "download": {
+            "$ref": "#/$defs/urlReference"
+          },
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "manifest": {
+            "$ref": "https://prismatix.dev/contracts/extension.schema.json"
+          },
+          "metadata": {
+            "$ref": "https://prismatix.dev/contracts/extension-package.schema.json"
+          },
+          "publishedAt": {
+            "$ref": "#/$defs/timestamp"
+          },
+          "requiredEngineVersion": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "size": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "version": {
+            "$ref": "#/$defs/versionNumber"
+          },
+          "yanked": {
+            "type": "boolean"
+          },
+          "yankedReason": {
+            "maxLength": 1024,
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "requiredEngineVersion",
+          "sha256",
+          "size",
+          "download",
+          "manifest",
+          "yanked"
+        ],
+        "type": "object"
+      },
+      "versionNumber": {
+        "$ref": "https://prismatix.dev/contracts/extension-package.schema.json#/$defs/version"
+      },
+      "versionSummary": {
+        "properties": {
+          "publishedAt": {
+            "$ref": "#/$defs/timestamp"
+          },
+          "requiredEngineVersion": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "size": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "version": {
+            "$ref": "#/$defs/versionNumber"
+          },
+          "yanked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "version",
+          "requiredEngineVersion",
+          "yanked"
+        ],
+        "type": "object"
+      },
+      "yankRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "yanked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "yanked"
+        ],
+        "type": "object"
+      }
+    },
+    "$id": "https://prismatix.dev/contracts/extension-registry.schema.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "JSON bodies of the /v1 registry routes (docs/extensions-sharing.md). Clients ignore unknown properties, so a registry may add its own. URLs (download, icon, screenshots, uploadUrl) may be relative; they resolve against the URL of the document that holds them.",
+    "title": "PrismatiX extension registry HTTP API v1"
   },
   "extension.schema.json": {
     "$defs": {
@@ -5001,6 +5600,9 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "character.schema.json": "2b93da553f2247c29d20e3365b313f29185a30d7ada1375be92004e6eb8f771b",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
   "effect.schema.json": "8707b1b1d75154000786f797b06561643a5f9881df968708a0994546e3f782bd",
+  "extension-lock.schema.json": "8b3f8661b0b80f23b04e0ae0241ba0782c823957ab49076800eef4c673c7d998",
+  "extension-package.schema.json": "bd7baa339d7a1b89d9cbd7d1db82aaabd104776712a6f270948220e6ec806ff5",
+  "extension-registry.schema.json": "47ab90d86c1368629261c7813796994b96aaf860e02536b872f15b720f7624db",
   "extension.schema.json": "62e1a93e20d9514aad911352665057ab9774ca48c4d9a8f23ae18f5bfeb88aee",
   "game.schema.json": "a2614c48076fc5e7554934e446f37319c556adb9f13a28f24c8592813f0dfd23",
   "locale.schema.json": "391e4abe7616d74554af376e2ae3563961215b1631cdd04faf5034016aaff774",

@@ -1,0 +1,29 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://prismatix.dev/contracts/extension-lock.schema.json",
+  "title":"PrismatiX extension lock (prismatix-extensions.lock)",
+  "description":"What `prismatix extension add` installed into Extensions/<owner>/<name>/, committed with the project.",
+  "type":"object","additionalProperties":false,
+  "required":["format","lockVersion","extensions"],
+  "properties":{
+    "format":{"const":"PrismatiXExtensionLock"},
+    "lockVersion":{"const":1},
+    "extensions":{
+      "type":"object","maxProperties":1024,
+      "propertyNames":{"$ref":"https://prismatix.dev/contracts/extension-package.schema.json#/$defs/packageId"},
+      "additionalProperties":{
+        "type":"object","additionalProperties":false,
+        "required":["version","sha256","size","source","manifest","files"],
+        "properties":{
+          "version":{"$ref":"https://prismatix.dev/contracts/extension-package.schema.json#/$defs/version"},
+          "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+          "size":{"type":"integer","minimum":0},
+          "source":{"type":"string","minLength":1,"maxLength":4096},
+          "range":{"type":"string","minLength":1,"maxLength":256},
+          "manifest":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
+          "files":{"type":"string","pattern":"^[0-9a-f]{64}$"}
+        }
+      }
+    }
+  }
+}

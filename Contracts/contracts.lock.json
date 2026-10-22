@@ -1,12 +1,15 @@
 {
   "format": "PrismatiXContractLock",
-  "manifestSha256": "55dc569eefc241631ffddada00d7709605dbb9bd56c5371053a4b9b08bcf5351",
+  "manifestSha256": "295f29ffad4f6753f56958b12e6b2fc23ac5b85d579a46ebb3c76c355117742f",
   "schemaRevision": 1,
   "schemas": {
     "animation.schema.json": "ef9ccdba9dbc8a08a00848e487cb2a6938c23f88b891ff0c85bf9d16783254a7",
     "character.schema.json": "2b93da553f2247c29d20e3365b313f29185a30d7ada1375be92004e6eb8f771b",
     "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
     "effect.schema.json": "8707b1b1d75154000786f797b06561643a5f9881df968708a0994546e3f782bd",
+    "extension-lock.schema.json": "8b3f8661b0b80f23b04e0ae0241ba0782c823957ab49076800eef4c673c7d998",
+    "extension-package.schema.json": "bd7baa339d7a1b89d9cbd7d1db82aaabd104776712a6f270948220e6ec806ff5",
+    "extension-registry.schema.json": "47ab90d86c1368629261c7813796994b96aaf860e02536b872f15b720f7624db",
     "extension.schema.json": "62e1a93e20d9514aad911352665057ab9774ca48c4d9a8f23ae18f5bfeb88aee",
     "game.schema.json": "a2614c48076fc5e7554934e446f37319c556adb9f13a28f24c8592813f0dfd23",
     "locale.schema.json": "391e4abe7616d74554af376e2ae3563961215b1631cdd04faf5034016aaff774",

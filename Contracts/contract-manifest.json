@@ -18,5 +18,7 @@
     {"id":"locale","extension":".json","schema":"locale.schema.json","schemaRevision":1},
     {"id":"saveMigration","extension":".pxsave-migration","schema":"save-migration.schema.json","schemaRevision":1}
     ,{"id":"effect","extension":".pxeffect","schema":"effect.schema.json","schemaRevision":1}
+    ,{"id":"extensionPackage","extension":"pxext.json","schema":"extension-package.schema.json","schemaRevision":1}
+    ,{"id":"extensionLock","extension":"prismatix-extensions.lock","schema":"extension-lock.schema.json","schemaRevision":1}
   ]
 }

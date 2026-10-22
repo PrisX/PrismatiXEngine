@@ -1,0 +1,38 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://prismatix.dev/contracts/extension-package.schema.json",
+  "$defs":{
+    "packageId":{"type":"string","maxLength":104,"pattern":"^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}/[a-z0-9][a-z0-9._-]{0,63}$"},
+    "version":{"type":"string","maxLength":64,"pattern":"^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"},
+    "url":{"type":"string","maxLength":2048,"pattern":"^https?://[^\\s]+$"},
+    "packagePath":{"type":"string","minLength":1,"maxLength":200,"pattern":"^(?:[A-Za-z0-9_][A-Za-z0-9._-]*/)*[A-Za-z0-9_][A-Za-z0-9._-]*$"},
+    "author":{
+      "type":"object","additionalProperties":false,"required":["name"],
+      "properties":{
+        "name":{"type":"string","minLength":1,"maxLength":128},
+        "email":{"type":"string","maxLength":254,"pattern":"^[^\\s@]+@[^\\s@]+$"},
+        "url":{"$ref":"#/$defs/url"}
+      }
+    }
+  },
+  "title":"PrismatiX extension package metadata (pxext.json)",
+  "description":"Written beside an extension's manifest by its author and at the root of every .pxext package. In a package, version and manifest are required; pack fills them from the manifest.",
+  "type":"object","additionalProperties":false,
+  "required":["format","formatVersion","id"],
+  "properties":{
+    "format":{"const":"PrismatiXExtensionPackage"},
+    "formatVersion":{"const":1},
+    "id":{"$ref":"#/$defs/packageId"},
+    "version":{"$ref":"#/$defs/version"},
+    "manifest":{"$ref":"#/$defs/packagePath"},
+    "displayName":{"type":"string","minLength":1,"maxLength":128},
+    "description":{"type":"string","maxLength":1024},
+    "author":{"$ref":"#/$defs/author"},
+    "license":{"type":"string","minLength":1,"maxLength":128},
+    "homepage":{"$ref":"#/$defs/url"},
+    "repository":{"$ref":"#/$defs/url"},
+    "keywords":{"type":"array","uniqueItems":true,"maxItems":16,"items":{"type":"string","minLength":1,"maxLength":32,"pattern":"^[a-z0-9][a-z0-9-]*$"}},
+    "icon":{"$ref":"#/$defs/packagePath"},
+    "screenshots":{"type":"array","uniqueItems":true,"maxItems":8,"items":{"$ref":"#/$defs/packagePath"}}
+  }
+}
