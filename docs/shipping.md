@@ -5,6 +5,7 @@ saves working, updates and patches, user data, automated play tests,
 importing an existing game, and the Android build.
 
 - [Building a distribution](#building-a-distribution)
+- [Packing for other platforms](#packing-for-other-platforms)
 - [Keeping players' saves](#keeping-players-saves)
 - [Comparing and patching distributions](#comparing-and-patching-distributions)
 - [Signed PDX content overlays](#signed-pdx-content-overlays)
@@ -167,10 +168,14 @@ macOS and Linux have their own conventions and ignore `layout`:
 
   When `pack` runs on a Mac it relinks bundled libraries through
   `@rpath` (`install_name_tool`) and signs the bundle ad hoc
-  (`codesign --sign -`), which Apple Silicon requires before anything runs.
+  (`codesign --sign -`), which Apple Silicon requires before anything runs;
+  on Windows and Linux it signs with rcodesign when that is installed.
   An ad-hoc signature is enough for your own testing, not for players:
   Gatekeeper blocks downloaded apps that are not signed with a Developer ID
-  and notarized. That is the author's step, after `pack` and with your Apple
+  and notarized. `pack` does both on any computer when it is given your
+  certificate and API key
+  ([Signing macOS apps from any computer](#signing-macos-apps-from-any-computer));
+  on a Mac you can also do it yourself after `pack`, with your Apple
   Developer account:
 
   ```sh
@@ -286,6 +291,153 @@ copy counts and bytes, fingerprinting, and publication on stderr. Packaging also
 updates as they happen. With `--json`, CLI progress is NDJSON on stderr and
 native Packager events are streamed on stdout; neither waits for the whole
 archive to finish before showing progress.
+
+## Packing for other platforms
+
+`pack` lays out a distribution for the computer it runs on unless `--platform`
+names others. Any computer packs for any of `win32-x64`, `linux-x64`,
+`darwin-x64` (Intel Macs) and `darwin-arm64` (Apple silicon):
+
+```bash
+prismatix add platform darwin-arm64 linux-x64     # once per project and CLI version
+prismatix pack my-game --platform win32-x64,darwin-arm64,linux-x64
+prismatix pack my-game --platform all --archive
+```
+
+`--platform` takes a platform, a comma list, `all` or `host`, and may repeat.
+The project is compiled once; each platform then gets its own folder,
+`<output>/<platform>` (by default `dist/<platform>`, beside `dist/web`), laid
+out by that platform's rules ([Distribution layout](#distribution-layout))
+with that platform's Player. Game content (the PDX archives, Runtime IR,
+fonts and media) is the same for every platform. `--output` names the folder
+that holds the platform folders and cannot be a packed distribution itself;
+`distribution.output`, the folder of a plain `pack`, is not used.
+
+`--archive` also writes the file players download beside each folder:
+`<name>-<platform>.zip` for Windows and macOS, `<name>-<platform>.tar.gz` for
+Linux, where `<name>` is `executableName` (else the project id). A Windows or
+Linux archive holds one folder of that name; a macOS archive holds the `.app`.
+Archives store Unix permissions, so the Player and libraries keep mode 755
+whichever computer made them. A Windows file system does not keep the
+executable bit, so a macOS or Linux distribution packed on Windows always gets
+its archive, and the folder next to it is only for inspection: ship the
+archive, and do not re-zip the folder with Explorer. Distributions contain no
+symbolic links (runtime libraries are copied as files), so nothing else is
+lost between file systems.
+
+### Getting another platform's runtime
+
+The CLI's npm package installs only this computer's native runtime
+(`@prismatix/native-<platform>` carries `os` and `cpu` fields, so npm and pnpm
+skip the others). `prismatix add platform <platform...>` adds the others to the
+project:
+
+1. It looks up `@prismatix/native-<platform>` at exactly the CLI's version in
+   the npm registry (`PRISMATIX_NPM_REGISTRY`, else the `npm_config_registry`
+   that npm and pnpm scripts set, else `https://registry.npmjs.org/`).
+2. It downloads the package tarball and checks it against the SHA-512
+   `integrity` the registry lists; a mismatch installs nothing.
+3. It extracts it into `.prismatix/platforms/<platform>/` in the project (the
+   starter's `.gitignore` already ignores `.prismatix/`), checks that its
+   runtime manifest names that platform and the CLI's version, and records
+   every file's size and SHA-256 in `platform.json`.
+
+Nothing in the package runs: the host's own Packager copies that platform's
+Player and libraries into the distribution. `pack` checks the recorded hashes
+before using a runtime, and checks every requested platform before compiling,
+so a missing one fails at once with the command that adds it (PXCLI1270).
+After updating `@prismatix/cli`, run `add platform` again; a runtime of
+another version is never used.
+
+`prismatix add platform --check` lists which platforms the project can pack
+for. Behind a proxy or private registry, download the tarball with npm's own
+configuration and install that file:
+
+```bash
+npm pack @prismatix/native-darwin-arm64@0.1.0
+prismatix add platform darwin-arm64 --from prismatix-native-darwin-arm64-0.1.0.tgz
+```
+
+`--from` also takes a runtime bundle as a `.tar.gz` or a folder (a release's
+`prismatix-native-runtime-<version>-<platform>.tar.gz`, or a CMake install of
+the `PrismatiXRuntime` component); it must still be that platform at exactly
+the CLI's version. For engine development, `PRISMATIX_PLATFORM_RUNTIMES=<dir>`
+uses `<dir>/<platform>/` runtime bundles directly, and a CLI running from an
+engine checkout also finds `out/platforms/<platform>/`; both accept
+pre-releases of the same line.
+
+### What every host can produce
+
+| | Packed on Windows | Packed on Linux | Packed on a Mac |
+| --- | --- | --- | --- |
+| Windows: icon, version information, manifest, `Engine/` | yes | yes | yes |
+| macOS `.app`: Info.plist, `.icns`, signature | yes, signed with rcodesign | yes, signed with rcodesign | yes, `codesign` |
+| Linux `lib/`, `.desktop`, icons, mode 755 | yes (in the archive) | yes | yes |
+| Custom effect shaders | SPIR-V, DXIL, MSL | SPIR-V, DXIL, MSL | SPIR-V, MSL |
+
+The Packager writes the Windows executable's resources itself, without
+Windows' resource API, so a Windows build is the same from every host. It
+rebuilds the executable's resource section, moves the relocation table behind
+it and recomputes the PE checksum. Windows tools and Explorer read the result
+exactly as before.
+
+The macOS runtime's Player links only macOS libraries and `@rpath`, so its
+`.app` needs no relinking; on a Mac `pack` still runs `install_name_tool` for
+any bundled library, and elsewhere it reports a library that would need it.
+
+Custom effects are compiled for every backend a platform's Player can use:
+SPIR-V (Vulkan, Linux and Windows), DXIL (Direct3D 12, the Windows fallback)
+and MSL (Metal). The DirectX Shader Compiler does not exist for macOS, so a Mac
+cannot pack a Windows build of a project with custom effects: that pack fails
+with PXPKG1511, and the Windows build is packed on Windows or Linux (a CI
+runner, for example). Projects without custom effects pack for Windows on a
+Mac.
+
+### Signing macOS apps from any computer
+
+Apple silicon runs no unsigned code, and macOS reports an app whose files
+changed after signing as damaged. The macOS Player is signed ad hoc by its
+linker, and `pack` signs the whole `.app`:
+
+- On a Mac, ad hoc with `codesign --sign -` (Xcode Command Line Tools).
+- Elsewhere, ad hoc with [rcodesign](https://github.com/indygreg/apple-platform-rs)
+  (apple-codesign), when it is installed. The CLI never downloads it. Install
+  it with `cargo install apple-codesign`, or put a release binary from
+  `https://github.com/indygreg/apple-platform-rs/releases` on `PATH`, or name
+  it with `PRISMATIX_RCODESIGN=/path/to/rcodesign`. Without rcodesign the
+  `.app` is packed unsigned as a bundle and `pack` warns (PXCLI1227).
+
+With a Developer ID Application certificate, `pack` signs with it and the
+hardened runtime on any computer (rcodesign, also on a Mac), and with an App
+Store Connect API key it notarizes the app and staples the ticket:
+
+| Variable | Value |
+| --- | --- |
+| `PRISMATIX_MACOS_P12` | the certificate and private key exported as `.p12` |
+| `PRISMATIX_MACOS_P12_PASSWORD` | its password (passed to rcodesign in a private file, never on the command line) |
+| `PRISMATIX_MACOS_NOTARY_KEY` | the API key as JSON, made once with `rcodesign encode-app-store-connect-api-key -o key.json <issuer-id> <key-id> AuthKey_<key-id>.p8` |
+
+Notarizing waits for Apple's answer, usually a few minutes. Keep these files
+outside the project and pass them as secrets in CI. `--json` reports each
+macOS distribution's `signature` (`developer-id`, `adhoc` or `none`) and
+`notarized`.
+
+What players see when they open a downloaded `.app`:
+
+- **Developer ID and notarized**: it opens.
+- **Ad hoc signed** (or Developer ID without notarization): macOS refuses it
+  as from an unidentified developer. On macOS 15 and later the player opens
+  it once from System Settings > Privacy & Security > Open Anyway; on earlier
+  versions with right-click (Control-click) > Open. `xattr -dr
+  com.apple.quarantine <Game>.app` clears the download quarantine as well.
+- **Not signed as a bundle**: the same, and some versions call it damaged;
+  clearing the quarantine still lets it run, because the Player keeps its
+  linker signature. Sign it before giving it to anyone.
+
+`scripts/check-desktop-layout.mjs --cross <platform>=<runtime>` is how CI packs
+the Starter sample for Windows and Apple silicon from Linux and for Linux from
+Windows, and checks each archive with that platform's rules. Only a Mac can
+show Gatekeeper's verdict and run the `.app`; only Windows can run the `.exe`.
 
 ## Keeping players' saves
 

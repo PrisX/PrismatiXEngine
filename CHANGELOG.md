@@ -15,6 +15,28 @@ The packages always carry the same version and pin each other exactly.
 
 ### Added
 
+- Packing for other platforms: `prismatix pack --platform
+  <win32-x64|linux-x64|darwin-x64|darwin-arm64|all>` (a comma list, may
+  repeat) compiles the project once and packs it for each platform into
+  `dist/<platform>/`, from any computer. `prismatix add platform <platform>`
+  downloads that platform's `@prismatix/native-<platform>` at exactly the
+  CLI's version from the npm registry, checks it against the registry's
+  SHA-512 integrity and keeps it in `.prismatix/platforms/` without running
+  anything in it (`--from` installs an `npm pack` tarball or a runtime bundle;
+  `--check` lists what the project can pack for). A missing runtime fails
+  before anything is built, with the command that adds it. `--archive` writes
+  `<name>-<platform>.zip` (Windows, macOS) or `.tar.gz` (Linux) with Unix
+  permissions; a macOS or Linux pack made on Windows always gets one, since
+  only the archive keeps the executable bit. The Packager takes a
+  `targetPlatform` and checks the Player is that platform's executable
+  (PXPKG1277, PXPKG1278).
+- macOS signing from any computer: off a Mac, `pack` signs the `.app` ad hoc
+  with rcodesign (apple-codesign) when it is installed (`PATH` or
+  `PRISMATIX_RCODESIGN`; never downloaded), and with `PRISMATIX_MACOS_P12`,
+  `PRISMATIX_MACOS_P12_PASSWORD` and `PRISMATIX_MACOS_NOTARY_KEY` it signs
+  with a Developer ID and the hardened runtime, notarizes and staples, on any
+  computer. An unsigned `.app` is reported (PXCLI1227) with what players
+  will see. docs/shipping.md, Packing for other platforms, has the details.
 - Extension handlers can be cancelled cleanly. Every command and Action
   handler gets `context.abortSignal` (a command's new second argument is
   `{abortSignal}`), an AbortSignal-like token with `aborted`, `reason`,
@@ -39,6 +61,15 @@ The packages always carry the same version and pin each other exactly.
 
 ### Changed
 
+- The Windows executable's icon, version information and manifest are written
+  by the Packager itself instead of Windows' resource API, so Linux and macOS
+  pack the same Windows build as Windows does. It rebuilds the resource
+  section, moves the relocation table behind it, drops a stale Authenticode
+  signature and recomputes the PE checksum.
+- A Mac refuses to pack a Windows build of a project with custom effects
+  (PXPKG1511): Windows Players need DXIL, which the DirectX Shader Compiler
+  cannot produce on macOS. Windows and Linux compile SPIR-V, DXIL and MSL for
+  every platform.
 - The CLI no longer carries every platform's runtime (272 MB packed). Each
   platform's native Player, Packager and Preview Host is its own package,
   `@prismatix/native-win32-x64`, `-linux-x64`, `-darwin-x64` and
@@ -66,6 +97,9 @@ The packages always carry the same version and pin each other exactly.
 
 ### Fixed
 
+- On Windows, packing no longer fails with PXPKG1315 when a virus scanner or
+  the search indexer still has the new Player open; the Packager waits up to
+  five seconds before giving up.
 - A game that cannot start no longer crashes the Player (access violation
   0xC0000005) while it closes. Whatever stops the boot (an extension's
   `engine.ready` handler that throws, a missing UI template, a damaged or
