@@ -64,6 +64,20 @@ The packages always carry the same version and pin each other exactly.
   PrismatiX Studio's new projects do. `scripts/check-sample-provenance.mjs`
   accepts the owner's `sample-only` pictures, for their exact bytes only.
 
+### Fixed
+
+- A game that cannot start no longer crashes the Player (access violation
+  0xC0000005) while it closes. Whatever stops the boot (an extension's
+  `engine.ready` handler that throws, a missing UI template, a damaged or
+  missing `Content.pdx`, ...), the Player logs `PXPLAYER5031 The game could
+  not start` with the cause, releases what it had started and exits with
+  code 1. A double-clicked game shows the cause in a message box; launched by
+  a tool (output to a pipe or file, `prismatix run`, the QA Player or
+  `PRISMATIX_NO_ERROR_DIALOG=1`) it shows none. A runtime that cannot start
+  says why in `PXPLAYER5007`. `prismatix test` reports such a journey as
+  "The game could not start" with the Player's report (`bootFailure` in
+  `--json`), extension lines at their `.ts` file and line.
+
 ## [0.1.0] - 2026-10-21
 
 First public release. See [docs/releases/0.1.0.md](docs/releases/0.1.0.md) for

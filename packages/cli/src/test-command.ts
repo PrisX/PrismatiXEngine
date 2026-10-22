@@ -38,7 +38,8 @@ export const testHelp = [
   "<output>/<journey> (default .prismatix/test-results). A journey fails when it throws, exceeds its",
   "time limit or the Player exits uncleanly; the report then shows the tail of the Player log. The",
   "limit is --timeout when given, else the journey's own `export const timeoutMs = 600_000`, else",
-  "180000 ms. The exit code is 1 when any journey failed.",
+  "180000 ms. The exit code is 1 when any journey failed. A game that cannot start fails with the",
+  "Player's own report (PXPLAYER5031, also `bootFailure` in --json), extension lines at their .ts source.",
   "Protocol: newline-delimited JSON {id, op, ...} -> {id, ok, result|error} on 127.0.0.1; operations",
   "state, controls, click, action, key, tap, input, bindings, uiData, variable, jump, advance,",
   "advanceUntil, choose, waitFor, screenshot, save, load, setting, route, resource, log, batch, quit.",
@@ -53,6 +54,8 @@ interface JourneyResult {
   readonly passed: boolean;
   readonly seconds: number;
   readonly error?: string;
+  /** The Player's PXPLAYER5031 report when the game could not start, extension lines remapped to .ts. */
+  readonly bootFailure?: string;
   readonly logTail?: string;
   readonly dataRoot: string;
   readonly outputDirectory: string;
@@ -181,7 +184,7 @@ async function remapLog(text: string, projectRoot: string): Promise<string> {
   return (await projectExtensionRemapper(projectRoot))(text);
 }
 
-async function logTail(dataRoot: string, lines = 40): Promise<string | undefined> {
+async function playerLog(dataRoot: string): Promise<{path: string; text: string} | undefined> {
   const logs: string[] = [];
   try {
     for (const entry of await readdir(dataRoot)) {
@@ -190,8 +193,31 @@ async function logTail(dataRoot: string, lines = 40): Promise<string | undefined
     }
   } catch { return undefined; }
   if (logs.length === 0) return undefined;
-  const text = await readFile(logs[0]!, "utf8");
-  return `${logs[0]}:\n${text.split(/\r?\n/u).filter(Boolean).slice(-lines).join("\n")}`;
+  return {path: logs[0]!, text: await readFile(logs[0]!, "utf8")};
+}
+
+function logTail(log: {path: string; text: string}, lines = 40): string {
+  return `${log.path}:\n${log.text.split(/\r?\n/u).filter(Boolean).slice(-lines).join("\n")}`;
+}
+
+/**
+ * The last "game could not start" report (PXPLAYER5031) in a Player log: the
+ * diagnostic and the lines that continue it, such as a JavaScript stack.
+ */
+export function bootFailure(log: string): string | undefined {
+  const lines = log.split(/\r?\n/u);
+  let start = -1;
+  for (let index = lines.length - 1; index >= 0 && start < 0; index -= 1)
+    if (lines[index]!.includes("PXPLAYER5031 ")) start = index;
+  if (start < 0) return undefined;
+  const first = lines[start]!;
+  const report = [first.slice(first.indexOf("PXPLAYER5031 "))];
+  // Every log record starts with its "[time]"; other lines continue the report.
+  for (const line of lines.slice(start + 1, start + 21)) {
+    if (line.startsWith("[")) break;
+    if (line.trim() !== "") report.push(line.trimEnd());
+  }
+  return report.join("\n");
 }
 
 function errorText(error: unknown): string {
@@ -216,6 +242,7 @@ async function runJourney(file: string, player: string, options: TestCommandOpti
   let child: ChildProcess | undefined;
   let client: PlayerTestClient | undefined;
   let failure: unknown;
+  let connected = false;
   const notes: string[] = [];
   try {
     const journey = await loadJourney(file, scratch);
@@ -228,6 +255,7 @@ async function runJourney(file: string, player: string, options: TestCommandOpti
       child!.once("error", (error) => { failure ??= error; exitCode = null; accept(); });
     });
     const port = await waitForPort(portFile, child, () => exitCode !== undefined, 60_000);
+    connected = true;
     client = await PlayerTestClient.connect(port, outputDirectory);
     const context: JourneyContext = {name, file, projectRoot, outputDirectory, dataRoot,
       note: (message) => { notes.push(message); process.stdout.write(`  ${name}: ${message}\n`); }};
@@ -253,11 +281,17 @@ async function runJourney(file: string, player: string, options: TestCommandOpti
     if (child !== undefined && exitCode === undefined) child.kill();
   }
   const passed = failure === undefined;
+  const log = passed ? undefined : await playerLog(dataRoot);
+  // A Player that exits before opening its QA IPC usually could not start;
+  // its own report says why better than the missing port does.
+  const boot = log === undefined || connected ? undefined : bootFailure(log.text);
+  const startFailure = boot === undefined ? undefined : await remapLog(boot, projectRoot);
   const result: JourneyResult = {name, file, passed, seconds: (Date.now() - started) / 1000,
     dataRoot, outputDirectory,
-    ...(passed ? {} : {error: errorText(failure)}),
-    ...(passed ? {} : await logTail(dataRoot).then(async (tail) => tail === undefined ? {}
-      : {logTail: await remapLog(tail, projectRoot)}))};
+    ...(passed ? {} : {error: startFailure === undefined ? errorText(failure)
+      : `The game could not start (Player exit code ${exitCode}): ${startFailure}`}),
+    ...(startFailure === undefined ? {} : {bootFailure: startFailure}),
+    ...(log === undefined ? {} : {logTail: await remapLog(logTail(log), projectRoot)})};
   const keep = !passed || options.flags.has("keep-data") || sharedRoot !== undefined;
   if (!keep) await rm(scratch, {recursive: true, force: true}).catch(() => {});
   else if (sharedRoot !== undefined) await rm(portFile, {force: true}).catch(() => {});

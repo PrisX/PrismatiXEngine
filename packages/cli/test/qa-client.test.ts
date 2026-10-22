@@ -6,7 +6,7 @@ import {join} from "node:path";
 import test from "node:test";
 
 import {PlayerTestClient} from "../src/qa-client.js";
-import {loadJourney} from "../src/test-command.js";
+import {bootFailure, loadJourney} from "../src/test-command.js";
 
 // A stand-in Player: records requests and answers each with `answer`.
 async function fakePlayer(answer: (request: Record<string, unknown>) => unknown) {
@@ -82,4 +82,20 @@ test("a journey may set its own time limit", async () => {
     assert.equal((await loadJourney(join(scratch, "plain.mjs"), scratch)).timeoutMs, undefined);
     await assert.rejects(loadJourney(join(scratch, "bad.mjs"), scratch), /timeoutMs must be/u);
   } finally { await rm(scratch, {recursive: true, force: true}); }
+});
+
+test("a Player that could not start is reported by its PXPLAYER5031 line and the stack under it", () => {
+  const log = [
+    "[2026-10-22 12:59:51.263] [info] [58452] Player boot: engine.ready",
+    "[2026-10-22 12:59:51.264] [error] [58452] [diagnostic] PXJS7202 [Script.JavaScript] handler failed",
+    "[2026-10-22 12:59:51.265] [critical] [58452] [diagnostic] PXPLAYER5031 [Player.Boot] The game could not start" +
+      " — PXJS7202 [Script.JavaScript] JavaScript event handler failed (boom) — Error: boom",
+    "    at <anonymous> (Content/Extensions/boom/main.js:360:13)",
+    "",
+    "[2026-10-22 12:59:51.315] [info] [58452] Runtime shut down.",
+  ].join("\r\n");
+  assert.equal(bootFailure(log), "PXPLAYER5031 [Player.Boot] The game could not start — PXJS7202 " +
+    "[Script.JavaScript] JavaScript event handler failed (boom) — Error: boom\n" +
+    "    at <anonymous> (Content/Extensions/boom/main.js:360:13)");
+  assert.equal(bootFailure("[2026-10-22 12:59:51.315] [info] [1] Runtime shut down.\n"), undefined);
 });
