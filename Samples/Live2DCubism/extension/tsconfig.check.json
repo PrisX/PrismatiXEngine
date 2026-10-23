@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "paths": {
+      "@prismatix/runtime": ["../../../runtime-sdk/dist/src/index.d.ts"],
+      "@prismatix/runtime/raw": ["../../../runtime-sdk/dist/src/raw.d.ts"],
+      "@prismatix/runtime/native": ["../../../runtime-sdk/dist/src/native.d.ts"]
+    }
+  },
+  "include": ["main.ts", "src/**/*.ts", "prismatix-extension.d.ts", "../../../runtime-sdk/sandbox.d.ts"]
+}

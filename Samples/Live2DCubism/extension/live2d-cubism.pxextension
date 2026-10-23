@@ -1,0 +1,337 @@
+{
+  "format": "PrismatiXExtension",
+  "schemaRevision": 1,
+  "language": "typescript",
+  "id": "live2d-cubism",
+  "version": "0.1.0",
+  "requiredEngineVersion": ">=0.1.0 <0.2.0",
+  "entry": "main.ts",
+  "capabilities": [
+    "runtime",
+    "persistence",
+    "raw.mesh",
+    "native"
+  ],
+  "platforms": [
+    "win32-x64",
+    "linux-x64",
+    "darwin-x64",
+    "darwin-arm64"
+  ],
+  "safety": {
+    "previewSafe": false,
+    "deterministic": true,
+    "seekSafe": true,
+    "rollbackSafe": true
+  },
+  "native": {
+    "abi": 1,
+    "services": [
+      "live2d.core.load",
+      "live2d.model.create",
+      "live2d.model.update",
+      "live2d.model.release"
+    ],
+    "libraries": {
+      "win32-x64": {
+        "path": "native/win32-x64/px_live2d.dll"
+      },
+      "linux-x64": {
+        "path": "native/linux-x64/libpx_live2d.so"
+      },
+      "darwin-x64": {
+        "path": "native/darwin-x64/libpx_live2d.dylib"
+      },
+      "darwin-arm64": {
+        "path": "native/darwin-arm64/libpx_live2d.dylib"
+      }
+    }
+  },
+  "commands": [
+    {
+      "id": "live2d.core",
+      "displayName": "Set Cubism Core",
+      "description": "Where Live2D's Cubism Core library is. Empty uses the platform default name (see the README).",
+      "category": "Live2D",
+      "await": false,
+      "rollback": "reversible",
+      "parameters": [
+        {
+          "name": "path",
+          "type": "string",
+          "displayName": "path",
+          "description": "Absolute path, or a library name the OS can find.",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "id": "live2d.show",
+      "displayName": "Show Model",
+      "description": "Shows a Live2D model, or replaces the one with this id.",
+      "category": "Live2D",
+      "await": false,
+      "rollback": "reversible",
+      "parameters": [
+        {
+          "name": "id",
+          "type": "string",
+          "displayName": "id",
+          "description": "Name you use to refer to the model later.",
+          "required": true
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "displayName": "model",
+          "description": "Project path of the .model3.json (its .moc3 as <moc>.b64 beside it).",
+          "required": true,
+          "resourceFilter": "model3.json"
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "displayName": "x",
+          "description": "Horizontal position of the model's feet, as a fraction of the screen width.",
+          "default": 0.5,
+          "range": {
+            "minimum": -2,
+            "maximum": 3,
+            "step": 0.01
+          }
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "displayName": "y",
+          "description": "Vertical position of the model's feet, as a fraction of the screen height.",
+          "default": 1,
+          "range": {
+            "minimum": -2,
+            "maximum": 3,
+            "step": 0.01
+          }
+        },
+        {
+          "name": "height",
+          "type": "number",
+          "displayName": "height",
+          "description": "Height of the model's canvas, as a fraction of the screen height.",
+          "default": 1,
+          "range": {
+            "minimum": 0.05,
+            "maximum": 5,
+            "step": 0.01
+          }
+        },
+        {
+          "name": "z",
+          "type": "integer",
+          "displayName": "z",
+          "description": "Models with a higher z draw over lower ones.",
+          "default": 0,
+          "range": {
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        {
+          "name": "idle",
+          "type": "string",
+          "displayName": "idle",
+          "description": "Motion group looped while nothing else plays (empty for none).",
+          "default": "Idle"
+        },
+        {
+          "name": "breath",
+          "type": "boolean",
+          "displayName": "breath",
+          "description": "Add Cubism's breathing sway.",
+          "default": true
+        },
+        {
+          "name": "blink",
+          "type": "boolean",
+          "displayName": "blink",
+          "description": "Blink using the model's EyeBlink group.",
+          "default": true
+        }
+      ]
+    },
+    {
+      "id": "live2d.hide",
+      "displayName": "Hide Model",
+      "description": "Removes a model.",
+      "category": "Live2D",
+      "await": false,
+      "rollback": "reversible",
+      "parameters": [
+        {
+          "name": "id",
+          "type": "string",
+          "displayName": "id",
+          "description": "",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "live2d.move",
+      "displayName": "Move Model",
+      "description": "Moves and resizes a shown model.",
+      "category": "Live2D",
+      "await": false,
+      "rollback": "reversible",
+      "parameters": [
+        {
+          "name": "id",
+          "type": "string",
+          "displayName": "id",
+          "description": "",
+          "required": true
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "displayName": "x",
+          "description": "",
+          "default": 0.5,
+          "range": {
+            "minimum": -2,
+            "maximum": 3,
+            "step": 0.01
+          }
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "displayName": "y",
+          "description": "",
+          "default": 1,
+          "range": {
+            "minimum": -2,
+            "maximum": 3,
+            "step": 0.01
+          }
+        },
+        {
+          "name": "height",
+          "type": "number",
+          "displayName": "height",
+          "description": "",
+          "default": 1,
+          "range": {
+            "minimum": 0.05,
+            "maximum": 5,
+            "step": 0.01
+          }
+        }
+      ]
+    },
+    {
+      "id": "live2d.motion",
+      "displayName": "Play Motion",
+      "description": "Plays a motion of the model3.json; the idle motion resumes afterwards.",
+      "category": "Live2D",
+      "await": false,
+      "rollback": "reversible",
+      "parameters": [
+        {
+          "name": "id",
+          "type": "string",
+          "displayName": "id",
+          "description": "",
+          "required": true
+        },
+        {
+          "name": "group",
+          "type": "string",
+          "displayName": "group",
+          "description": "Motion group name, for example TapBody.",
+          "required": true
+        },
+        {
+          "name": "index",
+          "type": "integer",
+          "displayName": "index",
+          "description": "Which motion of the group.",
+          "default": 0,
+          "range": {
+            "minimum": 0,
+            "maximum": 999
+          }
+        },
+        {
+          "name": "loop",
+          "type": "boolean",
+          "displayName": "loop",
+          "description": "",
+          "default": false
+        }
+      ]
+    },
+    {
+      "id": "live2d.expression",
+      "displayName": "Set Expression",
+      "description": "Applies an expression of the model3.json by name; empty clears it.",
+      "category": "Live2D",
+      "await": false,
+      "rollback": "reversible",
+      "parameters": [
+        {
+          "name": "id",
+          "type": "string",
+          "displayName": "id",
+          "description": "",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "displayName": "name",
+          "description": "",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "id": "live2d.param",
+      "displayName": "Hold Parameter",
+      "description": "Holds a parameter at a value (lip sync, looking somewhere), or lets go of it.",
+      "category": "Live2D",
+      "await": false,
+      "rollback": "reversible",
+      "parameters": [
+        {
+          "name": "id",
+          "type": "string",
+          "displayName": "id",
+          "description": "",
+          "required": true
+        },
+        {
+          "name": "param",
+          "type": "string",
+          "displayName": "param",
+          "description": "Parameter id, for example ParamMouthOpenY.",
+          "required": true
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "displayName": "value",
+          "description": "",
+          "default": 0
+        },
+        {
+          "name": "release",
+          "type": "boolean",
+          "displayName": "release",
+          "description": "Stop holding the parameter.",
+          "default": false
+        }
+      ]
+    }
+  ],
+  "actions": []
+}

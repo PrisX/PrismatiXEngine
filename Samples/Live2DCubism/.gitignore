@@ -1,0 +1,2 @@
+# Built native libraries (cmake -S native writes them here).
+extension/native/

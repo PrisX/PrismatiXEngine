@@ -1,0 +1,175 @@
+{
+  "format": "PrismatiXSampleProvenance",
+  "schemaRevision": 1,
+  "sample": "Live2DCubism",
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "90a83698fa8f29efce6c7ebeac25f4bbb40762dd6b7141e1712c2e197941f7fd",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "DEVELOPMENT_NOTES.md",
+      "sha256": "34b4cd47fb7e65e4a85d9296d527eeade16f2ae1e430200b6b9aca75f6c3ca2e",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "README.md",
+      "sha256": "e3bda54e0f9d614d911349964be14b3e897c4093a0c0c79170896863ba16d704",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/live2d-cubism.pxextension",
+      "sha256": "78f1c1d2aa3a8115b4b086f92018c3edb4be24466bf6bad20f27a99d256670b7",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/main.ts",
+      "sha256": "77bc0e3848c5bd86df8382239c2a7b6bb37422266bdd5fb91eef518a675ab758",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/prismatix-extension.d.ts",
+      "sha256": "bffe5d1b3dd895909fd1472a85a6ab116771110c497fffa3a35ec8f58b2f2717",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/src/base64.ts",
+      "sha256": "41c00b26dfbb072e008fdba1e1ef3d70ccb9fc2dafd065924053f9d5d68f5a74",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/src/model3.ts",
+      "sha256": "a8e00381894df7ee7e95d99451110747853521f18b86b31b06d677009e9fe563",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/src/motion.ts",
+      "sha256": "f7a57675d0966326456233c58f57e549cdc0a3aeee92e3f9878ea5e8bf2711a3",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/src/parameters.ts",
+      "sha256": "2d88ac824d2f88eafdbf1a705b3dd38c1329824253b96bfd9d911b97ef603aa2",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/src/protocol.ts",
+      "sha256": "938bc3c3b570aebedba2b891fd57102bb05d24bb2af8a034d065218e54441454",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/src/renderer.ts",
+      "sha256": "a928bb4e5b0063fbc0822804071165e8824d8824f1eee8995eeb60f42a1277a4",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/src/scene.ts",
+      "sha256": "a1b4938018fbb2f5f99a5c54c90264ec44c6fc8643c2472f5ea9df228cfc7ddd",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/test/native.test.ts",
+      "sha256": "77fdfe40c34a044fb582663548be0b54748e92ef2ea3953a787fb2dc39dc9552",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/test/support.ts",
+      "sha256": "633aa3e13119682aa152bd7fe5948954bce2d6ee3effced0c588a3b5a5f8f46a",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/test/unit.test.ts",
+      "sha256": "83925444948f32a89e1360daab76d10cedfc359867e40dbfed0a9594d1b0a3d3",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/tsconfig.check.json",
+      "sha256": "0d07996d3b7afdc55187b6ef4ddcd1b96cfd2231b5b8d1973de766964a6fb66c",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "extension/tsconfig.json",
+      "sha256": "58857ac6dbe8cd13182c22c88ab9457b2c9ba4c64abcee8d1bd9528723759e97",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "native/CMakeLists.txt",
+      "sha256": "a44f6d3e4fcf73cf979d3894a06086d61d431b5d9a024684d0b2a847d92262c9",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "native/cubism_bridge.c",
+      "sha256": "6094c19cd6754951c3e8f7e32a8726a6577dd6fb4a993f43e5f81bbbf55b4f14",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "native/cubism_bridge.h",
+      "sha256": "6d93b32d997680c954493b897ae53c2bd33f5d9f1b5c349a875ad8b037d9a651",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "native/cubism_core_api.h",
+      "sha256": "38a40388148421b0cc108ece2ca118407e74e9b0cf0b1745209c413d4ff3e943",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "native/cubism_smoke.c",
+      "sha256": "e5f96022c9fabb991affb94710c3aa6667efdfbeffa9276d18aa2015c338959e",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "native/px_live2d_plugin.c",
+      "sha256": "15039171f8415da18b976ec40df5cdef072bbb9c90f8973ffc6b252439578fd6",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "native/test/mock_cubism_core.c",
+      "sha256": "7274cb24e85b447c1d0a1400b571b59c8860afa11a976ec1c6a921b89b20480c",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "native/test/plugin_harness.c",
+      "sha256": "d0d34530e88bf36c66799545783a01a2330abaf1872f4d9f5a5691d0553f1824",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "tools/moc-to-text.mjs",
+      "sha256": "739b48d13096f55c64ef3b9bedc11648d93d92db66818d2849a36e004ba795ca",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    },
+    {
+      "path": "tools/test.sh",
+      "sha256": "d7594cd3b7c5e23fceafb8a63259b373d0551f489e32dc052ca522f035647470",
+      "origin": "Written for this sample (Live2D Cubism bridge example); contains no Live2D code or data",
+      "license": "MIT"
+    }
+  ]
+}
