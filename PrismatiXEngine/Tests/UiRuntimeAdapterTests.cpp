@@ -573,8 +573,8 @@ void TestAuthoredPlacedItemTemplate() {
         context.Root()->Find(*px::Uuid::Parse(viewId)));
     Check(placed && placed->HasSource() && placed->Children().empty(),
           "placed item template must not become a static child");
-    Check(placed->GetMouseFilter() == px::ui::MouseFilter::Pass,
-          "a placed view passes clicks between its items through (it usually covers the story)");
+    Check(placed->GetMouseFilter() == px::ui::MouseFilter::Ignore,
+          "a placed view leaves clicks between its items to what is below it (it usually covers the HUD)");
     (void)context.Root()->Measure({400, 300});
     context.Root()->Arrange({0, 0, 400, 300});
     Check(placed->RealizedCount() == 2, "placed source must realize both item controls");

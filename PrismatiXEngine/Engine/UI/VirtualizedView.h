@@ -127,12 +127,14 @@ public:
 /** Data-driven absolute item placement, retaining stable-key item identities. */
 class PlacedItemsView final : public VirtualizedView {
 public:
-    // Usually fills the screen over the story (choices): clicks between its
-    // items pass through to the game, like a Group's, instead of stopping.
+    // Usually fills the screen over the story (choices): only its items take
+    // clicks. Ignore, not Pass: a Pass control is still where a click lands,
+    // so a full-screen one would hide the buttons below it (a HUD's quick
+    // menu) even though the click would advance the dialogue.
     explicit PlacedItemsView(std::string name = "PlacedItemsView")
         : VirtualizedView(std::move(name)) {
         EnablePlacedItems();
-        SetMouseFilter(MouseFilter::Pass);
+        SetMouseFilter(MouseFilter::Ignore);
     }
     [[nodiscard]] std::string_view TypeName() const override { return "PlacedItemsView"; }
 

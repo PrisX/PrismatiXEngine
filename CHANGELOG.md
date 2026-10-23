@@ -217,10 +217,10 @@ The packages always carry the same version and pin each other exactly.
 ### Fixed
 
 - A placed-items view (`ItemsPlaced`, the usual `ChoiceList` that fills the
-  HUD) no longer swallows every click on the screen: like a Group it passes
-  clicks between its items through (`mouseFilter` `Pass` by default), so a
-  click advances the dialogue again in HUDs built from PrismatiX Studio's
-  presets.
+  HUD) no longer swallows every click on the screen: only its items take
+  clicks (`mouseFilter` `Ignore` by default), so a click advances the
+  dialogue again and reaches the buttons below it, such as the quick menu,
+  in HUDs built from PrismatiX Studio's presets.
 - `frame.update`, `scenario.started`, `save.loaded` and `save.written`
   reached scripts as an array (`["delta", "0.016"]`) instead of an object
   (`{delta: "0.016"}`), so `ctx.frame.onUpdate` and `raw.onFrame` saw 0
