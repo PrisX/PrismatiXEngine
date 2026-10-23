@@ -688,6 +688,10 @@ export interface PrismatiXEngine {
 
   ResourceExists(path: string): boolean;
   ReadResourceText(path: string): string;
+  /** A packaged file's bytes (at most 64 MiB). */
+  ReadResourceBytes(path: string): Uint8Array;
+  /** The extension's saved generator: a number in [0, 1). */
+  Random(): number;
 
   PushRoute(route: string, transition?: RouteTransitionOptions): boolean;
   ReplaceRoute(route: string, transition?: RouteTransitionOptions): boolean;
@@ -867,6 +871,8 @@ export const ENGINE_HOST_BINDINGS = [
   "SetVariable",
   "ResourceExists",
   "ReadResourceText",
+  "ReadResourceBytes",
+  "Random",
   "PushRoute",
   "ReplaceRoute",
   "BackRoute",
@@ -1029,6 +1035,45 @@ declare global {
   var DisplayMode: DisplayModeTable;
 }
 
+export interface PrismatiXRandom {
+  /** A number in [0, 1). */
+  next(): number;
+  /** An integer from `min` to `max`, both included. */
+  int(min: number, max: number): number;
+  /** A number in [min, max). */
+  range(min: number, max: number): number;
+  /** True with probability `probability` (0-1). */
+  chance(probability: number): boolean;
+  /** One item; undefined for an empty list. */
+  pick<T>(items: readonly T[]): T | undefined;
+  /** A shuffled copy (Fisher-Yates). */
+  shuffle<T>(items: readonly T[]): T[];
+}
+
+function createRandom(engine: PrismatiXEngine): PrismatiXRandom {
+  const next = () => engine.Random();
+  const int = (min: number, max: number) => {
+    const low = Math.ceil(Math.min(min, max)), high = Math.floor(Math.max(min, max));
+    if (!Number.isFinite(low) || !Number.isFinite(high) || low > high) throw new RangeError("random.int needs a finite range holding an integer");
+    return low + Math.floor(next() * (high - low + 1));
+  };
+  return Object.freeze({
+    next,
+    int,
+    range: (min: number, max: number) => min + next() * (max - min),
+    chance: (probability: number) => next() < probability,
+    pick: <T>(items: readonly T[]) => items.length === 0 ? undefined : items[Math.floor(next() * items.length)],
+    shuffle: <T>(items: readonly T[]) => {
+      const copy = [...items];
+      for (let index = copy.length - 1; index > 0; index--) {
+        const other = Math.floor(next() * (index + 1));
+        [copy[index], copy[other]] = [copy[other]!, copy[index]!];
+      }
+      return copy;
+    },
+  });
+}
+
 export interface PrismatiXContext {
   readonly raw: PrismatiXEngine;
   readonly displayMode: DisplayModeTable;
@@ -1039,7 +1084,17 @@ export interface PrismatiXContext {
   readonly assets: {
     exists(path: string): boolean;
     readText(path: string): string;
+    /** A packaged file's bytes (at most 64 MiB; larger throws RangeError PXJS7804). */
+    readBytes(path: string): Uint8Array;
   };
+  /**
+   * Random numbers for extensions (Math.random is disabled). The generator
+   * belongs to this extension, is seeded by the engine for each new session
+   * and is saved with the game: a load or rollback returns it to where it
+   * was, so the same draws follow. Draws inside a command or Action are
+   * journaled like other engine operations.
+   */
+  readonly random: PrismatiXRandom;
   readonly ui: {
     push(route: string, transition?: RouteTransitionOptions): boolean;
     replace(route: string, transition?: RouteTransitionOptions): boolean;
@@ -1419,7 +1474,9 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
     assets: {
       exists: (path) => engine.ResourceExists(path),
       readText: (path) => engine.ReadResourceText(path),
+      readBytes: (path) => engine.ReadResourceBytes(path),
     },
+    random: createRandom(engine),
     ui: {
       push: (route, transition) => engine.PushRoute(route, transition),
       replace: (route, transition) => engine.ReplaceRoute(route, transition),

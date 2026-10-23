@@ -46,11 +46,28 @@ Player because they reduce to SDL geometry, streaming textures and texture
 render targets, which SDL implements on Direct3D, Metal, Vulkan and OpenGL,
 on the WebGL2 Web Player and on SDL_GPU's WebGPU backend.
 
-**Meshes** (`raw.mesh`). `uploadVertices` takes a `Float32Array` of
+**Meshes** (`raw.mesh`). `mesh.vertices` takes a `Float32Array` of
 interleaved vertices, 8 floats each: `x, y, u, v, r, g, b, a` (positions in
-logical pixels, or target pixels inside a render target; colors 0-1).
-`uploadIndices` takes a `Uint16Array` or `Uint32Array` triangle list;
-without indices the vertices themselves are a triangle list. Options:
+logical pixels, or target pixels inside a render target; colors 0-1); with
+`firstVertex` it overwrites that range of the existing vertices.
+`mesh.indices` takes a `Uint16Array` or `Uint32Array` triangle list; without
+indices the vertices themselves are a triangle list. Indices are checked
+against the vertices the mesh has when they arrive (`PXJS7802` past the
+end), so on separate calls send the vertices first; `mesh.geometry(vertices,
+indices)` sends both in one call.
+
+**Many meshes per frame.** Every upload call counts against the per-frame
+budget once, so a model whose 100-300 parts all move each frame (a
+Live2D-style rig) sends them in one batch:
+
+```ts
+raw.upload(parts.map((part) => ({mesh: part.id, vertices: part.vertices})));
+// A part may also carry firstVertex or indices; each mesh at most once.
+```
+
+A batch is checked whole before anything changes: one bad part throws and
+leaves every mesh as it was. It counts as one upload; its bytes still count
+toward the 16 MiB. Options:
 
 | Option | |
 |---|---|
@@ -59,7 +76,8 @@ without indices the vertices themselves are a triangle list. Options:
 | `visible`, `route` | as retained render nodes |
 | `texture` | `{kind: "asset", path}`, `{kind: "texture", id}`, `{kind: "target", id}`; null: vertex colors only |
 | `blend` | `normal`, `premultiplied` (render target contents), `additive`, `multiply`, `replace` |
-| `mask` | another mesh whose coverage (alpha) masks this one; screen meshes only |
+| `mask` | a mesh id, or a list of up to 16, whose coverage (alpha) masks this one; a list unites their coverage; screen meshes only |
+| `maskInverted` | `true` shows the mesh where the masks are not (default `false`) |
 | `target` | draw into this render target instead of the screen |
 | `transform` | `{a, b, c, d, tx, ty}` applied to the positions |
 
@@ -70,6 +88,15 @@ screen, each target is cleared (`clear`, or kept with `null`) and its meshes
 draw into it, targets in `order`. A target's contents are premultiplied, so
 show it with `blend: "premultiplied"`; a mesh cannot sample the target it
 draws into.
+
+A mask mesh draws by itself unless it is `visible: false`; an invisible
+mesh still masks. Masks are drawn source-over whatever their own `blend`, so
+an additive or multiply mesh still masks by its alpha.
+
+**Where the math goes.** QuickJS interprets: transforming tens of thousands
+of vertices in script every frame is slow. Move a whole mesh with
+`transform` (no vertex upload at all), and leave per-vertex deformation to a
+native service (layer 2) that returns finished vertices for `raw.upload`.
 
 **Presentation only.** Raw resources are not saved, not recorded in the
 operation journal and not rolled back. A load or rollback keeps them as they
@@ -82,7 +109,7 @@ that is replayed after a load can create its meshes again harmlessly.
 | | |
 |---|---|
 | vertices / indices drawn per frame | 65,536 / 196,608 |
-| uploads per frame | 64 calls and 16 MiB |
+| uploads per frame | 64 calls (a batch is one) and 16 MiB |
 | per mesh | 65,536 vertices, 196,608 indices |
 | resources | 512 meshes, 64 textures, 8 targets, 4096 px per side, 64 MiB of textures and targets |
 
@@ -134,8 +161,13 @@ native.onMessage("steam.achievements", (bytes) => ctx.log.info(`steam: ${bytes.l
 
 - A script may call only the services its own manifest lists.
 - `request` runs synchronously on the game thread; requests and responses are
-  at most 16 MiB. It is journaled like an engine operation: a load or
-  rollback replays the recorded response instead of calling the library again.
+  at most 16 MiB. Inside a command or Action it is journaled like an engine
+  operation, request and response bytes included: a load or rollback replays
+  the recorded response instead of calling the library again, and a save
+  made mid-command carries the journal. Calls that only feed presentation
+  (a model's vertices each frame) belong in `frame.update` listeners
+  (`raw.onFrame`, `ctx.frame.onUpdate`), which are not journaled; keep
+  journaled requests to the small ones that change game state.
 - The Player loads the library when the manifest is loaded, before the entry
   runs. A missing, unsigned or altered library, or one built for another
   ABI, is never loaded: its services are unavailable (`has()` is false,
@@ -182,6 +214,18 @@ PX_PLUGIN_EXPORT void px_plugin_shutdown(void) {}
   `native.services` (`PX_ERROR_NOT_DECLARED`).
 - `respond` copies the response, at most once per call. A handler that
   returns anything but `PX_OK` makes the request throw `PXJS7902`.
+- `respond_error(response, message)` (ABI 1.1) fails the request with a
+  UTF-8 message, cut to 4 KiB: the script's call throws `PXJS7902` with
+  "The native service 'name' failed: message", whatever the handler returns.
+  Call it instead of `respond`, not after.
+- `plugin_directory` (ABI 1.1) is the absolute folder holding the library,
+  without a trailing separator: load a companion library (`files` in the
+  manifest) from there at run time. Libraries the loader resolves on its own
+  also come from there on Windows (`LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR`); on
+  Linux and macOS link with an `$ORIGIN` / `@loader_path` run path.
+- ABI 1.1 only appended `respond_error` and `plugin_directory`: a library
+  built against 1.0 loads unchanged, and one built against 1.1 needs a 1.1
+  Player (the minor-version check above).
 - `post_message` is the only thread-safe function: it queues up to 256
   messages per service, delivered on the game thread from the next frame.
 - `log` writes to the Player log; `px_plugin_shutdown` runs before the library
@@ -284,9 +328,9 @@ Registry API v1 additions (`Contracts/extension-registry.schema.json`):
 | PXJS7801 | a raw upload over the frame budget |
 | PXJS7802 | an unknown raw id, an index past the vertices or a region outside the texture |
 | PXJS7803 | invalid raw arguments or options |
-| PXJS7804 | a raw resource limit (count, size, texture memory) |
+| PXJS7804 | a raw resource limit (count, size, texture memory, masks per mesh, batch parts); also `readBytes` past 64 MiB |
 | PXJS7901 | a native service that is unavailable or not declared |
-| PXJS7902 | a native service that failed |
+| PXJS7902 | a native service that failed (with its `respond_error` message when it gave one) |
 | PXJS7903 | (log) a native library that could not be verified or loaded |
 | PXEXTNAT1001-1006 | manifest checks: capability, ABI, platforms, paths, unsigned, bad signature |
 | PXEXTPKG1015 / 1016 | a native pack with missing or extra files / a file that does not match its pinned SHA-256 |

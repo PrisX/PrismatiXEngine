@@ -9,8 +9,10 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace px::script {
 
@@ -24,6 +26,8 @@ struct ScriptRawLimits {
     std::size_t verticesPerMesh = 65536;
     std::size_t indicesPerMesh = 196608;
     std::size_t meshes = 512;
+    // Masks one mesh can name (their coverage is united).
+    std::size_t masksPerMesh = 16;
     std::size_t textures = 64;
     std::size_t targets = 8;
     int textureSize = 4096;
@@ -53,6 +57,21 @@ public:
         int h = 0;
     };
 
+    // One mesh's part of an upload. Vertices (8 floats each), indices
+    // (16- or 32-bit) or both; indices are checked against the vertices
+    // this upload leaves.
+    struct Upload {
+        std::string_view id{};
+        const float* vertices = nullptr;
+        std::size_t floatCount = 0;
+        std::optional<std::size_t> firstVertex{};
+        const std::uint16_t* indices16 = nullptr;
+        const std::uint32_t* indices32 = nullptr;
+        std::size_t indexCount = 0;
+        bool hasVertices = false;
+        bool hasIndices = false;
+    };
+
     explicit ScriptRawGraphics(graphics::Renderer2D* renderer,
                                Limits limits = {})
         : m_renderer(renderer), m_limits(limits) {}
@@ -70,6 +89,9 @@ public:
                            std::optional<std::size_t> firstVertex);
     Outcome UploadIndices(std::string_view id, const std::uint16_t* data16,
                           const std::uint32_t* data32, std::size_t count);
+    // Applies every part or none, and counts as one upload (its bytes are
+    // the parts' bytes together). Each mesh appears at most once.
+    Outcome UploadBatch(std::span<const Upload> uploads);
     bool DestroyMesh(std::string_view id);
 
     Outcome CreateTexture(std::string_view id, int width, int height,
@@ -110,7 +132,9 @@ private:
         std::string route;
         Source texture;
         graphics::RawBlendMode blend = graphics::RawBlendMode::Normal;
-        std::string mask;
+        // Meshes whose coverage, united, masks this one.
+        std::vector<std::string> masks;
+        bool maskInverted = false;
         std::string target;
         graphics::AffineTransform2D transform;
         std::vector<graphics::RawVertex> vertices;
@@ -138,7 +162,10 @@ private:
     Outcome CountUpload(std::size_t bytes);
     [[nodiscard]] std::size_t TextureBytes() const;
     [[nodiscard]] graphics::TextureHandle Resolve(const Source& source) const;
-    bool Draw(const Mesh& mesh);
+    // `coverage` draws a mask: source-over whatever the mesh's blend, so
+    // several masks unite.
+    bool Draw(const Mesh& mesh, bool coverage = false);
+    void DrawMasked(const Mesh& mesh);
     void RenderTargets();
 
     graphics::Renderer2D* m_renderer = nullptr;

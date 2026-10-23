@@ -32,7 +32,7 @@ extern "C" {
 #endif
 
 #define PX_PLUGIN_ABI_MAJOR 1u
-#define PX_PLUGIN_ABI_MINOR 0u
+#define PX_PLUGIN_ABI_MINOR 1u
 #define PX_PLUGIN_ABI_VERSION ((PX_PLUGIN_ABI_MAJOR << 16) | PX_PLUGIN_ABI_MINOR)
 
 #if defined(_WIN32)
@@ -61,6 +61,8 @@ typedef int32_t PxStatus;
 
 /* The largest request, response or message. */
 #define PX_PLUGIN_MAX_BUFFER (16u * 1024u * 1024u)
+/* respond_error keeps at most this many bytes of its message. */
+#define PX_PLUGIN_MAX_ERROR_MESSAGE 4096u
 
 /* Host-owned; valid only during the handler call it is passed to. */
 typedef struct PxResponse PxResponse;
@@ -68,7 +70,8 @@ typedef struct PxResponse PxResponse;
 /*
  * Handles one request. `request` is valid only during the call. Write the
  * answer with host->respond (no call means an empty response). Return PX_OK,
- * or an error status to make the script's call throw.
+ * or an error status to make the script's call throw; host->respond_error
+ * (ABI 1.1) gives that error a message.
  */
 typedef PxStatus (*PxServiceHandler)(void* user_data, const uint8_t* request,
                                      size_t request_size, PxResponse* response);
@@ -100,6 +103,22 @@ typedef struct PxHostApi {
                              const uint8_t* data, size_t size);
     /* Writes to the Player log. */
     void (*log)(void* host, int32_t level, const char* message);
+
+    /* ABI 1.1 (struct_size covers the fields below). */
+
+    /*
+     * Fails the request with a UTF-8 message: the script's call throws
+     * PXJS7902 with it, whatever status the handler returns. At most one of
+     * respond or respond_error per handler call. The message is copied and
+     * cut to PX_PLUGIN_MAX_ERROR_MESSAGE bytes.
+     */
+    PxStatus (*respond_error)(PxResponse* response, const char* message);
+    /*
+     * The folder holding this library (UTF-8, absolute, no trailing
+     * separator), valid while the library is loaded: where it finds files it
+     * ships beside itself, such as another library to load at run time.
+     */
+    const char* plugin_directory;
 } PxHostApi;
 
 typedef uint32_t (*PxPluginAbiVersionFn)(void);

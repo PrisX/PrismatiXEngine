@@ -184,7 +184,8 @@ int main() {
         px::graphics::Renderer2D renderer(device.Renderer(), assets, true);
         renderer.SetLogicalSize(640, 360);
         // Layer-1 raw drawing: a render target sampled on screen, a mesh
-        // masked by another mesh and a writable texture.
+        // masked by an invisible mesh, two masks united, an inverted mask
+        // and a writable texture.
         {
             px::script::ScriptRawGraphics raw(&renderer);
             const auto quad = [](const float x, const float y, const float w, const float h,
@@ -212,7 +213,14 @@ int main() {
                 !raw.CreateTexture("tex", 2, 2, nullptr) &&
                 !raw.UploadTexture("tex", blue, sizeof blue, std::nullopt) &&
                 mesh("tile", {{"texture", px::Variant(px::VariantObject{{"kind", "texture"}, {"id", "tex"}})}},
-                     quad(500, 100, 60, 60, 1, 1, 1, 1));
+                     quad(500, 100, 60, 60, 1, 1, 1, 1)) &&
+                mesh("left", {{"visible", false}}, quad(300, 220, 30, 80, 1, 1, 1, 1)) &&
+                // An additive mask still covers: masks draw source-over.
+                mesh("right", {{"visible", false}, {"blend", "additive"}}, quad(370, 220, 30, 80, 1, 1, 1, 1)) &&
+                mesh("both", {{"mask", px::VariantArray{px::Variant("left"), px::Variant("right")}}},
+                     quad(300, 220, 100, 80, 0, 1, 0, 1)) &&
+                mesh("hole", {{"visible", false}}, quad(500, 220, 50, 80, 1, 1, 1, 1)) &&
+                mesh("around", {{"mask", "hole"}, {"maskInverted", true}}, quad(500, 220, 100, 80, 0, 0, 1, 1));
             ClearFrame(device.Renderer());
             raw.Render(px::script::RenderPhase::AfterStage, {}, {});
             SaveVisualArtifact(device.Renderer(), "raw-layer-one");
@@ -221,10 +229,13 @@ int main() {
             const bool sampled = pixels && at(132, 132).r > 200 && at(132, 132).g < 60;
             const bool masked = pixels && at(325, 150).g > 200 && at(375, 150).g < 60;
             const bool textured = pixels && at(530, 130).b > 200 && at(530, 130).r < 60;
+            const bool united = pixels && at(315, 260).g > 200 && at(350, 260).g < 60 && at(385, 260).g > 200;
+            const bool inverted = pixels && at(525, 260).b < 60 && at(575, 260).b > 200;
             if (pixels) SDL_DestroySurface(pixels);
-            if (!built || !sampled || !masked || !textured) {
+            if (!built || !sampled || !masked || !textured || !united || !inverted) {
                 std::cerr << "FAIL: raw drawing (built " << built << ", target " << sampled
-                          << ", mask " << masked << ", texture " << textured << ")\n";
+                          << ", mask " << masked << ", texture " << textured << ", masks united " << united
+                          << ", inverted mask " << inverted << ")\n";
                 result = 1;
             }
         }

@@ -140,6 +140,9 @@ struct ScriptServices {
     // Folders holding `<extension id>/<library>` for native extensions (the
     // distribution's Plugins folder). PRISMATIX_NATIVE_PLUGIN_PATH comes first.
     std::vector<std::string> nativePluginDirectories;
+    // Seeds every extension's `ctx.random` (mixed with its id); unset, each
+    // new session draws a seed from the system. QA and tests set it.
+    std::optional<std::uint64_t> randomSeed;
 };
 
 struct DebugBreakpoint {

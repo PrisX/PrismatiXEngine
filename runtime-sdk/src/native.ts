@@ -13,6 +13,7 @@
 // services its manifest lists in `native.services`.
 
 import type {Unsubscribe} from "./index.js";
+import {decodeUtf8, encodeUtf8} from "./text.js";
 
 /** The `EngineNative` host object the Player installs (what `createPrismatiXNative` wraps). */
 export interface PrismatiXNativeHost {
@@ -51,40 +52,7 @@ declare global {
   var EngineNative: PrismatiXNativeHost;
 }
 
-/** UTF-8 encoding (the sandbox has no TextEncoder). */
-export function encodeUtf8(text: string): Uint8Array {
-  const bytes: number[] = [];
-  for (const character of text) {
-    let code = character.codePointAt(0)!;
-    if (code >= 0xd800 && code <= 0xdfff) code = 0xfffd;
-    if (code < 0x80) bytes.push(code);
-    else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 63));
-    else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
-    else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 63), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
-  }
-  return new Uint8Array(bytes);
-}
-
-/** UTF-8 decoding; malformed sequences become U+FFFD. */
-export function decodeUtf8(bytes: Uint8Array): string {
-  let text = "";
-  for (let index = 0; index < bytes.length;) {
-    const first = bytes[index]!;
-    const length = first < 0x80 ? 1 : first >= 0xf0 && first < 0xf5 ? 4 : first >= 0xe0 ? 3 : first >= 0xc2 && first < 0xe0 ? 2 : 0;
-    let code = length === 1 ? first : length === 2 ? first & 31 : length === 3 ? first & 15 : first & 7;
-    let valid = length > 0 && index + length <= bytes.length;
-    for (let offset = 1; valid && offset < length; offset += 1) {
-      const next = bytes[index + offset]!;
-      if ((next & 0xc0) !== 0x80) valid = false;
-      code = (code << 6) | (next & 63);
-    }
-    if (valid && (length === 3 && (code < 0x800 || (code >= 0xd800 && code <= 0xdfff)) || length === 4 && (code < 0x10000 || code > 0x10ffff)))
-      valid = false;
-    text += valid ? String.fromCodePoint(code) : "�";
-    index += valid ? length : 1;
-  }
-  return text;
-}
+export {encodeUtf8, decodeUtf8};
 
 function bytesOf(payload: NativePayload | undefined): Uint8Array {
   return payload === undefined ? new Uint8Array(0) : typeof payload === "string" ? encodeUtf8(payload) : payload;

@@ -66,11 +66,15 @@ Parameter types map to `boolean`, `number` (integer/number), `string` (a string 
 - `ctx.log.info/warn/error` write to the Player log, like the sandbox `console`.
 - The Player refuses a call whose capability the manifest's `capabilities` do not list: `ui` for `defineAction` and `ctx.ui` routes, `audio`, `video`, `animation`, `persistence` for `ctx.saves` and `ctx.state`, `render` for retained `ctx.renderer.upsert/remove/clear`, `input` for `ctx.input.actionPressed/actionDown`, `raw.mesh`/`raw.texture`/`raw.target` for `@prismatix/runtime/raw`, `native` for `@prismatix/runtime/native`, and `runtime` for the rest. Builds warn about a call the manifest does not cover (`PXCLIEXT2004`).
 
+### Random numbers, binary resources and text
+
+`Math.random` and `Date` are disabled in the sandbox. `ctx.random` (`next`, `int`, `range`, `chance`, `pick`, `shuffle`) draws from a generator that belongs to the extension, is seeded by the engine for each new session and is saved with the game, so after a load or rollback the same numbers follow; draws inside a command or Action are journaled like other engine operations. `ctx.assets.readBytes(path)` returns a packaged file's bytes as a `Uint8Array` (at most 64 MiB). `@prismatix/runtime/text` has the helpers the sandbox lacks: `encodeUtf8`/`decodeUtf8`, `toBase64`/`fromBase64` (standard or URL-safe) and `toHex`/`fromHex`; they need no capability.
+
 ### Lower layers: `@prismatix/runtime/raw` and `@prismatix/runtime/native`
 
 Two separate entries sit beside the facade ([docs/native-extensions.md](../docs/native-extensions.md)):
 
-- `@prismatix/runtime/raw` (experimental, every platform): `createPrismatiXRaw()` builds meshes from `Float32Array` vertices and `Uint16Array`/`Uint32Array` indices with blend modes and masks, writes pixels into textures and draws into render targets. It is presentation only (never saved or rolled back) and has per-frame vertex and upload budgets.
+- `@prismatix/runtime/raw` (experimental, every platform): `createPrismatiXRaw()` builds meshes from `Float32Array` vertices and `Uint16Array`/`Uint32Array` indices with blend modes and masks (one mesh or a united list, optionally inverted), writes pixels into textures and draws into render targets. `mesh.geometry(vertices, indices)` and `raw.upload([...])` send vertices and indices together, a whole batch of meshes as one upload. It is presentation only (never saved or rolled back) and has per-frame vertex and upload budgets.
 - `@prismatix/runtime/native` (desktop): `createPrismatiXNative()` calls the named services of the extension's signed C library with bytes in and bytes out (`request`, `requestText`, `requestJson`, `onMessage`). The Web Player loads no libraries, so there `has()` is false.
 - Player log lines and errors that name a bundle position (`main.js:12:5`) are shown at the TypeScript line by `prismatix test` and while `prismatix run` plays the game. With `--json`, `run` writes each extension log line (an error with its stack, a warning, `ctx.log`/`console` output) as a `run.extension` record whose `span` is the `.ts` file, line and column of the first authored frame; Studio's 試玩 console and its problems list show them there.
 

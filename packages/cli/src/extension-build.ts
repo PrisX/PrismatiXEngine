@@ -59,7 +59,7 @@ async function esbuild(): Promise<typeof import("esbuild")> {
 // The entries of @prismatix/runtime an extension may import: the facade and
 // the experimental layer-1 ("raw") and layer-2 ("native") modules. Each is a
 // single module without imports, inlined into the bundle.
-const runtimeSubpaths = ["raw", "native"] as const;
+const runtimeSubpaths = ["raw", "native", "text"] as const;
 
 interface RuntimeFiles {
   readonly entry: string;
@@ -170,11 +170,16 @@ function sandboxPlugin(runtimeSources: ReadonlyMap<string, string>): Plugin {
     setup(context) {
       context.onResolve({filter: new RegExp(`^@prismatix/runtime(?:/(?:${runtimeSubpaths.join("|")}))?$`)}, (args) =>
         ({path: args.path, namespace: runtimeNamespace}));
+      // One runtime module importing another ("./text.js" in native.js).
+      context.onResolve({filter: new RegExp("^\\./[a-z]+\\.js$"), namespace: runtimeNamespace}, (args) => {
+        const name = args.path.slice(2, -3);
+        return {path: name === "index" ? "@prismatix/runtime" : `@prismatix/runtime/${name}`, namespace: runtimeNamespace};
+      });
       context.onLoad({filter: new RegExp(".*"), namespace: runtimeNamespace}, (args) =>
         ({contents: runtimeSources.get(args.path) ?? "", loader: "js"}));
       context.onResolve({filter: new RegExp("^@prismatix/(?:runtime/sandbox|authoring-sdk|cli)(?:/.*)?$")}, (args) => ({
         errors: [{text: `"${args.path}" is build-time tooling; the Player cannot load it. ` +
-          "Import \"@prismatix/runtime\" (or its \"/raw\" and \"/native\" entries) in extension code."}]}));
+          "Import \"@prismatix/runtime\" (or its \"/raw\", \"/native\" and \"/text\" entries) in extension code."}]}));
       context.onResolve({filter: new RegExp("^[^./]")}, (args) => nodeBuiltins.has(args.path) ? {
         errors: [{text: `"${args.path}" is a Node.js module. Extensions run in the Player's sandbox, ` +
           "which has no filesystem, network, process or timer modules."}]} : undefined);
@@ -271,8 +276,8 @@ const contextMemberCapabilities: Readonly<Record<string, string>> = {
 // @prismatix/runtime/raw and /native: the receiver's type names the capability
 // of every member that reaches the Player (the rest only read limits or stats).
 const memberCapabilities: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  PrismatiXRaw: {createMesh: "raw.mesh", mesh: "raw.mesh", createTexture: "raw.texture", createTarget: "raw.target"},
-  RawMesh: {update: "raw.mesh", vertices: "raw.mesh", indices: "raw.mesh", destroy: "raw.mesh"},
+  PrismatiXRaw: {createMesh: "raw.mesh", mesh: "raw.mesh", upload: "raw.mesh", createTexture: "raw.texture", createTarget: "raw.target"},
+  RawMesh: {update: "raw.mesh", vertices: "raw.mesh", indices: "raw.mesh", geometry: "raw.mesh", destroy: "raw.mesh"},
   RawTexture: {upload: "raw.texture", destroy: "raw.texture"},
   RawTarget: {update: "raw.target", destroy: "raw.target"},
   PrismatiXNative: {services: "native", has: "native", request: "native", requestText: "native",
@@ -281,7 +286,7 @@ const memberCapabilities: Readonly<Record<string, Readonly<Record<string, string
 };
 /** The capability an `EngineRaw` call needs; Limits, Stats and Clear need none. */
 export function rawCapability(name: string): string | undefined {
-  if (/Mesh$|^Upload(?:Vertices|Indices)$/u.test(name)) return "raw.mesh";
+  if (/Mesh$|^Upload(?:Vertices|Indices|Geometry|Batch)$/u.test(name)) return "raw.mesh";
   if (/Texture$/u.test(name)) return "raw.texture";
   if (/Target$/u.test(name)) return "raw.target";
   return undefined;

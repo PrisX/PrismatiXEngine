@@ -23,6 +23,15 @@
 //   upload calls and upload bytes. An upload over budget throws RangeError
 //   PXJS7801; a mesh that would draw past the vertex budget is skipped for
 //   that frame and counted in `stats().skippedMeshes`.
+// - Every upload call counts once: `vertices`, `indices`, `geometry` and a
+//   whole `upload([...])` batch. Many meshes changing every frame (a
+//   Live2D-style model) go in one `upload` batch.
+// - Indices are checked against the vertices the mesh has after the call,
+//   so on a separate `indices` call upload the vertices first; `geometry`
+//   and `upload` take both at once.
+// - Heavy per-vertex math belongs in a native service (layer 2) or in the
+//   mesh `transform`; QuickJS is an interpreter, so tens of thousands of
+//   vertices transformed in script each frame are slow.
 
 import type {Color, Rect, RenderPhase, Unsubscribe} from "./index.js";
 
@@ -67,11 +76,14 @@ export interface RawMeshOptions {
   readonly texture?: RawTextureSource | null;
   readonly blend?: RawBlendMode;
   /**
-   * The id of another mesh whose coverage (its alpha, after its own texture
-   * and vertex colors) masks this one. The mask mesh still draws by itself
-   * unless it is not `visible`. Screen meshes only.
+   * Other meshes whose coverage (alpha, after their own texture and vertex
+   * colors) masks this one; with several, their coverage is united. A mask
+   * mesh still draws by itself unless it is not `visible`, and an invisible
+   * mesh still masks. At most 16; screen meshes only.
    */
-  readonly mask?: string | null;
+  readonly mask?: string | readonly string[] | null;
+  /** Show this mesh where the masks are not (default false). */
+  readonly maskInverted?: boolean;
   /** Draw into this render target (each frame, before the screen) instead of the screen. */
   readonly target?: string | null;
   /** Applied to the vertex positions (logical pixels, or target pixels). */
@@ -126,6 +138,16 @@ export interface RawFrameStats {
   readonly targets: number;
 }
 
+/** One mesh's part of an `upload` batch: vertices, indices or both. */
+export interface RawUploadPart {
+  readonly mesh: string;
+  /** Replaces the vertices, or with `firstVertex` overwrites that range. */
+  readonly vertices?: Float32Array;
+  readonly firstVertex?: number;
+  /** Checked against the vertices this part leaves. */
+  readonly indices?: Uint16Array | Uint32Array;
+}
+
 /** The `EngineRaw` host object the Player installs (what `createPrismatiXRaw` wraps). */
 export interface PrismatiXRawHost {
   Limits(): RawLimits;
@@ -136,6 +158,10 @@ export interface PrismatiXRawHost {
   UploadVertices(id: string, vertices: Float32Array, firstVertex?: number): void;
   /** Replaces the indices; omitted indices draw the vertices as a triangle list. */
   UploadIndices(id: string, indices: Uint16Array | Uint32Array): void;
+  /** Replaces the vertices and, when given, the indices: one upload. */
+  UploadGeometry(id: string, vertices: Float32Array, indices?: Uint16Array | Uint32Array): void;
+  /** Applies every part or none, and counts as one upload; each mesh at most once. */
+  UploadBatch(parts: readonly RawUploadPart[]): void;
   DestroyMesh(id: string): boolean;
   CreateTexture(id: string, width: number, height: number, options?: RawTextureOptions): boolean;
   /** RGBA8, rows top to bottom, `region.w * region.h * 4` bytes (the whole texture without a region). */
@@ -153,6 +179,8 @@ export interface RawMesh {
   update(options: RawMeshOptions): boolean;
   vertices(data: Float32Array, firstVertex?: number): void;
   indices(data: Uint16Array | Uint32Array): void;
+  /** Vertices and indices in one upload (no ordering to get right). */
+  geometry(vertices: Float32Array, indices?: Uint16Array | Uint32Array): void;
   destroy(): boolean;
 }
 
@@ -185,6 +213,8 @@ export interface PrismatiXRaw {
   mesh(id: string): RawMesh;
   createTexture(id: string, width: number, height: number, options?: RawTextureOptions): RawTexture;
   createTarget(id: string, width: number, height: number, options?: RawTargetOptions): RawTarget;
+  /** Uploads to many meshes as one upload call (the bytes still count). */
+  upload(parts: readonly RawUploadPart[]): void;
   /** A packaged image as a mesh texture source. */
   asset(path: string): RawTextureSource;
   /** Destroys every raw resource of this extension. */
@@ -208,6 +238,8 @@ function meshHandle(host: PrismatiXRawHost, id: string): RawMesh {
     update: (options: RawMeshOptions) => host.UpdateMesh(id, options),
     vertices: (data: Float32Array, firstVertex?: number) => host.UploadVertices(id, data, firstVertex),
     indices: (data: Uint16Array | Uint32Array) => host.UploadIndices(id, data),
+    geometry: (vertices: Float32Array, indices?: Uint16Array | Uint32Array) =>
+      host.UploadGeometry(id, vertices, indices),
     destroy: () => host.DestroyMesh(id),
   });
 }
@@ -239,6 +271,7 @@ export function createPrismatiXRaw(host: PrismatiXRawHost = globalThis.EngineRaw
         destroy: () => host.DestroyTarget(id),
       });
     },
+    upload: (parts) => host.UploadBatch(parts),
     asset: (path) => Object.freeze({kind: "asset", path}),
     clear: () => host.Clear(),
     onFrame: (draw) => {

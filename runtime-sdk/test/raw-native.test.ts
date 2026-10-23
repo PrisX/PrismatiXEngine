@@ -1,6 +1,7 @@
-import {createPrismatiXNative, decodeUtf8, encodeUtf8, type PrismatiXNativeHost} from "../src/native.js";
+import {createPrismatiXNative, encodeUtf8 as nativeEncodeUtf8, type PrismatiXNativeHost} from "../src/native.js";
 import {createPrismatiXRaw, QUAD_INDICES, quadVertices, RAW_VERTEX_STRIDE, type PrismatiXRawHost} from "../src/raw.js";
-import type {PrismatiXEngine} from "../src/index.js";
+import {decodeUtf8, encodeUtf8, fromBase64, fromHex, toBase64, toHex} from "../src/text.js";
+import {createPrismatiXContext, type PrismatiXEngine} from "../src/index.js";
 
 // Plain assertions: this package compiles without Node.js types.
 function equal(actual: unknown, expected: unknown, message = "mismatch"): void {
@@ -103,4 +104,56 @@ await test("the native facade sends bytes, text and JSON and polls messages", ()
   } finally {
     globalThis.Engine = previous;
   }
+});
+
+await test("geometry and upload batches reach EngineRaw as one call each", () => {
+  const {host, calls} = recorder<PrismatiXRawHost>();
+  const raw = createPrismatiXRaw(host);
+  const body = raw.createMesh("live2d.body", {mask: ["live2d.clip.a", "live2d.clip.b"], maskInverted: true});
+  body.geometry(quadVertices({x: 0, y: 0, w: 1, h: 1}), QUAD_INDICES);
+  raw.upload([{mesh: "live2d.body", vertices: new Float32Array(8), firstVertex: 2},
+    {mesh: "live2d.arm", vertices: new Float32Array(24), indices: new Uint16Array([0, 1, 2])}]);
+  equal(calls.map(([name]) => name), ["CreateMesh", "UploadGeometry", "UploadBatch"]);
+  equal(calls[0]![1][1], {mask: ["live2d.clip.a", "live2d.clip.b"], maskInverted: true});
+  equal((calls[2]![1][0] as unknown[]).length, 2);
+});
+
+await test("text helpers: base64 (RFC 4648 vectors), hex and strict UTF-8", () => {
+  const vectors: [string, string][] = [["", ""], ["f", "Zg=="], ["fo", "Zm8="], ["foo", "Zm9v"], ["foob", "Zm9vYg=="],
+    ["fooba", "Zm9vYmE="], ["foobar", "Zm9vYmFy"]];
+  for (const [text, encoded] of vectors) {
+    equal(toBase64(encodeUtf8(text)), encoded, `toBase64(${text})`);
+    equal(decodeUtf8(fromBase64(encoded)), text, `fromBase64(${encoded})`);
+  }
+  const bytes = new Uint8Array([251, 255, 0, 62, 63]);
+  equal(toBase64(bytes), "+/8APj8=");
+  equal(toBase64(bytes, true), "-_8APj8");
+  equal([...fromBase64("-_8APj8")], [...bytes]);
+  equal([...fromBase64(" +/8A\nPj8= ")], [...bytes]);
+  equal(toHex(bytes), "fbff003e3f");
+  equal([...fromHex("FBff003E3f")], [...bytes]);
+  for (const bad of [() => fromBase64("Zm9v!"), () => fromBase64("Zm9vY"), () => fromHex("abc"), () => fromHex("zz")]) {
+    let threw = false;
+    try { bad(); } catch (error) { threw = error instanceof TypeError; }
+    equal(threw, true, "malformed input throws TypeError");
+  }
+  equal(decodeUtf8(new Uint8Array([0xf5, 0x80, 0x80, 0x80])), "����", "0xF5 never leads");
+  equal(nativeEncodeUtf8, encodeUtf8, "native re-exports the text helpers");
+});
+
+await test("ctx.random draws from the engine's saved generator", () => {
+  const draws = [0, 0.999999, 0.5, 0.25, 0.75, 0.1, 0.9];
+  let index = 0;
+  const engine = {Random: () => draws[index++ % draws.length]!} as unknown as PrismatiXEngine;
+  const random = createPrismatiXContext(engine).random;
+  equal([random.int(1, 6), random.int(1, 6), random.int(1, 6)], [1, 6, 4]);
+  equal(random.range(10, 20), 12.5);
+  equal(random.chance(0.5), false);
+  equal(random.pick(["a", "b", "c"]), "a");
+  equal(random.pick([]), undefined);
+  const shuffled = random.shuffle([1, 2, 3, 4]);
+  equal([...shuffled].sort(), [1, 2, 3, 4], "a shuffle is a permutation");
+  let threw = false;
+  try { random.int(1.2, 1.8); } catch (error) { threw = error instanceof RangeError; }
+  equal(threw, true, "an empty integer range throws");
 });

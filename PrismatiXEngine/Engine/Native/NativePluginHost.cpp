@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <cstring>
+#include <optional>
 #include <string>
 
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
@@ -25,6 +27,8 @@
 struct PxResponse {
     std::vector<std::uint8_t> data;
     bool responded = false;
+    // Set by respond_error: the request fails with this message.
+    std::optional<std::string> error;
 };
 
 namespace px::native {
@@ -68,6 +72,7 @@ struct NativePluginHost::State {
     std::string extensionId;
     std::string engineVersion;
     std::string platform;
+    std::string pluginDirectory;
     std::vector<std::string> declared;
     std::map<std::string, Service, std::less<>> services;
     Log log;
@@ -81,6 +86,9 @@ struct NativePluginHost::State {
 };
 
 namespace {
+
+// The host functions exist only where libraries load (not on the Web or Android).
+#if defined(PRISMATIX_NATIVE_PLUGINS)
 
 constexpr std::size_t kMaxLibraryBytes = 256U * 1024U * 1024U;
 constexpr std::size_t kMaxQueuedMessages = 256;
@@ -112,6 +120,21 @@ PxStatus Respond(PxResponse* response, const std::uint8_t* data, const std::size
     return PX_OK;
 }
 
+PxStatus RespondError(PxResponse* response, const char* message) {
+    if (!response || !message) return PX_ERROR_INVALID_ARGUMENT;
+    if (response->responded) return PX_ERROR_STATE;
+    std::string text(message, ::strnlen(message, PX_PLUGIN_MAX_ERROR_MESSAGE));
+    // Never cut a UTF-8 sequence in half.
+    if (text.size() == PX_PLUGIN_MAX_ERROR_MESSAGE) {
+        std::size_t end = text.size();
+        while (end > 0 && (static_cast<unsigned char>(text[end - 1]) & 0xc0) == 0x80) --end;
+        if (end > 0 && static_cast<unsigned char>(text[end - 1]) >= 0xc0) text.resize(end - 1);
+    }
+    response->error = std::move(text);
+    response->responded = true;
+    return PX_OK;
+}
+
 PxStatus PostServiceMessage(void* host, const char* service, const std::uint8_t* data,
                      const std::size_t size) {
     auto* state = StateOf(host);
@@ -132,8 +155,6 @@ void LogMessage(void* host, const std::int32_t level, const char* message) {
     if (!state || !message || !state->log) return;
     state->log(level, "[" + state->extensionId + "] " + message);
 }
-
-#if defined(PRISMATIX_NATIVE_PLUGINS)
 
 std::filesystem::path Utf8Path(const std::string& value) {
     return std::filesystem::path(
@@ -301,6 +322,13 @@ std::unique_ptr<NativePluginHost> NativePluginHost::Load(
     auto& state = *host->m_state;
     state.extensionId = spec.extensionId;
     state.platform = spec.platform;
+    {
+        const auto absolute = std::filesystem::absolute(*folder).lexically_normal().u8string();
+        state.pluginDirectory.assign(reinterpret_cast<const char*>(absolute.data()), absolute.size());
+        while (state.pluginDirectory.size() > 1 &&
+               (state.pluginDirectory.back() == '/' || state.pluginDirectory.back() == '\\'))
+            state.pluginDirectory.pop_back();
+    }
     state.declared = spec.services;
     state.log = std::move(log);
     std::string error;
@@ -332,6 +360,8 @@ std::unique_ptr<NativePluginHost> NativePluginHost::Load(
     state.api.respond = &Respond;
     state.api.post_message = &PostServiceMessage;
     state.api.log = &LogMessage;
+    state.api.respond_error = &RespondError;
+    state.api.plugin_directory = state.pluginDirectory.c_str();
     state.initializing = true;
     const PxStatus status = init(&state.api);
     state.initializing = false;
@@ -372,6 +402,10 @@ std::optional<std::vector<std::uint8_t>> NativePluginHost::Request(
     const auto handler = reinterpret_cast<PxServiceHandler>(found->second.handler);
     static const std::uint8_t empty = 0;
     const PxStatus status = handler(found->second.userData, size == 0 ? &empty : data, size, &response);
+    if (response.error) {
+        failure = {"PXJS7902", "The native service '" + std::string(service) + "' failed: " + *response.error};
+        return std::nullopt;
+    }
     if (status != PX_OK) {
         failure = {"PXJS7902", "The native service '" + std::string(service) +
                                    "' failed with status " + std::to_string(status)};

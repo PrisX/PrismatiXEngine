@@ -15,6 +15,21 @@ The packages always carry the same version and pin each other exactly.
 
 ### Added
 
+- Extension building blocks from the first Live2D-style extension.
+  `ctx.random` (`next`, `int`, `range`, `chance`, `pick`, `shuffle`; the new
+  `Engine.Random`): a per-extension generator the engine seeds each session
+  and saves with the game, so loads and rollbacks repeat the same draws
+  (`ScriptServices::randomSeed` fixes the seed for QA and tests).
+  `ctx.assets.readBytes` (`Engine.ReadResourceBytes`, up to 64 MiB).
+  `@prismatix/runtime/text`: UTF-8, base64 and hex without TextEncoder or
+  atob. Raw drawing: `mesh.geometry(vertices, indices)` and
+  `raw.upload([...])` (`EngineRaw.UploadGeometry`, `EngineRaw.UploadBatch`)
+  send vertices and indices together, a batch of meshes as one upload that
+  applies all or nothing; `mask` takes a list of up to 16 meshes whose
+  coverage is united, and `maskInverted` flips it. Native ABI 1.1:
+  `respond_error` fails a request with a message the script sees, and
+  `plugin_directory` names the library's folder.
+
 - Two lower extension layers ([docs/native-extensions.md](docs/native-extensions.md)).
   Layer 1, `@prismatix/runtime/raw` (experimental, every Player including the
   WebGL2 and WebGPU Web Players): `createPrismatiXRaw()` over the new

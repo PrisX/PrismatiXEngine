@@ -1440,6 +1440,50 @@ void TestRawGraphicsBudgets(px::test::Suite& suite) {
     const auto invalid = raw.CreateMesh("e", &masked);
     suite.Expect(invalid && !invalid->range,
                  "a mesh drawn into a target cannot be masked");
+
+    // A batch is one upload, checks every part first and applies all or none.
+    using Upload = px::script::ScriptRawGraphics::Upload;
+    const std::vector<float> quad(4 * 8, 0.25f);
+    const std::vector<std::uint16_t> quadIndices{0, 1, 2, 0, 2, 3};
+    const std::vector<std::uint16_t> outside{0, 1, 4};
+    raw.BeginFrame();
+    suite.Require(!raw.UploadVertices("a", triangle.data(), triangle.size(), std::nullopt),
+                  "a single upload fits the frame");
+    const std::vector<Upload> batch{
+        {.id = "b", .vertices = quad.data(), .floatCount = quad.size(), .indices16 = quadIndices.data(),
+         .indexCount = quadIndices.size(), .hasVertices = true, .hasIndices = true},
+        {.id = "c", .vertices = quad.data(), .floatCount = quad.size(), .indices16 = quadIndices.data(),
+         .indexCount = quadIndices.size(), .hasVertices = true, .hasIndices = true},
+        {.id = "d", .vertices = quad.data(), .floatCount = quad.size(), .hasVertices = true}};
+    suite.Expect(!raw.UploadBatch(batch) && number("uploads") == 2,
+                 "a batch over three meshes counts as one upload, and indices check against the vertices it brings");
+    const std::vector<Upload> broken{
+        {.id = "a", .vertices = quad.data(), .floatCount = quad.size(), .hasVertices = true},
+        {.id = "d", .indices16 = outside.data(), .indexCount = outside.size(), .hasIndices = true}};
+    raw.BeginFrame();
+    const auto refused = raw.UploadBatch(broken);
+    raw.Render(px::script::RenderPhase::AfterStage, {}, {});
+    suite.Expect(refused && refused->code == "PXJS7802" && number("uploads") == 0 && number("vertices") == 3,
+                 "a batch with one bad part changes nothing and is not counted");
+    const std::vector<Upload> twice{
+        {.id = "a", .vertices = triangle.data(), .floatCount = triangle.size(), .hasVertices = true},
+        {.id = "a", .vertices = triangle.data(), .floatCount = triangle.size(), .hasVertices = true}};
+    const auto duplicated = raw.UploadBatch(twice);
+    suite.Expect(duplicated && !duplicated->range, "a batch names each mesh at most once");
+
+    // Masks: a list unites coverage, maskInverted flips it, at most 16.
+    const px::Variant several(px::VariantObject{
+        {"mask", px::VariantArray{px::Variant("b"), px::Variant("c"), px::Variant("b")}},
+        {"maskInverted", true}});
+    suite.Expect(!raw.CreateMesh("f", &several), "a mesh takes a list of masks and maskInverted");
+    px::VariantArray many;
+    for (int index = 0; index < 17; ++index) many.emplace_back("m" + std::to_string(index));
+    const px::Variant tooMany(px::VariantObject{{"mask", many}});
+    const auto excess = raw.CreateMesh("g", &tooMany);
+    suite.Expect(excess && excess->code == "PXJS7804", "more than 16 masks throw PXJS7804");
+    const px::Variant notBoolean(px::VariantObject{{"maskInverted", "yes"}});
+    const auto wrongType = raw.CreateMesh("g", &notBoolean);
+    suite.Expect(wrongType && wrongType->code == "PXJS7803", "maskInverted must be a boolean");
 }
 
 void TestNativeSignatureInterop(px::test::Suite& suite) {
@@ -1500,6 +1544,18 @@ void TestRawAndNativeExtensions(px::test::Suite& suite) {
         EngineRaw.CreateTarget("glow", 64, 32, { clear: { r: 0, g: 0, b: 0, a: 0 } });
         EngineRaw.CreateMesh("into", { target: "glow", texture: { kind: "texture", id: "noise" } });
         note("raw.selfSample", code(() => EngineRaw.UpdateMesh("into", { texture: { kind: "target", id: "glow" } })));
+        EngineRaw.CreateMesh("pair", { mask: ["quad", "into"], maskInverted: true });
+        const square = new Float32Array(32);
+        note("raw.geometry", code(() => EngineRaw.UploadGeometry("pair", square, new Uint32Array([0, 1, 2, 0, 2, 3]))));
+        const before = EngineRaw.Stats().uploads;
+        note("raw.batch", code(() => EngineRaw.UploadBatch([
+            { mesh: "quad", vertices: square.subarray(0, 8), firstVertex: 3 },
+            { mesh: "pair", vertices: square.subarray(0, 24), indices: new Uint16Array([0, 1, 2]) }])));
+        note("raw.batchCount", String(EngineRaw.Stats().uploads - before));
+        note("raw.batchTwice", code(() => EngineRaw.UploadBatch([{ mesh: "pair", indices: new Uint16Array(3) },
+                                                                  { mesh: "pair", indices: new Uint16Array(3) }])));
+        note("raw.batchShape", code(() => EngineRaw.UploadBatch([{ mesh: "pair", vertices: [0, 0] }])));
+        note("raw.batchFirst", code(() => EngineRaw.UploadBatch([{ mesh: "pair", firstVertex: 1, indices: new Uint16Array(3) }])));
         const limits = EngineRaw.Limits();
         let budget = "ok";
         for (let index = 0; index < limits.maxUploadsPerFrame + 2 && budget === "ok"; index += 1)
@@ -1507,10 +1563,28 @@ void TestRawAndNativeExtensions(px::test::Suite& suite) {
         note("raw.budget", budget);
         const stats = EngineRaw.Stats();
         note("raw.stats", `${stats.meshes}/${stats.textures}/${stats.targets}/${stats.uploads === limits.maxUploadsPerFrame}`);
+        note("raw.random", code(() => Math.random()));
         note("raw.frozen", code(() => { "use strict"; EngineRaw.CreateMesh = null; }));
     )js");
     Write(extensions / "raw.pxextension",
           ExtensionManifest("raw", "raw.js", "\"runtime\",\"raw.mesh\",\"raw.texture\",\"raw.target\"", safety));
+
+    {
+        std::ofstream binary(extensions / "blob.bin", std::ios::binary);
+        const char bytes[]{'\x00', '\xff', '\x10', 'A'};
+        binary.write(bytes, sizeof bytes);
+    }
+    Write(extensions / "random.js", R"js(
+        const note = (name, value) => Engine.SetVariable(name, value, "session");
+        const draws = [Engine.Random(), Engine.Random(), Engine.Random()];
+        note("random.first", String(draws[0]));
+        note("random.range", String(draws.every((value) => value >= 0 && value < 1) && new Set(draws).size === 3));
+        note("random.bytes", Array.from(Engine.ReadResourceBytes("Content/Extensions/blob.bin")).join(","));
+        note("random.isBytes", String(Engine.ReadResourceBytes("Content/Extensions/blob.bin") instanceof Uint8Array));
+        Engine.on("draw", () => note("random.next", String(Engine.Random())));
+    )js");
+    Write(extensions / "random.pxextension",
+          ExtensionManifest("random-demo", "random.js", "\"runtime\"", safety));
 
     px::io::VFS vfs;
     vfs.MountDirectory(temp.path.string());
@@ -1520,6 +1594,52 @@ void TestRawAndNativeExtensions(px::test::Suite& suite) {
     services.vfs = &vfs;
     services.variables = &variables;
     services.console = [&console](const px::script::ConsoleMessage& message) { console.push_back(message); };
+
+    {
+        // ctx.random: seeded per session (fixed here), saved, restored.
+        auto seeded = services;
+        seeded.randomSeed = 42;
+        std::string first;
+        {
+            px::script::JavaScriptHost host(seeded);
+            suite.Require(host.LoadExtensionManifest("Content/Extensions/random.pxextension"),
+                          "a random extension loads");
+            first = VariableText(variables, "random.first");
+            suite.Expect(VariableText(variables, "random.range") == "true",
+                         "Engine.Random draws distinct numbers in [0, 1)");
+            suite.Expect(VariableText(variables, "random.bytes") == "0,255,16,65" &&
+                             VariableText(variables, "random.isBytes") == "true",
+                         "Engine.ReadResourceBytes returns a packaged file's bytes as a Uint8Array");
+            const auto saved = host.CaptureExtensionState();
+            suite.Require(saved && saved.Value().size() == 1 &&
+                              saved.Value()[0].providerId == "$prismatix.random",
+                          "a used generator is part of the saved extension state");
+            suite.Require(static_cast<bool>(host.Emit("draw")), "the draw listener runs");
+            const auto next = VariableText(variables, "random.next");
+            suite.Require(static_cast<bool>(host.Emit("draw")), "the draw listener runs again");
+            suite.Expect(VariableText(variables, "random.next") != next, "the generator moves on");
+            suite.Require(static_cast<bool>(host.RestoreExtensionState(saved.Value())),
+                          "the saved generator restores");
+            suite.Require(static_cast<bool>(host.Emit("draw")), "the draw listener runs after the restore");
+            suite.Expect(VariableText(variables, "random.next") == next,
+                         "after a load or rollback the same numbers follow");
+            px::script::ExtensionStates corrupt = saved.Value();
+            corrupt[0].state = px::Variant(px::VariantObject{{"state", std::string("not hex")}});
+            suite.Expect(!host.RestoreExtensionState(corrupt), "a damaged generator state is refused");
+            suite.Require(static_cast<bool>(host.RestoreExtensionState({})),
+                          "a checkpoint from before the first draw restores");
+            const auto unused = host.CaptureExtensionState();
+            suite.Expect(unused && unused.Value().empty(),
+                         "restoring a checkpoint without the generator returns it to unused");
+        }
+        {
+            px::script::JavaScriptHost host(seeded);
+            suite.Require(host.LoadExtensionManifest("Content/Extensions/random.pxextension"),
+                          "the random extension loads again");
+            suite.Expect(VariableText(variables, "random.first") == first,
+                         "the same session seed gives the same numbers");
+        }
+    }
 
     // Layer 2: the test library, signed for this platform.
     const auto platform = std::string(px::native::CurrentPlatform());
@@ -1539,12 +1659,12 @@ void TestRawAndNativeExtensions(px::test::Suite& suite) {
         spec.version = "1.0.0";
         spec.platform = platform;
         spec.abi = 1;
-        spec.services = {"test.fail", "test.echo"};
+        spec.services = {"test.fail", "test.echo", "test.explain", "test.where"};
         spec.files = {{"native/" + platform + "/" + name, px::crypto::Sha256Hex(bytes)}};
         const auto signature = px::io::SignEcdsaP256(px::native::SignatureMessage(spec), key->privateKeyHex);
         suite.Require(signature.has_value(), "the library descriptor should be signed");
         const auto nativeSection = [&](const std::string& signed_) {
-            return "\"native\":{\"abi\":1,\"services\":[\"test.echo\",\"test.fail\"],\"publicKey\":\"" +
+            return "\"native\":{\"abi\":1,\"services\":[\"test.echo\",\"test.explain\",\"test.fail\",\"test.where\"],\"publicKey\":\"" +
                 key->publicKeyHex + "\",\"libraries\":{\"" + platform + "\":{\"path\":\"" + spec.files[0].path +
                 "\",\"sha256\":\"" + spec.files[0].sha256 + "\",\"signature\":\"" + signed_ + "\"}}},";
         };
@@ -1556,6 +1676,9 @@ void TestRawAndNativeExtensions(px::test::Suite& suite) {
             note("native.echo", Array.from(EngineNative.Request("test.echo", new Uint8Array([1, 2, 3]))).join(","));
             note("native.fail", code(() => EngineNative.Request("test.fail", new Uint8Array(0))));
             note("native.undeclared", code(() => EngineNative.Request("test.undeclared", new Uint8Array(0))));
+            try { EngineNative.Request("test.explain", new Uint8Array(0)); note("native.explain", "ok"); }
+            catch (error) { note("native.explain", `${error.code}:${error.message}`); }
+            note("native.where", String.fromCharCode(...EngineNative.Request("test.where", new Uint8Array(0))));
             note("native.messages", EngineNative.TakeMessages("test.echo").map((bytes) => String.fromCharCode(...bytes)).join(","));
         )js");
         Write(extensions / "native-demo.pxextension",
@@ -1592,10 +1715,20 @@ void TestRawAndNativeExtensions(px::test::Suite& suite) {
                      "raw arguments are checked: indices in range, 8 floats per vertex, RGBA8 sizes, blend names, no self-sampling targets");
         suite.Expect(VariableText(variables, "raw.budget") == "RangeError:PXJS7801",
                      "uploads past the per-frame budget throw PXJS7801");
-        suite.Expect(VariableText(variables, "raw.stats") == "2/1/1/true",
+        suite.Expect(VariableText(variables, "raw.geometry") == "ok" &&
+                         VariableText(variables, "raw.batch") == "ok" &&
+                         VariableText(variables, "raw.batchCount") == "1",
+                     "UploadGeometry and UploadBatch upload vertices and indices together, a batch as one upload");
+        suite.Expect(VariableText(variables, "raw.batchTwice") == "TypeError:PXJS7803" &&
+                         VariableText(variables, "raw.batchShape") == "TypeError:PXJS7803" &&
+                         VariableText(variables, "raw.batchFirst") == "TypeError:PXJS7803",
+                     "a batch refuses a mesh named twice, plain arrays and firstVertex without vertices");
+        suite.Expect(VariableText(variables, "raw.stats") == "3/1/1/true",
                      "Stats reports the extension's meshes, textures, targets and uploads");
         suite.Expect(VariableText(variables, "raw.frozen") == "TypeError:undefined",
                      "EngineRaw is frozen");
+        suite.Expect(VariableText(variables, "raw.random") == "Error:undefined",
+                     "Math.random stays disabled");
         const auto state = host.CaptureExtensionState();
         suite.Expect(state && state.Value().empty(),
                      "raw resources are not part of saved extension state");
@@ -1606,7 +1739,7 @@ void TestRawAndNativeExtensions(px::test::Suite& suite) {
         suite.Require(host.LoadExtensionManifest("Content/Extensions/native-demo.pxextension"),
                       "a signed native extension loads");
         suite.Expect(VariableText(variables, "native.has") == "true" &&
-                         VariableText(variables, "native.services") == "test.echo,test.fail",
+                         VariableText(variables, "native.services") == "test.echo,test.explain,test.fail,test.where",
                      "the library registers its declared services");
         suite.Expect(VariableText(variables, "native.echo") == "3,2,1",
                      "a request carries bytes to the library and its response back");
@@ -1615,6 +1748,14 @@ void TestRawAndNativeExtensions(px::test::Suite& suite) {
                      "a failing service throws PXJS7902 and an undeclared one PXJS7901");
         suite.Expect(VariableText(variables, "native.messages") == "hi",
                      "messages the library posts reach the script");
+        suite.Expect(VariableText(variables, "native.explain") ==
+                         "PXJS7902:The native service 'test.explain' failed: no light in the scene",
+                     "respond_error carries the library's message to the script");
+        const auto where = VariableText(variables, "native.where");
+        std::error_code same;
+        suite.Expect(std::filesystem::equivalent(std::filesystem::path(reinterpret_cast<const char8_t*>(where.c_str())),
+                                                 temp.path / "Plugins" / "native-demo", same),
+                     "plugin_directory names the folder holding the library");
     }
     {
         px::script::JavaScriptHost host(services);

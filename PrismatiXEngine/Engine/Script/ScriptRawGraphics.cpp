@@ -155,11 +155,29 @@ ScriptRawGraphics::Outcome ScriptRawGraphics::ApplyMeshOptions(
             else if (*name == "target") mesh.texture = {SourceKind::Target, *text};
             else return TypeFailure("texture kind must be asset, texture or target");
         } else if (key == "mask") {
-            if (value.Type() == VariantType::Null) { mesh.mask.clear(); continue; }
-            const auto* mask = value.TryGet<std::string>();
-            if (!mask || !ValidId(*mask)) return TypeFailure("mask must be a mesh id");
-            if (*mask == id) return TypeFailure("a mesh cannot mask itself");
-            mesh.mask = *mask;
+            // A mesh id, a list of them (their coverage united) or null.
+            std::vector<std::string> masks;
+            const auto add = [&](const Variant& item) -> Outcome {
+                const auto* mask = item.TryGet<std::string>();
+                if (!mask || !ValidId(*mask)) return TypeFailure("mask must be a mesh id or a list of mesh ids");
+                if (*mask == id) return TypeFailure("a mesh cannot mask itself");
+                if (std::ranges::find(masks, *mask) == masks.end()) masks.push_back(*mask);
+                return std::nullopt;
+            };
+            if (const auto* list = value.AsArray()) {
+                if (list->size() > m_limits.masksPerMesh)
+                    return RangeFailure("PXJS7804", "a raw mesh has at most " +
+                                                        std::to_string(m_limits.masksPerMesh) + " masks");
+                for (const auto& item : *list)
+                    if (auto failure = add(item)) return failure;
+            } else if (value.Type() != VariantType::Null) {
+                if (auto failure = add(value)) return failure;
+            }
+            mesh.masks = std::move(masks);
+        } else if (key == "maskInverted") {
+            const auto* inverted = value.TryGet<bool>();
+            if (!inverted) return TypeFailure("maskInverted must be a boolean");
+            mesh.maskInverted = *inverted;
         } else if (key == "target") {
             if (value.Type() == VariantType::Null) { mesh.target.clear(); continue; }
             const auto* target = value.TryGet<std::string>();
@@ -187,7 +205,7 @@ ScriptRawGraphics::Outcome ScriptRawGraphics::ApplyMeshOptions(
     if (!mesh.target.empty() && mesh.texture.kind == SourceKind::Target &&
         mesh.texture.value == mesh.target)
         return TypeFailure("a mesh cannot sample the render target it draws into");
-    if (!mesh.target.empty() && !mesh.mask.empty())
+    if (!mesh.target.empty() && !mesh.masks.empty())
         return TypeFailure("masks apply to meshes drawn to the screen, not into a render target");
     return std::nullopt;
 }
@@ -236,60 +254,96 @@ ScriptRawGraphics::Outcome ScriptRawGraphics::CountUpload(const std::size_t byte
 ScriptRawGraphics::Outcome ScriptRawGraphics::UploadVertices(
     const std::string_view id, const float* data, const std::size_t floatCount,
     const std::optional<std::size_t> firstVertex) {
-    const auto mesh = m_meshes.find(id);
-    if (mesh == m_meshes.end()) return Unknown("mesh", id);
-    constexpr std::size_t stride = 8;
-    if (floatCount % stride != 0)
-        return TypeFailure("vertices hold 8 floats each (x, y, u, v, r, g, b, a)");
-    const std::size_t count = floatCount / stride;
-    const std::size_t first = firstVertex.value_or(0);
-    auto& vertices = mesh->second.vertices;
-    if (firstVertex && first + count > vertices.size())
-        return RangeFailure("PXJS7802", "firstVertex and the data reach past the mesh's vertices");
-    if (!firstVertex && count > m_limits.verticesPerMesh)
-        return RangeFailure("PXJS7804", "a raw mesh has at most " +
-                                            std::to_string(m_limits.verticesPerMesh) + " vertices");
-    for (std::size_t index = 0; index < floatCount; ++index)
-        if (!std::isfinite(data[index])) return TypeFailure("vertices must be finite numbers");
-    if (auto failure = CountUpload(floatCount * sizeof(float))) return failure;
-    if (!firstVertex) {
-        vertices.assign(count, {});
-        // Indices left over from more vertices would read past the new ones.
-        auto& indices = mesh->second.indices;
-        if (std::ranges::any_of(indices, [count](const int index) {
-                return static_cast<std::size_t>(index) >= count;
-            }))
-            indices.clear();
-    }
-    for (std::size_t index = 0; index < count; ++index) {
-        const float* source = data + index * stride;
-        vertices[first + index] = {source[0], source[1], source[2], source[3],
-                                   source[4], source[5], source[6], source[7]};
-    }
-    return std::nullopt;
+    const Upload upload{.id = id, .vertices = data, .floatCount = floatCount,
+                        .firstVertex = firstVertex, .hasVertices = true};
+    return UploadBatch({&upload, 1});
 }
 
 ScriptRawGraphics::Outcome ScriptRawGraphics::UploadIndices(
     const std::string_view id, const std::uint16_t* data16,
     const std::uint32_t* data32, const std::size_t count) {
-    const auto mesh = m_meshes.find(id);
-    if (mesh == m_meshes.end()) return Unknown("mesh", id);
-    if (count % 3 != 0) return TypeFailure("indices describe triangles: a multiple of 3");
-    if (count > m_limits.indicesPerMesh)
-        return RangeFailure("PXJS7804", "a raw mesh has at most " +
-                                            std::to_string(m_limits.indicesPerMesh) + " indices");
-    const std::size_t vertexCount = mesh->second.vertices.size();
-    std::vector<int> indices(count);
-    for (std::size_t index = 0; index < count; ++index) {
-        const std::uint32_t value = data16 ? data16[index] : data32[index];
-        if (value >= vertexCount)
-            return RangeFailure("PXJS7802", "index " + std::to_string(value) +
-                                                " is past the mesh's " +
-                                                std::to_string(vertexCount) + " vertices");
-        indices[index] = static_cast<int>(value);
+    const Upload upload{.id = id, .indices16 = data16, .indices32 = data32,
+                        .indexCount = count, .hasIndices = true};
+    return UploadBatch({&upload, 1});
+}
+
+ScriptRawGraphics::Outcome ScriptRawGraphics::UploadBatch(const std::span<const Upload> uploads) {
+    constexpr std::size_t stride = 8;
+    // Everything is checked before anything changes, so a failed batch
+    // leaves every mesh as it was.
+    std::vector<Mesh*> meshes;
+    meshes.reserve(uploads.size());
+    std::size_t bytes = 0;
+    for (const auto& upload : uploads) {
+        const auto found = m_meshes.find(upload.id);
+        if (found == m_meshes.end()) return Unknown("mesh", upload.id);
+        Mesh& mesh = found->second;
+        if (std::ranges::find(meshes, &mesh) != meshes.end())
+            return TypeFailure("an upload names mesh '" + std::string(upload.id) + "' twice");
+        if (!upload.hasVertices && !upload.hasIndices)
+            return TypeFailure("an upload of mesh '" + std::string(upload.id) + "' has neither vertices nor indices");
+        meshes.push_back(&mesh);
+        std::size_t vertexCount = mesh.vertices.size();
+        if (upload.hasVertices) {
+            if (upload.floatCount % stride != 0)
+                return TypeFailure("vertices hold 8 floats each (x, y, u, v, r, g, b, a)");
+            const std::size_t count = upload.floatCount / stride;
+            if (upload.firstVertex) {
+                if (*upload.firstVertex > vertexCount || count > vertexCount - *upload.firstVertex)
+                    return RangeFailure("PXJS7802", "firstVertex and the data reach past the mesh's vertices");
+            } else {
+                if (count > m_limits.verticesPerMesh)
+                    return RangeFailure("PXJS7804", "a raw mesh has at most " +
+                                                        std::to_string(m_limits.verticesPerMesh) + " vertices");
+                vertexCount = count;
+            }
+            for (std::size_t index = 0; index < upload.floatCount; ++index)
+                if (!std::isfinite(upload.vertices[index])) return TypeFailure("vertices must be finite numbers");
+            bytes += upload.floatCount * sizeof(float);
+        }
+        if (upload.hasIndices) {
+            if (upload.indexCount % 3 != 0) return TypeFailure("indices describe triangles: a multiple of 3");
+            if (upload.indexCount > m_limits.indicesPerMesh)
+                return RangeFailure("PXJS7804", "a raw mesh has at most " +
+                                                    std::to_string(m_limits.indicesPerMesh) + " indices");
+            for (std::size_t index = 0; index < upload.indexCount; ++index) {
+                const std::uint32_t value = upload.indices16 ? upload.indices16[index] : upload.indices32[index];
+                if (value >= vertexCount)
+                    return RangeFailure("PXJS7802", "index " + std::to_string(value) +
+                                                        " is past the mesh's " +
+                                                        std::to_string(vertexCount) + " vertices");
+            }
+            bytes += upload.indexCount * (upload.indices16 ? 2U : 4U);
+        }
     }
-    if (auto failure = CountUpload(count * (data16 ? 2U : 4U))) return failure;
-    mesh->second.indices = std::move(indices);
+    if (auto failure = CountUpload(bytes)) return failure;
+    for (std::size_t part = 0; part < uploads.size(); ++part) {
+        const auto& upload = uploads[part];
+        Mesh& mesh = *meshes[part];
+        if (upload.hasVertices) {
+            const std::size_t count = upload.floatCount / stride;
+            const std::size_t first = upload.firstVertex.value_or(0);
+            if (!upload.firstVertex) {
+                mesh.vertices.assign(count, {});
+                // Indices left over from more vertices would read past the new ones.
+                if (!upload.hasIndices && std::ranges::any_of(mesh.indices, [count](const int index) {
+                        return static_cast<std::size_t>(index) >= count;
+                    }))
+                    mesh.indices.clear();
+            }
+            for (std::size_t index = 0; index < count; ++index) {
+                const float* source = upload.vertices + index * stride;
+                mesh.vertices[first + index] = {source[0], source[1], source[2], source[3],
+                                                source[4], source[5], source[6], source[7]};
+            }
+        }
+        if (upload.hasIndices) {
+            mesh.indices.resize(upload.indexCount);
+            for (std::size_t index = 0; index < upload.indexCount; ++index)
+                mesh.indices[index] = static_cast<int>(upload.indices16 ? upload.indices16[index]
+                                                                        : upload.indices32[index]);
+        }
+    }
     return std::nullopt;
 }
 
@@ -476,7 +530,7 @@ graphics::TextureHandle ScriptRawGraphics::Resolve(const Source& source) const {
     return {};
 }
 
-bool ScriptRawGraphics::Draw(const Mesh& mesh) {
+bool ScriptRawGraphics::Draw(const Mesh& mesh, const bool coverage) {
     if (mesh.vertices.empty()) return true;
     const std::size_t indexCount = mesh.indices.empty() ? mesh.vertices.size() : mesh.indices.size();
     if (m_drawnVertices + mesh.vertices.size() > m_limits.verticesPerFrame ||
@@ -496,8 +550,34 @@ bool ScriptRawGraphics::Draw(const Mesh& mesh) {
                                 static_cast<int>(mesh.vertices.size()),
                                 mesh.indices.empty() ? nullptr : mesh.indices.data(),
                                 mesh.indices.empty() ? 0 : static_cast<int>(mesh.indices.size()),
-                                mesh.blend, mesh.transform);
+                                coverage ? graphics::RawBlendMode::Normal : mesh.blend,
+                                mesh.transform);
     return true;
+}
+
+void ScriptRawGraphics::DrawMasked(const Mesh& mesh) {
+    std::vector<const Mesh*> masks;
+    for (const auto& id : mesh.masks) {
+        const auto mask = m_meshes.find(id);
+        if (mask == m_meshes.end() || !mask->second.target.empty()) {
+            ++m_skippedMeshes;
+            return;
+        }
+        masks.push_back(&mask->second);
+    }
+    if (!m_renderer) {
+        if (Draw(mesh))
+            for (const auto* mask : masks) (void)Draw(*mask, true);
+        return;
+    }
+    // Never show a masked mesh unmasked: a failed mask skips it.
+    if (!m_renderer->BeginAlphaMask()) {
+        ++m_skippedMeshes;
+        return;
+    }
+    bool covered = Draw(mesh) && m_renderer->BeginAlphaMaskCoverage();
+    for (const auto* mask : masks) covered = covered && Draw(*mask, true);
+    m_renderer->EndAlphaMask(covered, mesh.maskInverted);
 }
 
 void ScriptRawGraphics::RenderTargets() {
@@ -548,27 +628,8 @@ void ScriptRawGraphics::Render(const RenderPhase phase, const std::string_view r
         return std::tie(left->order, left->sequence) < std::tie(right->order, right->sequence);
     });
     for (const auto* mesh : meshes) {
-        if (mesh->mask.empty()) {
-            (void)Draw(*mesh);
-            continue;
-        }
-        const auto mask = m_meshes.find(mesh->mask);
-        if (mask == m_meshes.end() || !mask->second.target.empty()) {
-            ++m_skippedMeshes;
-            continue;
-        }
-        if (!m_renderer) {
-            if (Draw(*mesh)) (void)Draw(mask->second);
-            continue;
-        }
-        // Never show a masked mesh unmasked: a failed mask skips it.
-        if (!m_renderer->BeginAlphaMask()) {
-            ++m_skippedMeshes;
-            continue;
-        }
-        const bool drawn = Draw(*mesh);
-        const bool covered = drawn && m_renderer->BeginAlphaMaskCoverage() && Draw(mask->second);
-        m_renderer->EndAlphaMask(covered);
+        if (mesh->masks.empty()) (void)Draw(*mesh);
+        else DrawMasked(*mesh);
     }
 }
 

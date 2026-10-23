@@ -363,9 +363,10 @@ public:
     // The caller draws content, switches to coverage, draws the mask image,
     // then ends. Failed setup leaves state unchanged; failed coverage must be
     // ended with composite=false so an unmasked layer is never exposed.
+    // `inverted` keeps the content where the coverage is not.
     [[nodiscard]] bool BeginAlphaMask();
     [[nodiscard]] bool BeginAlphaMaskCoverage();
-    void EndAlphaMask(bool composite = true);
+    void EndAlphaMask(bool composite = true, bool inverted = false);
 
     [[nodiscard]] SDL_Renderer* Handle() const { return m_renderer; }
 

@@ -48,6 +48,14 @@ SDL_BlendMode AlphaCoverageBlendMode() {
         SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_SRC_ALPHA, SDL_BLENDOPERATION_ADD);
 }
 
+SDL_BlendMode InvertedCoverageBlendMode() {
+    // One minus the mask's alpha multiplies color and alpha: the content
+    // stays where the mask is not.
+    return SDL_ComposeCustomBlendMode(
+        SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD,
+        SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD);
+}
+
 SDL_BlendMode PremultipliedBlendMode() {
     // A render target drawn with normal alpha blending contains premultiplied
     // color, so compositing it with SDL_BLENDMODE_BLEND would square alpha.
@@ -1197,9 +1205,11 @@ bool Renderer2D::BeginAlphaMaskCoverage() {
     return true;
 }
 
-void Renderer2D::EndAlphaMask(const bool composite) {
+void Renderer2D::EndAlphaMask(const bool composite, const bool inverted) {
     if (!m_maskActive || !m_renderer) return;
     bool ready = composite && m_maskCoverageActive &&
+        SDL_SetTextureBlendMode(m_maskCoverageTarget,
+            inverted ? InvertedCoverageBlendMode() : AlphaCoverageBlendMode()) &&
         SDL_SetRenderTarget(m_renderer, m_maskContentTarget);
     if (ready) {
         const bool clipEnabled = SDL_RenderClipEnabled(m_renderer);

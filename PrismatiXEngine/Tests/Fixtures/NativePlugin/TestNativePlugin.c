@@ -1,5 +1,6 @@
 /* A native extension library for JavaScriptHostIntegrationTests: "test.echo"
- * answers with the request reversed, "test.fail" always fails, and init
+ * answers with the request reversed, "test.fail" always fails, "test.explain"
+ * fails with a message, "test.where" answers with plugin_directory, and init
  * posts one "test.echo" message. */
 #define PX_PLUGIN_BUILD 1
 #include "Engine/Native/PxPluginAbi.h"
@@ -24,6 +25,17 @@ static PxStatus Fail(void* user_data, const uint8_t* request, size_t size, PxRes
     return PX_ERROR_FAILED;
 }
 
+static PxStatus Explain(void* user_data, const uint8_t* request, size_t size, PxResponse* response) {
+    (void)user_data; (void)request; (void)size;
+    g_host->respond_error(response, "no light in the scene");
+    return PX_OK;
+}
+
+static PxStatus Where(void* user_data, const uint8_t* request, size_t size, PxResponse* response) {
+    (void)user_data; (void)request; (void)size;
+    return g_host->respond(response, (const uint8_t*)g_host->plugin_directory, strlen(g_host->plugin_directory));
+}
+
 PX_PLUGIN_EXPORT uint32_t px_plugin_abi_version(void) { return PX_PLUGIN_ABI_VERSION; }
 
 PX_PLUGIN_EXPORT PxStatus px_plugin_init(const PxHostApi* host) {
@@ -32,6 +44,8 @@ PX_PLUGIN_EXPORT PxStatus px_plugin_init(const PxHostApi* host) {
     g_host = host;
     if (host->register_service(host->host, "test.echo", &Echo, NULL) != PX_OK) return PX_ERROR_FAILED;
     if (host->register_service(host->host, "test.fail", &Fail, NULL) != PX_OK) return PX_ERROR_FAILED;
+    if (host->register_service(host->host, "test.explain", &Explain, NULL) != PX_OK) return PX_ERROR_FAILED;
+    if (host->register_service(host->host, "test.where", &Where, NULL) != PX_OK) return PX_ERROR_FAILED;
     /* An undeclared service is refused. */
     if (host->register_service(host->host, "test.undeclared", &Echo, NULL) != PX_ERROR_NOT_DECLARED)
         return PX_ERROR_FAILED;

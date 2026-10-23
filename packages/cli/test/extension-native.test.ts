@@ -75,17 +75,24 @@ test("raw and native host calls without their capability are PXCLIEXT2004 warnin
   await write(join(root, "Content/Extensions/fx/main.ts"), [
     "import {createPrismatiXRaw, quadVertices, QUAD_INDICES} from \"@prismatix/runtime/raw\";",
     "import {createPrismatiXNative} from \"@prismatix/runtime/native\";",
+    "import {toBase64} from \"@prismatix/runtime/text\";",
     "const raw = createPrismatiXRaw();",
     "const mesh = raw.createMesh(\"fx.quad\", {blend: \"additive\"});",
     "mesh.vertices(quadVertices({x: 0, y: 0, w: 10, h: 10}));",
     "mesh.indices(QUAD_INDICES);",
+    "mesh.geometry(quadVertices({x: 0, y: 0, w: 10, h: 10}), QUAD_INDICES);",
+    "raw.upload([{mesh: \"fx.quad\", indices: QUAD_INDICES}]);",
     "raw.createTarget(\"fx.rt\", 64, 64);",
+    "console.log(toBase64(new Uint8Array([1, 2, 3])));",
     "createPrismatiXNative().request(\"fx.service\", \"hi\");",
     "console.log(raw.limits().maxVerticesPerFrame);", ""].join("\n"));
   const validated = await run(["validate", root]);
   assert.equal(validated.status, 0, validated.stderr);
   assert.match(validated.stderr, /PXCLIEXT2004.*raw\.createMesh.*"raw\.mesh"/u);
   assert.match(validated.stderr, /PXCLIEXT2004.*mesh\.vertices.*"raw\.mesh"/u);
+  assert.match(validated.stderr, /PXCLIEXT2004.*mesh\.geometry.*"raw\.mesh"/u);
+  assert.match(validated.stderr, /PXCLIEXT2004.*raw\.upload.*"raw\.mesh"/u);
+  assert.doesNotMatch(validated.stderr, /PXCLIEXT1001/u, "the /text entry and native's import of it bundle");
   assert.match(validated.stderr, /PXCLIEXT2004.*raw\.createTarget.*"raw\.target"/u);
   assert.match(validated.stderr, /PXCLIEXT2004.*request.*"native"/u);
   assert.doesNotMatch(validated.stderr, /raw\.limits/u, "limits needs no capability");
