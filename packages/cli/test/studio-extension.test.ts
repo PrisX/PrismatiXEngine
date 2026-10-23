@@ -16,7 +16,7 @@ const cli = resolve("dist/src/cli.js");
 
 function run(args: readonly string[]) {
   return spawnSync(process.execPath, [cli, ...args], {encoding: "utf8",
-    env: {...process.env, PRISMATIX_EXTENSION_REGISTRY: "", CI: "1"}});
+    env: {...process.env, PRISMATIX_EXTENSION_REGISTRY: "none", CI: "1"}});
 }
 
 function json(args: readonly string[]): Record<string, unknown> {

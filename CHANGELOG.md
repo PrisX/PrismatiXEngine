@@ -15,6 +15,13 @@ The packages always carry the same version and pin each other exactly.
 
 ### Added
 
+- The official extension registry, `https://illyasviel.dev`, is the default
+  when neither `--registry`, `PRISMATIX_EXTENSION_REGISTRY` nor the project's
+  `settings["extensions.registry"]` names one. `prismatix extension registry
+  none` now turns registries off for the project (the setting becomes
+  `false`; `PRISMATIX_EXTENSION_REGISTRY=none` does the same for a shell),
+  `prismatix extension registry default` removes the setting, and the
+  registry's `source` can be `default`.
 - Studio extensions (docs/studio-extensions.md): an extension can have a
   Studio side, a `studio` object in a `schemaRevision: 2` manifest with an
   `entry` (built ES module JavaScript), `requiredStudioVersion`,

@@ -350,6 +350,28 @@ test("pack is reproducible and validateExtensionPackage refuses unsafe archives"
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 
+test("the official registry is the default; none turns registries off and default brings it back", async () => {
+  const root = await project("default-registry");
+  const unset = {PRISMATIX_EXTENSION_REGISTRY: ""};
+  try {
+    const shown = await run(["extension", "registry", "--project", root, "--json"], {env: unset});
+    assert.deepEqual(last(shown.stdout), {url: "https://illyasviel.dev", source: "default"});
+    const off = await run(["extension", "registry", "none", "--project", root, "--json"], {env: unset});
+    assert.equal(off.status, 0, off.stderr);
+    assert.equal(JSON.parse(await readFile(join(root, "prismatix.json"), "utf8")).settings["extensions.registry"], false);
+    assert.deepEqual(last((await run(["extension", "registry", "--project", root, "--json"], {env: unset})).stdout),
+      {url: null, source: null});
+    const search = await run(["extension", "search", "fx", "--project", root], {env: unset});
+    assert.equal(search.status, 1);
+    assert.match(search.stderr, /turned off/u);
+    assert.equal((await run(["extension", "registry", "default", "--project", root], {env: unset})).status, 0);
+    assert.equal(JSON.parse(await readFile(join(root, "prismatix.json"), "utf8")).settings, undefined);
+    assert.deepEqual(last((await run(["extension", "registry", "--project", root, "--json"], {env: {
+      PRISMATIX_EXTENSION_REGISTRY: "https://registry.example.com"}})).stdout),
+      {url: "https://registry.example.com", source: "environment"});
+  } finally { await rm(root, {recursive: true, force: true}); }
+});
+
 test("publish, search, resolve, add, verify, update, outdated and remove against a registry", async () => {
   const registry = new MockRegistry();
   await registry.start();
@@ -358,8 +380,8 @@ test("publish, search, resolve, add, verify, update, outdated and remove against
   const env = {PRISMATIX_EXTENSION_REGISTRY: registry.base};
   try {
     await authored(author, "fx-kit", "greet");
-    // Without a registry, the error says how to set one.
-    const none = await run(["extension", "search", "fx", "--project", consumer]);
+    // With registries turned off, the error says how to name one.
+    const none = await run(["extension", "search", "fx", "--project", consumer], {env: {PRISMATIX_EXTENSION_REGISTRY: "none"}});
     assert.equal(none.status, 1);
     assert.match(none.stderr, /PRISMATIX_EXTENSION_REGISTRY/u);
 

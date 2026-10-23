@@ -38,6 +38,7 @@ import {
 } from "./extension-install.js";
 import {displayPath, packExtension} from "./extension-pack.js";
 import {
+  DEFAULT_REGISTRY,
   locateRegistry,
   noRegistryMessage,
   REGISTRY_SETTING,
@@ -77,13 +78,13 @@ export const sharingHelp = [
   "prismatix extension info <owner/name>",
   "prismatix extension publish [file.pxext | extension] [--owner <owner>]   (token: PRISMATIX_REGISTRY_TOKEN)",
   "prismatix extension yank <owner/name@version> [--undo] [--reason <text>]",
-  "prismatix extension registry [<url> | none]",
+  "prismatix extension registry [<url> | default | none]",
   "",
   "pack writes dist/extensions/<owner>-<name>-<version>.pxext from the extension's folder and its pxext.json",
   "(--owner creates pxext.json). add checks the package's SHA-256, form and engine range, shows what it may",
   "do and installs it into Extensions/<owner>/<name>/, registered and recorded in prismatix-extensions.lock;",
   "nothing in a package runs at install time. The registry is --registry, PRISMATIX_EXTENSION_REGISTRY or",
-  `the project's settings["${REGISTRY_SETTING}"]; there is no default.`,
+  `the project's settings["${REGISTRY_SETTING}"], else ${DEFAULT_REGISTRY} ("none" turns registries off).`,
   "An extension with native libraries (docs/native-extensions.md) installs only with --allow-native, which",
   "accepts code that runs outside the sandbox; --platform picks the native packs to fetch (this computer's",
   "by default; android-arm64 for an Android build). pack signs its libraries with --signing-key or",
@@ -123,7 +124,8 @@ function json(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
 }
 
-async function setRegistry(root: string, url: string | undefined): Promise<string> {
+/** Saves the project's registry: a URL, `false` (registries off) or undefined (the default registry). */
+async function setRegistry(root: string, url: string | false | undefined): Promise<string> {
   const file = await projectManifest(root);
   const path = join(root, file);
   const value = JSON.parse((await readFile(path, "utf8")).replace(/^﻿/u, "")) as {settings?: Record<string, unknown>};
@@ -240,11 +242,15 @@ export async function extensionSharingCommand(root: string | undefined, options:
 
   if (subcommand === "registry") {
     if (first !== undefined) {
-      const url = first === "none" ? undefined : first;
-      if (url !== undefined) new RegistryClient(url);
+      // "none" turns registries off for the project; "default" goes back to the official one.
+      const url = first === "none" ? false : first === "default" ? undefined : first;
+      if (typeof url === "string") new RegistryClient(url);
       const file = await setRegistry(project(), url);
-      return {status: 0, text: machine ? json({url: url ?? null, file})
-        : url === undefined ? `Removed settings["${REGISTRY_SETTING}"] from ${file}\n` : `Set settings["${REGISTRY_SETTING}"] in ${file} to ${url}\n`};
+      const location = await locateRegistry(project(), undefined, {});
+      return {status: 0, text: machine ? json({url: location?.url ?? null, source: location?.source ?? null, file})
+        : url === false ? `Turned extension registries off in ${file} (settings["${REGISTRY_SETTING}"] is false)\n`
+        : url === undefined ? `Removed settings["${REGISTRY_SETTING}"] from ${file}; the default registry ${DEFAULT_REGISTRY} applies\n`
+        : `Set settings["${REGISTRY_SETTING}"] in ${file} to ${url}\n`};
     }
     const location = await locateRegistry(root, options.values.get("registry"));
     return {status: 0, text: machine ? json({url: location?.url ?? null, source: location?.source ?? null})

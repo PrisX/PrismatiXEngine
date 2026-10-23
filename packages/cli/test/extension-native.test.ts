@@ -30,7 +30,7 @@ interface Ran {readonly status: number | null; readonly stdout: string; readonly
 function run(args: readonly string[], env: NodeJS.ProcessEnv = {}): Promise<Ran> {
   return new Promise((done) => {
     const child = spawn(process.execPath, [cli, ...args], {
-      env: {...process.env, PRISMATIX_EXTENSION_REGISTRY: "", PRISMATIX_EXTENSION_SIGNING_KEY: "", CI: "1", ...env},
+      env: {...process.env, PRISMATIX_EXTENSION_REGISTRY: "none", PRISMATIX_EXTENSION_SIGNING_KEY: "", CI: "1", ...env},
       stdio: ["ignore", "pipe", "pipe"]});
     let stdout = "";
     let stderr = "";

@@ -113,11 +113,15 @@ projects that pin it exactly, but no range resolves to it.
 npm package holds one `.pxext` at its root, or names it in `package.json`:
 `"prismatix": {"extension": "dist/owner-name-1.0.0.pxext"}`.
 
-There is no default registry. The CLI uses, in order, `--registry <url>`, the
-`PRISMATIX_EXTENSION_REGISTRY` environment variable, and the project's
+The CLI uses, in order, `--registry <url>`, the
+`PRISMATIX_EXTENSION_REGISTRY` environment variable, the project's
 `settings["extensions.registry"]`, which `prismatix extension registry <url>`
-sets (`prismatix extension registry none` removes it; without an argument it
-shows the one in use). Registry, download and upload URLs must be `https`;
+sets, and otherwise the official registry, `https://illyasviel.dev`.
+`prismatix extension registry none` turns registries off for the project (the
+setting becomes `false`; `PRISMATIX_EXTENSION_REGISTRY=none` does the same for
+one shell), `prismatix extension registry default` removes the setting, and
+without an argument it shows the one in use and where it came from
+(`flag`, `environment`, `project` or `default`). Registry, download and upload URLs must be `https`;
 `http` is accepted only for `localhost`, `127.0.0.1` and `[::1]`.
 
 ## Installing

@@ -5,9 +5,10 @@
 // files on GitHub Pages or any web host), where every route is a file:
 // `<route>/index.json`.
 //
-// There is no default registry: the URL comes from --registry, the
-// PRISMATIX_EXTENSION_REGISTRY environment variable or the project's
-// `settings["extensions.registry"]`.
+// The URL comes from --registry, the PRISMATIX_EXTENSION_REGISTRY
+// environment variable or the project's `settings["extensions.registry"]`,
+// and otherwise is the official registry (DEFAULT_REGISTRY). "none" in the
+// environment, or `false` in the project, turns registries off.
 
 import {createHash} from "node:crypto";
 import {existsSync} from "node:fs";
@@ -35,10 +36,12 @@ import {
 export const REGISTRY_SETTING = "extensions.registry";
 export const REGISTRY_ENVIRONMENT = "PRISMATIX_EXTENSION_REGISTRY";
 export const REGISTRY_TOKEN_ENVIRONMENT = "PRISMATIX_REGISTRY_TOKEN";
+/** The official registry, used when nothing else names one. */
+export const DEFAULT_REGISTRY = "https://illyasviel.dev";
 
 export interface RegistryLocation {
   readonly url: string;
-  readonly source: "flag" | "environment" | "project";
+  readonly source: "flag" | "environment" | "project" | "default";
 }
 
 const loopback = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
@@ -59,32 +62,38 @@ function normalizedBase(value: string): string {
   return url.href.replace(/\/+$/u, "");
 }
 
-async function projectSetting(root: string): Promise<string | undefined> {
+/** The project's registry: a URL, `false` when it turns registries off, undefined when it names none. */
+async function projectSetting(root: string): Promise<string | false | undefined> {
   for (const name of ["prismatix.json", "project.pxproject"]) {
     const path = join(root, name);
     if (!existsSync(path)) continue;
     try {
       const value = JSON.parse((await readFile(path, "utf8")).replace(/^﻿/u, "")) as {settings?: Record<string, unknown>};
       const setting = value.settings?.[REGISTRY_SETTING];
+      if (setting === false) return false;
       return typeof setting === "string" && setting.trim().length > 0 ? setting.trim() : undefined;
     } catch { return undefined; }
   }
   return undefined;
 }
 
-/** The configured registry, or undefined when none is set. */
+/** The registry in use, or undefined when registries are turned off. */
 export async function locateRegistry(root: string | undefined, flag?: string,
   environment: NodeJS.ProcessEnv = process.env): Promise<RegistryLocation | undefined> {
   if (flag !== undefined) return {url: normalizedBase(flag), source: "flag"};
   const fromEnvironment = environment[REGISTRY_ENVIRONMENT]?.trim();
+  if (fromEnvironment?.toLowerCase() === "none") return undefined;
   if (fromEnvironment) return {url: normalizedBase(fromEnvironment), source: "environment"};
   const fromProject = root === undefined ? undefined : await projectSetting(root);
-  return fromProject === undefined ? undefined : {url: normalizedBase(fromProject), source: "project"};
+  if (fromProject === false) return undefined;
+  return fromProject === undefined ? {url: DEFAULT_REGISTRY, source: "default"}
+    : {url: normalizedBase(fromProject), source: "project"};
 }
 
-export const noRegistryMessage = "No extension registry is configured. Set one with --registry <url>, the " +
-  `${REGISTRY_ENVIRONMENT} environment variable, or \`prismatix extension registry <url>\` (the project's ` +
-  `settings["${REGISTRY_SETTING}"] in prismatix.json). Files (./x.pxext), https URLs and npm:<package> install without one.`;
+export const noRegistryMessage = "Extension registries are turned off (the project's " +
+  `settings["${REGISTRY_SETTING}"] is false, or ${REGISTRY_ENVIRONMENT} is "none"). Name one with --registry <url>, ` +
+  `${REGISTRY_ENVIRONMENT}, or \`prismatix extension registry <url>\`; \`prismatix extension registry default\` ` +
+  `goes back to ${DEFAULT_REGISTRY}. Files (./x.pxext), https URLs and npm:<package> install without one.`;
 
 export async function requireRegistry(root: string | undefined, flag?: string): Promise<RegistryLocation> {
   const location = await locateRegistry(root, flag);
