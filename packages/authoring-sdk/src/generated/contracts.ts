@@ -65,7 +65,7 @@ export const contractManifest: Readonly<Record<string, unknown>> = {
       "extension": ".pxextension",
       "id": "extension",
       "schema": "extension.schema.json",
-      "schemaRevision": 1
+      "schemaRevision": 2
     },
     {
       "extension": "story.pxindex",
@@ -1074,11 +1074,17 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           "repository": {
             "$ref": "#/$defs/urlReference"
           },
+          "requiredStudioVersion": {
+            "$ref": "#/$defs/requiredStudioVersion"
+          },
           "screenshots": {
             "items": {
               "$ref": "#/$defs/urlReference"
             },
             "type": "array"
+          },
+          "sides": {
+            "$ref": "#/$defs/sides"
           },
           "updatedAt": {
             "$ref": "#/$defs/timestamp"
@@ -1254,6 +1260,12 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         ],
         "type": "object"
       },
+      "requiredStudioVersion": {
+        "description": "The Studio versions its Studio side runs in, when it has one.",
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      },
       "searchResponse": {
         "properties": {
           "page": {
@@ -1336,6 +1348,12 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "minLength": 1,
             "type": "string"
           },
+          "requiredStudioVersion": {
+            "$ref": "#/$defs/requiredStudioVersion"
+          },
+          "sides": {
+            "$ref": "#/$defs/sides"
+          },
           "updatedAt": {
             "$ref": "#/$defs/timestamp"
           }
@@ -1351,6 +1369,19 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "sha256": {
         "pattern": "^[0-9a-f]{64}$",
         "type": "string"
+      },
+      "sides": {
+        "description": "The sides an extension has (docs/studio-extensions.md); absent means a game side only.",
+        "items": {
+          "enum": [
+            "game",
+            "studio"
+          ]
+        },
+        "maxItems": 2,
+        "minItems": 1,
+        "type": "array",
+        "uniqueItems": true
       },
       "timestamp": {
         "maxLength": 64,
@@ -1629,6 +1660,48 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         ],
         "type": "object"
       },
+      "optionsFrom": {
+        "description": "Where Studio gets a string or token parameter's choices for a dropdown. The engine treats the value as an ordinary string.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "parameter": {
+                "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+              },
+              "pointer": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "take": {
+                "enum": [
+                  "keys",
+                  "values"
+                ]
+              }
+            },
+            "required": [
+              "parameter",
+              "pointer"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "parameter": {
         "additionalProperties": false,
         "properties": {
@@ -1672,6 +1745,9 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           "name": {
             "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
           },
+          "optionsFrom": {
+            "$ref": "#/$defs/optionsFrom"
+          },
           "range": {
             "additionalProperties": false,
             "properties": {
@@ -1692,6 +1768,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "type": "boolean"
           },
           "resourceFilter": {
+            "description": "A media kind (image/*, or an exact type/subtype) or a file-name glob (*.model3.json), or a comma-separated list of them.",
             "maxLength": 128,
             "type": "string"
           },
@@ -1756,11 +1833,238 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "sha256": {
         "pattern": "^[0-9a-f]{64}$",
         "type": "string"
+      },
+      "studio": {
+        "additionalProperties": false,
+        "description": "The Studio side (schemaRevision 2): a module PrismatiX Studio loads in a sandboxed frame. It never reaches a game.",
+        "properties": {
+          "contributes": {
+            "additionalProperties": false,
+            "properties": {
+              "assetTypes": {
+                "items": {
+                  "$ref": "#/$defs/studioAssetType"
+                },
+                "maxItems": 64,
+                "type": "array"
+              },
+              "inspectors": {
+                "items": {
+                  "$ref": "#/$defs/studioInspector"
+                },
+                "maxItems": 64,
+                "type": "array"
+              },
+              "parameterOptions": {
+                "items": {
+                  "$ref": "#/$defs/studioParameterOptions"
+                },
+                "maxItems": 64,
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "entry": {
+            "allOf": [
+              {
+                "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+              },
+              {
+                "pattern": "\\.js$",
+                "type": "string"
+              }
+            ]
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/$defs/studioPermission"
+            },
+            "maxItems": 8,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "requiredStudioVersion": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry",
+          "requiredStudioVersion"
+        ],
+        "type": "object"
+      },
+      "studioAssetType": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "displayName": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+          },
+          "patterns": {
+            "items": {
+              "$ref": "#/$defs/studioGlob"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "id",
+          "displayName",
+          "patterns"
+        ],
+        "type": "object"
+      },
+      "studioGlob": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[^/\\\\\\[\\]{}]+$",
+        "type": "string"
+      },
+      "studioInspector": {
+        "additionalProperties": false,
+        "properties": {
+          "assetType": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+          },
+          "description": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "displayName": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "assetType"
+        ],
+        "type": "object"
+      },
+      "studioParameterOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "displayName": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "studioPermission": {
+        "enum": [
+          "project.read",
+          "project.write"
+        ]
       }
     },
     "$id": "https://prismatix.dev/contracts/extension.schema.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "schemaRevision": {
+              "const": 1
+            }
+          },
+          "required": [
+            "schemaRevision"
+          ]
+        },
+        "then": {
+          "properties": {
+            "actions": {},
+            "capabilities": {},
+            "commands": {},
+            "entry": {},
+            "language": {},
+            "studio": false
+          },
+          "required": [
+            "language",
+            "entry",
+            "capabilities",
+            "commands",
+            "actions"
+          ]
+        }
+      },
+      {
+        "else": {
+          "properties": {
+            "actions": {
+              "maxItems": 0,
+              "type": "array"
+            },
+            "capabilities": {
+              "maxItems": 0,
+              "type": "array"
+            },
+            "commands": {
+              "maxItems": 0,
+              "type": "array"
+            },
+            "modules": false,
+            "native": false,
+            "platforms": false,
+            "safety": false,
+            "studio": {}
+          },
+          "required": [
+            "studio"
+          ]
+        },
+        "if": {
+          "properties": {
+            "entry": {}
+          },
+          "required": [
+            "entry"
+          ]
+        },
+        "then": {
+          "properties": {
+            "actions": {},
+            "capabilities": {},
+            "commands": {},
+            "language": {}
+          },
+          "required": [
+            "language",
+            "capabilities",
+            "commands",
+            "actions"
+          ]
+        }
+      }
+    ],
     "properties": {
       "actions": {
         "items": {
@@ -1955,7 +2259,13 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "$ref": "#/$defs/safety"
       },
       "schemaRevision": {
-        "const": 1
+        "enum": [
+          1,
+          2
+        ]
+      },
+      "studio": {
+        "$ref": "#/$defs/studio"
       },
       "version": {
         "maxLength": 64,
@@ -1966,14 +2276,9 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     "required": [
       "format",
       "schemaRevision",
-      "language",
       "id",
       "version",
-      "requiredEngineVersion",
-      "entry",
-      "capabilities",
-      "commands",
-      "actions"
+      "requiredEngineVersion"
     ],
     "type": "object"
   },
@@ -5923,8 +6228,8 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "effect.schema.json": "8707b1b1d75154000786f797b06561643a5f9881df968708a0994546e3f782bd",
   "extension-lock.schema.json": "842ae4c71560b8913c76ae1e03def3c416760edf93d3c522ebad7a570b18415f",
   "extension-package.schema.json": "bd7baa339d7a1b89d9cbd7d1db82aaabd104776712a6f270948220e6ec806ff5",
-  "extension-registry.schema.json": "9493fdcd55ae7e656fca16082cb8816fde36aee26816687753f26fbb2c096fcc",
-  "extension.schema.json": "28419cc5b2ce5c845a257937927505daec53719a6f69a8090b877b9d76df08fc",
+  "extension-registry.schema.json": "8e046a9e49d28b7867df3dee4024f8b53780ae06b24a5f0420cafa705c4abe98",
+  "extension.schema.json": "c7acfc1c4298f34f0687cd50d04a5c48b64f137465916c4041d070d0d279dead",
   "game.schema.json": "a2614c48076fc5e7554934e446f37319c556adb9f13a28f24c8592813f0dfd23",
   "locale.schema.json": "391e4abe7616d74554af376e2ae3563961215b1631cdd04faf5034016aaff774",
   "motion.schema.json": "6cc663c16bc82c6d966609bb2410bb2873ae43a16d5da3611234bec041d54268",

@@ -99,7 +99,7 @@ test("raw and native host calls without their capability are PXCLIEXT2004 warnin
   assert.match(validated.stderr, /PXCLIEXT2004.*raw\.createTarget.*"raw\.target"/u);
   assert.match(validated.stderr, /PXCLIEXT2004.*request.*"native"/u);
   assert.doesNotMatch(validated.stderr, /raw\.limits/u, "limits needs no capability");
-  await editManifest(root, "fx", (manifest) => ({...manifest, capabilities: [...manifest.capabilities, "raw.mesh", "raw.target"]}));
+  await editManifest(root, "fx", (manifest) => ({...manifest, capabilities: [...manifest.capabilities ?? [], "raw.mesh", "raw.target"]}));
   const declared = await run(["validate", root]);
   assert.equal(declared.status, 0, declared.stderr);
   assert.doesNotMatch(declared.stderr, /"raw\./u, "declared raw capabilities are not reported");
@@ -108,7 +108,7 @@ test("raw and native host calls without their capability are PXCLIEXT2004 warnin
 test("native extensions: signed packs, consent, lock hashes, platform resolution and the Web target", async () => {
   const author = await project("author");
   assert.equal((await run(["extension", "create", "glow", "--lang", "js", "--command", "shine", "--project", author])).status, 0);
-  await editManifest(author, "glow", (manifest) => ({...manifest, capabilities: [...manifest.capabilities, "native"],
+  await editManifest(author, "glow", (manifest) => ({...manifest, capabilities: [...manifest.capabilities ?? [], "native"],
     native: {abi: 1, services: ["glow.fx"], libraries: {
       "win32-x64": {path: "native/win32-x64/glow.dll", files: [{path: "native/win32-x64/helper.dll"}],
         userFiles: [{name: "Core.dll", hint: "Get it from the vendor's SDK."}]},

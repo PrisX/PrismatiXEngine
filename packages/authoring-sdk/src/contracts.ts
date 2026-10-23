@@ -2,7 +2,7 @@ import {Ajv2020, type ErrorObject, type ValidateFunction} from "ajv/dist/2020.js
 
 import {canonicalJson} from "./canonical-json.js";
 import {contractHashes, contractManifest, contractSchemas} from "./generated/contracts.js";
-import {validateSemantics, validateUiPropertyUsage, type UiTypeRegistryMetadata} from "./semantic.js";
+import {extensionShapeDiagnostics, validateSemantics, validateUiPropertyUsage, type UiTypeRegistryMetadata} from "./semantic.js";
 import type {AuthoringDiagnostic, JsonValue, Result} from "./types.js";
 
 const maximumDocumentBytes = 16 * 1024 * 1024;
@@ -65,10 +65,18 @@ export function validateDocument<T>(contractId: string, value: unknown, path?: s
       ? {value: value as T, diagnostics: [], valid: true}
       : {diagnostics, valid: false};
   }
-  const diagnostics = (validator.errors ?? []).map((error) =>
-    diagnostic("PXSDKJSON1004", "Document does not match its canonical contract", path, formatAjvError(error)),
-  );
+  const explained = contractId === "extension" ? extensionShapeDiagnostics(value, path) : [];
+  // The plain-language reasons replace the schema's cross-field errors they explain.
+  const errors = (validator.errors ?? []).filter((error) => explained.length === 0 || !explainedAjvError(error));
+  const diagnostics = [...explained, ...errors.map((error) =>
+    diagnostic("PXSDKJSON1004", "Document does not match its canonical contract", path, formatAjvError(error)))];
   return {diagnostics, valid: false};
+}
+
+function explainedAjvError(error: ErrorObject): boolean {
+  if (!error.schemaPath.startsWith("#/allOf/")) return false;
+  return ["if", "false schema", "maxItems"].includes(error.keyword) ||
+    (error.keyword === "required" && (error.params as {missingProperty?: string}).missingProperty === "studio");
 }
 
 /**

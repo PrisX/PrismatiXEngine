@@ -12,6 +12,10 @@
     "capabilities":{"type":"array","uniqueItems":true,"maxItems":64,"items":{"type":"string","maxLength":64}},
     "platforms":{"type":"array","uniqueItems":true,"maxItems":8,"items":{"$ref":"https://prismatix.dev/contracts/extension.schema.json#/$defs/platform"},
       "description":"The platforms an extension runs on; absent means every platform (a JavaScript-only extension)."},
+    "sides":{"type":"array","uniqueItems":true,"minItems":1,"maxItems":2,"items":{"enum":["game","studio"]},
+      "description":"The sides an extension has (docs/studio-extensions.md); absent means a game side only."},
+    "requiredStudioVersion":{"type":"string","minLength":1,"maxLength":128,
+      "description":"The Studio versions its Studio side runs in, when it has one."},
     "platformDownload":{
       "type":"object","required":["download","sha256","size"],
       "properties":{"download":{"$ref":"#/$defs/urlReference"},"sha256":{"$ref":"#/$defs/sha256"},"size":{"type":"integer","minimum":1}}
@@ -40,6 +44,8 @@
         "capabilities":{"$ref":"#/$defs/capabilities"},
         "platforms":{"$ref":"#/$defs/platforms"},
         "native":{"type":"boolean"},
+        "sides":{"$ref":"#/$defs/sides"},
+        "requiredStudioVersion":{"$ref":"#/$defs/requiredStudioVersion"},
         "keywords":{"type":"array","items":{"type":"string","maxLength":32}},
         "icon":{"$ref":"#/$defs/urlReference"},
         "downloads":{"type":"integer","minimum":0},
@@ -85,6 +91,8 @@
         "capabilities":{"$ref":"#/$defs/capabilities"},
         "platforms":{"$ref":"#/$defs/platforms"},
         "native":{"type":"boolean"},
+        "sides":{"$ref":"#/$defs/sides"},
+        "requiredStudioVersion":{"$ref":"#/$defs/requiredStudioVersion"},
         "latestVersion":{"oneOf":[{"$ref":"#/$defs/versionNumber"},{"type":"null"}]},
         "versions":{"type":"array","items":{"$ref":"#/$defs/versionSummary"}},
         "downloads":{"type":"integer","minimum":0},

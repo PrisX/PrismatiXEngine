@@ -29,6 +29,7 @@ import {createHash} from "node:crypto";
 
 import {
   compareSemVer,
+  extensionSides,
   manifestPlatforms,
   nativeExtensionPlatforms,
   nativePackFileName,
@@ -135,6 +136,9 @@ export async function buildExtensionIndex(entriesDirectory, outputDirectory, log
     // Absent `platforms` means every platform (a JavaScript-only extension).
     const platformsOf = (value) => value.platforms === undefined && value.native === undefined ? {}
       : {platforms: manifestPlatforms(value)};
+    // A Studio side is announced; a game-only extension leaves `sides` out.
+    const sidesOf = (value) => value.studio === undefined ? {}
+      : {sides: extensionSides(value), requiredStudioVersion: value.studio.requiredStudioVersion};
     for (const item of extension.versions) {
       // A package kept beside its entry is published next to its version document.
       if (item.url.protocol === "file:") {
@@ -179,7 +183,7 @@ export async function buildExtensionIndex(entriesDirectory, outputDirectory, log
       ...(metadata.homepage === undefined ? {} : {homepage: metadata.homepage}),
       ...(metadata.repository === undefined ? {} : {repository: metadata.repository}),
       ...(metadata.keywords === undefined ? {} : {keywords: metadata.keywords}),
-      ...media, capabilities: manifest.capabilities, ...platformsOf(manifest),
+      ...media, capabilities: manifest.capabilities ?? [], ...platformsOf(manifest), ...sidesOf(manifest),
       ...(manifest.native === undefined ? {} : {native: true}),
       latestVersion: stable[0]?.validation.version ?? null,
       versions: extension.versions.map((item) => ({version: item.validation.version,
@@ -192,7 +196,7 @@ export async function buildExtensionIndex(entriesDirectory, outputDirectory, log
       ...(metadata.displayName === undefined ? {} : {displayName: metadata.displayName}),
       ...(metadata.description ? {description: metadata.description} : {}),
       latestVersion: stable[0].validation.version, requiredEngineVersion: manifest.requiredEngineVersion,
-      capabilities: manifest.capabilities, ...platformsOf(manifest),
+      capabilities: manifest.capabilities ?? [], ...platformsOf(manifest), ...sidesOf(manifest),
       ...(manifest.native === undefined ? {} : {native: true}),
       ...(metadata.keywords === undefined ? {} : {keywords: metadata.keywords}),
       ...(media.icon === undefined ? {} : {icon: `../extensions/${extension.owner}/${extension.name}/icon.png`}),

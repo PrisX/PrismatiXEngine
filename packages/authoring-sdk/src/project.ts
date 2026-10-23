@@ -29,10 +29,12 @@ import {compileStoryProject, type StoryIndexDocument, type StoryProjectCompilati
   type StoryProjectProgress, mappedSpan} from "./story-project.js";
 import {ENGINE_VERSION} from "./version.js";
 import {bundledExtensionManifest, extensionUsesTypeScript} from "./extension-typescript.js";
+import {gameExtensionManifest, hasGameSide} from "./extension-sides.js";
 import type {
   AuthoringDiagnostic,
   CharacterDocument,
   ExtensionManifest,
+  GameExtensionManifest,
   GameDocument,
   JsonValue,
   RuntimeIrDocument,
@@ -717,10 +719,15 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     ...(input.resourceExists === undefined ? {} : {assetExists: input.resourceExists}),
   });
   diagnostics.push(...characterGraph.diagnostics);
-  const extensions: ExtensionManifest[] = [];
-  const extensionDocuments = new Map<string, ExtensionManifest>();
+  const extensions: GameExtensionManifest[] = [];
+  const extensionDocuments = new Map<string, GameExtensionManifest>();
+  // A game only ever uses an extension's game side: a Studio-only extension
+  // (no entry) is checked against its contract and then left out entirely.
+  const gameExtensionPaths: string[] = [];
   for (const path of project.extensions) {
-    const extension = documentAt<ExtensionManifest>("extension", path, documents, diagnostics);
+    const document = documentAt<ExtensionManifest>("extension", path, documents, diagnostics);
+    const extension = document !== undefined && hasGameSide(document) ? document : undefined;
+    if (document === undefined || extension !== undefined) gameExtensionPaths.push(path);
     if (extension !== undefined) {
       extensionDocuments.set(path, extension);
       const compatible = satisfiesEngineVersion(extension.requiredEngineVersion);
@@ -1673,8 +1680,11 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
 
   const runtimeIrPath = "Runtime/main.pxir";
   const sourceMapPath = "Runtime/main.pxmap";
+  // The game's project lists only the extensions with a game side.
+  const gameProject = gameExtensionPaths.length === project.extensions.length ? project
+    : {...project, extensions: gameExtensionPaths};
   const files: Record<string, string> = {
-    [projectPath]: canonicalJson(project),
+    [projectPath]: canonicalJson(gameProject),
     [project.storyIndex]: serialized(documents[project.storyIndex]),
     [project.gameCatalog]: gameDeclaredInStory ? canonicalJson(game)
       : serialized(documents[project.gameCatalog]),
@@ -1693,11 +1703,13 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   }
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) return {diagnostics, valid: false};
   for (const descriptor of project.characters ?? []) files[descriptor.source] = serialized(documents[descriptor.source]);
-  for (const path of project.extensions) {
+  for (const path of gameExtensionPaths) {
     const extension = extensionDocuments.get(path);
     const build = input.extensionBuilds?.[path];
     if (extension === undefined || build === undefined || !extensionUsesTypeScript(extension)) {
-      files[path] = serialized(documents[path]);
+      // The Player reads revision 1: a manifest with a Studio side loses it.
+      files[path] = extension === undefined || (extension.schemaRevision === 1 && extension.studio === undefined)
+        ? serialized(documents[path]) : canonicalJson(gameExtensionManifest(extension));
       continue;
     }
     const bundlePath = extensionFilePath(path, build.entry);
@@ -1705,7 +1717,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       dependency.logicalPath.toLocaleLowerCase("en-US") === bundlePath.toLocaleLowerCase("en-US")))
       diagnostics.push(issue("PXBUILD1132", "Bundled extension script collides with another artifact file",
         path, bundlePath));
-    files[path] = canonicalJson(bundledExtensionManifest(extension, build.entry));
+    files[path] = canonicalJson(bundledExtensionManifest(gameExtensionManifest(extension), build.entry));
     files[bundlePath] = build.code;
   }
   for (const [path, value] of saveMigrationDocuments) files[path] = canonicalJson(value);
@@ -1733,7 +1745,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   return {
     artifact: {
       engineVersion: ENGINE_VERSION,
-      project,
+      project: gameProject,
       runtimeIr: compiled.runtimeIr,
       sourceMap: compiled.sourceMap,
       runtimeIrPath,

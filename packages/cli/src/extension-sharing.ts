@@ -10,6 +10,7 @@ import {dirname, join, resolve} from "node:path";
 import {
   ENGINE_VERSION,
   EXTENSION_PACKAGE_SUFFIX,
+  extensionSides,
   manifestPlatforms,
   nativeExtensionPlatforms,
   nativeKeyFingerprint,
@@ -29,6 +30,7 @@ import {
   fetchExtensionPackage,
   outdatedExtensions,
   removeExtension,
+  studioSummary,
   summarizePackage,
   updateExtensions,
   verifyExtensions,
@@ -172,11 +174,13 @@ export async function extensionSharingCommand(root: string | undefined, options:
   if (subcommand === "inspect") {
     const fetched = await fetchExtensionPackage(root ?? process.cwd(), first!, installOptions(options, progress));
     const summary = root === undefined ? undefined : await summarizePackage(root, fetched);
+    const manifest = fetched.contents.manifest!;
+    const studio = studioSummary(manifest);
     const value = summary ?? {id: fetched.contents.metadata!.id, version: fetched.contents.metadata!.version,
-      sha256: fetched.sha256, size: fetched.bytes.length, source: fetched.source, capabilities: fetched.contents.manifest!.capabilities,
-      requiredEngineVersion: fetched.contents.manifest!.requiredEngineVersion,
-      ...(fetched.contents.manifest!.native === undefined ? {} : {native: fetched.contents.manifest!.native,
-        platforms: manifestPlatforms(fetched.contents.manifest!)})};
+      sha256: fetched.sha256, size: fetched.bytes.length, source: fetched.source, capabilities: manifest.capabilities ?? [],
+      requiredEngineVersion: manifest.requiredEngineVersion, sides: extensionSides(manifest),
+      ...(studio === undefined ? {} : {studio}),
+      ...(manifest.native === undefined ? {} : {native: manifest.native, platforms: manifestPlatforms(manifest)})};
     return {status: 0, text: machine ? json({...value, metadata: fetched.contents.metadata, files: [...fetched.contents.files.keys()]})
       : `${summary === undefined ? JSON.stringify(value, null, 2) : describeSummary(summary)}\n` +
         `${summary !== undefined && summary.conflicts.length > 0 ? `Conflicts: ${summary.conflicts.map((item) =>
@@ -189,7 +193,10 @@ export async function extensionSharingCommand(root: string | undefined, options:
       `${result.previous === undefined ? "Installed" : `Updated ${result.previous} ->`} ${result.id}@${result.version} into ${result.folder}`,
       ...result.summary.notes.map((note) => `Note: ${note}`),
       `Updated ${result.updated.filter((path) => path !== result.folder).join(", ")}`,
-      ...result.summary.commands.slice(0, 1).map((command) => `Use a command in Story: [${command}]`), ""].join("\n")};
+      ...result.summary.commands.slice(0, 1).map((command) => `Use a command in Story: [${command}]`),
+      ...(result.summary.studio === undefined ? [] : [`It has a Studio side (${result.summary.studio.permissions.join(", ") || "no permissions"}); ` +
+        "Studio asks each user before it loads it."]),
+      ...(result.summary.sides.includes("game") ? [] : ["It adds nothing to the game."]), ""].join("\n")};
   }
 
   if (subcommand === "remove") {

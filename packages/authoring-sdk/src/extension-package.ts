@@ -15,6 +15,9 @@
 import {validateContractDefinition, validateDocument} from "./contracts.js";
 import type {AuthoringDiagnostic, ExtensionManifest, ExtensionPlatform, NativeExtensionPlatform} from "./types.js";
 import {compareSemVer, isExactVersion, isVersionRange, parseSemVer, satisfiesVersionRange} from "./version-range.js";
+import {hasGameSide, type ExtensionSide} from "./extension-sides.js";
+
+export * from "./extension-sides.js";
 
 export const EXTENSION_PACKAGE_FORMAT = "PrismatiXExtensionPackage";
 /** The package metadata file, beside an extension's manifest and at the root of a package. */
@@ -249,7 +252,7 @@ export function nativeManifestDiagnostics(manifest: ExtensionManifest, path: str
   const diagnostics: AuthoringDiagnostic[] = [];
   const native = manifest.native;
   const declared = manifest.platforms;
-  const hasCapability = manifest.capabilities.includes("native");
+  const hasCapability = (manifest.capabilities ?? []).includes("native");
   if (native === undefined) {
     if (hasCapability)
       diagnostics.push(error("PXEXTNAT1001", "The \"native\" capability needs a \"native\" section with the libraries", path));
@@ -627,14 +630,17 @@ export function readExtensionPackage(bytes: Uint8Array): ExtensionPackageContent
     if (manifest.version !== metadata.version || parseSemVer(manifest.version) === undefined ||
         /^[vV]/u.test(manifest.version))
       diagnostics.push(error("PXEXTPKG1010", `The manifest version ${manifest.version} is not the package version ${metadata.version}`, manifestPath));
-    if (manifest.language !== "javascript")
+    if (hasGameSide(manifest) && manifest.language !== "javascript")
       diagnostics.push(error("PXEXTPKG1010", "A packaged manifest's language is javascript (pack bundles TypeScript)", manifestPath));
     if (!isVersionRange(manifest.requiredEngineVersion))
       diagnostics.push(error("PXEXTPKG1013", "requiredEngineVersion is not a SemVer range", manifestPath, manifest.requiredEngineVersion));
-    for (const script of [manifest.entry, ...manifest.modules ?? []]) {
+    // The game side's scripts and the Studio side's entry are all built JavaScript in dist/.
+    const scripts = [...hasGameSide(manifest) ? [manifest.entry, ...manifest.modules ?? []] : [],
+      ...manifest.studio === undefined ? [] : [manifest.studio.entry]];
+    for (const script of scripts) {
       referenced.add(script);
       if (!script.startsWith("dist/") || !script.endsWith(".js"))
-        diagnostics.push(error("PXEXTPKG1010", "The entry and modules of a packaged manifest are .js files in dist/", manifestPath, script));
+        diagnostics.push(error("PXEXTPKG1010", "The game entry and modules and the Studio entry of a packaged manifest are .js files in dist/", manifestPath, script));
       else if (!files.has(script)) diagnostics.push(error("PXEXTPKG1010", `The package has no ${script}`, manifestPath, script));
     }
     diagnostics.push(...nativeManifestDiagnostics(manifest, manifestPath!, true));
@@ -647,8 +653,8 @@ export function readExtensionPackage(bytes: Uint8Array): ExtensionPackageContent
     if (path.startsWith("dist/") && path.endsWith(".js")) {
       distBytes += data.length;
       if (manifest !== undefined && !referenced.has(path))
-        diagnostics.push(warning("PXEXTPKG2004", "A script in dist/ is not the manifest's entry or one of its modules", path,
-          "The Player loads only the entry and the listed modules."));
+        diagnostics.push(warning("PXEXTPKG2004", "A script in dist/ is not the manifest's entry, one of its modules or its Studio entry", path,
+          "The Player loads only the entry and the listed modules; Studio loads only studio.entry."));
       continue;
     }
     if (path.startsWith("types/") && path.endsWith(".d.ts")) continue;
@@ -765,6 +771,10 @@ export interface RegistrySearchResult {
   readonly platforms?: readonly ExtensionPlatform[];
   /** True when it loads native libraries (installing needs --allow-native). */
   readonly native?: boolean;
+  /** Its sides; absent: a game side only. */
+  readonly sides?: readonly ExtensionSide[];
+  /** The Studio versions its Studio side runs in. */
+  readonly requiredStudioVersion?: string;
   readonly keywords?: readonly string[];
   readonly icon?: string;
   readonly downloads?: number;
@@ -806,6 +816,9 @@ export interface RegistryExtension {
   readonly capabilities: readonly string[];
   readonly platforms?: readonly ExtensionPlatform[];
   readonly native?: boolean;
+  /** Its sides; absent: a game side only. */
+  readonly sides?: readonly ExtensionSide[];
+  readonly requiredStudioVersion?: string;
   readonly latestVersion?: string | null;
   /** Newest first. */
   readonly versions: readonly RegistryVersionSummary[];

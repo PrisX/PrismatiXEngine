@@ -77,7 +77,7 @@ export function validateUiActionUsage(document: unknown,
   };
   const escapePointer = (part: string) => part.replaceAll("~", "~0").replaceAll("/", "~1");
   const declarations = new Map<string, ExtensionAction>();
-  for (const extension of extensions) for (const action of extension.actions)
+  for (const extension of extensions) for (const action of extension.actions ?? [])
     declarations.set(action.id, action);
   for (const action of hostActions) declarations.set(action.id, action);
   const nodes = objects(root.nodes);

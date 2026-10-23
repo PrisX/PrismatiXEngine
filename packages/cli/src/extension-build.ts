@@ -499,6 +499,72 @@ export async function buildTypeScriptExtensions(root: string,
   return {builds, diagnostics, sources};
 }
 
+// The Studio side --------------------------------------------------------------
+// `studio.entry` is built JavaScript that PrismatiX Studio loads in a
+// sandboxed frame. When a TypeScript source sits next to it (`studio.ts` for
+// `studio.js`, or `studio.ts` beside the manifest for `dist/studio.js`), pack
+// and `prismatix extension build` bundle that source into it, as a game
+// build bundles a TypeScript entry. Games never see either file.
+
+export interface StudioBundle {
+  /** The source, relative to the manifest. */
+  readonly source: string;
+  readonly code: string;
+  readonly diagnostics: readonly AuthoringDiagnostic[];
+}
+
+/** The TypeScript source of a Studio entry, relative to its manifest, when one exists. */
+export function studioEntrySource(root: string, manifestPath: string, entry: string): string | undefined {
+  const directory = manifestDirectory(manifestPath);
+  const candidates = [entry.replace(/\.js$/iu, ".ts"),
+    ...entry.startsWith("dist/") ? [entry.slice(5).replace(/\.js$/iu, ".ts")] : []];
+  return candidates.find((candidate) => {
+    const path = resolve(root, ...joinVirtual(directory, candidate).split("/"));
+    return within(root, path) !== undefined && existsSync(path);
+  });
+}
+
+/**
+ * Bundles a Studio entry's TypeScript source and its imports into one ES
+ * module for a browser frame (no Node.js modules). Undefined when the entry
+ * has no source next to it; errors stop with PXCLIEXT1001 like a game entry.
+ */
+export async function bundleStudioEntry(root: string, manifestPath: string,
+  manifest: ExtensionManifest): Promise<StudioBundle | undefined> {
+  if (manifest.studio === undefined) return undefined;
+  const source = studioEntrySource(root, manifestPath, manifest.studio.entry);
+  if (source === undefined) return undefined;
+  const directory = manifestDirectory(manifestPath);
+  const sourceVirtual = joinVirtual(directory, source);
+  const entryPath = resolve(root, ...sourceVirtual.split("/"));
+  const outfile = resolve(root, ...joinVirtual(directory, manifest.studio.entry).split("/"));
+  let result;
+  try {
+    result = await (await esbuild()).build({
+      entryPoints: [entryPath], bundle: true, write: false,
+      format: "esm", platform: "browser", target: "es2022",
+      absWorkingDir: root, outfile, sourcemap: false,
+      mainFields: ["browser", "module", "main"], conditions: ["import", "module", "browser", "default"],
+      resolveExtensions: [".ts", ".tsx", ".mjs", ".js", ".json"],
+      charset: "utf8", legalComments: "eof", logLevel: "silent",
+      plugins: [{name: "prismatix-studio", setup(context) {
+        context.onResolve({filter: new RegExp("^[^./]")}, (args) => nodeBuiltins.has(args.path) ? {
+          errors: [{text: `"${args.path}" is a Node.js module. A Studio side runs in a sandboxed browser frame; ` +
+            "it reaches project files only through studio.project with its permissions."}]} : undefined);
+      }}],
+    });
+  } catch (error) {
+    const failure = error as {errors?: Message[]};
+    if (!Array.isArray(failure.errors)) throw error;
+    return {source, code: "", diagnostics: failure.errors.map((message) =>
+      messageDiagnostic(root, message, "PXCLIEXT1001", "error", sourceVirtual))};
+  }
+  const output = result.outputFiles.find((file) => file.path.endsWith(".js"));
+  if (output === undefined) throw new Error(`esbuild produced no JavaScript for ${sourceVirtual}`);
+  return {source, code: output.text,
+    diagnostics: result.warnings.map((message) => messageDiagnostic(root, message, "PXCLIEXT1002", "warning", sourceVirtual))};
+}
+
 // Player logs name bundle positions (`Content/Extensions/x/main.js:12:5`).
 // The cached source map turns them back into the authored TypeScript line.
 

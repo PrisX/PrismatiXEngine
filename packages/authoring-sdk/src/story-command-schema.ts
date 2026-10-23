@@ -1,4 +1,4 @@
-import type {JsonValue, ExtensionCommand, ExtensionParameter} from "./types.js";
+import type {JsonValue, ExtensionCommand, ExtensionOptionsFrom, ExtensionParameter} from "./types.js";
 import type {StoryAssetCategory} from "./story-assets.js";
 import {storyActorActions} from "./story.js";
 
@@ -103,6 +103,8 @@ export interface StoryCommandParameter {
   /** Rarely needed; editors may fold it away. */
   readonly advanced?: boolean;
   readonly description?: string;
+  /** An extension parameter's `optionsFrom`: where Studio gets choices to offer. */
+  readonly optionsFrom?: ExtensionOptionsFrom;
 }
 
 export interface StoryCommandSchema {
@@ -490,6 +492,7 @@ export function extensionCommandSchema(descriptor: ExtensionCommand): StoryComma
         ...(parameter.required === true ? {required: true} : {}),
         ...(fallback === undefined ? {} : {default: fallback}),
         ...(parameter.description === undefined ? {} : {description: parameter.description}),
+        ...(parameter.optionsFrom === undefined ? {} : {optionsFrom: parameter.optionsFrom}),
       };
     }),
   };

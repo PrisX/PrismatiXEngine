@@ -12,7 +12,7 @@
     {"id":"timeline","extension":".pxtimeline","schema":"timeline.schema.json","schemaRevision":1},
     {"id":"animation","extension":".pxanim","schema":"animation.schema.json","schemaRevision":1},
     {"id":"motion","extension":".pxmotion","schema":"motion.schema.json","schemaRevision":1},
-    {"id":"extension","extension":".pxextension","schema":"extension.schema.json","schemaRevision":1},
+    {"id":"extension","extension":".pxextension","schema":"extension.schema.json","schemaRevision":2},
     {"id":"storyIndex","extension":"story.pxindex","schema":"story-index.schema.json","schemaRevision":1},
     {"id":"game","extension":"game.pxgame","schema":"game.schema.json","schemaRevision":1},
     {"id":"locale","extension":".json","schema":"locale.schema.json","schemaRevision":1},

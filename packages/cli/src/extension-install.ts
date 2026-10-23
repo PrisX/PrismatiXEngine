@@ -7,7 +7,9 @@
 // Extensions/<owner>/<name>/ (committed with the project), registered in the
 // project's `extensions` and recorded in prismatix-extensions.lock. Nothing
 // from a package runs at install time; its scripts run only inside the
-// game's sandboxed JavaScript host, limited to the capabilities it declares.
+// game's sandboxed JavaScript host, limited to the capabilities it declares,
+// and its Studio side only in PrismatiX Studio's sandboxed frame, limited to
+// its permissions (docs/studio-extensions.md).
 
 import {createHash, randomUUID} from "node:crypto";
 import {createWriteStream, existsSync} from "node:fs";
@@ -24,6 +26,7 @@ import {
   EXTENSION_LOCK_FILE,
   extensionFilesDigest,
   extensionPackageLimits,
+  extensionSides,
   isNativeExtensionPlatform,
   isVersionRange,
   manifestPlatforms,
@@ -40,6 +43,7 @@ import {
   type AuthoringDiagnostic,
   type ExtensionManifest,
   type ExtensionNativePack,
+  type ExtensionSide,
   type ExtensionPackageContents,
   type ExtensionPackageMetadata,
   type NativeExtensionPlatform,
@@ -399,8 +403,8 @@ export function extensionConflicts(manifest: ExtensionManifest, others: readonly
     if (other.manifestPath === replacing) continue;
     if (other.manifest.id === manifest.id) conflicts.push({id: manifest.id, kind: "extension", with: other.manifestPath});
     const theirs = new Set([...other.manifest.commands ?? [], ...other.manifest.actions ?? []].map((item) => item.id));
-    for (const command of manifest.commands) if (theirs.has(command.id)) conflicts.push({id: command.id, kind: "command", with: other.manifestPath});
-    for (const action of manifest.actions) if (theirs.has(action.id)) conflicts.push({id: action.id, kind: "action", with: other.manifestPath});
+    for (const command of manifest.commands ?? []) if (theirs.has(command.id)) conflicts.push({id: command.id, kind: "command", with: other.manifestPath});
+    for (const action of manifest.actions ?? []) if (theirs.has(action.id)) conflicts.push({id: action.id, kind: "action", with: other.manifestPath});
   }
   return conflicts;
 }
@@ -429,6 +433,36 @@ export const capabilityDescriptions: Readonly<Record<string, string>> = {
   "raw.target": "draw into offscreen render targets; experimental",
   native: "call its native libraries' services",
 };
+
+export const studioPermissionDescriptions: Readonly<Record<string, string>> = {
+  "project.read": "read files inside the project",
+  "project.write": "create and overwrite files inside the project",
+};
+
+/** What a package's Studio side asks for and adds (`extension inspect --json` `studio`). */
+export interface StudioSummary {
+  readonly requiredStudioVersion: string;
+  readonly permissions: readonly string[];
+  readonly contributes: {
+    readonly assetTypes: readonly {readonly id: string; readonly displayName: string}[];
+    readonly inspectors: readonly {readonly assetType: string}[];
+    readonly parameterOptions: readonly {readonly id: string; readonly displayName?: string}[];
+  };
+}
+
+/** The Studio side of a manifest, or undefined when it has none. */
+export function studioSummary(manifest: Pick<ExtensionManifest, "studio">): StudioSummary | undefined {
+  const studio = manifest.studio;
+  if (studio === undefined) return undefined;
+  const contributes = studio.contributes ?? {};
+  return {requiredStudioVersion: studio.requiredStudioVersion, permissions: studio.permissions ?? [],
+    contributes: {
+      assetTypes: (contributes.assetTypes ?? []).map((item) => ({id: item.id, displayName: item.displayName})),
+      inspectors: (contributes.inspectors ?? []).map((item) => ({assetType: item.assetType})),
+      parameterOptions: (contributes.parameterOptions ?? []).map((item) =>
+        ({id: item.id, ...(item.displayName === undefined ? {} : {displayName: item.displayName})})),
+    }};
+}
 
 export interface NativeSummary {
   readonly services: readonly string[];
@@ -463,6 +497,10 @@ export interface PackageSummary {
   readonly capabilities: readonly string[];
   readonly commands: readonly string[];
   readonly actions: readonly string[];
+  /** "game" when it has a game side (an entry), "studio" when it has a Studio side. */
+  readonly sides: readonly ExtensionSide[];
+  /** Set when it has a Studio side. */
+  readonly studio?: StudioSummary;
   readonly yanked?: string;
   readonly installed?: {readonly version: string; readonly sha256: string};
   readonly conflicts: readonly ExtensionConflict[];
@@ -494,6 +532,7 @@ export async function summarizePackage(root: string, fetched: FetchedPackage, en
       .map((file) => ({platform, name: file.name, ...(file.hint === undefined ? {} : {hint: file.hint})}))),
     ...(keyFingerprint === undefined ? {} : {keyFingerprint}),
     ...(installed?.nativeKey !== undefined && installed.nativeKey !== keyFingerprint ? {previousKey: installed.nativeKey} : {})};
+  const studio = studioSummary(manifest);
   return {id: metadata.id, version: metadata.version!, sha256: fetched.sha256, size: fetched.bytes.length, source: fetched.source,
     ...(manifest.platforms === undefined && manifest.native === undefined ? {} : {platforms: manifestPlatforms(manifest)}),
     ...(native === undefined ? {} : {native}),
@@ -503,8 +542,9 @@ export async function summarizePackage(root: string, fetched: FetchedPackage, en
     ...(metadata.author === undefined ? {} : {author: metadata.author.name}),
     requiredEngineVersion: manifest.requiredEngineVersion, engineVersion,
     compatible: satisfiesVersionRange(engineVersion, manifest.requiredEngineVersion, {includePrerelease: true}) === true,
-    capabilities: manifest.capabilities, commands: manifest.commands.map((item) => item.id),
-    actions: manifest.actions.map((item) => item.id),
+    capabilities: manifest.capabilities ?? [], commands: (manifest.commands ?? []).map((item) => item.id),
+    actions: (manifest.actions ?? []).map((item) => item.id),
+    sides: extensionSides(manifest), ...(studio === undefined ? {} : {studio}),
     ...(fetched.yanked === undefined ? {} : {yanked: fetched.yanked}),
     ...(installed === undefined ? {} : {installed: {version: installed.version, sha256: installed.sha256}}),
     conflicts: extensionConflicts(manifest, await projectExtensions(root), installed?.manifest ?? target),
@@ -518,13 +558,20 @@ export function describeSummary(summary: PackageSummary): string {
     `  from ${summary.source}, ${summary.size} bytes, SHA-256 ${summary.sha256}`,
     ...(summary.license ? [`  license ${summary.license}`] : []),
     `  requires engine ${summary.requiredEngineVersion} (this project: ${summary.engineVersion})`,
-    "  It may:",
-    ...summary.capabilities.map((capability) => `    - ${capability}: ${capabilityDescriptions[capability] ?? capability}`),
-    `  It adds ${summary.commands.length} Story command(s)${summary.commands.length ? `: ${summary.commands.join(", ")}` : ""}`,
-    `  and ${summary.actions.length} UI Action(s)${summary.actions.length ? `: ${summary.actions.join(", ")}` : ""}.`,
+    ...(!summary.sides.includes("game")
+      ? ["  It adds nothing to the game: it has only a Studio side."]
+      : [
+        "  In the game it may:",
+        ...summary.capabilities.map((capability) => `    - ${capability}: ${capabilityDescriptions[capability] ?? capability}`),
+        `  It adds ${summary.commands.length} Story command(s)${summary.commands.length ? `: ${summary.commands.join(", ")}` : ""}`,
+        `  and ${summary.actions.length} UI Action(s)${summary.actions.length ? `: ${summary.actions.join(", ")}` : ""}.`,
+      ]),
+    ...(summary.studio === undefined ? [] : describeStudio(summary.studio)),
     ...(summary.platforms === undefined ? [] : [`  Runs on: ${summary.platforms.join(", ")}`]),
     ...(summary.native === undefined
-      ? ["  Nothing runs now; its scripts run only in the game's sandbox, limited to these capabilities."]
+      ? [summary.sides.includes("game")
+        ? "  Nothing runs now; its scripts run only in the game's sandbox, limited to these capabilities."
+        : "  Nothing runs now."]
       : [
         "  WARNING: it loads NATIVE CODE. Its libraries run inside the game process with the player's full",
         "  permissions (files, network, everything), outside the sandbox and the capabilities above. Install it",
@@ -543,6 +590,20 @@ export function describeSummary(summary: PackageSummary): string {
     ...(summary.installed ? [`  Replaces the installed ${summary.installed.version}.`] : []),
     ...summary.notes.map((note) => `  Note: ${note}`),
   ].join("\n");
+}
+
+function describeStudio(studio: StudioSummary): string[] {
+  const {assetTypes, inspectors, parameterOptions} = studio.contributes;
+  return [
+    `  In PrismatiX Studio (${studio.requiredStudioVersion}), in a sandboxed frame, it may:`,
+    ...(studio.permissions.length === 0 ? ["    - nothing beyond what Studio hands it (no permissions)"]
+      : studio.permissions.map((permission) => `    - ${permission}: ${studioPermissionDescriptions[permission] ?? permission}`)),
+    ...(assetTypes.length === 0 ? [] : [`  Asset types: ${assetTypes.map((item) => `${item.displayName} (${item.id})`).join(", ")}`]),
+    ...(inspectors.length === 0 ? [] : [`  Inspectors for: ${inspectors.map((item) => item.assetType).join(", ")}`]),
+    ...(parameterOptions.length === 0 ? [] : [`  Parameter options: ${parameterOptions.map((item) => item.displayName === undefined
+      ? item.id : `${item.displayName} (${item.id})`).join(", ")}`]),
+    "  Studio asks each user before it loads the Studio side.",
+  ];
 }
 
 // Files ----------------------------------------------------------------------
@@ -768,10 +829,12 @@ export async function updateExtensions(root: string, id: string | undefined,
       outcomes.push({id: name, from: entry.version, status: "current", reason: `the range resolves to the older ${next}`});
       continue;
     }
-    // New capabilities need the same confirmation as an install.
+    // New capabilities or Studio permissions need the same confirmation as an install.
     const installed = await readFile(join(root, ...entry.manifest.split("/")), "utf8")
       .then((text) => JSON.parse(text) as ExtensionManifest).catch(() => undefined);
-    const added = fetched.contents.manifest!.capabilities.filter((item) => !installed?.capabilities.includes(item));
+    const incoming = fetched.contents.manifest!;
+    const added = [...(incoming.capabilities ?? []).filter((item) => !(installed?.capabilities ?? []).includes(item)),
+      ...(incoming.studio?.permissions ?? []).filter((item) => !(installed?.studio?.permissions ?? []).includes(item))];
     // So does native code signed by a different key.
     const key = fetched.contents.manifest!.native?.publicKey;
     const rekeyed = key !== undefined && entry.nativeKey !== await nativeKeyFingerprint(key);

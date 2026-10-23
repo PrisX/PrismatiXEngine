@@ -119,8 +119,35 @@ export interface ExtensionParameter {
   readonly default?: JsonValue;
   readonly enum?: readonly JsonValue[];
   readonly range?: {readonly minimum?: number; readonly maximum?: number; readonly step?: number};
+  /**
+   * Type `resource` only: a media kind (`image/*`, an exact `type/subtype`) or
+   * a file-name glob (`*.model3.json`), or a comma-separated list of them.
+   */
   readonly resourceFilter?: string;
   readonly editorHint?: string;
+  /** Types `string` and `token` only, never with `enum`: where Studio gets the choices. */
+  readonly optionsFrom?: ExtensionOptionsFrom;
+}
+
+/**
+ * Where Studio gets a parameter's choices (a dropdown). The engine never
+ * checks a value against them.
+ */
+export type ExtensionOptionsFrom = ExtensionOptionsFromResource | ExtensionOptionsFromProvider;
+
+/** The keys or values at `pointer` in the JSON resource the sibling `parameter` names. */
+export interface ExtensionOptionsFromResource {
+  /** A `resource` parameter of the same command or Action. */
+  readonly parameter: string;
+  /** An RFC 6901 JSON pointer ("" is the whole document). */
+  readonly pointer: string;
+  /** Object keys (the default), or array items / object values that are strings or numbers. */
+  readonly take?: "keys" | "values";
+}
+
+/** A Studio-side `parameterOptions` contribution: `<extension id>:<contribution id>`. */
+export interface ExtensionOptionsFromProvider {
+  readonly provider: string;
 }
 
 export interface ExtensionSafety {
@@ -154,19 +181,29 @@ export interface ExtensionAction {
   readonly parameters: readonly ExtensionParameter[];
 }
 
+/**
+ * An extension manifest (`<id>.pxextension`). It has a game side (`entry` and
+ * the fields beside it) and, from schemaRevision 2, a Studio side (`studio`);
+ * at least one. Revision 1 always has the game side and never `studio`.
+ * Without `entry` (a Studio-only extension) `language`, `capabilities`,
+ * `commands` and `actions` are absent or empty; `hasGameSide` tells them apart.
+ */
 export interface ExtensionManifest {
   readonly format: "PrismatiXExtension";
-  readonly schemaRevision: 1;
-  /** TypeScript sources are bundled to JavaScript by the PrismatiX CLI. */
-  readonly language: "javascript" | "typescript";
+  readonly schemaRevision: 1 | 2;
+  /** TypeScript sources are bundled to JavaScript by the PrismatiX CLI. Present with `entry`. */
+  readonly language?: "javascript" | "typescript";
   readonly id: string;
   readonly version: string;
   readonly requiredEngineVersion: string;
-  /** A .js entry, or a .ts entry that the CLI bundles (with its imports) into one .js module. */
-  readonly entry: string;
+  /**
+   * The game side: a .js entry, or a .ts entry that the CLI bundles (with its
+   * imports) into one .js module. Absent in a Studio-only extension.
+   */
+  readonly entry?: string;
   /** ES modules that the entry is allowed to import, relative to this manifest. */
   readonly modules?: readonly string[];
-  readonly capabilities: readonly ExtensionCapability[];
+  readonly capabilities?: readonly ExtensionCapability[];
   /**
    * The platforms the extension runs on; omitted means every platform. An
    * extension with `native` libraries runs only where it has one, never on
@@ -176,8 +213,66 @@ export interface ExtensionManifest {
   /** Signed C ABI libraries (layer 2); see docs/native-extensions.md. */
   readonly native?: ExtensionNative;
   readonly safety?: ExtensionSafety;
+  readonly commands?: readonly ExtensionCommand[];
+  readonly actions?: readonly ExtensionAction[];
+  /** The Studio side (schemaRevision 2); see docs/studio-extensions.md. Never part of a game. */
+  readonly studio?: ExtensionStudio;
+}
+
+/** A manifest with a game side: what validate, build, run and pack of a game use. */
+export type GameExtensionManifest = ExtensionManifest & {
+  readonly entry: string;
+  readonly language: "javascript" | "typescript";
+  readonly capabilities: readonly ExtensionCapability[];
   readonly commands: readonly ExtensionCommand[];
   readonly actions: readonly ExtensionAction[];
+};
+
+/** What a Studio side may do; v1 has only files inside the project. */
+export type ExtensionStudioPermission = "project.read" | "project.write";
+
+/** The `studio` object of a manifest: a module PrismatiX Studio loads in a sandboxed frame. */
+export interface ExtensionStudio {
+  /** Built ESM JavaScript, relative to the manifest. */
+  readonly entry: string;
+  /** A SemVer range of Studio versions, like requiredEngineVersion. */
+  readonly requiredStudioVersion: string;
+  readonly permissions?: readonly ExtensionStudioPermission[];
+  readonly contributes?: ExtensionStudioContributions;
+}
+
+export interface ExtensionStudioContributions {
+  readonly assetTypes?: readonly ExtensionStudioAssetType[];
+  readonly inspectors?: readonly ExtensionStudioInspector[];
+  readonly parameterOptions?: readonly ExtensionStudioParameterOptions[];
+}
+
+/** Files Studio's asset browser classifies as one type, by file name, without running code. */
+export interface ExtensionStudioAssetType {
+  /** Unique within the extension; fully qualified as `<extension id>:<id>`. */
+  readonly id: string;
+  readonly displayName: string;
+  readonly description?: string;
+  /** 1 to 16 file-name globs (`*` and `?`, case-insensitive), e.g. `*.model3.json`. */
+  readonly patterns: readonly string[];
+}
+
+/** The built-in asset kinds an inspector may name besides the extension's own asset types. */
+export type ExtensionStudioBuiltinAssetKind = "image" | "audio" | "video" | "font" | "text";
+
+export interface ExtensionStudioInspector {
+  /** An `assetTypes[].id` of the same extension, or a built-in kind. At most one inspector per asset type. */
+  readonly assetType: string;
+  readonly displayName?: string;
+  readonly description?: string;
+}
+
+/** A provider of parameter choices that `optionsFrom: {provider}` names. */
+export interface ExtensionStudioParameterOptions {
+  /** Unique within the extension; fully qualified as `<extension id>:<id>`. */
+  readonly id: string;
+  readonly displayName?: string;
+  readonly description?: string;
 }
 
 export type ExtensionCapability = "runtime" | "animation" | "ui" | "audio" | "video" | "persistence" | "input" | "render" |

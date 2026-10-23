@@ -1,7 +1,8 @@
 // `prismatix extension`: create a runtime extension (TypeScript by default),
-// add commands/Actions to it, regenerate its typed declarations and list the
-// project's extensions. PrismatiX Studio's New Extension dialog runs the same
-// command, so the CLI and Studio scaffold identical files.
+// optionally with a Studio side or as a Studio-only extension, add
+// commands/Actions to it, regenerate its typed declarations, build its Studio
+// side and list the project's extensions. PrismatiX Studio's New Extension
+// dialog runs the same command, so the CLI and Studio scaffold identical files.
 
 import {existsSync} from "node:fs";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
@@ -11,21 +12,28 @@ import {fileURLToPath} from "node:url";
 import {
   ENGINE_VERSION,
   EXTENSION_TYPES_FILE,
+  extensionSides,
   extensionTypeDeclarations,
   extensionUsesTypeScript,
+  hasGameSide,
   validateDocument,
   type ExtensionAction,
   type ExtensionCommand,
   type ExtensionManifest,
+  type ExtensionStudio,
+  type GameExtensionManifest,
 } from "@prismatix/authoring-sdk";
+
+import {bundleStudioEntry, studioEntrySource} from "./extension-build.js";
 
 export const extensionHelp = [
   "Create and maintain runtime extensions: Story commands and UI Actions written in TypeScript or JavaScript.",
-  "prismatix extension create <id> [--lang ts|js] [--command <id,...>] [--action <id,...>] [--dir <folder>]",
-  "    [--project <dir>] [--no-register]",
+  "prismatix extension create <id> [--lang ts|js] [--side game|studio|both] [--command <id,...>] [--action <id,...>]",
+  "    [--dir <folder>] [--project <dir>] [--no-register]",
   "prismatix extension add-command <extension> <id> [--await] [--project <dir>]",
   "prismatix extension add-action <extension> <id> [--project <dir>]",
   "prismatix extension types [extension] [--project <dir>]",
+  "prismatix extension build [extension] [--project <dir>]",
   "prismatix extension list [--project <dir>]",
   "",
   "create writes <dir>/<id>.pxextension and its entry script (default dir Content/Extensions/<id>) and",
@@ -37,6 +45,9 @@ export const extensionHelp = [
   "declares myFx.greet). <extension> is an extension id or its manifest path. add-command/add-action",
   "declare one more id and append a handler stub to the entry; types rewrites prismatix-extension.d.ts",
   "after a hand edit of the manifest. --json prints {created, updated, manifest, entry, extension}.",
+  "--side studio creates a Studio-only extension and --side both adds a Studio side (a module PrismatiX Studio",
+  "loads in a sandboxed frame; docs/studio-extensions.md). build bundles each Studio side's TypeScript source",
+  "into its studio.entry; games never include it.",
 ];
 
 const identifier = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
@@ -144,7 +155,7 @@ export function extensionHandlerStub(kind: "command" | "action", declaration: Ex
   return [`${register}(${id}, ${awaits ? "async " : ""}${parameters} => {`, ...body, "});", ""].join("\n");
 }
 
-function entryTemplate(manifest: ExtensionManifest, manifestFile: string, typescript: boolean): string {
+function entryTemplate(manifest: GameExtensionManifest, manifestFile: string, typescript: boolean): string {
   const handlers = [
     ...manifest.commands.map((command) => extensionHandlerStub("command", command, typescript)),
     ...manifest.actions.map((action) => extensionHandlerStub("action", action, typescript)),
@@ -182,6 +193,41 @@ function entryTemplate(manifest: ExtensionManifest, manifestFile: string, typesc
     ...handlers,
   ].join("\n");
 }
+
+// The Studio side's first file: an inspector for the built-in "text" kind,
+// which its manifest declares together with the project.read permission.
+function studioTemplate(manifest: ExtensionManifest, manifestFile: string, typescript: boolean): string {
+  const entry = manifest.studio!.entry;
+  return [
+    `// ${manifest.id}: the PrismatiX Studio side of this extension.`,
+    "//",
+    `// Studio loads ${entry} in a sandboxed frame (no Node.js, no network, no access`,
+    "// to Studio's page) and calls activate. It reaches project files only through",
+    `// studio.project and ctx.readText, with the permissions ${manifestFile} asks for;`,
+    "// Studio asks each user before it loads it. Games never include it.",
+    ...(typescript ? ["// `prismatix extension build` bundles this file into " + `${entry}; pack does too.`,
+      "// Types for `studio`: @prismatix/studio-sdk."] : []),
+    "",
+    typescript ? "export function activate(studio: any): void {" : "export function activate(studio) {",
+    "  studio.inspectors.register(\"text\", {",
+    typescript ? "    async mount(element: HTMLElement, ctx: any) {" : "    async mount(element, ctx) {",
+    "      const preview = document.createElement(\"pre\");",
+    "      preview.textContent = (await ctx.readText(ctx.asset.path)).slice(0, 4000);",
+    "      element.replaceChildren(preview);",
+    "    },",
+    "  });",
+    "}",
+    "",
+  ].join("\n");
+}
+
+const studioTsconfig = `${JSON.stringify({
+  compilerOptions: {
+    target: "ES2022", module: "ESNext", moduleResolution: "Bundler", lib: ["ES2023", "DOM"],
+    strict: true, noEmit: true, isolatedModules: true, skipLibCheck: true,
+  },
+  include: ["studio.ts"],
+}, null, 2)}\n`;
 
 const tsconfig = `${JSON.stringify({
   compilerOptions: {
@@ -306,6 +352,8 @@ function checked(manifest: ExtensionManifest, path: string): void {
 export async function createExtension(root: string, id: string, options: {
   readonly language?: string; readonly commands?: readonly string[]; readonly actions?: readonly string[];
   readonly directory?: string; readonly register?: boolean;
+  /** "game" (the default), "studio" (a Studio-only extension) or "both". */
+  readonly side?: string;
 } = {}): Promise<ExtensionScaffoldResult> {
   if (!identifier.test(id) || id.length > 256)
     throw new Error(`Extension id must start with a letter or digit and use only letters, digits, ".", "_" and "-": ${id}`);
@@ -313,6 +361,11 @@ export async function createExtension(root: string, id: string, options: {
   if (!["ts", "typescript", "js", "javascript"].includes(language))
     throw new Error(`--lang must be ts or js, not ${options.language}`);
   const typescript = language.startsWith("t");
+  const side = (options.side ?? "game").toLowerCase();
+  if (!["game", "studio", "both"].includes(side)) throw new Error(`--side must be game, studio or both, not ${options.side}`);
+  const game = side !== "studio";
+  if (!game && ((options.commands ?? []).length > 0 || (options.actions ?? []).length > 0))
+    throw new Error("A Studio-only extension has no Story commands or UI Actions; use --side both");
   const directory = (options.directory ?? `Content/Extensions/${id}`).replace(/\\/gu, "/").replace(/\/+$/u, "");
   if (!safeFolder(directory)) throw new Error(`--dir must be a folder inside the project: ${options.directory}`);
   const namespace = extensionNamespace(id);
@@ -322,11 +375,17 @@ export async function createExtension(root: string, id: string, options: {
   const commands = explicit ? commandIds.map((value) => plainCommand(value)) : [exampleCommand(namespace)];
   const actions = explicit ? actionIds.map(plainAction) : [exampleAction(namespace)];
   const entry = typescript ? "main.ts" : "main.js";
+  // A TypeScript Studio side is built into dist/; a JavaScript one is loaded as written.
+  const studio: ExtensionStudio | undefined = side === "game" ? undefined : {
+    entry: typescript ? "dist/studio.js" : "studio.js", requiredStudioVersion: ">=0.1.0", permissions: ["project.read"],
+    contributes: {inspectors: [{assetType: "text", displayName: `${id} preview`}]}};
+  const gameSide = {language: typescript ? "typescript" as const : "javascript" as const, entry,
+    capabilities: actions.length > 0 ? ["runtime" as const, "ui" as const] : ["runtime" as const],
+    safety: {...safety}, commands, actions};
   const manifest: ExtensionManifest = {
-    format: "PrismatiXExtension", schemaRevision: 1, language: typescript ? "typescript" : "javascript",
-    id, version: "1.0.0", requiredEngineVersion: engineRange(ENGINE_VERSION), entry,
-    capabilities: actions.length > 0 ? ["runtime", "ui"] : ["runtime"],
-    safety: {...safety}, commands, actions,
+    format: "PrismatiXExtension", schemaRevision: studio === undefined ? 1 : 2,
+    id, version: "1.0.0", requiredEngineVersion: engineRange(ENGINE_VERSION),
+    ...(game ? gameSide : {}), ...(studio === undefined ? {} : {studio}),
   };
   const manifestFile = `${id}.pxextension`;
   const manifestPath = within(directory, manifestFile);
@@ -337,21 +396,30 @@ export async function createExtension(root: string, id: string, options: {
   const others = await projectExtensions(root);
   const taken = others.find((item) => item.manifest.id === id);
   if (taken !== undefined) throw new Error(`Extension ${id} already exists: ${taken.manifestPath}`);
-  for (const declaration of [...commands, ...actions]) {
+  for (const declaration of game ? [...commands, ...actions] : []) {
     const owner = others.find((item) => [...item.manifest.commands ?? [], ...item.manifest.actions ?? []]
       .some((other) => other.id === declaration.id));
     if (owner !== undefined) throw new Error(`${declaration.id} is already declared by ${owner.manifestPath}`);
   }
-  if (typescript && others.some((item) => extensionUsesTypeScript(item.manifest) &&
+  if (typescript && game && others.some((item) => extensionUsesTypeScript(item.manifest) &&
       directoryOf(item.manifestPath) === directory))
     throw new Error(`${directory} already holds a TypeScript extension; give each TypeScript extension its own folder (--dir)`);
+  const studioSource = typescript ? "studio.ts" : "studio.js";
   const files: [string, string][] = [
     [manifestPath, `${JSON.stringify(manifest, null, 2)}\n`],
-    [within(directory, entry), entryTemplate(manifest, manifestFile, typescript)],
-    ...(typescript ? [
-      [within(directory, "tsconfig.json"), tsconfig],
-      [within(directory, EXTENSION_TYPES_FILE), extensionTypeDeclarations(manifest, manifestFile)],
+    ...(hasGameSide(manifest) ? [
+      [within(directory, entry), entryTemplate(manifest, manifestFile, typescript)],
+      ...(typescript ? [
+        // The game's tsconfig types the sandbox; studio.ts runs in a browser frame instead.
+        [within(directory, "tsconfig.json"), studio === undefined ? tsconfig
+          : tsconfig.replace(/\n\}\n$/u, ',\n  "exclude": ["studio.ts"]\n}\n')],
+        [within(directory, EXTENSION_TYPES_FILE), extensionTypeDeclarations(manifest, manifestFile)],
+      ] as [string, string][] : []),
     ] as [string, string][] : []),
+    ...(studio === undefined ? [] : [
+      [within(directory, studioSource), studioTemplate(manifest, manifestFile, typescript)],
+      ...(typescript ? [[within(directory, game ? "tsconfig.studio.json" : "tsconfig.json"), studioTsconfig]] : []),
+    ] as [string, string][]),
   ];
   for (const [path] of files)
     if (existsSync(join(root, ...path.split("/")))) throw new Error(`${path} already exists; nothing was written`);
@@ -365,21 +433,28 @@ export async function createExtension(root: string, id: string, options: {
     updated.push(projectFile);
   } else if (options.register === false)
     notes.push(`Not registered: add "${manifestPath}" to ${projectFile} "extensions" to load it.`);
-  if (typescript) {
+  const created = files.map(([path]) => path);
+  if (studio !== undefined && typescript) {
+    const built = await buildStudioSide(root, {manifestPath, manifest});
+    if (built !== undefined) created.push(built);
+  }
+  if (typescript && game) {
     const pinned = await pinRuntime(root);
     if (pinned !== undefined) {
       updated.push(pinned);
       notes.push("Added @prismatix/runtime to package.json: install packages so editors resolve its types (builds do not need it).");
     }
   }
-  return {created: files.map(([path]) => path), updated, manifest: manifestPath,
-    entry: within(directory, entry), extension: manifest, notes};
+  return {created, updated, manifest: manifestPath,
+    entry: within(directory, game ? entry : studioSource), extension: manifest, notes};
 }
 
 export async function addDeclaration(root: string, reference: string, kind: "command" | "action",
   name: string, options: {readonly await?: boolean} = {}): Promise<ExtensionScaffoldResult> {
   const located = await findExtension(root, reference);
   const manifest = located.manifest;
+  if (!hasGameSide(manifest))
+    throw new Error(`${manifest.id} has only a Studio side; give it an "entry" (a game side) before adding a ${kind}`);
   const id = qualified(extensionNamespace(manifest.id), name);
   const others = await projectExtensions(root);
   const owner = others.find((item) => [...item.manifest.commands ?? [], ...item.manifest.actions ?? []]
@@ -420,6 +495,40 @@ export async function addDeclaration(root: string, reference: string, kind: "com
   return {created: [], updated, manifest: located.manifestPath, entry, extension: next, notes: []};
 }
 
+/**
+ * Bundles a Studio side's TypeScript source into its `studio.entry` (when it
+ * has a source next to it and the output changed). Returns the written path.
+ */
+async function buildStudioSide(root: string, located: LocatedExtension): Promise<string | undefined> {
+  const bundle = await bundleStudioEntry(root, located.manifestPath, located.manifest);
+  if (bundle === undefined) return undefined;
+  const errors = bundle.diagnostics.filter((item) => item.severity === "error");
+  if (errors.length > 0)
+    throw new Error(`The Studio side of ${located.manifest.id} does not build: ${errors.map((item) =>
+      `${item.code} ${item.message}${item.details ? ` (${item.details})` : ""}`).join("; ")}`);
+  const path = within(directoryOf(located.manifestPath), located.manifest.studio!.entry);
+  const absolute = join(root, ...path.split("/"));
+  if (existsSync(absolute) && await readFile(absolute, "utf8") === bundle.code) return undefined;
+  await mkdir(join(absolute, ".."), {recursive: true});
+  await writeFile(absolute, bundle.code, "utf8");
+  return path;
+}
+
+/** `extension build`: writes every Studio side's bundle (or the named extension's). */
+export async function buildStudioSides(root: string, reference?: string): Promise<{updated: string[]; extensions: string[]}> {
+  const all = reference === undefined ? await projectExtensions(root) : [await findExtension(root, reference)];
+  const built = all.filter((item) => item.manifest.studio !== undefined &&
+    studioEntrySource(root, item.manifestPath, item.manifest.studio.entry) !== undefined);
+  if (reference !== undefined && built.length === 0)
+    throw new Error(`${reference} has no Studio side with a TypeScript source next to its studio.entry`);
+  const updated: string[] = [];
+  for (const item of built) {
+    const path = await buildStudioSide(root, item);
+    if (path !== undefined) updated.push(path);
+  }
+  return {updated, extensions: built.map((item) => item.manifestPath)};
+}
+
 export async function writeExtensionTypes(root: string, reference?: string): Promise<{updated: string[]; extensions: string[]}> {
   const all = reference === undefined ? await projectExtensions(root) : [await findExtension(root, reference)];
   const typed = all.filter((item) => extensionUsesTypeScript(item.manifest));
@@ -451,14 +560,19 @@ export async function extensionCommand(root: string, options: CommandOptions, js
       ...(options.values.has("lang") ? {language: options.values.get("lang")!} : {}),
       commands: list(options.values.get("command")), actions: list(options.values.get("action")),
       ...(options.values.has("dir") ? {directory: options.values.get("dir")!} : {}),
+      ...(options.values.has("side") ? {side: options.values.get("side")!} : {}),
       register: !options.flags.has("no-register")});
+    const commands = result.extension.commands ?? [];
+    const actions = result.extension.actions ?? [];
     return json ? `${JSON.stringify(result)}\n` : [...result.created.map((path) => `Created ${path}`),
       ...result.updated.map((path) => `Updated ${path}`), ...result.notes, "",
-      `Use a command in Story: [${result.extension.commands[0]?.id ?? "<command>"}${result.extension.commands[0]?.parameters
-        .filter((parameter) => parameter.required).map((parameter) => ` ${parameter.name}="..."`).join("") ?? ""}]`,
-      ...(result.extension.actions[0] === undefined ? [] :
-        [`Give a button the Action: {"id":"${result.extension.actions[0].id}","arguments":{${result.extension.actions[0].parameters
-          .filter((parameter) => parameter.required).map((parameter) => `"${parameter.name}":"..."`).join(",")}}}`]), ""].join("\n");
+      ...(!hasGameSide(result.extension) ? [] : [`Use a command in Story: [${commands[0]?.id ?? "<command>"}${commands[0]?.parameters
+        .filter((parameter) => parameter.required).map((parameter) => ` ${parameter.name}="..."`).join("") ?? ""}]`]),
+      ...(actions[0] === undefined ? [] :
+        [`Give a button the Action: {"id":"${actions[0].id}","arguments":{${actions[0].parameters
+          .filter((parameter) => parameter.required).map((parameter) => `"${parameter.name}":"..."`).join(",")}}}`]),
+      ...(result.extension.studio === undefined ? [] : [`Studio loads ${result.extension.studio.entry} after each user allows it` +
+        `${/\.ts$/u.test(result.entry) ? "; rebuild it with prismatix extension build" : ""}.`]), ""].join("\n");
   }
   if (subcommand === "add-command" || subcommand === "add-action") {
     const result = await addDeclaration(root, first!, subcommand === "add-command" ? "command" : "action", second!,
@@ -471,17 +585,25 @@ export async function extensionCommand(root: string, options: CommandOptions, js
       ? `Up to date: ${result.extensions.join(", ") || "no TypeScript extensions"}\n`
       : `${result.updated.map((path) => `Updated ${path}`).join("\n")}\n`;
   }
+  if (subcommand === "build") {
+    const result = await buildStudioSides(root, first);
+    return json ? `${JSON.stringify(result)}\n` : result.updated.length === 0
+      ? `Up to date: ${result.extensions.join(", ") || "no Studio side with a TypeScript source"}\n`
+      : `${result.updated.map((path) => `Built ${path}`).join("\n")}\n`;
+  }
   if (subcommand === "list") {
     const all = await projectExtensions(root);
     if (json) return `${JSON.stringify({extensions: all.map((item) => ({manifest: item.manifestPath, id: item.manifest.id,
       language: extensionUsesTypeScript(item.manifest) ? "typescript" : "javascript", entry: item.manifest.entry,
+      sides: extensionSides(item.manifest),
       commands: (item.manifest.commands ?? []).map((command) => command.id),
       actions: (item.manifest.actions ?? []).map((action) => action.id),
       ...(installed.has(item.manifestPath) ? {package: (({id, status, entry}) => ({id, version: entry.version,
         source: entry.source, ...(entry.range === undefined ? {} : {range: entry.range}), sha256: entry.sha256, lock: status}))(
         installed.get(item.manifestPath)!)} : {})}))})}\n`;
     if (all.length === 0) return "No extensions are registered.\n";
-    return `${all.map((item) => [`${item.manifest.id} (${extensionUsesTypeScript(item.manifest) ? "TypeScript" : "JavaScript"}) ${item.manifestPath}` +
+    return `${all.map((item) => [`${item.manifest.id} (${!hasGameSide(item.manifest) ? "Studio only"
+      : `${extensionUsesTypeScript(item.manifest) ? "TypeScript" : "JavaScript"}${item.manifest.studio === undefined ? "" : " + Studio"}`}) ${item.manifestPath}` +
       (installed.has(item.manifestPath) ? ` [${installed.get(item.manifestPath)!.id}@${installed.get(item.manifestPath)!.entry.version}, ` +
         `${installed.get(item.manifestPath)!.entry.source}, lock ${installed.get(item.manifestPath)!.status}]` : ""),
       ...(item.manifest.commands ?? []).map((command) => `  command ${command.id}`),

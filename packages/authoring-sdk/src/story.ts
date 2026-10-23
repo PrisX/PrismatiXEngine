@@ -768,7 +768,7 @@ function normalizeExtensionArguments(node: StoryNode, descriptor: ExtensionComma
 function reservedMacroNames(extensions: readonly ExtensionManifest[] | undefined): Set<string> {
   return new Set([...builtinStoryCommands, ...Object.keys(builtinNamedArguments),
     ...inlineTextTagNames,
-    ...(extensions ?? []).flatMap((extension) => extension.commands.map((command) => command.id))]);
+    ...(extensions ?? []).flatMap((extension) => (extension.commands ?? []).map((command) => command.id))]);
 }
 
 /**
@@ -848,7 +848,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
   }
   const variables = new Map((game?.variables ?? []).map((value) => [value.name, value]));
   const extensions = new Map<string, ExtensionCommand>();
-  for (const extension of context.extensions ?? []) for (const command of extension.commands) extensions.set(command.id, command);
+  for (const extension of context.extensions ?? []) for (const command of extension.commands ?? []) extensions.set(command.id, command);
   const operations: RuntimeIrOperation[] = [];
   const mappings: RuntimeSourceMap["mappings"][number][] = [];
   const resourceDependencies = new Set<string>();

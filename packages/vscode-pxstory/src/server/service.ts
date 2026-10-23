@@ -334,7 +334,7 @@ export class PxstoryService {
   }
 
   private extensionCommands(scope: DocumentScope): ExtensionCommand[] {
-    return scope.model?.extensions.flatMap((extension) => extension.commands) ?? [];
+    return scope.model?.extensions.flatMap((extension) => extension.commands ?? []) ?? [];
   }
 
   private commandCompletions(scope: DocumentScope): readonly StoryCommandCompletion[] {

@@ -1,8 +1,10 @@
 // `prismatix extension pack`: one registered extension as a reproducible
 // .pxext package (docs/extensions-sharing.md). TypeScript is bundled and
-// type-checked like a build; JavaScript entries and modules are copied. The
-// same sources always give the same bytes, so anyone can rebuild a published
-// package and compare its SHA-256.
+// type-checked like a build; JavaScript entries and modules are copied. A
+// Studio side's entry (docs/studio-extensions.md) goes into dist/ too, bundled
+// from its TypeScript source when it has one. The same sources always give
+// the same bytes, so anyone can rebuild a published package and compare its
+// SHA-256.
 
 import {createHash, randomUUID} from "node:crypto";
 import {existsSync} from "node:fs";
@@ -17,6 +19,7 @@ import {
   extensionPackageFileName,
   extensionTypeDeclarations,
   extensionUsesTypeScript,
+  hasGameSide,
   isSafePackagePath,
   nativeExtensionPlatforms,
   nativePackFileName,
@@ -32,7 +35,7 @@ import {
   type NativeExtensionPlatform,
 } from "@prismatix/authoring-sdk";
 
-import {buildTypeScriptExtensions, engineCapability, rawCapability} from "./extension-build.js";
+import {buildTypeScriptExtensions, bundleStudioEntry, engineCapability, rawCapability} from "./extension-build.js";
 import {directoryOf, findExtension, projectExtensions, readObject, type LocatedExtension} from "./extension-scaffold.js";
 import {nativePackFiles, readSigningKey, sealNativeManifest, SIGNING_KEY_ENVIRONMENT} from "./extension-native.js";
 
@@ -140,9 +143,11 @@ async function packageMetadata(root: string, located: LocatedExtension, owner: s
     created.push(path);
     const readme = within(directory, "README.md");
     if (!existsSync(absolute(root, readme))) {
-      await writeFile(absolute(root, readme), [`# ${name}`, "", "What this extension adds, and how to use its Story commands and UI Actions.",
-        "", ...located.manifest.commands.map((command) => `- \`[${command.id}]\`${command.description ? `: ${command.description}` : ""}`),
-        ...located.manifest.actions.map((action) => `- Action \`${action.id}\`${action.description ? `: ${action.description}` : ""}`), ""].join("\n"),
+      await writeFile(absolute(root, readme), [`# ${name}`, "", hasGameSide(located.manifest)
+        ? "What this extension adds, and how to use its Story commands and UI Actions."
+        : "What this extension adds to PrismatiX Studio.",
+        "", ...(located.manifest.commands ?? []).map((command) => `- \`[${command.id}]\`${command.description ? `: ${command.description}` : ""}`),
+        ...(located.manifest.actions ?? []).map((action) => `- Action \`${action.id}\`${action.description ? `: ${action.description}` : ""}`), ""].join("\n"),
         {encoding: "utf8", flag: "wx"});
       created.push(readme);
     }
@@ -189,9 +194,10 @@ export async function packExtension(root: string, reference: string | undefined,
   const warnings: AuthoringDiagnostic[] = [];
   const files: ExtensionPackageFile[] = [];
 
-  // dist/: the bundle of a TypeScript extension, or the JavaScript entry and modules.
-  let packaged: ExtensionManifest;
-  if (extensionUsesTypeScript(manifest)) {
+  // dist/: the bundle of a TypeScript extension, or the JavaScript entry and
+  // modules; a Studio-only extension has neither.
+  let packaged: ExtensionManifest = manifest;
+  if (hasGameSide(manifest) && extensionUsesTypeScript(manifest)) {
     const build = await buildTypeScriptExtensions(root, {[manifestPath]: manifest}, {cache: false});
     const errors = build.diagnostics.filter((item) => item.severity === "error");
     if (errors.length > 0) throw new ExtensionPackFailure(errors);
@@ -200,7 +206,7 @@ export async function packExtension(root: string, reference: string | undefined,
     if (bundle === undefined) throw new Error(`${manifestPath}: the TypeScript entry ${manifest.entry} was not bundled`);
     files.push({path: `dist/${bundle.entry}`, data: text(bundle.code)});
     packaged = bundledExtensionManifest(manifest, `dist/${bundle.entry}`);
-  } else {
+  } else if (hasGameSide(manifest)) {
     for (const script of [manifest.entry, ...manifest.modules ?? []]) {
       const path = within(directory, script);
       if (!existsSync(absolute(root, path))) throw new Error(`${manifestPath} lists ${script}, which does not exist`);
@@ -210,6 +216,28 @@ export async function packExtension(root: string, reference: string | undefined,
     }
     packaged = {...manifest, entry: `dist/${manifest.entry}`,
       ...(manifest.modules === undefined ? {} : {modules: manifest.modules.map((module) => `dist/${module}`)})};
+  }
+
+  // The Studio side's entry: bundled from a TypeScript source next to it, or copied.
+  if (manifest.studio !== undefined) {
+    const entry = manifest.studio.entry.startsWith("dist/") ? manifest.studio.entry : `dist/${manifest.studio.entry}`;
+    const bundle = await bundleStudioEntry(root, manifestPath, manifest);
+    let code: Uint8Array;
+    if (bundle !== undefined) {
+      const errors = bundle.diagnostics.filter((item) => item.severity === "error");
+      if (errors.length > 0) throw new ExtensionPackFailure(errors);
+      warnings.push(...bundle.diagnostics);
+      code = text(bundle.code);
+    } else {
+      const path = within(directory, manifest.studio.entry);
+      if (!existsSync(absolute(root, path)))
+        throw new Error(`${manifestPath} names the Studio entry ${manifest.studio.entry}, which does not exist (and has no .ts source next to it)`);
+      code = new Uint8Array(await readFile(absolute(root, path)));
+    }
+    if (files.some((file) => file.path === entry))
+      throw new Error(`${manifestPath}: the Studio entry ${entry} is also a game script; give it its own file`);
+    files.push({path: entry, data: code});
+    packaged = {...packaged, studio: {...manifest.studio, entry}};
   }
 
   // Native libraries: each platform that has its files is pinned, signed and
@@ -240,7 +268,8 @@ export async function packExtension(root: string, reference: string | undefined,
     nativePlatforms = [...check.available];
   }
   files.push({path: manifestFile, data: text(`${JSON.stringify(packaged, null, 2)}\n`)});
-  files.push({path: `types/${EXTENSION_TYPES_FILE}`, data: text(extensionTypeDeclarations(manifest, manifestFile))});
+  if (hasGameSide(manifest))
+    files.push({path: `types/${EXTENSION_TYPES_FILE}`, data: text(extensionTypeDeclarations(manifest, manifestFile))});
 
   // README, LICENSE, CHANGELOG, icon and screenshots from the extension's folder.
   for (const file of ["README.md", "LICENSE", "LICENSE.md", "LICENSE.txt", "CHANGELOG.md"]) {

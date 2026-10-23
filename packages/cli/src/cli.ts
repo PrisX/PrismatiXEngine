@@ -132,7 +132,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: "check"},
-  extension: {values: "project lang command action dir owner output registry sha256 to capability page reason platform signing-key",
+  extension: {values: "project lang side command action dir owner output registry sha256 to capability page reason platform signing-key",
     flags: "no-register await yes include-source undo reinstall allow-native"},
   eject: {values: "project runtime", flags: "force"},
   augment: {values: "artifact manifest", flags: ""},
@@ -203,10 +203,10 @@ function parseOptions(command: string, args: readonly string[]): Options {
   }
   if (command === "extension" && !flags.has("help")) {
     const counts: Readonly<Record<string, readonly number[]>> = {create: [2], "add-command": [3], "add-action": [3],
-      types: [1, 2], list: [1], ...sharingArity};
+      types: [1, 2], build: [1, 2], list: [1], ...sharingArity};
     if (!(counts[positional[0] ?? ""] ?? []).includes(positional.length))
       throw new Error("Use prismatix extension create <id> | add-command <extension> <id> | " +
-        "add-action <extension> <id> | types [extension] | list | pack [extension] | add <source> | remove <id> | " +
+        "add-action <extension> <id> | types [extension] | build [extension] | list | pack [extension] | add <source> | remove <id> | " +
         "update [id] | outdated | verify | inspect <source> | search [query] | info <id> | publish [file] | " +
         "yank <id@version> | registry [url]; see prismatix extension --help");
     return {values, flags, positional};

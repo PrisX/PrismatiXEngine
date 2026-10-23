@@ -11,8 +11,66 @@
         "required":{"type":"boolean"},"default":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"},
         "enum":{"type":"array","uniqueItems":true,"maxItems":1024,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}},
         "range":{"type":"object","additionalProperties":false,"properties":{"minimum":{"type":"number"},"maximum":{"type":"number"},"step":{"type":"number","exclusiveMinimum":0}}},
-        "resourceFilter":{"type":"string","maxLength":128},
+        "resourceFilter":{"type":"string","maxLength":128,"description":"A media kind (image/*, or an exact type/subtype) or a file-name glob (*.model3.json), or a comma-separated list of them."},
+        "optionsFrom":{"$ref":"#/$defs/optionsFrom"},
         "editorHint":{"enum":["default","multiline","enum","color","resource","character","expression","target","preset","hidden","route","node","animation","token"]}
+      }
+    },
+    "optionsFrom":{
+      "description":"Where Studio gets a string or token parameter's choices for a dropdown. The engine treats the value as an ordinary string.",
+      "oneOf":[
+        {"type":"object","additionalProperties":false,"required":["parameter","pointer"],
+          "properties":{
+            "parameter":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+            "pointer":{"type":"string","maxLength":1024},
+            "take":{"enum":["keys","values"]}
+          }},
+        {"type":"object","additionalProperties":false,"required":["provider"],
+          "properties":{"provider":{"type":"string","minLength":1,"maxLength":512}}}
+      ]
+    },
+    "studioPermission":{"enum":["project.read","project.write"]},
+    "studioGlob":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[^/\\\\\\[\\]{}]+$"},
+    "studioAssetType":{
+      "type":"object","additionalProperties":false,"required":["id","displayName","patterns"],
+      "properties":{
+        "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+        "displayName":{"type":"string","minLength":1,"maxLength":512},
+        "description":{"type":"string","maxLength":4096},
+        "patterns":{"type":"array","uniqueItems":true,"minItems":1,"maxItems":16,"items":{"$ref":"#/$defs/studioGlob"}}
+      }
+    },
+    "studioInspector":{
+      "type":"object","additionalProperties":false,"required":["assetType"],
+      "properties":{
+        "assetType":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+        "displayName":{"type":"string","minLength":1,"maxLength":512},
+        "description":{"type":"string","maxLength":4096}
+      }
+    },
+    "studioParameterOptions":{
+      "type":"object","additionalProperties":false,"required":["id"],
+      "properties":{
+        "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+        "displayName":{"type":"string","minLength":1,"maxLength":512},
+        "description":{"type":"string","maxLength":4096}
+      }
+    },
+    "studio":{
+      "description":"The Studio side (schemaRevision 2): a module PrismatiX Studio loads in a sandboxed frame. It never reaches a game.",
+      "type":"object","additionalProperties":false,"required":["entry","requiredStudioVersion"],
+      "properties":{
+        "entry":{"allOf":[{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},{"type":"string","pattern":"\\.js$"}]},
+        "requiredStudioVersion":{"type":"string","minLength":1,"maxLength":128},
+        "permissions":{"type":"array","uniqueItems":true,"maxItems":8,"items":{"$ref":"#/$defs/studioPermission"}},
+        "contributes":{
+          "type":"object","additionalProperties":false,
+          "properties":{
+            "assetTypes":{"type":"array","maxItems":64,"items":{"$ref":"#/$defs/studioAssetType"}},
+            "inspectors":{"type":"array","maxItems":64,"items":{"$ref":"#/$defs/studioInspector"}},
+            "parameterOptions":{"type":"array","maxItems":64,"items":{"$ref":"#/$defs/studioParameterOptions"}}
+          }
+        }
       }
     },
     "platform":{"enum":["win32-x64","linux-x64","darwin-x64","darwin-arm64","android-arm64","web"]},
@@ -59,9 +117,20 @@
     }
   },
   "type":"object","additionalProperties":false,
-  "required":["format","schemaRevision","language","id","version","requiredEngineVersion","entry","capabilities","commands","actions"],
+  "required":["format","schemaRevision","id","version","requiredEngineVersion"],
+  "allOf":[
+    {"if":{"properties":{"schemaRevision":{"const":1}},"required":["schemaRevision"]},
+      "then":{"properties":{"language":{},"entry":{},"capabilities":{},"commands":{},"actions":{},"studio":false},
+        "required":["language","entry","capabilities","commands","actions"]}},
+    {"if":{"properties":{"entry":{}},"required":["entry"]},
+      "then":{"properties":{"language":{},"capabilities":{},"commands":{},"actions":{}},
+        "required":["language","capabilities","commands","actions"]},
+      "else":{"properties":{"studio":{},"modules":false,"native":false,"platforms":false,"safety":false,
+        "capabilities":{"type":"array","maxItems":0},"commands":{"type":"array","maxItems":0},"actions":{"type":"array","maxItems":0}},
+        "required":["studio"]}}
+  ],
   "properties":{
-    "format":{"const":"PrismatiXExtension"},"schemaRevision":{"const":1},"language":{"enum":["javascript","typescript"]},
+    "format":{"const":"PrismatiXExtension"},"schemaRevision":{"enum":[1,2]},"language":{"enum":["javascript","typescript"]},
     "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"version":{"type":"string","pattern":"^[vV]?[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$","maxLength":64},
     "requiredEngineVersion":{"type":"string","minLength":1,"maxLength":128},"entry":{"allOf":[{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},{"type":"string","pattern":"\\.(?:js|ts)$"}]},
     "modules":{"type":"array","uniqueItems":true,"maxItems":1024,"items":{"allOf":[{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},{"type":"string","pattern":"\\.(?:js|ts)$"}]}},
@@ -70,6 +139,7 @@
     "native":{"$ref":"#/$defs/native"},
     "safety":{"$ref":"#/$defs/safety"},
     "commands":{"type":"array","maxItems":10000,"items":{"type":"object","additionalProperties":false,"required":["id","parameters"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"displayName":{"type":"string","maxLength":512},"description":{"type":"string","maxLength":4096},"category":{"type":"string","maxLength":256},"await":{"type":"boolean"},"rollback":{"enum":["reversible","boundary","transient"]},"allowAdditionalParameters":{"type":"boolean"},"capabilities":{"type":"array","uniqueItems":true,"items":{"type":"string"}},"safety":{"$ref":"#/$defs/safety"},"parameters":{"type":"array","maxItems":1024,"items":{"$ref":"#/$defs/parameter"}}}}},
-    "actions":{"type":"array","maxItems":10000,"items":{"type":"object","additionalProperties":false,"required":["id","parameters"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"displayName":{"type":"string","maxLength":512},"description":{"type":"string","maxLength":4096},"category":{"type":"string","maxLength":256},"reentry":{"enum":["allow","ignoreWhileRunning","restart"]},"capabilities":{"type":"array","uniqueItems":true,"items":{"type":"string"}},"safety":{"$ref":"#/$defs/safety"},"parameters":{"type":"array","maxItems":1024,"items":{"$ref":"#/$defs/parameter"}}}}}
+    "actions":{"type":"array","maxItems":10000,"items":{"type":"object","additionalProperties":false,"required":["id","parameters"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"displayName":{"type":"string","maxLength":512},"description":{"type":"string","maxLength":4096},"category":{"type":"string","maxLength":256},"reentry":{"enum":["allow","ignoreWhileRunning","restart"]},"capabilities":{"type":"array","uniqueItems":true,"items":{"type":"string"}},"safety":{"$ref":"#/$defs/safety"},"parameters":{"type":"array","maxItems":1024,"items":{"$ref":"#/$defs/parameter"}}}}},
+    "studio":{"$ref":"#/$defs/studio"}
   }
 }

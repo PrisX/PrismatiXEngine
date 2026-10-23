@@ -2,6 +2,8 @@ import type {AuthoringDiagnostic} from "./types.js";
 import {playerActionNamespaces, playerActions} from "./player-actions.js";
 import {isSafeResourcePath} from "./resources.js";
 import {isTypeScriptExtensionSource} from "./extension-typescript.js";
+import {isJsonPointer, parseContributionId, studioBuiltinAssetKinds} from "./extension-sides.js";
+import {isVersionRange} from "./version-range.js";
 import {nativeJsonValueValid, nativeUiValueType} from "./ui-value.js";
 import {jsonPointerSpans} from "./json-source-spans.js";
 
@@ -117,6 +119,102 @@ function validActionEditorHint(hint: unknown, type: unknown, hasEnum: boolean): 
   if (hint === "animation") return type === "resource" || type === "string";
   if (hint === "token") return type === "token";
   return false;
+}
+
+// A resourceFilter item: a media kind (`image/*`, `audio/ogg`) or a file-name glob (`*.model3.json`).
+const mediaKindPattern = /^[a-z]+\/(?:\*|[A-Za-z0-9][A-Za-z0-9.+-]*)$/u;
+const fileGlobPattern = /^[^/\\[\]{}]+$/u;
+
+/** True when the manifest's id is the extension part of a qualified id (`live2d` or `owen/live2d`). */
+function namesThisExtension(manifestId: unknown, extension: string): boolean {
+  return typeof manifestId === "string" && (extension === manifestId || extension.endsWith(`/${manifestId}`));
+}
+
+/** `resourceFilter` lists and `optionsFrom` on one command or Action parameter (both revisions). */
+function parameterChoiceDiagnostics(root: ObjectValue, parameter: ObjectValue, siblings: readonly ObjectValue[],
+  location: string, path?: string): AuthoringDiagnostic[] {
+  const diagnostics: AuthoringDiagnostic[] = [];
+  if (typeof parameter.resourceFilter === "string" && parameter.resourceFilter.trim() !== "") {
+    for (const item of parameter.resourceFilter.split(",").map((value) => value.trim()))
+      if (!mediaKindPattern.test(item) && !fileGlobPattern.test(item))
+        diagnostics.push(issue("PXSDKSEM1138", "Extension resourceFilter items are media kinds (image/*) or file-name globs (*.model3.json)",
+          path, `${location}: ${item}`));
+  }
+  const optionsFrom = object(parameter.optionsFrom);
+  if (optionsFrom === undefined) return diagnostics;
+  if ((parameter.type !== "string" && parameter.type !== "token") || parameter.enum !== undefined)
+    diagnostics.push(issue("PXSDKSEM1133", "optionsFrom is for string and token parameters without enum", path, location));
+  if (typeof optionsFrom.parameter === "string") {
+    const source = siblings.find((sibling) => sibling.name === optionsFrom.parameter);
+    if (source === undefined || source === parameter || source.type !== "resource")
+      diagnostics.push(issue("PXSDKSEM1134", "optionsFrom.parameter must name a resource parameter of the same command or Action",
+        path, `${location}: ${optionsFrom.parameter}`));
+  }
+  if (typeof optionsFrom.pointer === "string" && !isJsonPointer(optionsFrom.pointer))
+    diagnostics.push(issue("PXSDKSEM1135", "optionsFrom.pointer is not a JSON pointer (\"\" or \"/key/0\", with ~0 and ~1 escapes)",
+      path, `${location}: ${optionsFrom.pointer}`));
+  if (typeof optionsFrom.provider === "string") {
+    const provider = parseContributionId(optionsFrom.provider);
+    if (provider === undefined)
+      diagnostics.push(issue("PXSDKSEM1136", "optionsFrom.provider is a fully qualified id, <extension id>:<parameterOptions id>",
+        path, `${location}: ${optionsFrom.provider}`));
+    else if (namesThisExtension(root.id, provider.extension) &&
+        !objects(object(object(root.studio)?.contributes)?.parameterOptions).some((item) => item.id === provider.id))
+      diagnostics.push(issue("PXSDKSEM1137", "optionsFrom.provider names a parameterOptions id this extension's Studio side does not contribute",
+        path, `${location}: ${optionsFrom.provider}`));
+  }
+  return diagnostics;
+}
+
+/** The Studio side of a manifest: its version range and its contributions. */
+function studioSideDiagnostics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
+  const studio = object(root.studio);
+  if (studio === undefined) return [];
+  const diagnostics: AuthoringDiagnostic[] = [];
+  if (typeof studio.requiredStudioVersion === "string" && !isVersionRange(studio.requiredStudioVersion))
+    diagnostics.push(issue("PXSDKSEM1129", "studio.requiredStudioVersion is not a SemVer range", path, studio.requiredStudioVersion));
+  const contributes = object(studio.contributes);
+  const assetTypes = objects(contributes?.assetTypes);
+  const parameterOptions = objects(contributes?.parameterOptions);
+  for (const id of duplicates(assetTypes.map((item) => item.id)))
+    diagnostics.push(issue("PXSDKSEM1130", "Studio assetTypes ids must be unique", path, id));
+  for (const id of duplicates(parameterOptions.map((item) => item.id)))
+    diagnostics.push(issue("PXSDKSEM1130", "Studio parameterOptions ids must be unique", path, id));
+  const known = new Set<unknown>([...studioBuiltinAssetKinds, ...assetTypes.map((item) => item.id)]);
+  const inspectors = objects(contributes?.inspectors);
+  for (const inspector of inspectors) if (!known.has(inspector.assetType))
+    diagnostics.push(issue("PXSDKSEM1131", `A Studio inspector names an asset type the extension does not declare (built in: ${studioBuiltinAssetKinds.join(", ")})`,
+      path, String(inspector.assetType)));
+  for (const assetType of duplicates(inspectors.map((item) => item.assetType)))
+    diagnostics.push(issue("PXSDKSEM1132", "An extension has at most one Studio inspector per asset type", path, assetType));
+  return diagnostics;
+}
+
+/**
+ * Plain-language reasons an extension manifest fails its schema where the
+ * schema's own message would not say what to change: a Studio side in a
+ * revision-1 manifest, a manifest with neither side, a Studio-only manifest
+ * with game fields. `validateDocument` puts them before the schema errors.
+ */
+export function extensionShapeDiagnostics(value: unknown, path?: string): AuthoringDiagnostic[] {
+  const root = object(value);
+  if (root === undefined || root.format !== "PrismatiXExtension") return [];
+  const diagnostics: AuthoringDiagnostic[] = [];
+  const hasEntry = root.entry !== undefined;
+  if (root.schemaRevision === 1 && root.studio !== undefined)
+    diagnostics.push(issue("PXSDKSEM1126", "A Studio side (\"studio\") needs \"schemaRevision\": 2; this manifest is revision 1",
+      path, "Set schemaRevision to 2. Revision 2 needs a CLI and engine that know Studio extensions."));
+  if (root.schemaRevision === 2 && !hasEntry && root.studio === undefined)
+    diagnostics.push(issue("PXSDKSEM1127", "An extension has a game side (\"entry\") or a Studio side (\"studio\"), or both", path));
+  if (root.schemaRevision === 2 && !hasEntry) {
+    const gameFields = ["modules", "native", "platforms", "safety"].filter((field) => root[field] !== undefined);
+    for (const field of ["capabilities", "commands", "actions"])
+      if (Array.isArray(root[field]) && (root[field] as unknown[]).length > 0) gameFields.push(field);
+    for (const field of gameFields)
+      diagnostics.push(issue("PXSDKSEM1128", `A Studio-only extension (no "entry") cannot have "${field}"; add an "entry" to give it a game side`,
+        path, field));
+  }
+  return diagnostics;
 }
 
 function timelineSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
@@ -740,8 +838,10 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
         for (const parameter of parameters) {
           const range = object(parameter.range);
           if (range !== undefined && typeof range.minimum === "number" && typeof range.maximum === "number" && range.minimum > range.maximum) diagnostics.push(issue("PXSDKSEM1108", "Extension parameter minimum exceeds maximum", path, `${String(declaration.id)}.${String(parameter.name)}`));
+          diagnostics.push(...parameterChoiceDiagnostics(root, parameter, parameters, `${String(declaration.id)}.${String(parameter.name)}`, path));
         }
       }
+      diagnostics.push(...studioSideDiagnostics(root, path));
       const capabilities = new Set(Array.isArray(root.capabilities) ? root.capabilities : []);
       for (const action of actions) {
         for (const capability of Array.isArray(action.capabilities) ? action.capabilities : []) {
