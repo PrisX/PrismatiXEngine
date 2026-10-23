@@ -80,6 +80,7 @@ toward the 16 MiB. Options:
 | `maskInverted` | `true` shows the mesh where the masks are not (default `false`) |
 | `target` | draw into this render target instead of the screen |
 | `transform` | `{a, b, c, d, tx, ty}` applied to the positions |
+| `effect` | `{id, parameters?, progress?, seed?}`: draw this screen mesh through a packaged node `.pxeffect` (below); null removes it |
 
 **Writable textures** (`raw.texture`): RGBA8, rows top to bottom; `upload`
 replaces the whole texture or a `{x, y, w, h}` region with exactly
@@ -92,6 +93,65 @@ draws into.
 A mask mesh draws by itself unless it is `visible: false`; an invisible
 mesh still masks. Masks are drawn source-over whatever their own `blend`, so
 an additive or multiply mesh still masks by its alpha.
+
+**Effects.** A screen mesh can be drawn through a packaged `.pxeffect`
+whose `targetLayer` is `node`, the shaders `ctx.stage.nodeEffect` applies to
+Stage nodes ([custom render effects](ui-reference.md#custom-render-effects)).
+Draw a whole model into a render target, then show it through an outline,
+glow, dissolve or distortion shader on the GPU:
+
+```ts
+const model = raw.createTarget("live2d.model", 1024, 1024, {clear: {r: 0, g: 0, b: 0, a: 0}});
+// ...the model's part meshes draw into it with target: model.id...
+const outline = {id: "character-outline", parameters: {width: 2, color: [1, 0.85, 0.4, 1]}} as const;
+const shown = raw.createMesh("live2d.shown", {texture: model.source, blend: "premultiplied", effect: outline});
+shown.geometry(quadVertices({x: 448, y: 40, w: 1024, h: 1024}), QUAD_INDICES);
+
+let pulse = 0;
+raw.onFrame((delta) => {
+  pulse = (pulse + delta) % 1;
+  shown.update({effect: {...outline, progress: pulse}});  // every frame, never journaled
+});
+```
+
+`parameters` are named uniform values in the shapes `nodeEffect` takes (a
+number, `[x, y]`, a color as `[r, g, b, a]` in 0-1); undeclared names, the
+wrong number of components and values outside the declared range throw
+`TypeError` `PXJS7803` when the option is set, as do an unknown id and an
+effect that is not a `node` effect. `progress` is clamped to 0-1 (default
+1); `seed` is the shader's `randomSeed` (default: derived from the mesh and
+effect ids). `update({effect})` replaces the whole effect. Effects apply to
+screen meshes only: `effect` with `target` throws `PXJS7803`.
+
+How the shader sees the mesh:
+
+- A **textured** mesh is drawn with the shader in place, the way a Stage leaf
+  is: the shader samples the mesh's texture at the mesh's UVs and the mesh's
+  `blend` composites what it returns. A render target holds premultiplied
+  colors, so show it with `blend: "premultiplied"`; a shader that is linear
+  in color (tints, channel mixes, outlines built from samples) then keeps the
+  alpha once.
+- A mesh with **vertex colors only** has no texture to sample. It is drawn
+  into a transparent screen-size layer, as a Stage group is, the shader
+  samples that layer at screen UVs, and the layer composites as
+  premultiplied colors. Its `blend` applies inside the layer.
+- `viewport` is the mesh's on-screen bounds in logical pixels and
+  `texelSize` one logical pixel of the screen, as for Stage nodes; on a quad
+  whose UVs span its texture, `1 / viewport.zw` is one screen pixel in UVs.
+- With a `mask`, the effect draws the mesh and the mask then cuts the result.
+  A mask mesh's effect does not change the coverage it masks with.
+
+The game ships the effect: declare its `.pxeffect` in the project's
+`effects` with `graphicsTier: "gpu-effects"`, and the Packager compiles it
+with the game's other effects. Effects are loaded with the package, before
+any extension runs. A `.pxext` package cannot carry `.pxeffect` or HLSL
+files, so an extension that needs an effect says so in its README and the
+game adds it. A game without the GPU-effects tier (`graphicsTier: "basic"`,
+which cannot declare effects) has no effect list: the option is checked for
+shape only and the mesh draws without its effect. That fallback, an effect that fails
+when drawn, and meshes past `maxEffectsPerFrame` (32) all draw the mesh
+plain and count in `stats().skippedEffects`; a mesh is never skipped because
+of its effect.
 
 **Where the math goes.** QuickJS interprets: transforming tens of thousands
 of vertices in script every frame is slow. Move a whole mesh with
@@ -112,6 +172,7 @@ that is replayed after a load can create its meshes again harmlessly.
 | uploads per frame | 64 calls (a batch is one) and 16 MiB |
 | per mesh | 65,536 vertices, 196,608 indices |
 | resources | 512 meshes, 64 textures, 8 targets, 4096 px per side, 64 MiB of textures and targets |
+| effects | 32 meshes drawn through an effect per frame (the rest draw plain) |
 
 An upload over budget throws `RangeError` `PXJS7801`. A mesh that would draw
 past the vertex budget is skipped for that frame and counted in
@@ -327,7 +388,7 @@ Registry API v1 additions (`Contracts/extension-registry.schema.json`):
 | PXJS7101 | a raw or native call without its capability |
 | PXJS7801 | a raw upload over the frame budget |
 | PXJS7802 | an unknown raw id, an index past the vertices or a region outside the texture |
-| PXJS7803 | invalid raw arguments or options |
+| PXJS7803 | invalid raw arguments or options, including an unknown effect or parameters that do not match its uniforms |
 | PXJS7804 | a raw resource limit (count, size, texture memory, masks per mesh, batch parts); also `readBytes` past 64 MiB |
 | PXJS7901 | a native service that is unavailable or not declared |
 | PXJS7902 | a native service that failed (with its `respond_error` message when it gave one) |

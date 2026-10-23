@@ -1126,20 +1126,23 @@ bool Renderer2D::BeginComposition() {
     return true;
 }
 
-void Renderer2D::EndComposition(
+bool Renderer2D::EndComposition(
     const std::string_view effect, const float progress,
     const float randomSeed,
     const std::array<std::array<float, 4>, 8>& parameters,
-    const Rect& viewport) {
-    if (m_compositionStack.empty() || !m_renderer) return;
+    const Rect& viewport, const bool premultiplied) {
+    if (m_compositionStack.empty() || !m_renderer) return false;
     const CompositionState composition = m_compositionStack.back();
     m_compositionStack.pop_back();
     (void)SDL_SetRenderTarget(m_renderer, composition.previousTarget);
+    if (premultiplied)
+        (void)SDL_SetTextureBlendMode(composition.texture, PremultipliedBlendMode());
     const bool active = BeginNodeEffect(effect, progress, randomSeed,
                                         parameters, viewport);
     BlitUntransformed(composition.texture);
     if (active) EndNodeEffect();
     SDL_DestroyTexture(composition.texture);
+    return active;
 }
 
 bool Renderer2D::ClearMaskTarget(SDL_Texture* texture) {

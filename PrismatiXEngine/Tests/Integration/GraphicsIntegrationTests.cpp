@@ -4,6 +4,7 @@
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/Script/ScriptRawGraphics.h"
 #include "Engine/Graphics/Screenshot.h"
+#include "Engine/IO/Crypto.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/SDK/Motion.h"
@@ -238,6 +239,174 @@ int main() {
                           << ", inverted mask " << inverted << ")\n";
                 result = 1;
             }
+        }
+        // Raw meshes drawn through a packaged node .pxeffect (raw-rotate:
+        // red becomes green, green becomes blue, times a `tint` color).
+        {
+            px::io::VFS effectVfs;
+            effectVfs.MountDirectory(PRISMATIX_TEST_EFFECT_DIR);
+            px::graphics::CustomEffectDescriptor rotate;
+            rotate.id = "raw-rotate";
+            rotate.targetLayer = "node";
+            rotate.samplerCount = 1;
+            rotate.uniformBufferCount = 1;
+            rotate.uniforms.push_back({"tint", "color", 0, {1, 1, 1, 1}, 0.0f, 1.0f});
+            for (const auto& [format, file] : {std::pair{"spirv", "raw-rotate.spv"},
+                                                std::pair{"dxil", "raw-rotate.dxil"},
+                                                std::pair{"msl", "raw-rotate.msl"}}) {
+                const auto bytes = effectVfs.Read(file);
+                if (!bytes) continue;
+                rotate.artifacts.push_back(
+                    {format, file,
+                     px::crypto::Sha256Hex({reinterpret_cast<const char*>(bytes->data()), bytes->size()})});
+            }
+            const bool loaded = renderer.LoadCustomEffects({rotate}, effectVfs) &&
+                                renderer.HasCustomEffect("raw-rotate", "node");
+            px::script::ScriptRawGraphics raw(&renderer);
+            const auto quad = [](const float x, const float y, const float w, const float h,
+                                 const float r, const float g, const float b, const float a) {
+                return std::vector<float>{x, y, 0, 0, r, g, b, a,  x + w, y, 1, 0, r, g, b, a,
+                                          x + w, y + h, 1, 1, r, g, b, a,  x, y + h, 0, 1, r, g, b, a};
+            };
+            const std::uint16_t indices[6]{0, 1, 2, 0, 2, 3};
+            const auto mesh = [&](const std::string& id, const px::VariantObject& options,
+                                  const std::vector<float>& vertices) {
+                const px::Variant value(options);
+                return !raw.CreateMesh(id, &value) &&
+                       !raw.UploadVertices(id, vertices.data(), vertices.size(), std::nullopt) &&
+                       !raw.UploadIndices(id, indices, nullptr, 6);
+            };
+            const auto source = [](const char* target) {
+                return px::Variant(px::VariantObject{{"kind", "target"}, {"id", target}});
+            };
+            const auto effect = [](px::VariantObject fields) {
+                fields.emplace("id", "raw-rotate");
+                return px::Variant(std::move(fields));
+            };
+            const auto rejected = [&](const px::VariantObject& fields) {
+                const px::Variant options(px::VariantObject{{"effect", effect(fields)}});
+                const auto failure = raw.CreateMesh("bad", &options);
+                return failure && !failure->range && failure->code == "PXJS7803";
+            };
+            const px::Variant unknownEffect(px::VariantObject{
+                {"effect", px::Variant(px::VariantObject{{"id", "no-such-effect"}})}});
+            const auto unknown = raw.CreateMesh("bad", &unknownEffect);
+            const bool validated = loaded && unknown && unknown->code == "PXJS7803" &&
+                rejected({{"parameters", px::Variant(px::VariantObject{{"glow", 1.0}})}}) &&
+                rejected({{"parameters", px::Variant(px::VariantObject{{"tint", 0.5}})}}) &&
+                rejected({{"parameters", px::Variant(px::VariantObject{
+                    {"tint", px::VariantArray{px::Variant(2.0), px::Variant(0.0), px::Variant(0.0), px::Variant(1.0)}}})}});
+            raw.BeginFrame();
+            const px::Variant clear(px::VariantObject{{"clear", px::Variant(px::VariantObject{{"a", 0}})}});
+            const auto shown = [&](px::VariantObject options) {
+                options.emplace("blend", "premultiplied");
+                return options;
+            };
+            const auto halfTint = px::VariantArray{px::Variant(0.5), px::Variant(0.5), px::Variant(0.5), px::Variant(1.0)};
+            const bool built = !raw.CreateTarget("red", 64, 64, &clear) &&
+                !raw.CreateTarget("half", 64, 64, &clear) &&
+                mesh("fillRed", {{"target", "red"}}, quad(0, 0, 64, 64, 1, 0, 0, 1)) &&
+                mesh("fillHalf", {{"target", "half"}}, quad(0, 0, 64, 64, 1, 0, 0, 0.5f)) &&
+                // The same target shown plain and through the effect.
+                mesh("plain", shown({{"texture", source("red")}}), quad(40, 40, 64, 64, 1, 1, 1, 1)) &&
+                mesh("rotated", shown({{"texture", source("red")}, {"effect", effect({})}}),
+                     quad(140, 40, 64, 64, 1, 1, 1, 1)) &&
+                // Half-transparent target contents keep their alpha once.
+                mesh("halfRotated", shown({{"texture", source("half")}, {"effect", effect({})}}),
+                     quad(240, 40, 64, 64, 1, 1, 1, 1)) &&
+                // Vertex colors only: drawn into a layer the effect samples.
+                mesh("colored", {{"effect", effect({})}}, quad(340, 40, 64, 64, 0, 1, 0, 1)) &&
+                mesh("coloredHalf", {{"effect", effect({})}}, quad(440, 40, 64, 64, 0, 1, 0, 0.5f)) &&
+                mesh("tinted", shown({{"texture", source("red")}, {"effect", effect({{"parameters",
+                     px::Variant(px::VariantObject{{"tint", halfTint}})}})}}),
+                     quad(540, 40, 64, 64, 1, 1, 1, 1)) &&
+                mesh("unrotated", shown({{"texture", source("red")}, {"effect", effect({{"progress", 0.0}})}}),
+                     quad(40, 160, 64, 64, 1, 1, 1, 1)) &&
+                // The effect draws the mesh, then the mask cuts the result.
+                mesh("cover", {{"visible", false}}, quad(140, 160, 32, 64, 1, 1, 1, 1)) &&
+                mesh("maskedEffect", shown({{"texture", source("red")}, {"effect", effect({})}, {"mask", "cover"}}),
+                     quad(140, 160, 64, 64, 1, 1, 1, 1)) &&
+                // Changed every frame without journaling: back to plain.
+                mesh("updated", shown({{"texture", source("red")}, {"effect", effect({})}}),
+                     quad(240, 160, 64, 64, 1, 1, 1, 1));
+            bool found = false;
+            const px::Variant cleared(px::VariantObject{{"effect", px::Variant()}});
+            const bool updated = !raw.UpdateMesh("updated", cleared, found) && found;
+            const px::Variant targetEffect(px::VariantObject{{"effect", effect({})}});
+            bool targetFound = false;
+            const auto onTarget = raw.UpdateMesh("fillRed", targetEffect, targetFound);
+            ClearFrame(device.Renderer());
+            raw.Render(px::script::RenderPhase::AfterStage, {}, {});
+            SaveVisualArtifact(device.Renderer(), "raw-effect");
+            SDL_Surface* pixels = SDL_RenderReadPixels(device.Renderer(), nullptr);
+            const auto at = [&](const int x, const int y) { return ReadLogicalPixel(pixels, x, y, 640, 360); };
+            const auto around = [](const int value, const int expected) { return std::abs(value - expected) <= 14; };
+            const bool plain = pixels && at(72, 72).r > 200 && at(72, 72).g < 40;
+            const bool rotated = pixels && at(172, 72).g > 200 && at(172, 72).r < 40;
+            // 0.5 green over the (7, 11, 19) clear: 128 + 11 / 2; a doubled
+            // alpha would give about 70.
+            const auto half = at(272, 72);
+            const bool premultiplied = pixels && around(half.g, 133) && half.r < 30;
+            const bool colored = pixels && at(372, 72).b > 200 && at(372, 72).g < 40;
+            const auto coloredHalf = at(472, 72);
+            const bool layered = pixels && around(coloredHalf.b, 137) && coloredHalf.g < 30;
+            const bool tinted = pixels && around(at(572, 72).g, 128) && at(572, 72).r < 30;
+            const bool progress = pixels && at(72, 192).r > 200 && at(72, 192).g < 40;
+            const bool maskedEffect = pixels && at(150, 192).g > 200 && at(150, 192).r < 40 &&
+                                      at(190, 192).g < 40 && at(190, 192).r < 40;
+            const bool plainAgain = pixels && at(272, 192).r > 200 && at(272, 192).g < 40;
+            if (pixels) SDL_DestroySurface(pixels);
+            const auto stats = raw.StatsValue();
+            const auto* skipped = stats.AsObject() ? stats.AsObject()->at("skippedEffects").TryGet<std::int64_t>() : nullptr;
+            if (!loaded || !validated || !built || !updated || !onTarget || onTarget->code != "PXJS7803" ||
+                !plain || !rotated || !premultiplied || !colored || !layered || !tinted || !progress ||
+                !maskedEffect || !plainAgain || !skipped || *skipped != 0) {
+                std::cerr << "FAIL: raw effect (loaded " << loaded << ", validated " << validated << ", built " << built
+                          << ", updated " << updated << ", plain " << plain << ", rotated " << rotated
+                          << ", premultiplied " << premultiplied << " g=" << int(half.g) << ", vertex colors " << colored
+                          << ", layer " << layered << " b=" << int(coloredHalf.b) << ", tint " << tinted
+                          << ", progress " << progress << ", mask " << maskedEffect << ", cleared " << plainAgain
+                          << ", skipped " << (skipped ? *skipped : -1) << ")\n";
+                result = 1;
+            }
+            (void)renderer.LoadCustomEffects({}, effectVfs);
+
+            // A Player without the GPU-effects tier has no effect list: the
+            // option is checked for shape only and the mesh draws plain.
+            SDL_Window* basicWindow = SDL_CreateWindow("PrismatiX basic raw effect", 640, 360, SDL_WINDOW_HIDDEN);
+            px::graphics::GraphicsDevice basicDevice;
+            if (!basicWindow || !basicDevice.Create(basicWindow, px::graphics::GraphicsTier::Basic)) {
+                std::cerr << "FAIL: basic renderer raw effect setup\n";
+                result = 1;
+            } else {
+                px::graphics::AssetCache basicAssets(basicDevice.Renderer(), vfs);
+                px::graphics::Renderer2D basicRenderer(basicDevice.Renderer(), basicAssets, false);
+                basicRenderer.SetLogicalSize(640, 360);
+                px::script::ScriptRawGraphics basic(&basicRenderer);
+                const px::Variant colorOnly(px::VariantObject{{"effect", effect({})}});
+                const px::Variant badShape(px::VariantObject{{"effect", effect({{"progress", "full"}})}});
+                const auto shape = basic.CreateMesh("bad", &badShape);
+                const bool accepted = !basic.CreateMesh("fallback", &colorOnly) &&
+                    !basic.UploadVertices("fallback", quad(40, 40, 64, 64, 0, 1, 0, 1).data(), 32, std::nullopt) &&
+                    !basic.UploadIndices("fallback", indices, nullptr, 6);
+                ClearFrame(basicDevice.Renderer());
+                basic.Render(px::script::RenderPhase::AfterStage, {}, {});
+                SDL_Surface* basicPixels = SDL_RenderReadPixels(basicDevice.Renderer(), nullptr);
+                const auto drawn = ReadLogicalPixel(basicPixels, 72, 72, 640, 360);
+                if (basicPixels) SDL_DestroySurface(basicPixels);
+                const auto basicStats = basic.StatsValue();
+                const auto* basicSkipped = basicStats.AsObject()
+                    ? basicStats.AsObject()->at("skippedEffects").TryGet<std::int64_t>() : nullptr;
+                if (!accepted || !shape || shape->code != "PXJS7803" || drawn.g < 200 || drawn.b > 40 ||
+                    !basicSkipped || *basicSkipped != 1) {
+                    std::cerr << "FAIL: raw effect fallback without the GPU-effects tier (accepted " << accepted
+                              << ", green " << int(drawn.g) << ", skipped "
+                              << (basicSkipped ? *basicSkipped : -1) << ")\n";
+                    result = 1;
+                }
+            }
+            basicDevice.Destroy();
+            if (basicWindow) SDL_DestroyWindow(basicWindow);
         }
         // Nine-slice: a 30px image with a 10px red border around a blue
         // middle keeps its border at patchMargins * patchScale on screen,

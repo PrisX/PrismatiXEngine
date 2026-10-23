@@ -5,6 +5,7 @@
 #include "Engine/Graphics/Texture.h"
 #include "Engine/Script/ScriptRenderTree.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -28,6 +29,9 @@ struct ScriptRawLimits {
     std::size_t meshes = 512;
     // Masks one mesh can name (their coverage is united).
     std::size_t masksPerMesh = 16;
+    // Screen meshes drawn through a .pxeffect per rendered frame; the rest
+    // draw without their effect.
+    std::size_t effectsPerFrame = 32;
     std::size_t textures = 64;
     std::size_t targets = 8;
     int textureSize = 4096;
@@ -124,6 +128,16 @@ private:
         SourceKind kind = SourceKind::None;
         std::string value;
     };
+    // A packaged node .pxeffect a screen mesh is drawn through.
+    struct Effect {
+        std::string id;
+        // As given; resolved again at draw time when the renderer could not
+        // check them when they were set.
+        graphics::CustomEffectNamedParameters parameters;
+        std::optional<std::array<std::array<float, 4>, 8>> resolved;
+        float progress = 1.0f;
+        float seed = 0.0f;
+    };
     struct Mesh {
         std::uint64_t sequence = 0;
         RenderPhase phase = RenderPhase::AfterStage;
@@ -137,6 +151,7 @@ private:
         bool maskInverted = false;
         std::string target;
         graphics::AffineTransform2D transform;
+        std::optional<Effect> effect;
         std::vector<graphics::RawVertex> vertices;
         std::vector<int> indices;
     };
@@ -158,6 +173,8 @@ private:
 
     Outcome ApplyMeshOptions(Mesh& mesh, std::string_view id,
                              const Variant& options) const;
+    Outcome ParseEffect(const Variant& value, std::string_view meshId,
+                        std::optional<Effect>& effect) const;
     Outcome ApplyTargetOptions(Target& target, const Variant& options) const;
     Outcome CountUpload(std::size_t bytes);
     [[nodiscard]] std::size_t TextureBytes() const;
@@ -165,6 +182,13 @@ private:
     // `coverage` draws a mask: source-over whatever the mesh's blend, so
     // several masks unite.
     bool Draw(const Mesh& mesh, bool coverage = false);
+    // Draws `mesh` through its effect, or without it (counted) when the
+    // effect cannot run.
+    void DrawThroughEffect(const Mesh& mesh, graphics::TextureHandle texture);
+    void DrawGeometry(const Mesh& mesh, graphics::TextureHandle texture,
+                      bool coverage);
+    // The mesh's on-screen bounds in logical pixels (the shader's viewport).
+    [[nodiscard]] Rect ScreenBounds(const Mesh& mesh) const;
     void DrawMasked(const Mesh& mesh);
     void RenderTargets();
 
@@ -180,6 +204,8 @@ private:
     std::size_t m_drawnVertices = 0;
     std::size_t m_drawnIndices = 0;
     std::size_t m_skippedMeshes = 0;
+    std::size_t m_effectDraws = 0;
+    std::size_t m_skippedEffects = 0;
     std::optional<RenderPhase> m_lastPhase;
 };
 

@@ -29,11 +29,15 @@
 // - Indices are checked against the vertices the mesh has after the call,
 //   so on a separate `indices` call upload the vertices first; `geometry`
 //   and `upload` take both at once.
+// - A screen mesh can be drawn through a packaged node `.pxeffect` (`effect`).
+//   The game declares the effect (project `effects`, graphicsTier
+//   "gpu-effects"); a Player without it draws the mesh plain and counts it in
+//   `stats().skippedEffects`.
 // - Heavy per-vertex math belongs in a native service (layer 2) or in the
 //   mesh `transform`; QuickJS is an interpreter, so tens of thousands of
 //   vertices transformed in script each frame are slow.
 
-import type {Color, Rect, RenderPhase, Unsubscribe} from "./index.js";
+import type {Color, CustomEffectNamedParameters, Rect, RenderPhase, Unsubscribe} from "./index.js";
 
 /** Floats per vertex in `uploadVertices`: x, y, u, v, r, g, b, a. */
 export const RAW_VERTEX_STRIDE = 8;
@@ -64,6 +68,32 @@ export interface RawTransform {
   readonly ty: number;
 }
 
+/**
+ * A packaged `.pxeffect` (targetLayer "node") a screen mesh is drawn through,
+ * as `ctx.stage.nodeEffect` applies one to a Stage node.
+ *
+ * - A textured mesh runs the shader on its own draw: it samples the mesh's
+ *   texture at the mesh's UVs, and the mesh's `blend` composites the result.
+ *   A render target holds premultiplied colors: show it with blend
+ *   "premultiplied" and a shader that stays linear in color keeps its alpha.
+ * - A mesh with vertex colors only is first drawn into a transparent
+ *   screen-size layer; the shader samples that layer at screen UVs and the
+ *   layer composites as premultiplied colors.
+ * - `viewport` in the shader is the mesh's on-screen bounds (logical pixels).
+ * - With `mask`, the effect applies to the mesh, then the mask cuts the result.
+ *   A mask mesh's own effect does not change its coverage.
+ */
+export interface RawMeshEffect {
+  /** The effect's id; unknown ids or non-node effects throw TypeError PXJS7803. */
+  readonly id: string;
+  /** Named uniform values checked against the descriptor (names, types, ranges); the rest keep their defaults. */
+  readonly parameters?: CustomEffectNamedParameters;
+  /** The shader's `progress`, clamped to 0-1 (default 1). */
+  readonly progress?: number;
+  /** The shader's `randomSeed` (default: derived from the mesh and effect ids). */
+  readonly seed?: number;
+}
+
 export interface RawMeshOptions {
   /** When a screen mesh draws (default "after-stage"). Ignored with `target`. */
   readonly phase?: RenderPhase;
@@ -88,6 +118,12 @@ export interface RawMeshOptions {
   readonly target?: string | null;
   /** Applied to the vertex positions (logical pixels, or target pixels). */
   readonly transform?: RawTransform | null;
+  /**
+   * Draw this screen mesh through a packaged node `.pxeffect`; null removes it.
+   * `update({effect})` replaces the whole effect, so it can change every frame.
+   * Not with `target` (TypeError PXJS7803).
+   */
+  readonly effect?: RawMeshEffect | null;
 }
 
 export interface RawTextureOptions {
@@ -121,6 +157,8 @@ export interface RawLimits {
   readonly maxTextures: number;
   readonly maxTargets: number;
   readonly maxTextureSize: number;
+  /** Screen meshes drawn through an effect per frame; the rest draw without it. */
+  readonly maxEffectsPerFrame: number;
   /** The renderer behind SDL ("direct3d11", "metal", "opengl", "webgl2", "gpu", ...), for diagnostics only. */
   readonly backend: string;
 }
@@ -133,6 +171,11 @@ export interface RawFrameStats {
   readonly uploads: number;
   readonly uploadBytes: number;
   readonly skippedMeshes: number;
+  /**
+   * Meshes drawn without their effect: no GPU-effects tier (no effect list),
+   * the effect failed or the per-frame effect budget was spent.
+   */
+  readonly skippedEffects: number;
   readonly meshes: number;
   readonly textures: number;
   readonly targets: number;

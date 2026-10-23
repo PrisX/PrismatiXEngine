@@ -1299,8 +1299,47 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID)
         Tests/Integration/GraphicsIntegrationTests.cpp
         PrismatiX.Integration.Runtime.Graphics
         "integration;runtime;graphics;gpu;native" PrismatiXRuntime)
+    # A node .pxeffect compiled offline the way the Packager compiles one, so
+    # the raw drawing pixel test runs a real custom effect.
+    set(PRISMATIX_TEST_EFFECT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/test-effects")
+    set(PRISMATIX_TEST_EFFECT_SOURCE
+        "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/Effects/raw-rotate.frag.hlsl")
+    if(APPLE)
+        add_custom_command(
+            OUTPUT "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.spv" "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.msl"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${PRISMATIX_TEST_EFFECT_DIR}"
+            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}" "${PRISMATIX_TEST_EFFECT_SOURCE}"
+                    --source HLSL --dest SPIRV --stage fragment
+                    --entrypoint main --output "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.spv"
+            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}" "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.spv"
+                    --source SPIRV --dest MSL --stage fragment
+                    --entrypoint main --output "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.msl"
+            DEPENDS "${PRISMATIX_TEST_EFFECT_SOURCE}"
+            COMMENT "Offline-compiling the raw drawing test effect"
+            VERBATIM)
+        set(PRISMATIX_TEST_EFFECT_ARTIFACTS
+            "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.spv" "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.msl")
+    else()
+        add_custom_command(
+            OUTPUT "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.spv" "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.dxil"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${PRISMATIX_TEST_EFFECT_DIR}"
+            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}" "${PRISMATIX_TEST_EFFECT_SOURCE}"
+                    --source HLSL --dest SPIRV --stage fragment
+                    --entrypoint main --output "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.spv"
+            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}" "${PRISMATIX_TEST_EFFECT_SOURCE}"
+                    --source HLSL --dest DXIL --stage fragment
+                    --entrypoint main --output "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.dxil"
+            DEPENDS "${PRISMATIX_TEST_EFFECT_SOURCE}"
+            COMMENT "Offline-compiling the raw drawing test effect"
+            VERBATIM)
+        set(PRISMATIX_TEST_EFFECT_ARTIFACTS
+            "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.spv" "${PRISMATIX_TEST_EFFECT_DIR}/raw-rotate.dxil")
+    endif()
+    add_custom_target(PrismatiXTestEffects DEPENDS ${PRISMATIX_TEST_EFFECT_ARTIFACTS})
+    add_dependencies(PrismatiXGraphicsIntegrationTests PrismatiXTestEffects)
     target_compile_definitions(PrismatiXGraphicsIntegrationTests PRIVATE
-        PRISMATIX_RESOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../Resources")
+        PRISMATIX_RESOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../Resources"
+        PRISMATIX_TEST_EFFECT_DIR="${PRISMATIX_TEST_EFFECT_DIR}")
     prismatix_add_simple_test(
         PrismatiXStageGraphParticleIntegrationTests
         Tests/Integration/StageGraphParticleIntegrationTests.cpp

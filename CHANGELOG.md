@@ -26,7 +26,15 @@ The packages always carry the same version and pin each other exactly.
   `raw.upload([...])` (`EngineRaw.UploadGeometry`, `EngineRaw.UploadBatch`)
   send vertices and indices together, a batch of meshes as one upload that
   applies all or nothing; `mask` takes a list of up to 16 meshes whose
-  coverage is united, and `maskInverted` flips it. Native ABI 1.1:
+  coverage is united, and `maskInverted` flips it. A screen mesh's
+  `effect: {id, parameters, progress, seed}` draws it through a packaged
+  node `.pxeffect` on the GPU (a render target holding a whole model shown
+  through an outline, glow or dissolve, without doubling its alpha), with
+  the values `ctx.stage.nodeEffect` takes checked against the effect's
+  uniforms (`PXJS7803`); the effect applies first, then the mask. Without
+  the GPU-effects tier, past the new `maxEffectsPerFrame` or when an effect
+  fails, the mesh draws plain and counts in `stats().skippedEffects`.
+  Native ABI 1.1:
   `respond_error` fails a request with a message the script sees, and
   `plugin_directory` names the library's folder.
 

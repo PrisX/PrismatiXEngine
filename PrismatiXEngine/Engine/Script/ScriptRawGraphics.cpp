@@ -75,6 +75,56 @@ std::optional<std::optional<Color>> ParseClear(const Variant& value) {
     return std::optional<Color>{Color{channels[0], channels[1], channels[2], channels[3]}};
 }
 
+// A finite number a shader uniform (a float) can hold.
+std::optional<float> UniformNumber(const Variant& value) {
+    const auto number = Number(value);
+    if (!number || !std::isfinite(*number) ||
+        std::abs(*number) > std::numeric_limits<float>::max())
+        return std::nullopt;
+    return static_cast<float>(*number);
+}
+
+// The default randomSeed of a mesh's effect, the way the Stage seeds a node's.
+float EffectSeed(const std::string_view mesh, const std::string_view effect) {
+    std::uint32_t hash = 2166136261u;
+    for (const auto text : {mesh, effect}) {
+        for (const unsigned char character : text) {
+            hash ^= character;
+            hash *= 16777619u;
+        }
+        hash ^= 0xffu;
+        hash *= 16777619u;
+    }
+    return static_cast<float>(hash);
+}
+
+// Named uniform values as ctx.stage.nodeEffect takes them: a number, or 1 to
+// 4 numbers (vec2 is 2, color is 4 in 0-1).
+std::optional<graphics::CustomEffectNamedParameters> ParseEffectParameters(
+    const Variant& value) {
+    graphics::CustomEffectNamedParameters parameters;
+    if (value.Type() == VariantType::Null) return parameters;
+    const auto* named = value.AsObject();
+    if (!named || named->size() > 8) return std::nullopt;
+    for (const auto& [name, item] : *named) {
+        std::vector<float> components;
+        if (const auto* list = item.AsArray()) {
+            if (list->empty() || list->size() > 4) return std::nullopt;
+            for (const auto& entry : *list) {
+                const auto number = UniformNumber(entry);
+                if (!number) return std::nullopt;
+                components.push_back(*number);
+            }
+        } else {
+            const auto number = UniformNumber(item);
+            if (!number) return std::nullopt;
+            components.push_back(*number);
+        }
+        parameters.emplace(name, std::move(components));
+    }
+    return parameters;
+}
+
 }  // namespace
 
 Variant ScriptRawGraphics::LimitsValue() const {
@@ -92,6 +142,7 @@ Variant ScriptRawGraphics::LimitsValue() const {
         {"maxTextures", count(m_limits.textures)},
         {"maxTargets", count(m_limits.targets)},
         {"maxTextureSize", static_cast<std::int64_t>(m_limits.textureSize)},
+        {"maxEffectsPerFrame", count(m_limits.effectsPerFrame)},
         {"backend", m_renderer ? m_renderer->BackendName() : std::string("none")},
     });
 }
@@ -107,6 +158,7 @@ Variant ScriptRawGraphics::StatsValue() const {
         {"uploads", count(m_uploads)},
         {"uploadBytes", count(m_uploadBytes)},
         {"skippedMeshes", count(m_skippedMeshes)},
+        {"skippedEffects", count(m_skippedEffects)},
         {"meshes", count(m_meshes.size())},
         {"textures", count(m_textures.size())},
         {"targets", count(m_targets.size())},
@@ -198,6 +250,8 @@ ScriptRawGraphics::Outcome ScriptRawGraphics::ApplyMeshOptions(
                 *fields[index] = static_cast<float>(*number);
             }
             mesh.transform = parsed;
+        } else if (key == "effect") {
+            if (auto failure = ParseEffect(value, id, mesh.effect)) return failure;
         } else {
             return TypeFailure("unknown raw mesh option: " + key);
         }
@@ -207,6 +261,61 @@ ScriptRawGraphics::Outcome ScriptRawGraphics::ApplyMeshOptions(
         return TypeFailure("a mesh cannot sample the render target it draws into");
     if (!mesh.target.empty() && !mesh.masks.empty())
         return TypeFailure("masks apply to meshes drawn to the screen, not into a render target");
+    if (!mesh.target.empty() && mesh.effect)
+        return TypeFailure("effects apply to meshes drawn to the screen, not into a render target");
+    return std::nullopt;
+}
+
+ScriptRawGraphics::Outcome ScriptRawGraphics::ParseEffect(
+    const Variant& value, const std::string_view meshId,
+    std::optional<Effect>& effect) const {
+    if (value.Type() == VariantType::Null) {
+        effect.reset();
+        return std::nullopt;
+    }
+    const auto* object = value.AsObject();
+    if (!object) return TypeFailure("effect must be {id, parameters?, progress?, seed?} or null");
+    Effect parsed;
+    bool hasSeed = false;
+    for (const auto& [key, field] : *object) {
+        if (key == "id") {
+            const auto* id = field.TryGet<std::string>();
+            if (!id || !ValidId(*id)) return TypeFailure("effect id must be a .pxeffect id");
+            parsed.id = *id;
+        } else if (key == "parameters") {
+            auto parameters = ParseEffectParameters(field);
+            if (!parameters)
+                return TypeFailure("effect parameters are at most 8 named numbers or vectors of 1 to 4 finite numbers");
+            parsed.parameters = std::move(*parameters);
+        } else if (key == "progress") {
+            const auto progress = Number(field);
+            if (!progress || !std::isfinite(*progress)) return TypeFailure("effect progress must be a finite number");
+            parsed.progress = std::clamp(static_cast<float>(*progress), 0.0f, 1.0f);
+        } else if (key == "seed") {
+            const auto seed = UniformNumber(field);
+            if (!seed) return TypeFailure("effect seed must be a finite number");
+            parsed.seed = *seed;
+            hasSeed = true;
+        } else {
+            return TypeFailure("unknown raw mesh effect option: " + key);
+        }
+    }
+    if (parsed.id.empty()) return TypeFailure("effect needs the id of a .pxeffect");
+    if (!hasSeed) parsed.seed = EffectSeed(meshId, parsed.id);
+    // Effects are loaded with the package, before any extension runs; a
+    // renderer without the GPU-effects tier has none, so there only the
+    // shape is checked and the mesh draws without its effect.
+    if (m_renderer && m_renderer->SupportsStagePostEffects()) {
+        if (!m_renderer->HasCustomEffect(parsed.id, "node"))
+            return TypeFailure("effect '" + parsed.id + "' is not a packaged .pxeffect with targetLayer node");
+        parsed.resolved = parsed.parameters.empty()
+                              ? m_renderer->CustomEffectDefaults(parsed.id)
+                              : m_renderer->ResolveCustomEffectParameters(parsed.id, parsed.parameters);
+        if (!parsed.resolved)
+            return TypeFailure("effect parameters do not match the uniforms '" + parsed.id +
+                               "' declares (names, number of components and ranges)");
+    }
+    effect = std::move(parsed);
     return std::nullopt;
 }
 
@@ -544,15 +653,90 @@ bool ScriptRawGraphics::Draw(const Mesh& mesh, const bool coverage) {
     if (mesh.texture.kind != SourceKind::None && !texture) return false;
     m_drawnVertices += mesh.vertices.size();
     m_drawnIndices += indexCount;
-    if (!m_renderer) return true;
+    if (!m_renderer) {
+        // Nothing applies an effect without a renderer.
+        if (mesh.effect && !coverage) ++m_skippedEffects;
+        return true;
+    }
     if (mesh.indices.empty() && mesh.vertices.size() % 3 != 0) return false;
+    // A mask's coverage is its own alpha: its effect does not apply there.
+    if (mesh.effect && !coverage) DrawThroughEffect(mesh, texture);
+    else DrawGeometry(mesh, texture, coverage);
+    return true;
+}
+
+void ScriptRawGraphics::DrawGeometry(const Mesh& mesh, const graphics::TextureHandle texture,
+                                     const bool coverage) {
     m_renderer->DrawRawGeometry(texture, mesh.vertices.data(),
                                 static_cast<int>(mesh.vertices.size()),
                                 mesh.indices.empty() ? nullptr : mesh.indices.data(),
                                 mesh.indices.empty() ? 0 : static_cast<int>(mesh.indices.size()),
                                 coverage ? graphics::RawBlendMode::Normal : mesh.blend,
                                 mesh.transform);
-    return true;
+}
+
+Rect ScriptRawGraphics::ScreenBounds(const Mesh& mesh) const {
+    float left = std::numeric_limits<float>::max(), top = left;
+    float right = std::numeric_limits<float>::lowest(), bottom = right;
+    for (const auto& vertex : mesh.vertices) {
+        const auto& transform = mesh.transform;
+        const Vec2 point = m_renderer->TransformPoint(
+            {transform.a * vertex.x + transform.c * vertex.y + transform.tx,
+             transform.b * vertex.x + transform.d * vertex.y + transform.ty});
+        left = std::min(left, point.x);
+        top = std::min(top, point.y);
+        right = std::max(right, point.x);
+        bottom = std::max(bottom, point.y);
+    }
+    if (right > left && bottom > top) return {left, top, right - left, bottom - top};
+    // A degenerate mesh shades against the whole screen, as a Stage node does.
+    int width = 0, height = 0;
+    m_renderer->GetLogicalSize(width, height);
+    return {0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height)};
+}
+
+void ScriptRawGraphics::DrawThroughEffect(const Mesh& mesh, const graphics::TextureHandle texture) {
+    const auto& effect = *mesh.effect;
+    // Parameters the renderer could not check when they were set (no effect
+    // list then) are resolved now; an effect that is still unknown, or one
+    // past the per-frame budget, draws the mesh without it.
+    auto parameters = effect.resolved;
+    if (!parameters && m_renderer->HasCustomEffect(effect.id, "node"))
+        parameters = effect.parameters.empty()
+                         ? m_renderer->CustomEffectDefaults(effect.id)
+                         : m_renderer->ResolveCustomEffectParameters(effect.id, effect.parameters);
+    if (!parameters || m_effectDraws >= m_limits.effectsPerFrame) {
+        ++m_skippedEffects;
+        DrawGeometry(mesh, texture, false);
+        return;
+    }
+    ++m_effectDraws;
+    const Rect viewport = ScreenBounds(mesh);
+    if (texture) {
+        // A Stage leaf's contract: the shader runs on the mesh's own draw and
+        // samples its texture at the mesh's UVs. The mesh's blend composites
+        // the result, so a render target (premultiplied, drawn "premultiplied")
+        // keeps its alpha once.
+        const bool active = m_renderer->BeginNodeEffect(effect.id, effect.progress, effect.seed,
+                                                        *parameters, viewport);
+        DrawGeometry(mesh, texture, false);
+        if (active) m_renderer->EndNodeEffect();
+        else ++m_skippedEffects;
+        return;
+    }
+    // Vertex colors only, so there is no texture to sample: like a Stage
+    // group, the mesh is drawn into a transparent screen-size layer and the
+    // shader samples that layer (screen UVs), which then composites as the
+    // premultiplied colors drawing into it left.
+    if (!m_renderer->BeginComposition()) {
+        ++m_skippedEffects;
+        DrawGeometry(mesh, texture, false);
+        return;
+    }
+    DrawGeometry(mesh, texture, false);
+    if (!m_renderer->EndComposition(effect.id, effect.progress, effect.seed, *parameters,
+                                    viewport, true))
+        ++m_skippedEffects;
 }
 
 void ScriptRawGraphics::DrawMasked(const Mesh& mesh) {
@@ -616,6 +800,8 @@ void ScriptRawGraphics::Render(const RenderPhase phase, const std::string_view r
         m_drawnVertices = 0;
         m_drawnIndices = 0;
         m_skippedMeshes = 0;
+        m_effectDraws = 0;
+        m_skippedEffects = 0;
         RenderTargets();
     }
     m_lastPhase = phase;

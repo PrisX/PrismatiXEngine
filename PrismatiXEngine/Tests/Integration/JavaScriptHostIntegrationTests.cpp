@@ -25,7 +25,9 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <memory>
 #include <string>
@@ -1484,6 +1486,65 @@ void TestRawGraphicsBudgets(px::test::Suite& suite) {
     const px::Variant notBoolean(px::VariantObject{{"maskInverted", "yes"}});
     const auto wrongType = raw.CreateMesh("g", &notBoolean);
     suite.Expect(wrongType && wrongType->code == "PXJS7803", "maskInverted must be a boolean");
+
+    // Effects. Without a renderer there is no effect list: only the shape is
+    // checked, and a drawn mesh counts as drawn without its effect.
+    px::script::ScriptRawGraphics effects(nullptr);
+    const auto effectOptions = [](px::VariantObject effect) {
+        return px::Variant(px::VariantObject{{"effect", px::Variant(std::move(effect))}});
+    };
+    const auto vector = [](std::initializer_list<double> values) {
+        px::VariantArray array;
+        for (const double value : values) array.emplace_back(value);
+        return px::Variant(std::move(array));
+    };
+    const px::Variant full = effectOptions(
+        {{"id", "outline"}, {"progress", 2.0}, {"seed", 7},
+         {"parameters", px::Variant(px::VariantObject{
+             {"width", 2.0}, {"offset", vector({1.0, -1.0})}, {"color", vector({1.0, 0.5, 0.0, 1.0})}})}});
+    const px::Variant idOnly = effectOptions({{"id", "outline"}});
+    suite.Expect(!effects.CreateMesh("outlined", &full) && !effects.CreateMesh("plain", &idOnly),
+                 "a mesh takes an effect id with named number, vec2 and color values, progress and seed");
+    bool found = false;
+    const px::Variant clearEffect(px::VariantObject{{"effect", px::Variant()}});
+    suite.Expect(!effects.UpdateMesh("plain", clearEffect, found) && found, "effect: null removes the effect");
+    const auto rejects = [&](const px::Variant& options) {
+        const auto failure = effects.CreateMesh("refused", &options);
+        return failure && !failure->range && failure->code == "PXJS7803";
+    };
+    px::VariantObject nine;
+    for (int index = 0; index < 9; ++index) nine.emplace("u" + std::to_string(index), 1.0);
+    suite.Expect(rejects(px::Variant(px::VariantObject{{"effect", "outline"}})) &&
+                     rejects(effectOptions({})) && rejects(effectOptions({{"id", ""}})) &&
+                     rejects(effectOptions({{"id", "outline"}, {"strength", 1.0}})) &&
+                     rejects(effectOptions({{"id", "outline"}, {"progress", "half"}})) &&
+                     rejects(effectOptions({{"id", "outline"},
+                                            {"seed", std::numeric_limits<double>::infinity()}})) &&
+                     rejects(effectOptions({{"id", "outline"}, {"parameters", "wide"}})) &&
+                     rejects(effectOptions({{"id", "outline"}, {"parameters", px::Variant(nine)}})) &&
+                     rejects(effectOptions({{"id", "outline"}, {"parameters", px::Variant(px::VariantObject{
+                                                {"color", vector({1.0, 1.0, 1.0, 1.0, 1.0})}})}})) &&
+                     rejects(effectOptions({{"id", "outline"}, {"parameters", px::Variant(px::VariantObject{
+                                                {"width", "2"}})}})),
+                 "an effect needs an id and takes only finite numbers or 1 to 4 of them as values");
+    const px::Variant intoTarget(px::VariantObject{
+        {"target", "rt"}, {"effect", px::Variant(px::VariantObject{{"id", "outline"}})}});
+    const auto onTarget = effects.CreateMesh("into", &intoTarget);
+    const px::Variant toTarget(px::VariantObject{{"target", "rt"}});
+    const auto movedToTarget = effects.UpdateMesh("outlined", toTarget, found);
+    suite.Expect(onTarget && onTarget->code == "PXJS7803" && movedToTarget &&
+                     movedToTarget->code == "PXJS7803",
+                 "effects apply to screen meshes, not meshes drawn into a render target");
+    suite.Require(!effects.UploadVertices("outlined", triangle.data(), triangle.size(), std::nullopt) &&
+                      !effects.UploadVertices("plain", triangle.data(), triangle.size(), std::nullopt),
+                  "the effect meshes take vertices");
+    effects.Render(px::script::RenderPhase::AfterStage, {}, {});
+    const auto stats = effects.StatsValue();
+    const auto limitsValue = effects.LimitsValue();
+    const auto* skipped = stats.AsObject()->at("skippedEffects").TryGet<std::int64_t>();
+    const auto* budget = limitsValue.AsObject()->at("maxEffectsPerFrame").TryGet<std::int64_t>();
+    suite.Expect(skipped && *skipped == 1 && budget && *budget == 32,
+                 "a mesh drawn without its effect counts in skippedEffects; limits report maxEffectsPerFrame");
 }
 
 void TestNativeSignatureInterop(px::test::Suite& suite) {
@@ -1563,6 +1624,15 @@ void TestRawAndNativeExtensions(px::test::Suite& suite) {
         note("raw.budget", budget);
         const stats = EngineRaw.Stats();
         note("raw.stats", `${stats.meshes}/${stats.textures}/${stats.targets}/${stats.uploads === limits.maxUploadsPerFrame}`);
+        EngineRaw.CreateMesh("outlined", { texture: { kind: "target", id: "glow" }, blend: "premultiplied",
+            effect: { id: "outline", parameters: { width: 2, color: [1, 0.5, 0, 1] }, progress: 0.5 } });
+        note("raw.effect", code(() => EngineRaw.UpdateMesh("outlined", {
+            effect: { id: "outline", parameters: { offset: [1, -1] }, progress: 1, seed: 3 } })));
+        note("raw.effectClear", code(() => EngineRaw.UpdateMesh("outlined", { effect: null })));
+        note("raw.effectTarget", code(() => EngineRaw.UpdateMesh("into", { effect: { id: "outline" } })));
+        note("raw.effectShape", code(() => EngineRaw.UpdateMesh("outlined", { effect: { id: "outline", parameters: { width: "2" } } })));
+        note("raw.effectKey", code(() => EngineRaw.CreateMesh("glowing", { effect: { id: "outline", strength: 1 } })));
+        note("raw.effectStats", `${EngineRaw.Stats().skippedEffects}/${EngineRaw.Limits().maxEffectsPerFrame}`);
         note("raw.random", code(() => Math.random()));
         note("raw.frozen", code(() => { "use strict"; EngineRaw.CreateMesh = null; }));
     )js");
@@ -1725,6 +1795,14 @@ void TestRawAndNativeExtensions(px::test::Suite& suite) {
                      "a batch refuses a mesh named twice, plain arrays and firstVertex without vertices");
         suite.Expect(VariableText(variables, "raw.stats") == "3/1/1/true",
                      "Stats reports the extension's meshes, textures, targets and uploads");
+        suite.Expect(VariableText(variables, "raw.effect") == "ok" &&
+                         VariableText(variables, "raw.effectClear") == "ok" &&
+                         VariableText(variables, "raw.effectStats") == "0/32",
+                     "a mesh takes an effect and changes or clears it with UpdateMesh; Stats and Limits report effects");
+        suite.Expect(VariableText(variables, "raw.effectTarget") == "TypeError:PXJS7803" &&
+                         VariableText(variables, "raw.effectShape") == "TypeError:PXJS7803" &&
+                         VariableText(variables, "raw.effectKey") == "TypeError:PXJS7803",
+                     "an effect on a render target mesh, a non-numeric value or an unknown key throws PXJS7803");
         suite.Expect(VariableText(variables, "raw.frozen") == "TypeError:undefined",
                      "EngineRaw is frozen");
         suite.Expect(VariableText(variables, "raw.random") == "Error:undefined",

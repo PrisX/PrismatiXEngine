@@ -1065,6 +1065,10 @@ const transition = ctx.effects.play("ink-wipe", 0.8, {softness: 0.12});
 await ctx.effects.wait(transition);
 ```
 
+Layer-1 raw meshes take the same `node` effects through their `effect`
+option ([raw drawing](native-extensions.md#layer-1-raw-drawing)); like every
+raw call, that is presentation only and never saved.
+
 Named values are checked against the packaged schema before native uniform
 updates. The positional `vec4[]` form remains available for compatibility with
 older extensions. Per-frame progress sampling and rendering stay native; Stage

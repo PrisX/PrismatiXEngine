@@ -54,6 +54,23 @@ await test("the raw facade forwards to EngineRaw and builds quads", () => {
   equal([...QUAD_INDICES], [0, 1, 2, 0, 2, 3]);
 });
 
+await test("a raw mesh effect reaches EngineRaw as given and updates every frame", () => {
+  const {host, calls} = recorder<PrismatiXRawHost>({UpdateMesh: true, Stats: {skippedEffects: 0}, Limits: {maxEffectsPerFrame: 32}});
+  const raw = createPrismatiXRaw(host);
+  const target = raw.createTarget("live2d.rt", 512, 512);
+  const shown = raw.createMesh("live2d.shown", {texture: target.source, blend: "premultiplied",
+    effect: {id: "outline", parameters: {width: 2, offset: [1, -1], color: [1, 0.8, 0.2, 1]}}});
+  equal(shown.update({effect: {id: "outline", progress: 0.5, seed: 7}}), true);
+  equal(shown.update({effect: null}), true);
+  equal(raw.stats().skippedEffects, 0);
+  equal(raw.limits().maxEffectsPerFrame, 32);
+  equal(calls.map(([name]) => name), ["CreateTarget", "CreateMesh", "UpdateMesh", "UpdateMesh", "Stats", "Limits"]);
+  equal(calls[1]![1][1], {texture: {kind: "target", id: "live2d.rt"}, blend: "premultiplied",
+    effect: {id: "outline", parameters: {width: 2, offset: [1, -1], color: [1, 0.8, 0.2, 1]}}});
+  equal(calls[2]![1], ["live2d.shown", {effect: {id: "outline", progress: 0.5, seed: 7}}]);
+  equal(calls[3]![1], ["live2d.shown", {effect: null}]);
+});
+
 await test("raw onFrame draws every frame until stopped", () => {
   const {engine, tick, listeners} = frameEngine();
   const previous = globalThis.Engine;

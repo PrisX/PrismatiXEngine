@@ -353,11 +353,14 @@ public:
     // matching EndComposition composites that target once, so a node shader
     // observes an entire group rather than being re-run for each leaf.
     // Calls may be nested. A false return leaves renderer state unchanged.
+    // `premultiplied` composites the capture as the premultiplied colors that
+    // drawing source-over into a transparent target leaves (raw meshes); the
+    // Stage composites it as straight alpha. True when `effect` was applied.
     [[nodiscard]] bool BeginComposition();
-    void EndComposition(
+    bool EndComposition(
         std::string_view effect, float progress, float randomSeed,
         const std::array<std::array<float, 4>, 8>& parameters,
-        const Rect& viewport);
+        const Rect& viewport, bool premultiplied = false);
 
     // Reuses two logical-size render targets for image-layer alpha masks.
     // The caller draws content, switches to coverage, draws the mask image,
