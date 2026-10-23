@@ -29,6 +29,27 @@ import {
   type NativeExtensionPlatform,
 } from "@prismatix/authoring-sdk";
 
+/**
+ * `extension add/update/inspect --platform`: native platforms (Android's
+ * android-arm64 among them), `all` for every one, `host` for this computer's.
+ */
+export function parseNativePlatformList(value: string, host = `${process.platform}-${process.arch}`): NativeExtensionPlatform[] {
+  const result: NativeExtensionPlatform[] = [];
+  for (const item of value.split(",")) {
+    const name = item.trim();
+    if (name === "") continue;
+    const expanded = name === "all" ? [...nativeExtensionPlatforms] : [name === "host" ? host : name];
+    for (const platform of expanded) {
+      if (!isNativeExtensionPlatform(platform))
+        throw new Error(name === "host" ? `This computer (${host}) is not a platform native extensions run on`
+          : `Unknown platform ${JSON.stringify(name)}; use ${nativeExtensionPlatforms.join(", ")} or all`);
+      if (!result.includes(platform)) result.push(platform);
+    }
+  }
+  if (result.length === 0) throw new Error(`--platform needs a platform: ${nativeExtensionPlatforms.join(", ")} or all`);
+  return result;
+}
+
 /** A PEM file with the P-256 private key that signs native libraries. */
 export const SIGNING_KEY_ENVIRONMENT = "PRISMATIX_EXTENSION_SIGNING_KEY";
 /** Where a project keeps the key that signs its own native libraries for local builds. */
@@ -193,9 +214,9 @@ export type BuildTarget =
 
 /**
  * Extensions that cannot run on the build's target: a native extension on
- * the Web (PXCLIEXT1101) or Android (PXCLIEXT1102), an extension whose
- * `platforms` leave the target out (PXCLIEXT1103), a native library missing
- * for a desktop platform (PXCLIEXT1104).
+ * the Web (PXCLIEXT1101), an extension whose `platforms` leave the target
+ * out (PXCLIEXT1103), a native library missing for a desktop platform or
+ * Android (PXCLIEXT1104). Android is the platform android-arm64.
  */
 export function platformFindings(extensions: readonly {readonly manifestPath: string; readonly manifest: ExtensionManifest;
   readonly available?: readonly NativeExtensionPlatform[]}[], target: BuildTarget): AuthoringDiagnostic[] {
@@ -210,14 +231,7 @@ export function platformFindings(extensions: readonly {readonly manifestPath: st
         findings.push(error("PXCLIEXT1103", `${manifest.id} does not list "web" in its platforms`, manifestPath));
       continue;
     }
-    if (target.kind === "android") {
-      if (manifest.native !== undefined)
-        findings.push(error("PXCLIEXT1102", `${manifest.id} loads native libraries, which the Android Player does not support yet`, manifestPath));
-      else if (!platforms.includes("android-arm64"))
-        findings.push(error("PXCLIEXT1103", `${manifest.id} does not list "android-arm64" in its platforms`, manifestPath));
-      continue;
-    }
-    for (const platform of target.platforms) {
+    for (const platform of target.kind === "android" ? ["android-arm64" as const] : target.platforms) {
       if (!platforms.includes(platform)) {
         findings.push(error("PXCLIEXT1103", `${manifest.id} does not run on ${platform} (its platforms: ${platforms.join(", ")})`, manifestPath));
         continue;

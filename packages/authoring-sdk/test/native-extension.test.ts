@@ -51,6 +51,12 @@ test("native manifest checks: capability, ABI, platforms and what pack fills", (
   assert.ok(codes(manifest({native: {...manifest().native!, libraries: {"win32-x64": {path: "native/win32-x64/glow.so"}}}}))
     .includes("PXEXTNAT1004"), "a Windows library is a .dll");
   assert.ok(codes(manifest(), true).includes("PXEXTNAT1005"), "a package is signed");
+  const android = (path: string) => manifest({native: {...manifest().native!, libraries: {"android-arm64": {path}}}});
+  assert.deepEqual(codes(android("native/android-arm64/libglow.so")), [], "Android loads native libraries");
+  assert.ok(codes(android("native/android-arm64/glow.dll")).includes("PXEXTNAT1004"), "an Android library is a .so");
+  assert.ok(validateDocument<ExtensionManifest>("extension", android("native/android-arm64/libglow.so"), "glow.pxextension").valid,
+    "the contract accepts an android-arm64 library");
+  assert.deepEqual(manifestPlatforms(android("native/android-arm64/libglow.so")), ["android-arm64"]);
   assert.deepEqual(manifestPlatforms(manifest()), ["win32-x64"]);
   assert.deepEqual(manifestPlatforms({}), ["win32-x64", "linux-x64", "darwin-x64", "darwin-arm64", "android-arm64", "web"]);
 });

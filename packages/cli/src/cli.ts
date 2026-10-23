@@ -1513,7 +1513,8 @@ async function validateCommand(options: Options): Promise<number> {
         : {kind: "desktop", platforms: parsePlatformList([options.values.get("platform") ?? "host"])};
     const extensions = buildTarget === undefined ? [] : await projectExtensions(loaded.root);
     const targetFindings = buildTarget === undefined ? [] : [...platformFindings(extensions, buildTarget),
-      ...(buildTarget.kind === "desktop" ? (await resolveNativeUserFiles(loaded.root, extensions, buildTarget.platforms)).findings : [])];
+      ...(buildTarget.kind === "web" ? [] : (await resolveNativeUserFiles(loaded.root, extensions,
+        buildTarget.kind === "android" ? ["android-arm64"] : buildTarget.platforms)).findings)];
     printDiagnostics([...result.diagnostics, ...targetFindings]);
     if (!result.valid || targetFindings.some((item) => item.severity === "error")) return 1;
     const includedFiles = new Set(Object.values(loaded.includedResources).flat());
@@ -2117,6 +2118,11 @@ async function packProject(options: Options, settings: {
   readonly intermediate?: boolean;
   /** The desktop platform to pack for (`pack --platform`); the host's when absent. */
   readonly platform?: DesktopPlatform;
+  /**
+   * The native extension files an intermediate package carries in Plugins/
+   * (Android: android-arm64); without it an intermediate package has none.
+   */
+  readonly nativePlatform?: NativeExtensionPlatform;
   /** Content already compiled for this pack; nothing is built. */
   readonly prebuilt?: PrebuiltArtifact;
 } = {}): Promise<{output: string; player: string;
@@ -2487,15 +2493,18 @@ async function packProject(options: Options, settings: {
     }
     // Native extensions: the libraries for this platform go beside the game
     // data as loose files (the Player cannot load a library from the
-    // package); the packaged manifest pins and signs each one.
-    if (settings.intermediate !== true && !scriptTool) {
-      const platform: string = settings.platform ?? hostPlatform;
+    // package); the packaged manifest pins and signs each one. An Android
+    // package carries them the same way, and the APK takes them as assets.
+    const platform: string | undefined = settings.intermediate === true ? settings.nativePlatform
+      : scriptTool ? undefined : settings.platform ?? hostPlatform;
+    if (platform !== undefined) {
       const native = (await sealedArtifactExtensions(root, artifactRoot, project))
         .filter((item) => item.manifest.native !== undefined);
       if (native.length > 0) {
-        if (!isDesktopPlatform(platform))
+        if (!isDesktopPlatform(platform) && platform !== "android-arm64")
           throw new PackagerFailure([diagnostic("PXCLIEXT1104", `Native extensions cannot be packed on ${platform}`, root)]);
-        const findings = platformFindings(native, {kind: "desktop", platforms: [platform]});
+        const findings = platformFindings(native, platform === "android-arm64" ? {kind: "android"}
+          : {kind: "desktop", platforms: [platform]});
         if (findings.length > 0) throw new PackagerFailure(findings);
         const supplied = await resolveNativeUserFiles(root, native, [platform]);
         if (supplied.findings.length > 0) throw new PackagerFailure(supplied.findings);
@@ -2772,6 +2781,7 @@ async function androidPackCommand(options: Options): Promise<number> {
   try {
     const location = await resolveProjectPath(options.positional[0]);
     await checkExtensionTargets(location.root, {kind: "android"});
+    await checkNativeUserFiles(location.root, ["android-arm64"]);
     const raw = location.manifestExists ? object(await readJson(location.projectPath)) : undefined;
     if (raw?.distribution !== undefined) {
       const error = projectDistributionError(raw.distribution);
@@ -2813,7 +2823,7 @@ async function androidPackCommand(options: Options): Promise<number> {
     for (const name of ["target", "android-player", "gradle", "android-sdk"]) packOptions.values.delete(name);
     packOptions.flags.delete("debug");
     packOptions.values.set("output", packageDirectory);
-    const packed = await packProject(packOptions, {intermediate: true});
+    const packed = await packProject(packOptions, {intermediate: true, nativePlatform: "android-arm64"});
     const manifest = object(await readJson(join(packed.output, "Package", "manifest.json")));
     const resolution = object(manifest?.resolution);
     if (typeof manifest?.gameId !== "string" || typeof manifest.title !== "string" ||

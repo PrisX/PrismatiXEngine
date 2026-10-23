@@ -6,7 +6,10 @@
 //   src/main/jniLibs/arm64-v8a/libmain.so    PrismatiXPlayer (android-arm64 preset)
 //   src/main/jniLibs/arm64-v8a/libav*.so     FFmpeg shared libraries (LGPL)
 //   src/main/jniLibs/arm64-v8a/libsw*.so
-//   src/main/assets/                         the packaged game: Package/ and *.pdx
+//   src/main/assets/                         the packaged game: Package/ and *.pdx,
+//                                            and Plugins/<extension id>/ (native
+//                                            extensions, copied to the code cache
+//                                            and loaded from there at run time)
 //   ../prismatix.properties                  optional; the keys read below
 //
 // src/main/java/org/libsdl/app/ is SDL's Java glue, copied unchanged from the
