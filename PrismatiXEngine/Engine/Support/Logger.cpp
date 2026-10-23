@@ -2,6 +2,9 @@
 
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#if defined(__ANDROID__)
+#include <spdlog/sinks/android_sink.h>
+#endif
 
 #include <chrono>
 #include <memory>
@@ -25,9 +28,16 @@ bool Initialize(const std::string& application,
             "Could not create log directory", directory, ec);
         g_logPath = directory / (application + ".log");
 
+#if defined(__ANDROID__)
+        // An app's stdout goes nowhere on Android; logcat shows the log.
+        auto console = std::make_shared<spdlog::sinks::android_sink_mt>("PrismatiX");
+        console->set_level(spdlog::level::debug);
+        console->set_pattern("%v");
+#else
         auto console = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         console->set_level(spdlog::level::debug);
         console->set_pattern("[%H:%M:%S.%e] [%^%l%$] [%t] %v");
+#endif
 
         auto file = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
             g_logPath.string(), 5u * 1024u * 1024u, 5u, false);

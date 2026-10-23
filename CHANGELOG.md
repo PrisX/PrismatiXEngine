@@ -15,6 +15,15 @@ The packages always carry the same version and pin each other exactly.
 
 ### Added
 
+- Native extensions run on Android: `native.libraries` takes `android-arm64`
+  (a `.so`), `extension pack` writes its native pack, `extension add/update
+  --platform android-arm64` installs it, and `pack --target android` puts
+  each extension's files and user files into the APK's `assets/Plugins/`
+  instead of refusing them (`PXCLIEXT1102` is gone). The Android Player
+  copies them to the app's code cache, checks the pinned SHA-256s and the
+  signature there and loads the library; `plugin_directory` is that folder.
+  The Android Player's log now goes to logcat (tag `PrismatiX`).
+
 - Native extensions can name files the game's maker supplies, such as a
   vendor runtime that may not be redistributed (Live2D's Cubism Core):
   `native.libraries.<platform>.userFiles: [{name, hint?, sha256s?}]`. They

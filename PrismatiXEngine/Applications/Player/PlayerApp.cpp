@@ -39,6 +39,7 @@ EM_JS(void, FinishWebPersistenceRequest, (int saved), {
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Diagnostics/FrameProfiler.h"
 #include "Engine/IO/PackageVerifier.h"
+#include "Engine/Native/NativePluginHost.h"
 #include "Engine/Progression/AwaitedWork.h"
 #include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/Progression/UserDataLocation.h"
@@ -1063,12 +1064,21 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_scriptServices.renderer = &m_runtime.Renderer();
     m_scriptServices.audio = &m_runtime.Audio();
     // Native extension libraries sit beside Package/ (the working directory
-    // is the distribution's data root), in Plugins/<extension id>/.
+    // is the distribution's data root), in Plugins/<extension id>/. On
+    // Android Plugins/ is in the APK's assets, which dlopen cannot read, so
+    // each extension's files are copied to the app's code cache first.
+#if defined(__ANDROID__)
+    if (auto bundled = native::BundledPluginDirectory(); !bundled.empty()) {
+        m_scriptServices.nativePluginDirectories = {std::move(bundled)};
+        m_scriptServices.nativePluginAssets = "Plugins";
+    }
+#else
     {
         std::error_code error;
         const auto root = std::filesystem::current_path(error);
         if (!error) m_scriptServices.nativePluginDirectories = {PathToUtf8(root / "Plugins")};
     }
+#endif
     m_scriptServices.profile = &m_profile;
     m_scriptServices.input = &m_runtime.GetInput();
     m_scriptServices.stage = &m_session->Stage();

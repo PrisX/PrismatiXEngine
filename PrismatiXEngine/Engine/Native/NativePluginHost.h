@@ -31,10 +31,13 @@ struct NativeLibrarySpec {
     std::string signature;
     // The library first, then the files it loads from its folder.
     std::vector<File> files;
+    // Names of the files the game's maker supplies (`userFiles`): neither
+    // pinned nor signed, so Load does not check them; only copied on Android.
+    std::vector<std::string> userFiles;
 };
 
 // The platform this Player loads native libraries for, or empty (the Web
-// Player, Android and the WASM Preview load none).
+// Player and the WASM Preview load none).
 [[nodiscard]] std::string_view CurrentPlatform();
 
 // The text a library's signature covers (the SDK's nativeSignatureMessage).
@@ -46,6 +49,21 @@ struct NativeFailure {
     std::string code;
     std::string message;
 };
+
+// Android: dlopen cannot load a library from inside the APK, so the APK
+// carries the Plugins folder as assets and the Player copies an extension's
+// files (the library, its `files` and `userFiles`) from
+// `<assetFolder>/<extension id>/` into `<directory>/<extension id>/`, where
+// Load then checks and loads them. A file that already holds the same bytes
+// is left alone; a copied one is made read-only. `assetFolder` is opened
+// with SDL: on Android a relative path names the APK's assets, elsewhere it
+// is a folder. False (PXJS7903) when a file is missing or cannot be copied.
+bool CopyBundledFiles(const NativeLibrarySpec& spec, std::string_view assetFolder,
+                      const std::string& directory, NativeFailure& failure);
+
+// Where the Android Player keeps the native files it copies out of the APK:
+// `<code cache>/Plugins` (Context.getCodeCacheDir()). Empty elsewhere.
+[[nodiscard]] std::string BundledPluginDirectory();
 
 // A verified, loaded and initialized library and the services it
 // registered. Destroying it calls px_plugin_shutdown and unloads it.

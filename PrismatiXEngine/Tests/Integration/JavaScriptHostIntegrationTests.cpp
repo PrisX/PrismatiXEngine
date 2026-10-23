@@ -1843,6 +1843,48 @@ void TestRawAndNativeExtensions(px::test::Suite& suite) {
                          VariableText(variables, "forged.request") == "PXJS7901",
                      "a library whose signature does not verify is never loaded");
     }
+    {
+        // Android's path: the library comes out of the package (here a
+        // folder standing in for the APK's assets) into a private folder,
+        // replacing a stale copy, and is checked and loaded there.
+        const std::filesystem::path library(PRISMATIX_TEST_NATIVE_PLUGIN);
+        const auto name = library.filename();
+        const auto bundled = temp.path / "Bundled";
+        const auto copies = temp.path / "CodeCache";
+        std::filesystem::create_directories(bundled / "native-demo");
+        std::filesystem::copy_file(library, bundled / "native-demo" / name);
+        std::filesystem::create_directories(copies / "native-demo");
+        Write(copies / "native-demo" / name, "a stale copy");
+        auto copying = services;
+        copying.nativePluginDirectories = {copies.string()};
+        copying.nativePluginAssets = bundled.string();
+        {
+            px::script::JavaScriptHost host(copying);
+            suite.Require(host.LoadExtensionManifest("Content/Extensions/native-demo.pxextension"),
+                          "a native extension loads from copied files");
+            suite.Expect(VariableText(variables, "native.echo") == "3,2,1",
+                         "the library copied out of the package answers");
+            const auto where = VariableText(variables, "native.where");
+            std::error_code same;
+            suite.Expect(std::filesystem::equivalent(std::filesystem::path(reinterpret_cast<const char8_t*>(where.c_str())),
+                                                     copies / "native-demo", same),
+                         "plugin_directory names the folder the files were copied to");
+        }
+        std::ifstream original(library, std::ios::binary);
+        std::ifstream copied(copies / "native-demo" / name, std::ios::binary);
+        suite.Expect(std::string((std::istreambuf_iterator<char>(original)), std::istreambuf_iterator<char>()) ==
+                         std::string((std::istreambuf_iterator<char>(copied)), std::istreambuf_iterator<char>()),
+                     "a stale copy is replaced by the package's bytes");
+        copied.close();
+        std::filesystem::remove(bundled / "native-demo" / name);
+        {
+            // The script runs (and then throws at its first request).
+            px::script::JavaScriptHost host(copying);
+            (void)host.LoadExtensionManifest("Content/Extensions/native-demo.pxextension");
+            suite.Expect(VariableText(variables, "native.has") == "false",
+                         "a library missing from the package is not loaded from an old copy");
+        }
+    }
 }
 
 int main() {

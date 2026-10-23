@@ -8,11 +8,12 @@ express:
 | Layer | Entry | Runs where | Capabilities | Platforms |
 |---|---|---|---|---|
 | 1. Raw drawing (experimental) | `@prismatix/runtime/raw` | the sandbox | `raw.mesh`, `raw.texture`, `raw.target` | every Player: desktop, WebGL2 and WebGPU Web Players, WASM Preview |
-| 2. Native services | `@prismatix/runtime/native` + a signed C library | the game process | `native` | Windows x64, Linux x64, macOS (x64, Apple silicon); not the Web or Android |
+| 2. Native services | `@prismatix/runtime/native` + a signed C library | the game process | `native` | Windows x64, Linux x64, macOS (x64, Apple silicon), Android arm64; not the Web |
 
 - [Layer 1: raw drawing](#layer-1-raw-drawing)
 - [Layer 2: native services](#layer-2-native-services)
 - [The C ABI](#the-c-abi)
+- [Android](#android)
 - [Signing](#signing)
 - [Packaging, installing and the registry](#packaging-installing-and-the-registry)
 - [Build targets](#build-targets)
@@ -209,7 +210,9 @@ service name differently without the script changing.
 `platforms` (optional) lists where an extension runs: `win32-x64`,
 `linux-x64`, `darwin-x64`, `darwin-arm64`, `android-arm64`, `web`. Without it
 a JavaScript extension runs everywhere and a native one runs where it has a
-library. Pack fills `publicKey` and each library's `sha256` and `signature`.
+library. `native.libraries` takes every platform but `web`; an
+`android-arm64` library is a `.so` like Linux's. Pack fills `publicKey` and
+each library's `sha256` and `signature`.
 
 ```ts
 import {createPrismatiXNative} from "@prismatix/runtime/native";
@@ -239,6 +242,8 @@ native.onMessage("steam.achievements", (bytes) => ctx.log.info(`steam: ${bytes.l
   Windows holds the files open, write-locked, until the library is loaded),
   then the signature, and only then loads it.
   `PRISMATIX_NATIVE_PLUGIN_PATH` (a path list) adds folders to search first.
+  Android keeps them inside the APK and copies them out first
+  ([Android](#android)).
 
 ## The C ABI
 
@@ -283,7 +288,7 @@ PX_PLUGIN_EXPORT void px_plugin_shutdown(void) {}
   without a trailing separator: load a companion library (`files` in the
   manifest) from there at run time. Libraries the loader resolves on its own
   also come from there on Windows (`LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR`); on
-  Linux and macOS link with an `$ORIGIN` / `@loader_path` run path.
+  Linux, Android and macOS link with an `$ORIGIN` / `@loader_path` run path.
 - ABI 1.1 only appended `respond_error` and `plugin_directory`: a library
   built against 1.0 loads unchanged, and one built against 1.1 needs a 1.1
   Player (the minor-version check above).
@@ -330,6 +335,57 @@ their own copy:
 - The Player does not know about them: the library finds them in
   `plugin_directory` (ABI 1.1) and loads them itself.
 
+## Android
+
+The Android Player (`android-arm64`) loads native extensions with the same
+checks as the desktop Players: the pinned SHA-256 of every file, then the
+signature, then `dlopen`. What differs is where the files live, because
+`dlopen` cannot load a library from inside the APK's assets and the APK's
+`lib/arm64-v8a/` folder takes only `lib*.so` files under one shared name
+space.
+
+- **In the APK.** `pack --target android` copies each extension's
+  `android-arm64` files (the library, its `files` and the `userFiles` the
+  game's maker supplied) into the package's `Plugins/<extension id>/`, as a
+  desktop pack does, and the APK carries that folder as
+  `assets/Plugins/<extension id>/`. `lib/arm64-v8a/` holds only the Player
+  (`libmain.so` and FFmpeg), so extension file names never collide with each
+  other or with the Player's, and a file keeps its own name.
+- **On the device.** Before loading an extension, the Player copies its
+  files from the APK to `<code cache>/Plugins/<extension id>/`
+  (`Context.getCodeCacheDir()`: private to the app, never backed up, and
+  emptied by an app update) and makes them read-only. A file that already
+  holds the APK's bytes is left alone; any other copy is replaced, so a
+  changed copy does not survive the next start. A file missing from the APK
+  leaves the services unavailable with `PXJS7903` in the log.
+- **Verification** then runs on that folder exactly as on Linux: the Player
+  reads each file there, checks it against the SHA-256 the packaged manifest
+  pins and the signature, and `dlopen`s the same path. Only the app itself
+  can write its code cache.
+- **`plugin_directory`** is that folder, for example
+  `/data/user/0/<applicationId>/code_cache/Plugins/<extension id>`. It
+  holds the library, its `files` and the user files under their own names,
+  so a library finds its companions the same way on every platform.
+- `userFiles` for `android-arm64` are found like desktop ones:
+  `PRISMATIX_NATIVE_USER_FILES`, then `NativeUserFiles/`, each as
+  `<extension id>/android-arm64/<name>`, `android-arm64/<name>` and `<name>`.
+- The template's `useLegacyPackaging false` (uncompressed, page-aligned
+  `lib/arm64-v8a/`, no extraction) is unchanged: it applies to the Player's
+  libraries only.
+- Build the library with the NDK for `arm64-v8a`, API 26 or lower, and
+  16 KB page alignment (`-Wl,-z,max-page-size=16384`, or NDK r27's
+  `ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON`); Google Play requires it for
+  Android 15 targets. Link the C++ runtime statically (`c++_static`).
+- The Player's log goes to logcat with the tag `PrismatiX`
+  (`adb logcat -s PrismatiX`), where `PXJS7903` and the library's `log`
+  calls appear.
+
+Tested on the Android 15 x86_64 Google APIs emulator image, which runs
+arm64-only apps through its ARM translation: the arm64 test library
+(`Tests/Fixtures/NativePlugin`, built by the `PrismatiXTestNativePlugin`
+target of the `android-arm64` preset) loaded and answered from a script, and
+`plugin_directory` named the code cache folder.
+
 ## Signing
 
 Each platform's library is signed with ECDSA P-256 over SHA-256 of a
@@ -374,6 +430,7 @@ the package with warning `PXCLIEXT2006`.
 prismatix extension inspect owen/steamfx                # shows the native warning, services and key
 prismatix extension add owen/steamfx --allow-native     # this computer's platform
 prismatix extension add owen/steamfx --allow-native --platform win32-x64,darwin-arm64
+prismatix extension add owen/steamfx --allow-native --platform android-arm64   # for an Android build
 prismatix extension update owen/steamfx --platform linux-x64   # fetch another platform's pack
 ```
 
@@ -381,7 +438,8 @@ prismatix extension update owen/steamfx --platform linux-x64   # fetch another p
   the code runs outside the sandbox with the player's permissions). An update
   signed by the key the lock accepted needs no new consent; a different key
   asks again.
-- `--platform` picks the native packs (default: this computer's). Each pack
+- `--platform` picks the native packs (default: this computer's;
+  `android-arm64` for an Android build, `all` for every platform). Each pack
   is checked against the hashes the main package's manifest pins before
   anything is written; it installs into `Extensions/<owner>/<name>/native/`.
 - The lock records each installed pack's SHA-256 and size under `platforms`
@@ -413,13 +471,17 @@ Registry API v1 additions (`Contracts/extension-registry.schema.json`):
 - `pack --target web` and `validate --target web` refuse a native extension
   (`PXCLIEXT1101`) and an extension whose `platforms` leave out `web`
   (`PXCLIEXT1103`) before building anything.
-- `pack --target android` refuses native extensions (`PXCLIEXT1102`): the
-  Android Player does not load native libraries yet.
 - A desktop pack copies each native extension's files for the target
   platform, and the user files it finds, into `Plugins/<extension id>/`, and
   fails when a library for that platform is missing from the project
   (`PXCLIEXT1104`) or a user file cannot be found (`PXCLIEXT1106`, `1107`).
   `validate --target desktop --platform <list>` runs the same checks.
+- `pack --target android` and `validate --target android` do the same for
+  `android-arm64`: an extension that has no Android library, or whose
+  `platforms` leave it out, fails with `PXCLIEXT1103`, one whose Android
+  library is not in the project with `PXCLIEXT1104`. The files go into the
+  APK's `assets/Plugins/` ([Android](#android)). (`PXCLIEXT1102`, which
+  refused every native extension on Android, is no longer reported.)
 - Packing into an output folder that already holds a distribution replaces
   only the files an earlier pack copied into `Plugins/` (it lists them in
   `Plugins/.prismatix-managed.json`); anything else there, such as a file
@@ -436,10 +498,10 @@ Registry API v1 additions (`Contracts/extension-registry.schema.json`):
 | PXJS7804 | a raw resource limit (count, size, texture memory, masks per mesh, batch parts); also `readBytes` past 64 MiB |
 | PXJS7901 | a native service that is unavailable or not declared |
 | PXJS7902 | a native service that failed (with its `respond_error` message when it gave one) |
-| PXJS7903 | (log) a native library that could not be verified or loaded |
+| PXJS7903 | (log) a native library that could not be verified or loaded, or (Android) copied out of the APK |
 | PXEXTNAT1001-1006 | manifest checks: capability, ABI, platforms, paths, unsigned, bad signature |
 | PXEXTPKG1015 / 1016 | a native pack with missing or extra files / a file that does not match its pinned SHA-256 |
-| PXCLIEXT1101-1105 | build target checks and signing-key mismatch |
+| PXCLIEXT1101, 1103-1105 | build target checks and signing-key mismatch |
 | PXCLIEXT1106 | a user-supplied file (`userFiles`) was not found for the platform being packed |
 | PXCLIEXT1107 | a user-supplied file is not in its `sha256s` allow list |
 | PXCLIEXT2006 | a platform's library is not built, so the package leaves it out |

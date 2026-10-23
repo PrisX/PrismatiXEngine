@@ -140,6 +140,11 @@ struct ScriptServices {
     // Folders holding `<extension id>/<library>` for native extensions (the
     // distribution's Plugins folder). PRISMATIX_NATIVE_PLUGIN_PATH comes first.
     std::vector<std::string> nativePluginDirectories;
+    // Android: the package folder (in the APK's assets) whose
+    // `<extension id>/` files are copied into the last of
+    // nativePluginDirectories before the library is loaded from there
+    // (native::CopyBundledFiles). Empty: nothing is copied.
+    std::string nativePluginAssets;
     // Seeds every extension's `ctx.random` (mixed with its id); unset, each
     // new session draws a seed from the system. QA and tests set it.
     std::optional<std::uint64_t> randomSeed;

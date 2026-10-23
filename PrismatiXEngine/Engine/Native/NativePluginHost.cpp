@@ -9,10 +9,14 @@
 #include <optional>
 #include <string>
 
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
+#if !defined(__EMSCRIPTEN__)
 #define PRISMATIX_NATIVE_PLUGINS 1
 #include "Engine/IO/Crypto.h"
 #include "Engine/IO/OverlaySignature.h"
+#include <SDL3/SDL_iostream.h>
+#include <SDL3/SDL_stdinc.h>
+#include <array>
+#include <fstream>
 #if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -20,7 +24,10 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
-#include <fstream>
+#endif
+#if defined(__ANDROID__)
+#include <SDL3/SDL_system.h>
+#include <jni.h>
 #endif
 #endif
 
@@ -35,6 +42,10 @@ namespace px::native {
 
 std::string_view CurrentPlatform() {
 #if !defined(PRISMATIX_NATIVE_PLUGINS)
+    return {};
+#elif defined(__ANDROID__) && defined(__aarch64__)
+    return "android-arm64";
+#elif defined(__ANDROID__)
     return {};
 #elif defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
     return "win32-x64";
@@ -87,7 +98,7 @@ struct NativePluginHost::State {
 
 namespace {
 
-// The host functions exist only where libraries load (not on the Web or Android).
+// The host functions exist only where libraries load (not on the Web).
 #if defined(PRISMATIX_NATIVE_PLUGINS)
 
 constexpr std::size_t kMaxLibraryBytes = 256U * 1024U * 1024U;
@@ -175,7 +186,11 @@ public:
     VerifiedFile& operator=(const VerifiedFile&) = delete;
     VerifiedFile(VerifiedFile&& other) noexcept { *this = std::move(other); }
     VerifiedFile& operator=(VerifiedFile&& other) noexcept {
+#if defined(_WIN32)
         std::swap(m_handle, other.m_handle);
+#else
+        (void)other;
+#endif
         return *this;
     }
     ~VerifiedFile() {
@@ -254,9 +269,158 @@ void CloseLibrary(void* library) {
 #endif
 }
 
+struct CloseStream {
+    void operator()(SDL_IOStream* stream) const { SDL_CloseIO(stream); }
+};
+
+// Copies `source` (opened with SDL, so on Android a relative path reads the
+// APK's assets) to `target`, unless `target` already holds the same bytes.
+bool MirrorFile(const std::string& source, const std::filesystem::path& target, std::string& error) {
+    std::unique_ptr<SDL_IOStream, CloseStream> input(SDL_IOFromFile(source.c_str(), "rb"));
+    if (!input) {
+        error = "it is not in the package (" + std::string(SDL_GetError()) + ")";
+        return false;
+    }
+    const Sint64 size = SDL_GetIOSize(input.get());
+    if (size < 0 || static_cast<unsigned long long>(size) > kMaxLibraryBytes) {
+        error = "its size cannot be read or is over 256 MiB";
+        return false;
+    }
+    std::vector<char> buffer(1U << 16);
+    std::error_code code;
+    if (std::filesystem::is_regular_file(target, code) &&
+        std::filesystem::file_size(target, code) == static_cast<std::uintmax_t>(size) && !code) {
+        std::ifstream existing(target, std::ios::binary);
+        std::vector<char> held(buffer.size());
+        bool same = static_cast<bool>(existing);
+        while (same) {
+            const std::size_t read = SDL_ReadIO(input.get(), buffer.data(), buffer.size());
+            if (read == 0) {
+                same = SDL_GetIOStatus(input.get()) == SDL_IO_STATUS_EOF;
+                break;
+            }
+            existing.read(held.data(), static_cast<std::streamsize>(read));
+            same = static_cast<std::size_t>(existing.gcount()) == read &&
+                   std::memcmp(buffer.data(), held.data(), read) == 0;
+        }
+        if (same) return true;
+        if (SDL_SeekIO(input.get(), 0, SDL_IO_SEEK_SET) != 0) {
+            error = "it cannot be read again (" + std::string(SDL_GetError()) + ")";
+            return false;
+        }
+    }
+    auto partial = target;
+    partial += ".partial";
+    {
+        std::ofstream output(partial, std::ios::binary | std::ios::trunc);
+        bool written = static_cast<bool>(output);
+        while (written) {
+            const std::size_t read = SDL_ReadIO(input.get(), buffer.data(), buffer.size());
+            if (read == 0) {
+                written = SDL_GetIOStatus(input.get()) == SDL_IO_STATUS_EOF;
+                break;
+            }
+            written = static_cast<bool>(output.write(buffer.data(), static_cast<std::streamsize>(read)));
+        }
+        output.close();
+        if (!written || !output) {
+            std::filesystem::remove(partial, code);
+            error = "it cannot be written to its folder";
+            return false;
+        }
+    }
+#if defined(_WIN32)
+    std::filesystem::remove(target, code);
+#endif
+    std::filesystem::rename(partial, target, code);
+    if (code) {
+        std::filesystem::remove(partial, code);
+        error = "it cannot be moved into place";
+        return false;
+    }
+#if !defined(_WIN32)
+    // Read-only, as Android asks of code an app loads from its own storage.
+    std::filesystem::permissions(target, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec,
+                                 std::filesystem::perm_options::replace, code);
+#endif
+    return true;
+}
+
 #endif
 
 }  // namespace
+
+bool CopyBundledFiles(const NativeLibrarySpec& spec, const std::string_view assetFolder,
+                      const std::string& directory, NativeFailure& failure) {
+    const auto fail = [&failure, &spec](std::string message) {
+        failure = {"PXJS7903", "Native library of '" + spec.extensionId + "' (" +
+                                   spec.platform + "): " + std::move(message)};
+        return false;
+    };
+#if !defined(PRISMATIX_NATIVE_PLUGINS)
+    (void)assetFolder;
+    (void)directory;
+    return fail("this Player does not load native libraries");
+#else
+    std::vector<std::string> names;
+    for (const auto& file : spec.files) names.push_back(FileName(file.path));
+    names.insert(names.end(), spec.userFiles.begin(), spec.userFiles.end());
+    const auto folder = Utf8Path(directory) / Utf8Path(spec.extensionId);
+    std::error_code code;
+    std::filesystem::create_directories(folder, code);
+    if (code) return fail("the folder for its files cannot be created: " + code.message());
+    for (const auto& name : names) {
+        if (name.empty() || name == "." || name == ".." || name.find_first_of("/\\:") != std::string::npos)
+            return fail("the file name '" + name + "' is not a plain file name");
+        std::string error;
+        if (!MirrorFile(std::string(assetFolder) + "/" + spec.extensionId + "/" + name,
+                        folder / Utf8Path(name), error))
+            return fail(name + " cannot be copied out of the package: " + error);
+    }
+    return true;
+#endif
+}
+
+std::string BundledPluginDirectory() {
+#if defined(__ANDROID__)
+    // The code cache: private to the app, never backed up, and emptied when
+    // the app is updated, so the next start copies the new files.
+    auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    auto activity = static_cast<jobject>(env ? SDL_GetAndroidActivity() : nullptr);
+    if (!activity) return {};
+    const auto cleared = [env] {
+        if (!env->ExceptionCheck()) return false;
+        env->ExceptionClear();
+        return true;
+    };
+    std::string path;
+    jclass type = env->GetObjectClass(activity);
+    jmethodID getCodeCacheDir = env->GetMethodID(type, "getCodeCacheDir", "()Ljava/io/File;");
+    jobject file = getCodeCacheDir ? env->CallObjectMethod(activity, getCodeCacheDir) : nullptr;
+    if (cleared()) file = nullptr;
+    if (file) {
+        jclass fileType = env->GetObjectClass(file);
+        jmethodID getAbsolutePath = env->GetMethodID(fileType, "getAbsolutePath", "()Ljava/lang/String;");
+        auto text = static_cast<jstring>(getAbsolutePath ? env->CallObjectMethod(file, getAbsolutePath) : nullptr);
+        if (cleared()) text = nullptr;
+        if (text) {
+            if (const char* chars = env->GetStringUTFChars(text, nullptr)) {
+                path = chars;
+                env->ReleaseStringUTFChars(text, chars);
+            }
+            env->DeleteLocalRef(text);
+        }
+        env->DeleteLocalRef(fileType);
+        env->DeleteLocalRef(file);
+    }
+    cleared();
+    env->DeleteLocalRef(type);
+    env->DeleteLocalRef(activity);
+    return path.empty() ? path : path + "/Plugins";
+#else
+    return {};
+#endif
+}
 
 NativePluginHost::NativePluginHost() : m_state(std::make_unique<State>()) {}
 
