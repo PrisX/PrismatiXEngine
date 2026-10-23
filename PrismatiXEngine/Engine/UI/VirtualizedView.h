@@ -127,8 +127,13 @@ public:
 /** Data-driven absolute item placement, retaining stable-key item identities. */
 class PlacedItemsView final : public VirtualizedView {
 public:
+    // Usually fills the screen over the story (choices): clicks between its
+    // items pass through to the game, like a Group's, instead of stopping.
     explicit PlacedItemsView(std::string name = "PlacedItemsView")
-        : VirtualizedView(std::move(name)) { EnablePlacedItems(); }
+        : VirtualizedView(std::move(name)) {
+        EnablePlacedItems();
+        SetMouseFilter(MouseFilter::Pass);
+    }
     [[nodiscard]] std::string_view TypeName() const override { return "PlacedItemsView"; }
 
     // Where the stock Player places story choices when this view lists
