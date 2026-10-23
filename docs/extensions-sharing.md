@@ -19,7 +19,10 @@ implements, the static index layout, the lock file and the security model.
 An extension with native libraries also ships one native pack per platform,
 installs only with `--allow-native` and never builds for the Web:
 [Low-level and native extensions](native-extensions.md) covers what that
-adds to every section below.
+adds to every section below. An extension can also have a Studio side, a
+module PrismatiX Studio loads while you edit, or have only that side:
+[Studio extensions](studio-extensions.md) covers it. It is packed, shared and
+installed like any other extension.
 
 ## Authoring and packing
 
@@ -68,6 +71,9 @@ every release. pack:
   does not declare are warnings, `PXCLIEXT2001` and `PXCLIEXT2004`), or copies
   a JavaScript entry and its `modules` and warns about undeclared
   capabilities;
+- puts a Studio side's `studio.entry` in `dist/`, bundled from the
+  TypeScript source next to it when there is one
+  ([Studio extensions](studio-extensions.md#building-and-packing));
 - checks the manifest and `pxext.json` against their contracts and the
   package against the size limits below;
 - adds `types/prismatix-extension.d.ts` (the handler types generated from the
@@ -224,9 +230,9 @@ Contents:
 | Path | |
 |---|---|
 | `pxext.json` | Required. Package metadata (above) with `version` and `manifest` filled in by pack. |
-| `<name>.pxextension` | Required. The manifest: `language` `javascript`, `entry` and `modules` in `dist/`, `id` = name, `version` = `pxext.json` version, a valid `requiredEngineVersion` range. |
-| `dist/**/*.js` | Required: the entry (and modules). For TypeScript, the bundle. |
-| `types/**/*.d.ts` | Handler types generated from the manifest. |
+| `<name>.pxextension` | Required. The manifest: `language` `javascript`, `entry`, `modules` and `studio.entry` in `dist/`, `id` = name, `version` = `pxext.json` version, a valid `requiredEngineVersion` range. |
+| `dist/**/*.js` | Required: the entry (and modules) and the Studio entry. For TypeScript, the bundle. |
+| `types/**/*.d.ts` | Handler types generated from the manifest (with a game side). |
 | `README.md`, `LICENSE`, `LICENSE.md`, `LICENSE.txt`, `CHANGELOG.md` | Optional (pack warns without a README or LICENSE). |
 | `icon.png` | Only when `pxext.json` names it. |
 | `screenshots/<file>` | Only the files `pxext.json` lists. |
@@ -252,7 +258,7 @@ files}`. Errors are `PXEXTPKG1xxx`, warnings `PXEXTPKG2xxx`:
 | PXEXTPKG1007 | `pxext.json` is missing or not JSON |
 | PXEXTPKG1008 | `pxext.json` does not match its contract |
 | PXEXTPKG1009 | The manifest is missing, misnamed or invalid |
-| PXEXTPKG1010 | The manifest disagrees with the package (id, version, language, scripts) |
+| PXEXTPKG1010 | The manifest disagrees with the package (id, version, language, scripts, the Studio entry) |
 | PXEXTPKG1011 | A file a package may not hold |
 | PXEXTPKG1012 | A bad icon or screenshot |
 | PXEXTPKG1013 | `requiredEngineVersion` is not a SemVer range |
@@ -301,7 +307,9 @@ starts at 1.
 ```
 
 Required in a result: `id`, `latestVersion`, `requiredEngineVersion`,
-`capabilities`.
+`capabilities`. An extension with a Studio side may add `"sides": ["game",
+"studio"]` (or `["studio"]`) and `requiredStudioVersion`; without `sides` it
+has a game side only. Studio-only extensions list `"capabilities": []`.
 
 ### GET /v1/extensions/{owner}/{name}
 
@@ -326,7 +334,8 @@ Required in a result: `id`, `latestVersion`, `requiredEngineVersion`,
 Required: `id`, `capabilities`, `versions` (each with `version`,
 `requiredEngineVersion`, `yanked`), newest first. `latestVersion` is the
 newest non-yanked, non-prerelease version, or `null`. The metadata comes from
-the latest version's `pxext.json`.
+the latest version's `pxext.json`. `sides` and `requiredStudioVersion` are
+optional, as in a search result.
 
 ### GET /v1/extensions/{owner}/{name}/versions/{version}
 
@@ -461,8 +470,11 @@ re-runs the script, which fails on any invalid package.
   on this computer). The publish token comes from `PRISMATIX_REGISTRY_TOKEN`,
   is sent only to the registry, never to the upload URL, and is never stored.
 - **Consent.** Before installing, the CLI (and Studio) shows the
-  capabilities the extension declares and its commands and Actions; an
-  update that adds a capability asks again.
+  capabilities the extension declares and its commands and Actions, and the
+  permissions and contributions of its Studio side; an update that adds a
+  capability or a Studio permission asks again. Studio also asks each user
+  before it first loads a Studio side, because the lock is shared through
+  git ([Studio extensions](studio-extensions.md#how-studio-loads-it)).
 - **Native code** ([details](native-extensions.md)) is the exception: a
   library runs in the game process with the player's permissions, so it
   installs only with `--allow-native`, is signed per platform, is pinned by

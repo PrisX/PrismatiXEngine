@@ -1326,7 +1326,10 @@ extension is shown at its `.ts` file and line.
 
 To share an extension, or use one someone else published, see
 [Sharing extensions](extensions-sharing.md): `prismatix extension pack`
-makes a `.pxext` and `prismatix extension add owner/name` installs one.
+makes a `.pxext` and `prismatix extension add owner/name` installs one. An
+extension can also add to PrismatiX Studio (asset types, inspectors, choices
+for a parameter's dropdown) through a Studio side that games never include:
+see [Studio extensions](studio-extensions.md).
 
 ## Command schema for editors
 

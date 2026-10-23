@@ -15,6 +15,37 @@ The packages always carry the same version and pin each other exactly.
 
 ### Added
 
+- Studio extensions (docs/studio-extensions.md): an extension can have a
+  Studio side, a `studio` object in a `schemaRevision: 2` manifest with an
+  `entry` (built ES module JavaScript), `requiredStudioVersion`,
+  `permissions` (`project.read`, `project.write`) and `contributes`
+  (`assetTypes` matched by file-name globs, `inspectors` for an asset type,
+  `parameterOptions` providers). The game side (`entry` and its fields) is
+  optional in revision 2, so an extension can be Studio-only; one id,
+  version, package, lock entry and install consent cover both sides. Games
+  use only the game side: `validate`, `build`, `run` and `pack` skip a
+  Studio-only extension, and a two-sided manifest reaches the Player as
+  revision 1 without `studio`. New diagnostics `PXSDKSEM1126` to
+  `PXSDKSEM1132` explain revision and shape mistakes (a revision-1 manifest
+  with `studio` is told to raise `schemaRevision` to 2).
+- `prismatix extension create --side game|studio|both` scaffolds a Studio
+  side (`studio.ts`, bundled into `dist/studio.js`), the new `prismatix
+  extension build` rebuilds Studio sides from their TypeScript, and `pack`
+  puts `studio.entry` in the package's `dist/`. `extension inspect --json`
+  adds `sides` and a `studio` summary (permissions and contributions),
+  `extension list --json` adds `sides`, and the install summary shows the
+  Studio side and says when a package adds nothing to the game; `update`
+  asks again for a new Studio permission. Registry search results and
+  extension documents may carry `sides` and `requiredStudioVersion`.
+- Extension parameters: `resourceFilter` takes a comma-separated list of
+  media kinds (`image/*`, `audio/ogg`) and file-name globs (`*.model3.json`),
+  and `optionsFrom` (string and token parameters) tells Studio where a
+  dropdown's choices come from, the keys or values at a JSON pointer in the
+  file a sibling resource parameter names or a Studio side's
+  `parameterOptions` provider. The engine treats the value as an ordinary
+  string. `storyCommandSchema` passes `optionsFrom` on to editors
+  (`PXSDKSEM1133` to `PXSDKSEM1138`).
+
 - Native extensions can name files the game's maker supplies, such as a
   vendor runtime that may not be redistributed (Live2D's Cubism Core):
   `native.libraries.<platform>.userFiles: [{name, hint?, sha256s?}]`. They

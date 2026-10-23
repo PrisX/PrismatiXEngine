@@ -104,6 +104,9 @@ and Ogg as Opus in builds, which can make a game's media several times smaller.
 - [Sharing extensions](docs/extensions-sharing.md): pack an extension as a
   `.pxext`, publish it to a registry or a static index, install, update and
   verify shared extensions; the registry HTTP API and the security model.
+- [Studio extensions](docs/studio-extensions.md): give an extension a
+  Studio side (asset types, inspectors, parameter choices) that PrismatiX
+  Studio loads in a sandbox and games never include.
 - [Web export](docs/web-export.md): export a game with the WebGL2 or WebGPU
   renderer (both experimental), preview it locally, deploy offline-capable
   browser versions and build the WASM Player.
