@@ -510,6 +510,18 @@ function(prismatix_add_player target qa_hooks)
 endfunction()
 prismatix_add_player(PrismatiXPlayer 0)
 prismatix_add_player(PrismatiXPlayerQA 1)
+if(ANDROID)
+    # The native extension fixture the desktop tests load, built for a
+    # device run (docs/native-extensions.md (Android)); only on request.
+    add_library(PrismatiXTestNativePlugin SHARED EXCLUDE_FROM_ALL
+        Tests/Fixtures/NativePlugin/TestNativePlugin.c)
+    target_include_directories(PrismatiXTestNativePlugin PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_target_properties(PrismatiXTestNativePlugin PROPERTIES
+        C_VISIBILITY_PRESET hidden
+        LIBRARY_OUTPUT_DIRECTORY
+            "${CMAKE_BINARY_DIR}/android/fixtures/${CMAKE_ANDROID_ARCH_ABI}")
+endif()
 
 # Everything below is desktop tooling and its install layout. An Android
 # build produces only the Player libraries; packaging stays on the host.

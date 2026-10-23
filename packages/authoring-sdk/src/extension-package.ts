@@ -150,7 +150,7 @@ function comparePaths(left: string, right: string): number {
 export const extensionPlatforms: readonly ExtensionPlatform[] =
   ["win32-x64", "linux-x64", "darwin-x64", "darwin-arm64", "android-arm64", "web"];
 export const nativeExtensionPlatforms: readonly NativeExtensionPlatform[] =
-  ["win32-x64", "linux-x64", "darwin-x64", "darwin-arm64"];
+  ["win32-x64", "linux-x64", "darwin-x64", "darwin-arm64", "android-arm64"];
 /** The PxHostApi major ABI version this engine's Player provides (PX_PLUGIN_ABI_MAJOR). */
 export const NATIVE_PLUGIN_ABI = 1;
 /** The first line of every signed native descriptor. */

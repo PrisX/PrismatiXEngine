@@ -1170,6 +1170,7 @@ This page covers phases A0–A2 of the Android plan in the
 | Touch gestures and `platform.touch` | Unit-tested with synthetic finger events | `Engine/Platform/TouchGestures.h`, [Touch input](#touch-input) |
 | Text-to-speech (self-voicing) | Compiles; JNI to `android.speech.tts.TextToSpeech` | `Engine/Accessibility/SpeechService.cpp`, `PrismatiXSpeech.java` |
 | TalkBack (screen reader tree) | Not supported | `Engine/Accessibility` |
+| Native extensions (`android-arm64`) | Loaded, verified and called on the Android 15 x86_64 emulator through ARM translation | [native-extensions.md](native-extensions.md#android) |
 | Play Asset Delivery | Not started | phase A3 |
 
 ### Prerequisites (host)

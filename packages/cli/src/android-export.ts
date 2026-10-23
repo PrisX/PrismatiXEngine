@@ -188,10 +188,15 @@ async function checkIcon(path: string): Promise<void> {
       "512 x 512 matches the Play Store listing icon");
 }
 
-/** Files of a packed distribution that belong in the APK's assets/. */
+/**
+ * Files of a packed distribution that belong in the APK's assets/. Native
+ * extension files (Plugins/<extension id>/) go there too: dlopen cannot read
+ * them inside the APK, so the Player copies them to the app's code cache
+ * and checks and loads them there (docs/native-extensions.md (Android)).
+ */
 export function isAndroidAsset(path: string, playerExecutable: string): boolean {
   const parts = path.split("/");
-  if (path === "Package/cli-package-provenance.json") return false;
+  if (path === "Package/cli-package-provenance.json" || path === "Plugins/.prismatix-managed.json") return false;
   if (parts.length > 1) return true;
   const lower = path.toLowerCase();
   return path !== playerExecutable && !/\.(?:dll|dylib|exe)$/u.test(lower) &&

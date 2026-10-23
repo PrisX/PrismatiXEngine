@@ -3867,7 +3867,16 @@ public:
                 extra.push_back({file.value("path", std::string{}), file.value("sha256", std::string{})});
         std::ranges::sort(extra, {}, &native::NativeLibrarySpec::File::path);
         spec.files.insert(spec.files.end(), extra.begin(), extra.end());
+        for (const auto& file : library.value("userFiles", nlohmann::json::array()))
+            if (file.is_object()) spec.userFiles.push_back(file.value("name", std::string{}));
         native::NativeFailure failure;
+        if (!services.nativePluginAssets.empty() && !services.nativePluginDirectories.empty() &&
+            !native::CopyBundledFiles(spec, services.nativePluginAssets,
+                                      services.nativePluginDirectories.back(), failure)) {
+            nativeUnavailable = failure.message;
+            Console(ConsoleLevel::Error, failure.code + " " + failure.message, {});
+            return;
+        }
         nativeHost = native::NativePluginHost::Load(
             spec, NativePluginDirectories(services.nativePluginDirectories),
             [this](const int level, const std::string& message) {

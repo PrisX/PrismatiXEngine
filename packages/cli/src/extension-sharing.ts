@@ -48,8 +48,7 @@ import {
 } from "./extension-registry.js";
 import {projectManifest} from "./extension-scaffold.js";
 import * as tui from "./tui.js";
-import {SIGNING_KEY_ENVIRONMENT, writeSigningKey} from "./extension-native.js";
-import {parsePlatformList} from "./platform-runtime.js";
+import {parseNativePlatformList, SIGNING_KEY_ENVIRONMENT, writeSigningKey} from "./extension-native.js";
 
 export const sharingSubcommands = new Set(["pack", "add", "remove", "update", "outdated", "verify", "inspect", "search",
   "info", "publish", "yank", "registry", "keygen"]);
@@ -87,7 +86,8 @@ export const sharingHelp = [
   `the project's settings["${REGISTRY_SETTING}"]; there is no default.`,
   "An extension with native libraries (docs/native-extensions.md) installs only with --allow-native, which",
   "accepts code that runs outside the sandbox; --platform picks the native packs to fetch (this computer's",
-  "by default). pack signs its libraries with --signing-key or PRISMATIX_EXTENSION_SIGNING_KEY.",
+  "by default; android-arm64 for an Android build). pack signs its libraries with --signing-key or",
+  "PRISMATIX_EXTENSION_SIGNING_KEY.",
 ];
 
 interface CommandOptions {
@@ -106,7 +106,7 @@ function installOptions(options: CommandOptions, progress: (message: string) => 
   return {
     ...(options.values.has("registry") ? {registry: options.values.get("registry")!} : {}),
     ...(options.values.has("sha256") ? {sha256: options.values.get("sha256")!} : {}),
-    ...(options.values.has("platform") ? {platforms: parsePlatformList([options.values.get("platform")!])} : {}),
+    ...(options.values.has("platform") ? {platforms: parseNativePlatformList(options.values.get("platform")!)} : {}),
     allowNative: options.flags.has("allow-native"),
     yes: options.flags.has("yes"),
     onProgress: progress,

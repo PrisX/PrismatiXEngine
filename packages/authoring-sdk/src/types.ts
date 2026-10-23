@@ -280,7 +280,7 @@ export type ExtensionCapability = "runtime" | "animation" | "ui" | "audio" | "vi
 
 export type ExtensionPlatform = "win32-x64" | "linux-x64" | "darwin-x64" | "darwin-arm64" | "android-arm64" | "web";
 /** The platforms a native library can be built for. */
-export type NativeExtensionPlatform = "win32-x64" | "linux-x64" | "darwin-x64" | "darwin-arm64";
+export type NativeExtensionPlatform = "win32-x64" | "linux-x64" | "darwin-x64" | "darwin-arm64" | "android-arm64";
 
 export interface ExtensionNativeFile {
   readonly path: string;

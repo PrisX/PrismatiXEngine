@@ -14,7 +14,8 @@ import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import test from "node:test";
 
-import {resolveNativeUserFiles, stageNativePlugins} from "../src/extension-native.js";
+import {isAndroidAsset} from "../src/android-export.js";
+import {parseNativePlatformList, resolveNativeUserFiles, stageNativePlugins} from "../src/extension-native.js";
 import {
   nativePackFileName,
   readExtensionNativePack,
@@ -225,6 +226,103 @@ test("native extensions: signed packs, consent, lock hashes, platform resolution
   } finally {
     server.close();
   }
+});
+
+test("Android: android-arm64 native packs, --platform android-arm64, and the APK's Plugins assets", async () => {
+  assert.deepEqual(parseNativePlatformList("android-arm64,win32-x64"), ["android-arm64", "win32-x64"]);
+  assert.deepEqual(parseNativePlatformList("all"), ["win32-x64", "linux-x64", "darwin-x64", "darwin-arm64", "android-arm64"]);
+  assert.deepEqual(parseNativePlatformList("host", "linux-x64"), ["linux-x64"]);
+  assert.throws(() => parseNativePlatformList("android-x64"), /Unknown platform "android-x64"/u);
+  assert.equal(isAndroidAsset("Plugins/glow/libglow.so", "Player.exe"), true, "native files ride in assets/");
+  assert.equal(isAndroidAsset("Plugins/.prismatix-managed.json", "Player.exe"), false);
+
+  const author = await project("android-author");
+  assert.equal((await run(["extension", "create", "glow", "--lang", "js", "--command", "shine", "--project", author])).status, 0);
+  await editManifest(author, "glow", (manifest) => ({...manifest, capabilities: [...manifest.capabilities, "native"],
+    native: {abi: 1, services: ["glow.fx"], libraries: {
+      "android-arm64": {path: "native/android-arm64/libglow.so", files: [{path: "native/android-arm64/libhelper.so"}],
+        userFiles: [{name: "libcore.so", hint: "From the vendor's Android SDK."}]}}}}));
+  await write(join(author, "Content/Extensions/glow/native/android-arm64/libglow.so"), "\x7fELF glow");
+  await write(join(author, "Content/Extensions/glow/native/android-arm64/libhelper.so"), "\x7fELF helper");
+  const keys = await mkdtemp(join(tmpdir(), "prismatix-native-keys-"));
+  const key = join(keys, "glow.pem");
+  assert.equal((await run(["extension", "keygen", key])).status, 0);
+  const packed = await run(["extension", "pack", "glow", "--owner", "owen", "--output", join(author, "out"), "--project", author,
+    "--signing-key", key, "--json"]);
+  assert.equal(packed.status, 0, packed.stderr);
+  const result = JSON.parse(packed.stdout) as {file: string; nativePacks: {platform: string; file: string}[]};
+  assert.deepEqual(result.nativePacks.map((item) => item.platform), ["android-arm64"]);
+  assert.equal(result.nativePacks[0]!.file, join(author, "out", nativePackFileName("owen/glow", "1.0.0", "android-arm64")));
+
+  // Installing on a Windows, macOS or Linux computer fetches the Android pack only when asked.
+  const user = await project("android-user");
+  const added = await run(["extension", "add", result.file, "--yes", "--allow-native", "--platform", "android-arm64",
+    "--project", user, "--json"]);
+  assert.equal(added.status, 0, added.stderr);
+  assert.ok(existsSync(join(user, "Extensions/owen/glow/native/android-arm64/libglow.so")));
+  const lock = JSON.parse(await readFile(join(user, "prismatix-extensions.lock"), "utf8")) as {
+    extensions: Record<string, {platforms?: Record<string, unknown>}>};
+  assert.deepEqual(Object.keys(lock.extensions["owen/glow"]!.platforms ?? {}), ["android-arm64"]);
+  const desktop = await run(["validate", user, "--target", "desktop", "--platform", "win32-x64"]);
+  assert.equal(desktop.status, 1);
+  assert.match(desktop.stderr, /PXCLIEXT1103/u);
+
+  // The Android target checks the user files like a desktop one.
+  const unsupplied = await run(["validate", user, "--target", "android"]);
+  assert.equal(unsupplied.status, 1);
+  assert.match(unsupplied.stderr, /PXCLIEXT1106[\s\S]*libcore\.so[\s\S]*From the vendor's Android SDK\./u);
+  await write(join(user, "NativeUserFiles/android-arm64/libcore.so"), "\x7fELF core");
+  const supplied = await run(["validate", user, "--target", "android"]);
+  assert.equal(supplied.status, 0, supplied.stderr);
+
+  // pack --target android: the package's Plugins/ folder becomes assets/Plugins/.
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-native-android-"));
+  const packager = join(tools, "mock-packager.mjs");
+  await write(packager, [
+    "import {copyFile, mkdir, readFile, writeFile} from \"node:fs/promises\";",
+    "import {basename, join} from \"node:path\";",
+    "const request = JSON.parse(await readFile(process.argv[3], \"utf8\"));",
+    "const out = request.outputDir;",
+    "await mkdir(join(out, \"Package\"), {recursive: true});",
+    "await writeFile(join(out, \"Package\", \"manifest.json\"), JSON.stringify({gameId: request.gameId,",
+    "  title: request.title, resolution: {width: request.width, height: request.height}}));",
+    "await copyFile(request.playerExecutable, join(out, basename(request.playerExecutable)));",
+    "process.stdout.write(JSON.stringify({protocolVersion: 1, event: \"completed\", requestId: request.requestId}) + \"\\n\");", ""].join("\n"));
+  const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+  await write(player, "desktop player");
+  const gradle = join(tools, "mock-gradle.mjs");
+  await write(gradle, [
+    "import {mkdir, readdir, writeFile} from \"node:fs/promises\";",
+    "import {join, relative} from \"node:path\";",
+    "const args = process.argv.slice(2);",
+    "const project = args[args.indexOf(\"-p\") + 1];",
+    "const main = join(project, \"app\", \"src\", \"main\");",
+    "const list = async (directory) => (await readdir(directory, {recursive: true, withFileTypes: true}))",
+    "  .filter((entry) => entry.isFile())",
+    "  .map((entry) => relative(directory, join(entry.parentPath, entry.name)).split(\"\\\\\").join(\"/\")).sort();",
+    "await writeFile(process.env.PX_GRADLE_RECORD, JSON.stringify({jni: await list(join(main, \"jniLibs\", \"arm64-v8a\")),",
+    "  assets: await list(join(main, \"assets\"))}));",
+    "await mkdir(join(project, \"app\", \"build\", \"outputs\", \"apk\", \"debug\"), {recursive: true});",
+    "await writeFile(join(project, \"app\", \"build\", \"outputs\", \"apk\", \"debug\", \"app-debug.apk\"), \"apk\");", ""].join("\n"));
+  const arm64 = Buffer.alloc(64);
+  arm64.writeUInt32BE(0x7f454c46, 0);
+  arm64[4] = 2; arm64[5] = 1;
+  arm64.writeUInt16LE(183, 18);
+  await write(join(tools, "android", "libmain.so"), arm64);
+  await mkdir(join(tools, "sdk", "platforms"), {recursive: true});
+  const record = join(tools, "gradle-record.json");
+  const projectPath = join(user, "prismatix.json");
+  const manifest = JSON.parse(await readFile(projectPath, "utf8")) as Record<string, unknown>;
+  await writeFile(projectPath, JSON.stringify({...manifest, distribution: {android: {applicationId: "com.example.glow"}}}));
+  const android = await run(["pack", user, "--target", "android", "--packager", packager, "--player", player,
+    "--android-player", join(tools, "android"), "--gradle", gradle, "--android-sdk", join(tools, "sdk"),
+    "--output", join(tools, "out"), "--json"], {PX_GRADLE_RECORD: record});
+  assert.equal(android.status, 0, android.stderr);
+  assert.match(android.stderr, /Copied 3 native extension file\(s\) for android-arm64/u);
+  const seen = JSON.parse(await readFile(record, "utf8")) as {jni: string[]; assets: string[]};
+  assert.deepEqual(seen.jni, ["libmain.so"], "extension libraries are not in lib/arm64-v8a/");
+  assert.deepEqual(seen.assets.filter((path) => path.startsWith("Plugins/")),
+    ["Plugins/glow/libcore.so", "Plugins/glow/libglow.so", "Plugins/glow/libhelper.so"]);
 });
 
 test("user-supplied native files: lookup order, allow list, and Plugins staging that keeps files put there by hand", async () => {
