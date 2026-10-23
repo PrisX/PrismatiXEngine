@@ -9,6 +9,7 @@
 #include "Engine/Platform/Input.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Script/JavaScriptHost.h"
+#include "Engine/Script/ScriptFrameScheduler.h"
 #include "Engine/Script/ScriptRawGraphics.h"
 #include "Engine/UI/Actions/ActionCatalog.h"
 #include "Engine/UI/Actions/ActionDispatcher.h"
@@ -1375,6 +1376,20 @@ void TestCancellationAndEventListeners(px::test::Suite& suite) {
     )js", "listener-second") &&
                      host->ListenerCount("tick") == 1 && host->ListenerCount() == 1,
                  "Engine.off removes the native listener and listenerCount reports it");
+
+    // frame.update carries {delta: "<seconds>"}: an object, not ["delta", ...].
+    suite.Require(host->RunString(R"js(
+        globalThis.frameDelta = null;
+        Engine.on("frame.update", (payload) => { globalThis.frameDelta = payload; });
+    )js", "frame-delta-fixture"),
+                  "frame.update fixture should subscribe");
+    px::script::AdvanceScriptFrame(*host, 0.25f);
+    suite.Expect(host->RunString(R"js(
+        if (frameDelta === null || Array.isArray(frameDelta) || typeof frameDelta !== "object" ||
+            Math.abs(Number(frameDelta.delta) - 0.25) > 1e-6)
+            throw new Error(`frame.update payload ${JSON.stringify(frameDelta)}`);
+    )js", "frame-delta-check"),
+                 "frame.update hands listeners an object whose delta is the frame's seconds");
 
     // Shutdown ends what is still running.
     px::ui::ActionInvocation shutdown;

@@ -2254,7 +2254,7 @@ bool PlayerApp::CommitStartGame() {
             return false;
         }
     }
-    if (m_scriptHost) m_scriptHost->Emit("scenario.started", {{"resource", m_script}});
+    if (m_scriptHost) m_scriptHost->Emit("scenario.started", VariantObject{{"resource", m_script}});
     m_appState = AppState::Game;
     if (const Status routed = m_session->Routes().Replace(
             "hud", {.preset = "none"}); !routed) {
@@ -2506,7 +2506,7 @@ bool PlayerApp::LoadSlot(int slot) {
     m_storyHudVisible = true;
     if (m_ui.CurrentRoute() == "hud" || m_ui.CurrentRoute() == "game")
         (void)m_ui.RefreshHUD(DialogueUI());
-    if (m_scriptHost) m_scriptHost->Emit("save.loaded", {{"slot", std::to_string(slot)}});
+    if (m_scriptHost) m_scriptHost->Emit("save.loaded", VariantObject{{"slot", std::to_string(slot)}});
     PX_LOG_INFO("Loaded slot {}", slot);
     return true;
 }
@@ -2600,7 +2600,7 @@ void PlayerApp::HarvestBackgroundSave(const bool wait) {
                     .message = "Could not save slot " + std::to_string(slot)});
         return;
     }
-    if (m_scriptHost) m_scriptHost->Emit("save.written", {{"slot", std::to_string(slot)}});
+    if (m_scriptHost) m_scriptHost->Emit("save.written", VariantObject{{"slot", std::to_string(slot)}});
     PX_LOG_INFO("Saved slot {}", slot);
 }
 
@@ -2619,7 +2619,7 @@ bool PlayerApp::WriteSaveSlot(const int slot, progress::SaveSnapshot snap) {
         diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPLAYER6001",.category="Player.Save",
                            .message="Could not save slot "+std::to_string(slot)};diag::Emit(d);return false;
     }
-    if (m_scriptHost) m_scriptHost->Emit("save.written", {{"slot", std::to_string(slot)}});
+    if (m_scriptHost) m_scriptHost->Emit("save.written", VariantObject{{"slot", std::to_string(slot)}});
     PX_LOG_INFO("Saved slot {} (thumb {} bytes)", slot, snap.thumbnailPng.size());
     return true;
 }

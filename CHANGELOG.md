@@ -209,6 +209,13 @@ The packages always carry the same version and pin each other exactly.
 
 ### Fixed
 
+- `frame.update`, `scenario.started`, `save.loaded` and `save.written`
+  reached scripts as an array (`["delta", "0.016"]`) instead of an object
+  (`{delta: "0.016"}`), so `ctx.frame.onUpdate` and `raw.onFrame` saw 0
+  seconds every frame and listeners read no `slot` or `resource`.
+- `validate` reports a `resourceFilter` on a command parameter that is not a
+  `resource` (`PXSDKSEM1139`); the Player refused the whole extension for it
+  (`PXSCHEMA7017`).
 - Packing a game with native extensions no longer deletes the whole
   `Plugins/` folder of the output: it replaces only the files an earlier pack
   copied there (listed in `Plugins/.prismatix-managed.json`), so files put

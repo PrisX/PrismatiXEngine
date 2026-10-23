@@ -247,6 +247,7 @@ manifest must still match its contract, so a broken one fails `validate`.
 | PXSDKSEM1136 | `optionsFrom.provider` is not `<extension id>:<id>` |
 | PXSDKSEM1137 | `optionsFrom.provider` names this extension but a `parameterOptions` id its Studio side does not contribute |
 | PXSDKSEM1138 | A `resourceFilter` item is neither a media kind nor a file-name glob |
+| PXSDKSEM1139 | A command parameter has a `resourceFilter` but is not a `resource` (the Player refuses the extension) |
 
 Packages report a Studio entry outside `dist/`, not `.js`, or missing as
 `PXEXTPKG1010`.

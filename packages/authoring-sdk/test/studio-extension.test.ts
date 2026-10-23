@@ -111,6 +111,8 @@ test("optionsFrom and resourceFilter lists on parameters", () => {
   const model = {name: "model", type: "resource"};
   assert.deepEqual(parameters([{...model, resourceFilter: "image/*, *.model3.json,audio/ogg"}]), []);
   assert.deepEqual(parameters([{...model, resourceFilter: "models/*.json"}]), ["PXSDKSEM1138"]);
+  assert.deepEqual(parameters([{name: "model", type: "string", resourceFilter: "*.model3.json"}]), ["PXSDKSEM1139"],
+    "the Player refuses a resourceFilter on a command's string parameter");
   assert.deepEqual(parameters([model, {name: "motion", type: "integer", optionsFrom: {parameter: "model", pointer: ""}}]),
     ["PXSDKSEM1133"]);
   assert.deepEqual(parameters([model, {name: "motion", type: "string", enum: ["a"], optionsFrom: {parameter: "model", pointer: ""}}]),

@@ -10,7 +10,7 @@ void AdvanceScriptFrame(ScriptHost& host, const float deltaSeconds,
                         const std::function<void()>& safePoint,
                         const std::function<void()>& onPendingDrained) {
     (void)host.Emit("frame.update",
-                    {{"delta", std::to_string(deltaSeconds)}});
+                    VariantObject{{"delta", std::to_string(deltaSeconds)}});
     const bool hadPending =
         host.HasPendingCommand() || host.HasPendingAction();
     host.Update(deltaSeconds);

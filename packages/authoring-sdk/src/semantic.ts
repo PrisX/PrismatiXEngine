@@ -841,6 +841,12 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
           diagnostics.push(...parameterChoiceDiagnostics(root, parameter, parameters, `${String(declaration.id)}.${String(parameter.name)}`, path));
         }
       }
+      // The Player refuses the whole extension for this (PXSCHEMA7017); Actions report it as PXSDKSEM1118 below.
+      for (const command of commands)
+        for (const parameter of objects(command.parameters))
+          if (parameter.resourceFilter !== undefined && parameter.type !== "resource")
+            diagnostics.push(issue("PXSDKSEM1139", "Extension command resourceFilter needs a resource parameter",
+              path, `${String(command.id)}.${String(parameter.name)}`));
       diagnostics.push(...studioSideDiagnostics(root, path));
       const capabilities = new Set(Array.isArray(root.capabilities) ? root.capabilities : []);
       for (const action of actions) {
