@@ -363,8 +363,11 @@ export async function fetchExtensionPackage(root: string, spec: string | Extensi
   }
   const manifest = fetched.contents.manifest!;
   if (manifest.native === undefined) return fetched;
-  const wanted = options.platforms ?? (isNativeExtensionPlatform(hostPlatform) ? [hostPlatform] : []);
   const offered = manifestPlatforms(manifest);
+  // Without --platform: this computer's pack when there is one, so inspect
+  // can still show an extension built only for other platforms.
+  const wanted = options.platforms ?? (isNativeExtensionPlatform(hostPlatform) && offered.includes(hostPlatform) &&
+    manifest.native.libraries[hostPlatform] !== undefined ? [hostPlatform] : []);
   const natives = new Map<NativeExtensionPlatform, FetchedNativePack>();
   for (const platform of wanted) {
     if (!offered.includes(platform) || manifest.native.libraries[platform] === undefined)
@@ -376,7 +379,7 @@ export async function fetchExtensionPackage(root: string, spec: string | Extensi
     natives.set(platform, {bytes, sha256: sha256(bytes), pack});
   }
   if (wanted.length === 0)
-    notes.push(`This computer (${hostPlatform}) is not a native platform; no native library was installed (use --platform)`);
+    notes.push(`${manifest.id} has no native library for this computer (${hostPlatform}); choose platforms with --platform`);
   return {...fetched, natives};
 }
 
