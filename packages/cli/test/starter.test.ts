@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import {spawnSync} from "node:child_process";
 import {createHash} from "node:crypto";
-import {mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile} from "node:fs/promises";
+import {mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join, resolve} from "node:path";
 import test from "node:test";
 import {fileURLToPath} from "node:url";
-import {createStarter, detectPackageManager} from "../src/starter.js";
+import {createStarter, detectPackageManager, repairLocalLinks} from "../src/starter.js";
 const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 const prepared = async (directory: string): Promise<void> => {
@@ -158,3 +158,27 @@ test("create --package-manager pnpm writes pnpm-lock.yaml and a working node_mod
       assert.equal(JSON.parse(sdk).name, "@prismatix/authoring-sdk");
     } finally { await rm(root, {recursive: true, force: true, maxRetries: 5, retryDelay: 100}); }
   });
+
+test("repairLocalLinks points link: dependencies back at their absolute paths", async () => {
+  const root = await mkdtemp(join(tmpdir(), "px-links-"));
+  try {
+    const engine = join(root, "engine", "cli");
+    await mkdir(engine, {recursive: true});
+    await writeFile(join(engine, "package.json"), JSON.stringify({name: "@prismatix/cli"}));
+    const project = join(root, "game");
+    const kept = join(project, "node_modules", "@prismatix", "authoring-sdk");
+    await mkdir(kept, {recursive: true});
+    await writeFile(join(project, "package.json"), JSON.stringify({devDependencies: {
+      "@prismatix/cli": `link:${engine.split("\\").join("/")}`,
+      "@prismatix/authoring-sdk": `link:${engine.split("\\").join("/")}`,
+      "@prismatix/runtime": "link:../relative/runtime",
+    }}));
+    // What pnpm leaves for a checkout on another drive: a link joined onto the project folder.
+    const link = join(project, "node_modules", "@prismatix", "cli");
+    await symlink(join(project, "C-drive", "engine", "cli"), link, process.platform === "win32" ? "junction" : "dir");
+    assert.deepEqual(await repairLocalLinks(project), ["@prismatix/cli"]);
+    assert.equal(await realpath(link), await realpath(engine));
+    assert.deepEqual(await repairLocalLinks(project), [], "a right link is left alone");
+    assert.deepEqual(await readdir(kept), [], "a real folder is never replaced");
+  } finally { await rm(root, {recursive: true, force: true, maxRetries: 5, retryDelay: 100}); }
+});

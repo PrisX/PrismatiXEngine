@@ -213,6 +213,11 @@ The packages always carry the same version and pin each other exactly.
   reached scripts as an array (`["delta", "0.016"]`) instead of an object
   (`{delta: "0.016"}`), so `ctx.frame.onUpdate` and `raw.onFrame` saw 0
   seconds every frame and listeners read no `slot` or `resource`.
+- A project created on another drive than the engine checkout it links
+  (`link:C:/...` with pnpm) lost its pinned CLI (`PXCLI0002`): pnpm joins
+  the project folder with the absolute path whenever it installs from the
+  lockfile. `create` and every later command point those links back at the
+  checkout.
 - `validate` reports a `resourceFilter` on a command parameter that is not a
   `resource` (`PXSDKSEM1139`); the Player refused the whole extension for it
   (`PXSCHEMA7017`).

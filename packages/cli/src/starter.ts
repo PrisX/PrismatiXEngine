@@ -1,7 +1,7 @@
 import {spawn} from "node:child_process";
 import {randomUUID} from "node:crypto";
-import {copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, rmdir, stat, writeFile} from "node:fs/promises";
-import {basename, dirname, extname, join, resolve} from "node:path";
+import {copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, stat, symlink, unlink, writeFile} from "node:fs/promises";
+import {basename, dirname, extname, isAbsolute, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {externalizeStoryIds, serializeStoryIdentityMap} from "@prismatix/authoring-sdk";
 import {splashStudio, splashSource, splashStudioDocument, splashTsx} from "./splash.js";
@@ -202,6 +202,37 @@ async function relinkDependencies(directory: string, options: StarterOptions, co
 }
 
 /**
+ * Points each `link:` dependency with an absolute path back at that path.
+ * pnpm installs from its lockfile by joining the project folder with the
+ * link (`path.join`), so a project on another drive than the engine
+ * checkout gets `D:/game/C:/engine/...` junctions and no pinned CLI. A fresh
+ * install links them right; every later one breaks them again. Returns the
+ * packages it relinked. Only replaces links, never a real folder.
+ */
+export async function repairLocalLinks(root: string): Promise<string[]> {
+  let manifest: Record<string, unknown>;
+  try { manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as Record<string, unknown>; } catch { return []; }
+  const specs = {...manifest.dependencies as Record<string, unknown> | undefined,
+    ...manifest.devDependencies as Record<string, unknown> | undefined};
+  const repaired: string[] = [];
+  for (const [name, spec] of Object.entries(specs)) {
+    if (typeof spec !== "string" || !spec.startsWith("link:")) continue;
+    const target = spec.slice("link:".length);
+    if (!isAbsolute(target) || !await stat(join(target, "package.json")).then((info) => info.isFile(), () => false)) continue;
+    const link = join(root, "node_modules", ...name.split("/"));
+    const wanted = await realpath(target);
+    if (await realpath(link).then((actual) => actual === wanted, () => false)) continue;
+    const current = await lstat(link).catch(() => undefined);
+    if (current !== undefined && !current.isSymbolicLink()) continue;
+    if (current !== undefined) await unlink(link);
+    await mkdir(dirname(link), {recursive: true});
+    await symlink(wanted, link, process.platform === "win32" ? "junction" : "dir");
+    repaired.push(name);
+  }
+  return repaired;
+}
+
+/**
  * Pins the project's tools to this CLI's own version. A CLI running from an
  * engine source checkout links the checkout's packages instead (`file:` for
  * npm, `link:` for pnpm, whose `file:` would copy them), so `create` works
@@ -355,6 +386,7 @@ export async function createStarter(targetArgument: string, options: StarterOpti
         process.stderr.write(`Warning: ${error instanceof Error ? error.message : String(error)}
 `);
       });
+    if (manager === "pnpm") await repairLocalLinks(target);
     return {root: target, project: join(target, "prismatix.json")};
   } catch (error) {
     if (removedEmptyTarget) await mkdir(target).catch(() => {});

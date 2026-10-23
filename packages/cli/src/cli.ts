@@ -22,7 +22,7 @@ import {fingerprintFile, outputOwnershipMarker, publishDirectory, publishedInput
 import {glyphWarnings} from "./glyph-coverage.js";
 import {augmentArtifact} from "./artifact-augment.js";
 import {assessPackageDiskSpace, availableBytesForOutput, formatDiskBytes} from "./disk-space.js";
-import {addProjectDependency, createStarter, defaultPackageManager, pnpmInstalled, type PackageManager} from "./starter.js";
+import {addProjectDependency, createStarter, defaultPackageManager, pnpmInstalled, repairLocalLinks, type PackageManager} from "./starter.js";
 import {changeDirectory, cliVersion, createWizard, type CreateAnswers, projectMenu, runScript, say} from "./interactive.js";
 import * as tui from "./tui.js";
 import {canPrompt} from "./tui.js";
@@ -4620,6 +4620,8 @@ async function projectTool(command: string, options: Options, args: string[]): P
   // pnpm projects restore from pnpm-lock.yaml, npm projects from package-lock.json.
   const restore = await regularFile(join(location.root, "pnpm-lock.yaml"))
     ? "pnpm install --frozen-lockfile" : "npm ci";
+  // pnpm breaks links to an engine checkout on another drive on every install.
+  if (!await regularFile(entry) && localPackage) await repairLocalLinks(location.root);
   if (!await regularFile(entry)) throw new Error(`The project's pinned CLI is missing. Restore dependencies with ${restore} in the project directory.`);
   const installed = object(await readJson(join(localRoot, "package.json")));
   if (exactVersion && installed?.version !== pinned)
