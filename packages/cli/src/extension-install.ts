@@ -440,6 +440,11 @@ export interface NativeSummary {
   readonly keyFingerprint?: string;
   /** The fingerprint the lock accepted before, when it differs. */
   readonly previousKey?: string;
+  /**
+   * Files the game's maker must supply (not in the package, not signed),
+   * per platform; packing a game for that platform needs them.
+   */
+  readonly userFiles: readonly {readonly platform: NativeExtensionPlatform; readonly name: string; readonly hint?: string}[];
 }
 
 export interface PackageSummary {
@@ -485,6 +490,8 @@ export async function summarizePackage(root: string, fetched: FetchedPackage, en
     services: manifest.native.services,
     platforms: nativeExtensionPlatforms.filter((platform) => manifest.native!.libraries[platform] !== undefined),
     installing: [...fetched.natives?.keys() ?? []],
+    userFiles: nativeExtensionPlatforms.flatMap((platform) => (manifest.native!.libraries[platform]?.userFiles ?? [])
+      .map((file) => ({platform, name: file.name, ...(file.hint === undefined ? {} : {hint: file.hint})}))),
     ...(keyFingerprint === undefined ? {} : {keyFingerprint}),
     ...(installed?.nativeKey !== undefined && installed.nativeKey !== keyFingerprint ? {previousKey: installed.nativeKey} : {})};
   return {id: metadata.id, version: metadata.version!, sha256: fetched.sha256, size: fetched.bytes.length, source: fetched.source,
@@ -527,6 +534,10 @@ export function describeSummary(summary: PackageSummary): string {
         `  Signing key SHA-256: ${summary.native.keyFingerprint ?? "(none)"}`,
         ...(summary.native.previousKey === undefined ? []
           : [`  The signing key CHANGED: the installed version was signed by ${summary.native.previousKey}.`]),
+        ...(summary.native.userFiles.length === 0 ? [] : [
+          "  You must supply these files yourself (not in the package, not covered by its signature);",
+          "  packing a game for the platform fails until they are in NativeUserFiles/ or PRISMATIX_NATIVE_USER_FILES:",
+          ...summary.native.userFiles.map((file) => `    - ${file.name} (${file.platform})${file.hint === undefined ? "" : `: ${file.hint}`}`)]),
         "  It installs only with --allow-native.",
       ]),
     ...(summary.installed ? [`  Replaces the installed ${summary.installed.version}.`] : []),

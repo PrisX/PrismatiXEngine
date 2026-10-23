@@ -193,6 +193,23 @@ export interface ExtensionNativeFile {
   readonly sha256?: string;
 }
 
+/**
+ * A file the game's maker supplies (a vendor runtime that may not be
+ * redistributed, such as Live2D's Cubism Core). It is never in a package,
+ * never pinned by the manifest and not covered by the signature; packing a
+ * game copies it from NativeUserFiles/ or PRISMATIX_NATIVE_USER_FILES into
+ * the library's Plugins folder, where the library finds it through
+ * `plugin_directory`.
+ */
+export interface ExtensionNativeUserFile {
+  /** A file name (no folders). */
+  readonly name: string;
+  /** Where to get it, shown when it is missing and when installing. */
+  readonly hint?: string;
+  /** When given, the only accepted SHA-256 values (an allow list). */
+  readonly sha256s?: readonly string[];
+}
+
 export interface ExtensionNativeLibrary {
   /** The .dll, .so or .dylib, relative to the manifest (`native/<platform>/<file>`). */
   readonly path: string;
@@ -202,6 +219,8 @@ export interface ExtensionNativeLibrary {
   readonly signature?: string;
   /** Libraries it loads from its own folder (pinned by SHA-256 and covered by the signature). */
   readonly files?: readonly ExtensionNativeFile[];
+  /** Files the game's maker supplies; see ExtensionNativeUserFile. */
+  readonly userFiles?: readonly ExtensionNativeUserFile[];
 }
 
 export interface ExtensionNative {

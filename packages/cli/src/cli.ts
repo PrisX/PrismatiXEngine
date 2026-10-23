@@ -63,7 +63,7 @@ import {PlayerOutput, type ExtensionLogRecord} from "./player-output.js";
 import {extensionCommand, extensionHelp} from "./extension-scaffold.js";
 import {installedStatus} from "./extension-install.js";
 import {extensionSharingCommand, projectlessSubcommands, sharingArity, sharingHelp, sharingSubcommands} from "./extension-sharing.js";
-import {platformFindings, projectSigning, sealNativeManifest, stageNativePlugins, type BuildTarget,
+import {platformFindings, projectSigning, resolveNativeUserFiles, sealNativeManifest, stageNativePlugins, type BuildTarget,
   type NativeSigning} from "./extension-native.js";
 import {projectExtensions} from "./extension-scaffold.js";
 
@@ -1508,10 +1508,12 @@ async function validateCommand(options: Options): Promise<number> {
       options.values.get("runtime"), undefined, storyProgressReporter());
     // --target checks the extensions against a build target, as pack does.
     const target = options.values.get("target");
-    const targetFindings = target === undefined ? [] : platformFindings(
-      await projectExtensions(loaded.root),
-      target === "web" ? {kind: "web"} : target === "android" ? {kind: "android"}
-        : {kind: "desktop", platforms: parsePlatformList([options.values.get("platform") ?? "host"])});
+    const buildTarget: BuildTarget | undefined = target === undefined ? undefined
+      : target === "web" ? {kind: "web"} : target === "android" ? {kind: "android"}
+        : {kind: "desktop", platforms: parsePlatformList([options.values.get("platform") ?? "host"])};
+    const extensions = buildTarget === undefined ? [] : await projectExtensions(loaded.root);
+    const targetFindings = buildTarget === undefined ? [] : [...platformFindings(extensions, buildTarget),
+      ...(buildTarget.kind === "desktop" ? (await resolveNativeUserFiles(loaded.root, extensions, buildTarget.platforms)).findings : [])];
     printDiagnostics([...result.diagnostics, ...targetFindings]);
     if (!result.valid || targetFindings.some((item) => item.severity === "error")) return 1;
     const includedFiles = new Set(Object.values(loaded.includedResources).flat());
@@ -2495,7 +2497,9 @@ async function packProject(options: Options, settings: {
           throw new PackagerFailure([diagnostic("PXCLIEXT1104", `Native extensions cannot be packed on ${platform}`, root)]);
         const findings = platformFindings(native, {kind: "desktop", platforms: [platform]});
         if (findings.length > 0) throw new PackagerFailure(findings);
-        const copied = await stageNativePlugins(root, native, platform, await distributionDataRoot(staging));
+        const supplied = await resolveNativeUserFiles(root, native, [platform]);
+        if (supplied.findings.length > 0) throw new PackagerFailure(supplied.findings);
+        const copied = await stageNativePlugins(root, native, platform, await distributionDataRoot(staging), supplied.files);
         progress({severity: "information", code: "PXCLI1280",
           message: `Copied ${copied.length} native extension file(s) for ${platform}`});
       }
@@ -2749,6 +2753,14 @@ async function sealedArtifactExtensions(root: string, artifactRoot: string, proj
   return result;
 }
 
+/** Fails before anything is built when a native extension's user-supplied file is missing. */
+async function checkNativeUserFiles(root: string, platforms: readonly string[]): Promise<void> {
+  if (!existsSync(root)) return;
+  const extensions = (await projectExtensions(root).catch(() => [])).filter((item) => item.manifest.native !== undefined);
+  const {findings} = await resolveNativeUserFiles(root, extensions, platforms);
+  if (findings.length > 0) throw new PackagerFailure(findings);
+}
+
 async function checkExtensionTargets(root: string, target: BuildTarget): Promise<void> {
   if (!existsSync(root)) return;
   const extensions = await projectExtensions(root).catch(() => []);
@@ -2884,6 +2896,7 @@ async function packPlatforms(options: Options, platforms: readonly DesktopPlatfo
     }
   }
   if (missing.length > 0) throw new PackagerFailure(missing);
+  await checkNativeUserFiles(location.root, platforms);
   let temporary: string | undefined;
   try {
     let prebuilt: PrebuiltArtifact | undefined;
@@ -2948,6 +2961,8 @@ async function packCommand(options: Options): Promise<number> {
               `${result.notarized === true ? " (notarized)" : ""}\n`)).join(""));
       return 0;
     }
+    const location = await resolveProjectPath(options.positional[0]).catch(() => undefined);
+    if (location !== undefined) await checkNativeUserFiles(location.root, [hostPlatform]);
     const result = await packProject(options);
     let archive: string | undefined;
     if (result.validatedOnly !== true && options.flags.has("archive")) {

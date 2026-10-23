@@ -292,6 +292,44 @@ PX_PLUGIN_EXPORT void px_plugin_shutdown(void) {}
 - `log` writes to the Player log; `px_plugin_shutdown` runs before the library
   is unloaded at shutdown or reload.
 
+## Files the game's maker supplies (`userFiles`)
+
+Some libraries need a vendor runtime that may not be redistributed, such as
+Live2D's Cubism Core. The extension names it and the game's maker brings
+their own copy:
+
+```json
+"win32-x64": {
+  "path": "native/win32-x64/live2d.dll",
+  "userFiles": [{
+    "name": "Live2DCubismCore.dll",
+    "hint": "Download the Cubism SDK for Native from live2d.com and accept its license.",
+    "sha256s": ["<sha256 of a Core version the extension was tested with>"]
+  }]
+}
+```
+
+- `name` is a file name (no folders). It may not repeat, ignoring case, or
+  take the name of a file the package ships (`PXEXTNAT1004`).
+- A user file is **never in a package**: `extension pack` writes only the
+  library and its `files`, even when the author keeps a copy beside them.
+  The manifest does **not pin its SHA-256 and the signature does not cover
+  it**: what the game loads is whatever its maker supplied. `sha256s`, when
+  given, is an allow list that packing checks (`PXCLIEXT1107`); without it,
+  any file of that name is accepted.
+- Packing a game for a platform (`pack`, `pack --platform`, `run`) copies
+  each user file into `Plugins/<extension id>/` beside the library. It looks,
+  first match wins, in every folder of `PRISMATIX_NATIVE_USER_FILES` (a path
+  list), then in the project's `NativeUserFiles/`, each as
+  `<extension id>/<platform>/<name>`, `<platform>/<name>` and `<name>`. A
+  missing file fails the pack before anything is built (`PXCLIEXT1106`, with
+  the `hint`); `validate --target desktop --platform <list>` reports the
+  same. Keep `NativeUserFiles/` out of version control when the vendor's
+  license requires it.
+- `extension inspect` and `extension add` list the files to supply.
+- The Player does not know about them: the library finds them in
+  `plugin_directory` (ABI 1.1) and loads them itself.
+
 ## Signing
 
 Each platform's library is signed with ECDSA P-256 over SHA-256 of a
@@ -309,7 +347,8 @@ file <sha256> <path>          (the library, then its files by path)
 
 `nativeSignatureMessage(manifest, platform)` in `@prismatix/authoring-sdk`
 builds it and `verifyNativeSignature` checks it (Web Crypto); the Player
-rebuilds it from the manifest it loads and checks it with mbedTLS.
+rebuilds it from the manifest it loads and checks it with mbedTLS. `userFiles`
+are not part of it.
 
 ```sh
 prismatix extension keygen ~/keys/owen-native.pem     # keep it out of the project
@@ -377,9 +416,14 @@ Registry API v1 additions (`Contracts/extension-registry.schema.json`):
 - `pack --target android` refuses native extensions (`PXCLIEXT1102`): the
   Android Player does not load native libraries yet.
 - A desktop pack copies each native extension's files for the target
-  platform into `Plugins/<extension id>/`, and fails (`PXCLIEXT1104`) when a
-  library for that platform is missing from the project.
+  platform, and the user files it finds, into `Plugins/<extension id>/`, and
+  fails when a library for that platform is missing from the project
+  (`PXCLIEXT1104`) or a user file cannot be found (`PXCLIEXT1106`, `1107`).
   `validate --target desktop --platform <list>` runs the same checks.
+- Packing into an output folder that already holds a distribution replaces
+  only the files an earlier pack copied into `Plugins/` (it lists them in
+  `Plugins/.prismatix-managed.json`); anything else there, such as a file
+  put in by hand, stays.
 
 ## Error codes
 
@@ -396,4 +440,6 @@ Registry API v1 additions (`Contracts/extension-registry.schema.json`):
 | PXEXTNAT1001-1006 | manifest checks: capability, ABI, platforms, paths, unsigned, bad signature |
 | PXEXTPKG1015 / 1016 | a native pack with missing or extra files / a file that does not match its pinned SHA-256 |
 | PXCLIEXT1101-1105 | build target checks and signing-key mismatch |
+| PXCLIEXT1106 | a user-supplied file (`userFiles`) was not found for the platform being packed |
+| PXCLIEXT1107 | a user-supplied file is not in its `sha256s` allow list |
 | PXCLIEXT2006 | a platform's library is not built, so the package leaves it out |

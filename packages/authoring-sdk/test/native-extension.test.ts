@@ -95,3 +95,24 @@ test("resolution with a platform skips versions that do not run there", () => {
   assert.equal(resolveExtensionVersion(versions, "*", "0.1.0", "linux-x64").version?.version, "1.5.0", "no platforms means every platform");
   assert.equal(resolveExtensionVersion(versions, "^2", "0.1.0", "web").problem, "platform");
 });
+
+test("userFiles: names the maker supplies, outside the package and the signature", () => {
+  const library = manifest().native!.libraries["win32-x64"]!;
+  const withUserFiles = (userFiles: unknown) => manifest({native: {...manifest().native!,
+    libraries: {"win32-x64": {...library, userFiles}}}} as Partial<ExtensionManifest>);
+  const cubism = [{name: "Live2DCubismCore.dll", hint: "Download the Cubism SDK for Native from live2d.com.",
+    sha256s: [sha("core")]}];
+  const accepted = validateDocument<ExtensionManifest>("extension", withUserFiles(cubism), "glow.pxextension");
+  assert.ok(accepted.valid, JSON.stringify(accepted.diagnostics));
+  for (const bad of [[{name: "../evil.dll"}], [{name: "sub/core.dll"}], [{name: ".."}], [{name: "core.dll", sha256s: ["nothex"]}],
+    [{name: "core.dll", extra: true}]])
+    assert.equal(validateDocument<ExtensionManifest>("extension", withUserFiles(bad), "glow.pxextension").valid, false,
+      JSON.stringify(bad));
+  const codes = (userFiles: unknown) => nativeManifestDiagnostics(withUserFiles(userFiles), "glow.pxextension", false)
+    .map((item) => item.code);
+  assert.deepEqual(codes(cubism), []);
+  assert.ok(codes([{name: "ZLIB.dll"}]).includes("PXEXTNAT1004"), "a user file cannot take a shipped file's name");
+  assert.ok(codes([{name: "core.dll"}, {name: "Core.dll"}]).includes("PXEXTNAT1004"), "names are unique, ignoring case");
+  assert.equal(nativeSignatureMessage(withUserFiles(cubism), "win32-x64"), nativeSignatureMessage(manifest(), "win32-x64"),
+    "the signature does not cover user files");
+});

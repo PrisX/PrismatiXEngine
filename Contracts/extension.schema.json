@@ -25,13 +25,22 @@
         "sha256":{"$ref":"#/$defs/sha256"}
       }
     },
+    "nativeUserFile":{
+      "type":"object","additionalProperties":false,"required":["name"],
+      "properties":{
+        "name":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_][A-Za-z0-9._+-]*$","not":{"enum":[".",".."]}},
+        "hint":{"type":"string","minLength":1,"maxLength":500},
+        "sha256s":{"type":"array","uniqueItems":true,"minItems":1,"maxItems":32,"items":{"$ref":"#/$defs/sha256"}}
+      }
+    },
     "nativeLibrary":{
       "type":"object","additionalProperties":false,"required":["path"],
       "properties":{
         "path":{"allOf":[{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},{"type":"string","pattern":"\\.(?:dll|so|dylib)$"}]},
         "sha256":{"$ref":"#/$defs/sha256"},
         "signature":{"type":"string","pattern":"^[0-9a-f]{128}$"},
-        "files":{"type":"array","uniqueItems":true,"maxItems":32,"items":{"$ref":"#/$defs/nativeFile"}}
+        "files":{"type":"array","uniqueItems":true,"maxItems":32,"items":{"$ref":"#/$defs/nativeFile"}},
+        "userFiles":{"type":"array","uniqueItems":true,"maxItems":32,"items":{"$ref":"#/$defs/nativeUserFile"}}
       }
     },
     "native":{

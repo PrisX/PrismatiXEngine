@@ -1,17 +1,20 @@
 // Layer-1 (raw) capability checks and layer-2 native extensions end to end:
 // keygen, a signed pack with per-platform native packs, --allow-native,
 // per-platform hashes in the lock, a static index with platform downloads
-// and filters, and the Web target refusing native extensions.
+// and filters, the Web target refusing native extensions, and the files a
+// game's maker supplies (userFiles) beside the libraries in Plugins/.
 
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
+import {createHash} from "node:crypto";
 import {existsSync} from "node:fs";
-import {mkdir, mkdtemp, readFile, stat, writeFile} from "node:fs/promises";
+import {mkdir, mkdtemp, readdir, readFile, stat, writeFile} from "node:fs/promises";
 import {createServer, type Server} from "node:http";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import test from "node:test";
 
+import {resolveNativeUserFiles, stageNativePlugins} from "../src/extension-native.js";
 import {
   nativePackFileName,
   readExtensionNativePack,
@@ -107,9 +110,12 @@ test("native extensions: signed packs, consent, lock hashes, platform resolution
   assert.equal((await run(["extension", "create", "glow", "--lang", "js", "--command", "shine", "--project", author])).status, 0);
   await editManifest(author, "glow", (manifest) => ({...manifest, capabilities: [...manifest.capabilities, "native"],
     native: {abi: 1, services: ["glow.fx"], libraries: {
-      "win32-x64": {path: "native/win32-x64/glow.dll", files: [{path: "native/win32-x64/helper.dll"}]},
+      "win32-x64": {path: "native/win32-x64/glow.dll", files: [{path: "native/win32-x64/helper.dll"}],
+        userFiles: [{name: "Core.dll", hint: "Get it from the vendor's SDK."}]},
       "linux-x64": {path: "native/linux-x64/libglow.so"}}}}));
   await write(join(author, "Content/Extensions/glow/native/win32-x64/glow.dll"), "MZ not really a library");
+  // The author's own copy of the user-supplied file never ships.
+  await write(join(author, "Content/Extensions/glow/native/win32-x64/Core.dll"), "vendor runtime");
   await write(join(author, "Content/Extensions/glow/native/win32-x64/helper.dll"), "MZ helper");
 
   // A shared native extension must be signed with a key outside the project.
@@ -134,6 +140,7 @@ test("native extensions: signed packs, consent, lock hashes, platform resolution
   assert.equal(main.manifest!.native!.publicKey, publicKey);
   assert.deepEqual(Object.keys(main.manifest!.native!.libraries), ["win32-x64"], "a platform without its library is left out");
   assert.ok(![...main.files.keys()].some((path) => path.startsWith("native/")), "libraries ship only in native packs");
+  assert.deepEqual(main.manifest!.native!.libraries["win32-x64"]!.userFiles, [{name: "Core.dll", hint: "Get it from the vendor's SDK."}]);
   const pack = await readExtensionNativePack(new Uint8Array(await readFile(result.nativePacks[0]!.file)), main.manifest!, "win32-x64");
   assert.ok(pack.valid, JSON.stringify(pack.diagnostics));
   assert.equal(result.nativePacks[0]!.file, join(out, nativePackFileName("owen/glow", "1.0.0", "win32-x64")));
@@ -151,6 +158,10 @@ test("native extensions: signed packs, consent, lock hashes, platform resolution
   const inspected = await run(["extension", "inspect", result.file, "--platform", "win32-x64", "--project", user]);
   assert.equal(inspected.status, 0, inspected.stderr);
   assert.match(inspected.stdout, /NATIVE CODE/u);
+  assert.match(inspected.stdout, /supply these files yourself[\s\S]*Core\.dll \(win32-x64\): Get it from the vendor's SDK\./u);
+  const inspectedJson = await run(["extension", "inspect", result.file, "--project", user, "--json"]);
+  assert.deepEqual((JSON.parse(inspectedJson.stdout) as {native: {userFiles: unknown}}).native.userFiles,
+    [{platform: "win32-x64", name: "Core.dll", hint: "Get it from the vendor's SDK."}]);
   const added = await run(["extension", "add", result.file, "--yes", "--allow-native", "--platform", "win32-x64",
     "--project", user, "--json"]);
   assert.equal(added.status, 0, added.stderr);
@@ -176,6 +187,14 @@ test("native extensions: signed packs, consent, lock hashes, platform resolution
   const linux = await run(["validate", user, "--target", "desktop", "--platform", "linux-x64"]);
   assert.equal(linux.status, 1);
   assert.match(linux.stderr, /PXCLIEXT1103/u);
+
+  // Packing for Windows needs the file the maker supplies.
+  const unsupplied = await run(["validate", user, "--target", "desktop", "--platform", "win32-x64"]);
+  assert.equal(unsupplied.status, 1);
+  assert.match(unsupplied.stderr, /PXCLIEXT1106[\s\S]*Core\.dll[\s\S]*Get it from the vendor's SDK\./u);
+  await write(join(user, "NativeUserFiles/win32-x64/Core.dll"), "vendor runtime");
+  const supplied = await run(["validate", user, "--target", "desktop", "--platform", "win32-x64"]);
+  assert.equal(supplied.status, 0, supplied.stderr);
 
   // A static index publishes per-platform downloads; search and resolve filter by platform.
   const entries = join(author, "entries");
@@ -205,5 +224,62 @@ test("native extensions: signed packs, consent, lock hashes, platform resolution
     assert.ok(existsSync(join(other, "Extensions/owen/glow/native/win32-x64/helper.dll")));
   } finally {
     server.close();
+  }
+});
+
+test("user-supplied native files: lookup order, allow list, and Plugins staging that keeps files put there by hand", async () => {
+  const root = await project("user-files");
+  const library = {path: "native/win32-x64/glow.dll", userFiles: [{name: "Core.dll", hint: "From the vendor."}]};
+  const manifest = {format: "PrismatiXExtension", schemaRevision: 1, language: "javascript", id: "glow", version: "1.0.0",
+    requiredEngineVersion: "*", entry: "dist/main.js", capabilities: ["runtime", "native"], commands: [], actions: [],
+    native: {abi: 1, services: ["glow.fx"], libraries: {"win32-x64": library}}} as unknown as ExtensionManifest;
+  const extensions = [{manifestPath: "Content/Extensions/glow/glow.pxextension", manifest}];
+  await write(join(root, "Content/Extensions/glow/native/win32-x64/glow.dll"), "library");
+
+  const missing = await resolveNativeUserFiles(root, extensions, ["win32-x64", "linux-x64", "web"]);
+  assert.deepEqual(missing.findings.map((item) => item.code), ["PXCLIEXT1106"], "only platforms with the library need it");
+  assert.match(missing.findings[0]!.hint ?? "", /^From the vendor\. Put it at NativeUserFiles\/glow\/win32-x64\/Core\.dll/u);
+
+  await write(join(root, "NativeUserFiles/glow/win32-x64/Core.dll"), "project copy");
+  const fromProject = await resolveNativeUserFiles(root, extensions, ["win32-x64"]);
+  assert.equal(fromProject.findings.length, 0);
+  assert.equal(fromProject.files[0]!.source, join(root, "NativeUserFiles/glow/win32-x64/Core.dll"));
+
+  // PRISMATIX_NATIVE_USER_FILES comes first, and may hold the file directly.
+  const vendor = await mkdtemp(join(tmpdir(), "prismatix-vendor-"));
+  await write(join(vendor, "Core.dll"), "vendor copy");
+  const previous = process.env.PRISMATIX_NATIVE_USER_FILES;
+  process.env.PRISMATIX_NATIVE_USER_FILES = vendor;
+  try {
+    const fromEnvironment = await resolveNativeUserFiles(root, extensions, ["win32-x64"]);
+    assert.equal(fromEnvironment.files[0]!.source, join(vendor, "Core.dll"));
+
+    // sha256s is an allow list.
+    const sha = (text: string) => (createHash("sha256").update(text).digest("hex"));
+    const allowing = (sha256s: string[]) => [{manifestPath: extensions[0]!.manifestPath, manifest: {...manifest, native: {
+      ...manifest.native!, libraries: {"win32-x64": {...library, userFiles: [{name: "Core.dll", sha256s}]}}}} as ExtensionManifest}];
+    assert.equal((await resolveNativeUserFiles(root, allowing([sha("vendor copy")]), ["win32-x64"])).findings.length, 0);
+    const refused = await resolveNativeUserFiles(root, allowing([sha("another version")]), ["win32-x64"]);
+    assert.deepEqual(refused.findings.map((item) => item.code), ["PXCLIEXT1107"]);
+
+    // Staging replaces only what an earlier pack copied.
+    const dataRoot = join(root, "out");
+    await write(join(dataRoot, "Plugins/glow/notes.txt"), "mine");
+    await write(join(dataRoot, "Plugins/other/manual.dll"), "mine too");
+    const copied = await stageNativePlugins(root, extensions, "win32-x64", dataRoot, fromEnvironment.files);
+    assert.deepEqual(copied, ["Plugins/glow/glow.dll", "Plugins/glow/Core.dll"]);
+    assert.equal(await readFile(join(dataRoot, "Plugins/glow/Core.dll"), "utf8"), "vendor copy");
+    assert.deepEqual(JSON.parse(await readFile(join(dataRoot, "Plugins/.prismatix-managed.json"), "utf8")),
+      {files: ["glow/glow.dll", "glow/Core.dll"]});
+    await stageNativePlugins(root, extensions, "win32-x64", dataRoot, fromEnvironment.files);
+    assert.equal(await readFile(join(dataRoot, "Plugins/glow/notes.txt"), "utf8"), "mine", "a file put there by hand stays");
+    // Without native extensions the managed files go; the rest stays.
+    assert.deepEqual(await stageNativePlugins(root, [], "win32-x64", dataRoot), []);
+    assert.deepEqual((await readdir(join(dataRoot, "Plugins/glow"))).sort(), ["notes.txt"]);
+    assert.equal(await readFile(join(dataRoot, "Plugins/other/manual.dll"), "utf8"), "mine too");
+    assert.ok(!existsSync(join(dataRoot, "Plugins/.prismatix-managed.json")));
+  } finally {
+    if (previous === undefined) delete process.env.PRISMATIX_NATIVE_USER_FILES;
+    else process.env.PRISMATIX_NATIVE_USER_FILES = previous;
   }
 });

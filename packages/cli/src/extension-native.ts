@@ -11,10 +11,11 @@
 
 import {createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyObject} from "node:crypto";
 import {existsSync} from "node:fs";
-import {chmod, copyFile, mkdir, readFile, rm, writeFile} from "node:fs/promises";
-import {dirname, join} from "node:path";
+import {chmod, copyFile, mkdir, readFile, rm, rmdir, stat, writeFile} from "node:fs/promises";
+import {delimiter, dirname, join, resolve} from "node:path";
 
 import {
+  isNativeExtensionPlatform,
   manifestPlatforms,
   nativeExtensionPlatforms,
   nativeManifestDiagnostics,
@@ -34,6 +35,10 @@ export const SIGNING_KEY_ENVIRONMENT = "PRISMATIX_EXTENSION_SIGNING_KEY";
 export const DEVELOPMENT_KEY_FILE = ".prismatix/native-development-key.pem";
 /** The folder of a distribution's data root that holds native libraries. */
 export const NATIVE_PLUGIN_FOLDER = "Plugins";
+/** Folders (a path list) searched first for the files a game's maker supplies (`userFiles`). */
+export const NATIVE_USER_FILES_ENVIRONMENT = "PRISMATIX_NATIVE_USER_FILES";
+/** The project folder for those files: `NativeUserFiles/<extension id>/<platform>/<name>`. */
+export const NATIVE_USER_FILES_FOLDER = "NativeUserFiles";
 
 export interface SigningKey {
   readonly privateKey: KeyObject;
@@ -232,30 +237,136 @@ export function platformFindings(extensions: readonly {readonly manifestPath: st
  * `<dataRoot>/Plugins/<extension id>/` (flat, by file name), checking each
  * against the SHA-256 the sealed manifest pins. Returns the copied paths.
  */
+/** Lists, inside the Plugins folder, the files the CLI copied there (so a later pack removes only those). */
+export const MANAGED_PLUGINS_RECORD = ".prismatix-managed.json";
+
+/** A user-supplied native file found for packing (see `resolveNativeUserFiles`). */
+export interface NativeUserFileSource {
+  readonly extension: string;
+  readonly platform: NativeExtensionPlatform;
+  readonly name: string;
+  /** Absolute path of the file found. */
+  readonly source: string;
+}
+
+/**
+ * Where `name` is looked for, first match wins: every folder of
+ * PRISMATIX_NATIVE_USER_FILES (a path list), then the project's
+ * NativeUserFiles/, each as `<id>/<platform>/<name>`, `<platform>/<name>`
+ * and `<name>`.
+ */
+export function nativeUserFileCandidates(root: string, id: string, platform: NativeExtensionPlatform, name: string,
+  environment: string | undefined = process.env[NATIVE_USER_FILES_ENVIRONMENT]): string[] {
+  const folders = [...(environment ?? "").split(delimiter).filter((folder) => folder.trim() !== "").map((folder) => resolve(folder)),
+    join(root, NATIVE_USER_FILES_FOLDER)];
+  return folders.flatMap((folder) => [join(folder, ...id.split("/"), platform, name), join(folder, platform, name), join(folder, name)]);
+}
+
+/**
+ * Finds the user-supplied files (`userFiles`) of the extensions' libraries
+ * for `platforms`. A missing file is PXCLIEXT1106 (with the manifest's hint);
+ * one outside its `sha256s` allow list is PXCLIEXT1107. Nothing here is
+ * pinned by the manifest or covered by its signature.
+ */
+export async function resolveNativeUserFiles(root: string, extensions: readonly {readonly manifestPath: string;
+  readonly manifest: ExtensionManifest}[], platforms: readonly string[]): Promise<{files: NativeUserFileSource[];
+  findings: AuthoringDiagnostic[]}> {
+  const files: NativeUserFileSource[] = [];
+  const findings: AuthoringDiagnostic[] = [];
+  for (const {manifestPath, manifest} of extensions) {
+    for (const platform of platforms) {
+      if (!isNativeExtensionPlatform(platform)) continue;
+      for (const userFile of manifest.native?.libraries[platform]?.userFiles ?? []) {
+        const candidates = nativeUserFileCandidates(root, manifest.id, platform, userFile.name);
+        let source: string | undefined;
+        for (const candidate of candidates)
+          if ((await stat(candidate).catch(() => undefined))?.isFile() === true) { source = candidate; break; }
+        if (source === undefined) {
+          findings.push(error("PXCLIEXT1106", `${manifest.id} needs ${userFile.name} for ${platform}, a file you supply yourself`,
+            manifestPath, `${userFile.hint === undefined ? "" : `${userFile.hint} `}Put it at ` +
+              `${NATIVE_USER_FILES_FOLDER}/${manifest.id}/${platform}/${userFile.name} in the project, or in a folder ` +
+              `listed in ${NATIVE_USER_FILES_ENVIRONMENT}.`));
+          continue;
+        }
+        if (userFile.sha256s !== undefined) {
+          const digest = sha256(new Uint8Array(await readFile(source)));
+          if (!userFile.sha256s.includes(digest)) {
+            findings.push(error("PXCLIEXT1107", `${source} is not a version of ${userFile.name} that ${manifest.id} accepts ` +
+              `(SHA-256 ${digest})`, manifestPath, userFile.hint ?? `Its manifest lists the accepted SHA-256 values in userFiles.sha256s.`));
+            continue;
+          }
+        }
+        files.push({extension: manifest.id, platform, name: userFile.name, source});
+      }
+    }
+  }
+  return {files, findings};
+}
+
+/** A relative "/" path inside the Plugins folder, as the record lists it; anything else is ignored. */
+function managedEntry(value: unknown): string | undefined {
+  if (typeof value !== "string" || value === "" || value.includes("\\") || value.startsWith("/")) return undefined;
+  const parts = value.split("/");
+  return parts.some((part) => part === "" || part === "." || part === ".." || part.includes(":")) ? undefined : value;
+}
+
+/**
+ * Copies this platform's native files (the shipped libraries and the
+ * user-supplied files found by `resolveNativeUserFiles`) into
+ * `<dataRoot>/Plugins/<extension id>/`. Only files an earlier pack copied
+ * (listed in Plugins/.prismatix-managed.json) are removed first: anything
+ * else in Plugins, such as a file put there by hand, stays.
+ */
 export async function stageNativePlugins(root: string, extensions: readonly {readonly manifestPath: string;
-  readonly manifest: ExtensionManifest}[], platform: NativeExtensionPlatform, dataRoot: string): Promise<string[]> {
+  readonly manifest: ExtensionManifest}[], platform: NativeExtensionPlatform, dataRoot: string,
+  userFiles: readonly NativeUserFileSource[] = []): Promise<string[]> {
   const base = join(dataRoot, NATIVE_PLUGIN_FOLDER);
-  await rm(base, {recursive: true, force: true});
+  const record = join(base, MANAGED_PLUGINS_RECORD);
+  const previous = await readFile(record, "utf8").then((text) => JSON.parse(text) as {files?: unknown}).catch(() => ({files: []}));
+  const folders = new Set<string>();
+  for (const entry of Array.isArray(previous.files) ? previous.files.map(managedEntry) : []) {
+    if (entry === undefined) continue;
+    await rm(join(base, ...entry.split("/")), {force: true});
+    for (let index = entry.lastIndexOf("/"); index > 0; index = entry.lastIndexOf("/", index - 1))
+      folders.add(entry.slice(0, index));
+  }
   const copied: string[] = [];
   for (const {manifestPath, manifest} of extensions) {
     if (manifest.native?.libraries[platform] === undefined) continue;
-    const folder = join(base, manifest.id);
+    const folder = join(base, ...manifest.id.split("/"));
     await mkdir(folder, {recursive: true});
     const names = new Set<string>();
+    const place = async (source: string, name: string) => {
+      if (names.has(name.toLowerCase())) throw new Error(`${manifest.id} has two ${platform} native files named ${name}`);
+      names.add(name.toLowerCase());
+      await copyFile(source, join(folder, name));
+      copied.push(`${manifest.id}/${name}`);
+    };
     for (const file of nativePlatformFiles(manifest, platform)) {
       const source = projectPath(root, manifestPath, file.path);
       const data = await readFile(source);
       if (file.sha256 !== undefined && sha256(data) !== file.sha256)
         throw new Error(`${file.path} of ${manifest.id} changed after it was sealed`);
-      const name = file.path.slice(file.path.lastIndexOf("/") + 1);
-      if (names.has(name.toLowerCase())) throw new Error(`${manifest.id} has two ${platform} native files named ${name}`);
-      names.add(name.toLowerCase());
-      await copyFile(source, join(folder, name));
-      copied.push(`${NATIVE_PLUGIN_FOLDER}/${manifest.id}/${name}`);
+      await place(source, file.path.slice(file.path.lastIndexOf("/") + 1));
+    }
+    for (const userFile of manifest.native.libraries[platform]!.userFiles ?? []) {
+      const found = userFiles.find((item) => item.extension === manifest.id && item.platform === platform && item.name === userFile.name);
+      if (found === undefined) throw new Error(`${manifest.id} needs ${userFile.name} for ${platform}, which was not found`);
+      await place(found.source, userFile.name);
     }
   }
-  if (copied.length === 0) await rm(base, {recursive: true, force: true});
-  return copied;
+  // Folders that held only managed files go too (deepest first); a folder
+  // with anything else in it stays.
+  for (const folder of [...folders].sort((left, right) => right.length - left.length))
+    if (!copied.some((entry) => entry.startsWith(`${folder}/`)))
+      await rmdir(join(base, ...folder.split("/"))).catch(() => undefined);
+  if (copied.length > 0) {
+    await writeFile(record, `${JSON.stringify({files: copied}, null, 2)}\n`);
+  } else {
+    await rm(record, {force: true});
+    await rmdir(base).catch(() => undefined);
+  }
+  return copied.map((entry) => `${NATIVE_PLUGIN_FOLDER}/${entry}`);
 }
 
 /** The files of a platform's native pack (`native/<platform>/...` relative to the manifest). */

@@ -15,6 +15,15 @@ The packages always carry the same version and pin each other exactly.
 
 ### Added
 
+- Native extensions can name files the game's maker supplies, such as a
+  vendor runtime that may not be redistributed (Live2D's Cubism Core):
+  `native.libraries.<platform>.userFiles: [{name, hint?, sha256s?}]`. They
+  are never packaged, not pinned and not covered by the signature (`sha256s`
+  is an optional allow list); packing a game copies them from
+  `PRISMATIX_NATIVE_USER_FILES` or the project's `NativeUserFiles/` into
+  `Plugins/<extension id>/` and fails with the hint when one is missing
+  (`PXCLIEXT1106`, `PXCLIEXT1107`); `extension inspect` and `add` list them.
+
 - Extension building blocks from the first Live2D-style extension.
   `ctx.random` (`next`, `int`, `range`, `chance`, `pick`, `shuffle`; the new
   `Engine.Random`): a per-extension generator the engine seeds each session
@@ -161,6 +170,10 @@ The packages always carry the same version and pin each other exactly.
 
 ### Fixed
 
+- Packing a game with native extensions no longer deletes the whole
+  `Plugins/` folder of the output: it replaces only the files an earlier pack
+  copied there (listed in `Plugins/.prismatix-managed.json`), so files put
+  there by hand stay.
 - On Windows, packing no longer fails with PXPKG1315 when a virus scanner or
   the search indexer still has the new Player open; the Packager waits up to
   five seconds before giving up.

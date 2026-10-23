@@ -1571,6 +1571,14 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           "signature": {
             "pattern": "^[0-9a-f]{128}$",
             "type": "string"
+          },
+          "userFiles": {
+            "items": {
+              "$ref": "#/$defs/nativeUserFile"
+            },
+            "maxItems": 32,
+            "type": "array",
+            "uniqueItems": true
           }
         },
         "required": [
@@ -1585,6 +1593,41 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           "darwin-x64",
           "darwin-arm64"
         ]
+      },
+      "nativeUserFile": {
+        "additionalProperties": false,
+        "properties": {
+          "hint": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "not": {
+              "enum": [
+                ".",
+                ".."
+              ]
+            },
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._+-]*$",
+            "type": "string"
+          },
+          "sha256s": {
+            "items": {
+              "$ref": "#/$defs/sha256"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
       },
       "parameter": {
         "additionalProperties": false,
@@ -5881,7 +5924,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "extension-lock.schema.json": "842ae4c71560b8913c76ae1e03def3c416760edf93d3c522ebad7a570b18415f",
   "extension-package.schema.json": "bd7baa339d7a1b89d9cbd7d1db82aaabd104776712a6f270948220e6ec806ff5",
   "extension-registry.schema.json": "9493fdcd55ae7e656fca16082cb8816fde36aee26816687753f26fbb2c096fcc",
-  "extension.schema.json": "4080153f3c2b2f5a9af513cdc27e0f7a416556d8ef1301f040037443202425df",
+  "extension.schema.json": "28419cc5b2ce5c845a257937927505daec53719a6f69a8090b877b9d76df08fc",
   "game.schema.json": "a2614c48076fc5e7554934e446f37319c556adb9f13a28f24c8592813f0dfd23",
   "locale.schema.json": "391e4abe7616d74554af376e2ae3563961215b1631cdd04faf5034016aaff774",
   "motion.schema.json": "6cc663c16bc82c6d966609bb2410bb2873ae43a16d5da3611234bec041d54268",

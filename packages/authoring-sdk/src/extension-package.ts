@@ -202,6 +202,10 @@ export function nativePlatformFiles(manifest: ExtensionManifest, platform: Nativ
  *     abi <abi>
  *     services <services, sorted, comma-separated>
  *     file <sha256> <path>          (the library, then its files by path)
+ *
+ * `userFiles` are not in it: the game's maker supplies them, so neither the
+ * signature nor the manifest vouches for their contents (only an optional
+ * `sha256s` allow list, which pack checks).
  */
 export function nativeSignatureMessage(manifest: ExtensionManifest, platform: NativeExtensionPlatform): string {
   const native = manifest.native;
@@ -278,6 +282,18 @@ export function nativeManifestDiagnostics(manifest: ExtensionManifest, path: str
       seen.add(file.path.toLowerCase());
       if (packaged && file.sha256 === undefined)
         diagnostics.push(error("PXEXTNAT1005", "A packaged native file has its sha256", path, file.path));
+    }
+    // User-supplied files land in the same Plugins folder, so their names
+    // must not clash with each other or with the shipped files.
+    const shipped = new Set(files.map((file) => file.path.slice(file.path.lastIndexOf("/") + 1).toLowerCase()));
+    const supplied = new Set<string>();
+    for (const userFile of library.userFiles ?? []) {
+      const name = userFile.name.toLowerCase();
+      if (shipped.has(name))
+        diagnostics.push(error("PXEXTNAT1004", `The ${platform} user file ${userFile.name} has the name of a file the package ships`, path, userFile.name));
+      else if (supplied.has(name))
+        diagnostics.push(error("PXEXTNAT1004", `The ${platform} user file ${userFile.name} is listed twice`, path, userFile.name));
+      supplied.add(name);
     }
     const expected = platform === "win32-x64" ? ".dll" : platform.startsWith("darwin") ? ".dylib" : ".so";
     if (!library.path.endsWith(expected))
