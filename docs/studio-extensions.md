@@ -201,7 +201,10 @@ has a Studio side and a matching `requiredStudioVersion`:
   `readText`, `list` with `project.read`; `writeFile` with `project.write`)
   are the whole API; the types are in `@prismatix/studio-sdk`. Paths are
   project-relative; `..` and absolute paths are refused, and a call without
-  its permission fails with an error that names the permission.
+  its permission fails with an error that names the permission. `writeFile`
+  never writes what would run outside the sandbox: hidden files and folders
+  (`.git`, `.vscode`, ...), `NativeUserFiles/`, `node_modules/`,
+  `package.json`, executables and native libraries.
 - Asset types work without loading the module: the asset browser matches
   file names against `patterns`.
 - Installing is not enough. Because the lock is shared through git, Studio

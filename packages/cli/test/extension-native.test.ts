@@ -238,7 +238,7 @@ test("Android: android-arm64 native packs, --platform android-arm64, and the APK
 
   const author = await project("android-author");
   assert.equal((await run(["extension", "create", "glow", "--lang", "js", "--command", "shine", "--project", author])).status, 0);
-  await editManifest(author, "glow", (manifest) => ({...manifest, capabilities: [...manifest.capabilities, "native"],
+  await editManifest(author, "glow", (manifest) => ({...manifest, capabilities: [...manifest.capabilities ?? [], "native"],
     native: {abi: 1, services: ["glow.fx"], libraries: {
       "android-arm64": {path: "native/android-arm64/libglow.so", files: [{path: "native/android-arm64/libhelper.so"}],
         userFiles: [{name: "libcore.so", hint: "From the vendor's Android SDK."}]}}}}));
