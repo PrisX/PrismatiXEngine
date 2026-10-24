@@ -225,6 +225,34 @@ the HUD's `Speaker` label while they speak; other lines keep the label's own
 colour. Lines already read are drawn halfway to grey (`dimReadText`), which
 stays legible on light and dark message windows.
 
+`nameStyle` gives the name a whole look. Every field is optional and
+overrides only that part of the label's authored look; the next speaker
+without a style gets the authored look back:
+
+```json
+"nameStyle": {
+  "color": "#E0688AFF",
+  "gradient": ["#FFFFFF", "#FFC6D6"],
+  "outlineColor": "#4E3A52FF",
+  "outlineSize": 3,
+  "shadow": {"color": "#00000080", "x": 2, "y": 2, "blur": 2},
+  "font": "Content/Fonts/Name.ttf",
+  "bold": true,
+  "italic": false,
+  "plate": "Content/UI/Plates/shirone.png"
+}
+```
+
+`color` wins over `nameColor`. `gradient`, `shadow`, `bold` and `italic` work
+as the `Text` props `textGradient`, `textShadow`, `bold` and `italic` (see
+the UI reference, Text effects); `outlineSize` is 0 to 12 pixels. `font` is
+a project font for the name only. `plate` is the character's name plate
+picture: the Player publishes it as `dialogue.speakerPlate`, for an Image the
+HUD binds to it (UI reference, Per-character name plates). Colours are
+`#RRGGBB` or `#RRGGBBAA`; `validate` reports a missing `font` (`PXSDKRES2012`)
+or `plate` (`PXSDKRES2013`), and the Player refuses an invalid `nameStyle`
+(`PXCHAR1033`).
+
 ### Stage size
 
 A sprite is drawn at its native pixels, standing on the bottom edge. A

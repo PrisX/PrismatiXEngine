@@ -117,6 +117,48 @@ A sliced image stretches by definition, so it takes no `region`, `scaleMode` or
 `lockAspectRatio`; `validate` reports a negative margin or a `sliceScale`
 outside 0.01–16.
 
+### Text effects
+
+`Text` and `RichTextLabel` take a drop shadow, a gradient fill, faux bold and
+faux italic on top of `outlineSize` (0 to 12 pixels) and `outlineColor`:
+
+```tsx
+<Text name="Title" text="星降る夜に" fontSize={64} font="Content/Fonts/Title.ttf"
+  outlineSize={3} outlineColor="#4E3A52"
+  textShadow={{color: "#00000080", x: 2, y: 3, blur: 4}}
+  textGradient={["#FFFFFF", "#FFC6D6"]} bold italic
+  position={[0, 200]} size={[1920, 120]} horizontalAlignment="Center" />
+```
+
+- `textShadow` is drawn under the glyphs and their outline. `x` and `y`
+  default to 2; `blur` (0 to 8 pixels) softens it.
+- `textGradient` replaces the text colour: `[top, bottom]` runs down each
+  line, `[from, to, "horizontal"]` runs across the text (across the label's
+  box when it wraps, so the colours stay put while a typewriter reveals the
+  line). The outline keeps its own colour. In a `RichTextLabel`, a run with
+  its own `[color]` keeps that colour.
+- `bold` thickens the glyphs for a font without a bold face: `true` adds about
+  4% of the font size (at least a pixel) on each side, a number adds that
+  many pixels (0 to 4). The shadow and outline grow with it.
+- `italic` slants the glyphs right about each line's baseline: `true` is 12°,
+  a number is the angle (-20 to 20, negative leans left).
+
+The order is shadow, outline, fill. Shadow, outline and bold are baked into
+the cached text texture and the slant and gradient are in the quad, so a
+label with every effect still costs three draws a frame, on every renderer
+the Player ships; a label without effects draws as before. They apply to
+horizontal text; vertical `RichTextLabel` columns ignore them.
+
+The runtime properties are flat, as in a `.pxui` file or `runtimeProperties`:
+`textShadowColor`, `textShadowOffsetX`, `textShadowOffsetY`,
+`textShadowBlur`, `textGradientFrom`, `textGradientTo`,
+`textGradientDirection` (`"vertical"` or `"horizontal"`), `fauxBold` (pixels
+per side, `-1` for `bold: true`) and `fauxItalic` (degrees). Colours are
+`#RRGGBB` or `#RRGGBBAA`; a shadow or gradient shows while its colour has
+alpha. A value out of range stops the build at the `Text` that has it, and
+`validate` points `runtimeProperties.fauxBold` and the rest at the typed prop
+(`PXSDKJSX1100`).
+
 A caption is laid out in the whole button and centred on its letters, so on
 art whose face is not the middle of the image (a drop shadow or glow below it)
 the text looks low. `contentPadding` insets the caption's area in layout
@@ -251,6 +293,21 @@ settings values), the Player publishes booleans for HUD details that would
 otherwise need code: `dialogue.hasSpeaker` (a name plate that hides during narration),
 `dialogue.waiting` (the line is complete and waits for a click: bind a
 click-wait glyph's `visible` to it), and `hud.auto` / `hud.skip`.
+
+### Per-character name plates
+
+A character's `nameStyle` (see the Story reference) styles the HUD's
+`Speaker` label while they speak, and its `plate` picture is published as
+`dialogue.speakerPlate` (`""` for a speaker without one), with
+`dialogue.hasSpeakerPlate` saying whether there is one. Show it with an Image
+bound to the path, and hide the default plate art meanwhile:
+
+```tsx
+<Image name="NamePlateArt" path="Content/UI/Library/Pastel/nameplate.png"
+  visibleWhen="!dialogue.hasSpeakerPlate" position={[150, 770]} size={[360, 64]} />
+<Image name="NamePlateCustom" bind={{path: "dialogue.speakerPlate"}}
+  visibleWhen="dialogue.hasSpeakerPlate" position={[150, 770]} size={[360, 64]} />
+```
 
 ### Where choices appear
 

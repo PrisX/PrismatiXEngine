@@ -15,6 +15,20 @@ The packages always carry the same version and pin each other exactly.
 
 ### Added
 
+- Text effects on `Text` and `RichTextLabel`: `textShadow` (`{color, x, y,
+  blur}`), `textGradient` (`[top, bottom]` or `[from, to, "horizontal"]`),
+  faux `bold` and faux `italic`, on every renderer the Player ships. They
+  lower to the Label runtime properties `textShadowColor`,
+  `textShadowOffsetX`, `textShadowOffsetY`, `textShadowBlur`,
+  `textGradientFrom`, `textGradientTo`, `textGradientDirection`, `fauxBold`
+  and `fauxItalic`. `outlineSize` now goes up to 12 pixels.
+- `nameStyle` in a `.pxcharacter`: the speaker name's colour, gradient,
+  outline, shadow, font, bold, italic and name plate picture. The Player
+  applies it to the HUD's `Speaker` label for that character's lines and
+  publishes the plate as `dialogue.speakerPlate` / `dialogue.hasSpeakerPlate`.
+  `validate` reports a missing nameStyle font or plate (`PXSDKRES2012`,
+  `PXSDKRES2013`); the Player refuses an invalid nameStyle (`PXCHAR1033`).
+
 - The official extension registry, `https://illyasviel.dev`, is the default
   when neither `--registry`, `PRISMATIX_EXTENSION_REGISTRY` nor the project's
   `settings["extensions.registry"]` names one. `prismatix extension registry
@@ -216,6 +230,10 @@ The packages always carry the same version and pin each other exactly.
 
 ### Fixed
 
+- After a speaker with a `nameColor`, a speaker without one gets the HUD
+  `Speaker` label's theme colour back when the label sets no colour of its
+  own, instead of keeping the last name colour. The Preview hosts now colour
+  and style speaker names as the Player does.
 - A placed-items view (`ItemsPlaced`, the usual `ChoiceList` that fills the
   HUD) no longer swallows every click on the screen: only its items take
   clicks (`mouseFilter` `Ignore` by default), so a click advances the
