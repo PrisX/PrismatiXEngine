@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <tuple>
+#include <vector>
 
 namespace {
 
@@ -133,6 +135,27 @@ int main() {
               outlineColor && outlineColor->writable &&
               outlineColor->valueType == "color",
           "Label text outline must be authorable through the SDK registry");
+    Check(outlineSize && outlineSize->range.maximum == 12.0,
+          "Label outlines go up to 12 pixels");
+    for (const char* name : {"textShadowColor", "textGradientFrom", "textGradientTo"}) {
+        const auto* property = label ? FindProperty(*label, name) : nullptr;
+        Check(property && property->writable && property->valueType == "color",
+              "Label text effect colours must be authorable through the SDK registry");
+    }
+    for (const auto& [name, low, high] : {std::tuple{"textShadowOffsetX", -64.0, 64.0},
+                                          std::tuple{"textShadowOffsetY", -64.0, 64.0},
+                                          std::tuple{"textShadowBlur", 0.0, 8.0},
+                                          std::tuple{"fauxBold", 0.0, 4.0},
+                                          std::tuple{"fauxItalic", -20.0, 20.0}}) {
+        const auto* property = label ? FindProperty(*label, name) : nullptr;
+        Check(property && property->writable && property->hasRange &&
+                  property->range.minimum == low && property->range.maximum == high,
+              "Label text effect numbers must carry their editor ranges");
+    }
+    const auto* gradientDirection = label ? FindProperty(*label, "textGradientDirection") : nullptr;
+    Check(gradientDirection && gradientDirection->writable &&
+              gradientDirection->enumChoices == std::vector<std::string>({"vertical", "horizontal"}),
+          "Label gradient direction must offer vertical and horizontal");
     const auto* vertical = richText ? FindProperty(*richText, "vertical") : nullptr;
     const auto* verticalRows = richText
                                    ? FindProperty(*richText, "verticalRows")

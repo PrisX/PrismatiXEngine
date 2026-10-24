@@ -2,6 +2,7 @@
 #include "Engine/UI/Actions/ActionDescriptor.h"
 
 #include "Engine/UI/Control.h"
+#include "Engine/Graphics/TextEffects.h"
 #include "Engine/Graphics/Texture.h"
 #include "Engine/SDK/Motion.h"
 #include "Engine/SDK/Portrait.h"
@@ -59,12 +60,40 @@ public:
     [[nodiscard]] int FontSizeToFit(std::string_view content, int requested,
                                     float width, float height) const;
     void SetColor(Color value) { m_color = value; m_hasColor = true; }
+    // Back to the theme's text colour.
+    void ClearColor() { m_hasColor = false; }
     [[nodiscard]] Color GetColor() const { return m_color; }
     [[nodiscard]] bool HasColor() const { return m_hasColor; }
-    void SetOutlineSize(int value) { m_outlineSize = std::clamp(value, 0, 8); }
+    void SetOutlineSize(int value) { m_outlineSize = std::clamp(value, 0, 12); }
     [[nodiscard]] int OutlineSize() const { return m_outlineSize; }
     void SetOutlineColor(Color value) { m_outlineColor = value; }
     [[nodiscard]] Color OutlineColor() const { return m_outlineColor; }
+    // Text effects, all off by default. A shadow shows while its colour has
+    // alpha; a gradient while either of its colours does, and it replaces
+    // the text colour.
+    void SetTextShadowColor(Color value) { m_shadowColor = value; }
+    [[nodiscard]] Color TextShadowColor() const { return m_shadowColor; }
+    void SetTextShadowOffset(Vec2 value) {
+        m_shadowOffset = {Finite(value.x, -64.0f, 64.0f), Finite(value.y, -64.0f, 64.0f)};
+    }
+    [[nodiscard]] Vec2 TextShadowOffset() const { return m_shadowOffset; }
+    void SetTextShadowBlur(float value) { m_shadowBlur = Finite(value, 0.0f, 8.0f); }
+    [[nodiscard]] float TextShadowBlur() const { return m_shadowBlur; }
+    void SetTextGradientFrom(Color value) { m_gradientFrom = value; }
+    [[nodiscard]] Color TextGradientFrom() const { return m_gradientFrom; }
+    void SetTextGradientTo(Color value) { m_gradientTo = value; }
+    [[nodiscard]] Color TextGradientTo() const { return m_gradientTo; }
+    void SetTextGradientHorizontal(bool value) { m_gradientHorizontal = value; }
+    [[nodiscard]] bool TextGradientHorizontal() const { return m_gradientHorizontal; }
+    // Faux bold: pixels added on each side of the glyphs (0..4, 0 = off);
+    // negative (-1) picks about 4% of the font size, at least a pixel.
+    void SetFauxBold(float value) { m_fauxBold = value < 0.0f ? -1.0f : Finite(value, 0.0f, 4.0f); }
+    [[nodiscard]] float FauxBold() const { return m_fauxBold; }
+    // Faux italic: slant in degrees (-20..20, 0 = off).
+    void SetFauxItalic(float value) { m_fauxItalic = Finite(value, -20.0f, 20.0f); }
+    [[nodiscard]] float FauxItalic() const { return m_fauxItalic; }
+    // `fontSize` resolves the automatic faux bold.
+    [[nodiscard]] graphics::TextEffects TextEffects(int fontSize = 24) const;
     void SetHorizontalAlignment(HorizontalTextAlignment value) { m_horizontalAlignment=value; }
     void SetVerticalAlignment(VerticalTextAlignment value) { m_verticalAlignment=value; }
     [[nodiscard]] HorizontalTextAlignment HorizontalAlignment() const { return m_horizontalAlignment; }
@@ -83,6 +112,9 @@ protected:
                                            int size, float width) const;
 
 private:
+    static float Finite(float value, float low, float high) {
+        return std::isfinite(value) ? std::clamp(value, low, high) : 0.0f;
+    }
     std::string m_layoutReference;
     mutable std::string m_reflowKey;
     mutable std::vector<std::size_t> m_reflowBreaks;
@@ -95,6 +127,14 @@ private:
     bool m_hasColor = false;
     int m_outlineSize = 0;
     Color m_outlineColor{0, 0, 0, 255};
+    Color m_shadowColor{0, 0, 0, 0};
+    Vec2 m_shadowOffset{2.0f, 2.0f};
+    float m_shadowBlur = 0.0f;
+    Color m_gradientFrom{0, 0, 0, 0};
+    Color m_gradientTo{0, 0, 0, 0};
+    bool m_gradientHorizontal = false;
+    float m_fauxBold = 0.0f;
+    float m_fauxItalic = 0.0f;
     HorizontalTextAlignment m_horizontalAlignment = HorizontalTextAlignment::Left;
     VerticalTextAlignment m_verticalAlignment = VerticalTextAlignment::Top;
 };

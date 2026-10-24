@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {Button, Control, Group, Image, Radio, Scene, Slider, Text, TextureButton, Toggle, compileJsxUi} from "../src/index.js";
+import {Button, Control, Group, Image, Radio, RichTextLabel, Scene, Slider, Text, TextureButton, Toggle, compileJsxUi} from "../src/index.js";
 import {jsx, jsxs, type UiElement} from "../src/jsx-runtime.js";
 
 function compiled(children: readonly UiElement[]) {
@@ -307,4 +307,45 @@ test("style box decoration lowers to canonical appearance fields", () => {
   assert.deepEqual(card.appearance, {backgroundColor: "#FFFFFFCC", gradientColor: "#EEF2FCB3",
     cornerRadius: 22, borderWidth: 1.5, borderColor: "#FFFFFFF0", shadowColor: "#00000033",
     shadowBlur: 26, shadowOffsetX: 0, shadowOffsetY: 8});
+});
+
+test("Text effects lower to the Label's flat runtime properties", () => {
+  const node = compiled([
+    jsx(Text, {name: "Name", text: "Shirone", position: [0, 0], size: [200, 40], fontSize: 30,
+      outlineSize: 12, textShadow: {color: "#00000080", blur: 2.5},
+      textGradient: ["#FFFFFF", "#FFC6D6"], bold: true, italic: true}),
+    jsx(RichTextLabel, {name: "Line", text: "Hello", position: [0, 50], size: [400, 40],
+      textShadow: {color: "#102030", x: -1, y: 3}, textGradient: ["#FFFFFF", "#000000FF", "horizontal"],
+      bold: 1.5, italic: -8}),
+    jsx(Text, {name: "Off", text: "Plain", position: [0, 100], size: [200, 40], bold: false, italic: false}),
+  ]);
+  assert.deepEqual(node("Name").runtimeProperties, {fontSize: 30, outlineSize: 12,
+    textShadowColor: {type: "color", value: "#00000080"}, textShadowOffsetX: 2, textShadowOffsetY: 2,
+    textShadowBlur: 2.5, textGradientFrom: {type: "color", value: "#FFFFFF"},
+    textGradientTo: {type: "color", value: "#FFC6D6"}, textGradientDirection: "vertical",
+    fauxBold: -1, fauxItalic: 12});
+  const line = node("Line").runtimeProperties;
+  assert.equal(line.textShadowOffsetX, -1);
+  assert.equal(line.textShadowOffsetY, 3);
+  assert.equal(line.textGradientDirection, "horizontal");
+  assert.equal(line.fauxBold, 1.5);
+  assert.equal(line.fauxItalic, -8);
+  assert.equal("bold" in line || "italic" in line || "textShadow" in line, false);
+  assert.deepEqual(node("Off").runtimeProperties, {fauxBold: 0, fauxItalic: 0});
+});
+
+test("bad text effect values throw where the Text is written", () => {
+  for (const props of [{outlineSize: 13}, {textShadow: {color: "black"}}, {textShadow: {color: "#000000", blur: 9}},
+    {textShadow: {color: "#000000", spread: 1}}, {textGradient: ["#FFFFFF"]},
+    {textGradient: ["#FFFFFF", "#000000", "diagonal"]}, {textGradient: ["#FFF", "#000000"]},
+    {bold: 5}, {bold: Number.NaN}, {italic: 21}])
+    assert.throws(() => jsx(Text, {name: "T", text: "x", position: [0, 0], size: [10, 10], ...props}),
+      /^TypeError: Text (outlineSize|textShadow|textGradient|bold|italic)/u, JSON.stringify(props));
+});
+
+test("runtimeProperties text effects point at the typed props", () => {
+  const result = compileJsxUi(jsx(Scene, {name: "Lint", width: 640, height: 360,
+    children: jsx(Text, {name: "T", text: "x", position: [0, 0], size: [10, 10],
+      runtimeProperties: {fauxItalic: 12}})}));
+  assert.ok(result.diagnostics.some((item) => item.code === "PXSDKJSX1100" && item.message.includes("italic=")));
 });

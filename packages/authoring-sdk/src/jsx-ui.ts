@@ -302,12 +302,39 @@ export interface TextProps extends Omit<UiNodeProps, "children"> {
   /** Extra pixels between the characters of a single-line label. */
   readonly letterSpacing?: number;
   readonly wrap?: boolean;
+  /** Outline width in pixels, 0..12. */
   readonly outlineSize?: number;
   readonly outlineColor?: string;
+  /** Drop shadow under the glyphs and outline; x and y default to 2, blur (0..8 px) to 0. */
+  readonly textShadow?: UiTextShadow;
+  /**
+   * Fill gradient replacing the text colour: `[top, bottom]`, or
+   * `[from, to, "horizontal"]` across the text. The outline keeps its colour.
+   */
+  readonly textGradient?: UiTextGradient;
+  /**
+   * Faux bold for fonts without a bold face: `true` (about 4% of the font
+   * size, at least a pixel; lowers to `fauxBold: -1`, resolved at runtime) or
+   * pixels added on each side of the glyphs, 0..4.
+   */
+  readonly bold?: boolean | number;
+  /** Faux italic: `true` (12 degrees) or a slant in degrees, -20..20, leaning right about the baseline. */
+  readonly italic?: boolean | number;
   readonly horizontalAlignment?: "Left" | "Center" | "Right";
   readonly verticalAlignment?: "Top" | "Center" | "Bottom";
   readonly children?: string | number | readonly (string | number)[];
 }
+
+/** A text drop shadow. Colours are `#RRGGBB` or `#RRGGBBAA`. */
+export interface UiTextShadow {
+  readonly color: string;
+  readonly x?: number;
+  readonly y?: number;
+  readonly blur?: number;
+}
+
+export type UiTextGradient = readonly [from: string, to: string] |
+  readonly [from: string, to: string, direction: "vertical" | "horizontal"];
 
 export interface ColorRectProps extends UiNodeProps {
   /** #RRGGBB or #RRGGBBAA. */
@@ -907,9 +934,67 @@ export function ItemsPlaced(props: ItemsPlacedProps): UiElement {
   }});
 }
 
+const textColorPattern = /^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/u;
+
+function textEffectNumber(owner: string, value: unknown, low: number, high: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < low || value > high)
+    throw new TypeError(`${owner} must be a number from ${low} to ${high}`);
+  return value;
+}
+
+function textEffectColor(owner: string, value: unknown): JsonValue {
+  if (typeof value !== "string" || !textColorPattern.test(value))
+    throw new TypeError(`${owner} must be #RRGGBB or #RRGGBBAA`);
+  return {type: "color", value};
+}
+
+/**
+ * The text effect props of Text and RichTextLabel as the Label's flat
+ * runtime properties, checked: `textShadow`, `textGradient`, `bold` and
+ * `italic`, and the 0..12 `outlineSize`.
+ */
+function textEffectProperties(component: string, props: TextProps): Record<string, JsonValue> {
+  const result: Record<string, JsonValue> = {};
+  if (props.outlineSize !== undefined)
+    result.outlineSize = textEffectNumber(`${component} outlineSize`, props.outlineSize, 0, 12);
+  const shadow: unknown = props.textShadow;
+  if (shadow !== undefined) {
+    if (shadow === null || typeof shadow !== "object" || Array.isArray(shadow))
+      throw new TypeError(`${component} textShadow must be {color, x?, y?, blur?}`);
+    const fields = shadow as Record<string, unknown>;
+    for (const key of Object.keys(fields))
+      if (!["color", "x", "y", "blur"].includes(key))
+        throw new TypeError(`${component} textShadow has no ${key}; use color, x, y, blur`);
+    result.textShadowColor = textEffectColor(`${component} textShadow.color`, fields.color);
+    result.textShadowOffsetX = textEffectNumber(`${component} textShadow.x`, fields.x ?? 2, -64, 64);
+    result.textShadowOffsetY = textEffectNumber(`${component} textShadow.y`, fields.y ?? 2, -64, 64);
+    result.textShadowBlur = textEffectNumber(`${component} textShadow.blur`, fields.blur ?? 0, 0, 8);
+  }
+  const gradient: unknown = props.textGradient;
+  if (gradient !== undefined) {
+    if (!Array.isArray(gradient) || (gradient.length !== 2 && gradient.length !== 3) ||
+        (gradient.length === 3 && gradient[2] !== "vertical" && gradient[2] !== "horizontal"))
+      throw new TypeError(`${component} textGradient must be [from, to] or [from, to, "vertical" | "horizontal"]`);
+    result.textGradientFrom = textEffectColor(`${component} textGradient[0]`, gradient[0]);
+    result.textGradientTo = textEffectColor(`${component} textGradient[1]`, gradient[1]);
+    result.textGradientDirection = (gradient[2] as string | undefined) ?? "vertical";
+  }
+  const bold: unknown = props.bold;
+  // `true` is -1: the Player picks about 4% of the font size, at least a pixel.
+  if (bold === true) result.fauxBold = -1;
+  else if (bold === false) result.fauxBold = 0;
+  else if (bold !== undefined) result.fauxBold = textEffectNumber(`${component} bold`, bold, 0, 4);
+  const italic: unknown = props.italic;
+  if (italic === true) result.fauxItalic = 12;
+  else if (italic === false) result.fauxItalic = 0;
+  else if (italic !== undefined) result.fauxItalic = textEffectNumber(`${component} italic`, italic, -20, 20);
+  return result;
+}
+
 export function Text(props: TextProps): UiElement {
   const text = props.text ?? textualChildren(props.children);
-  const {children: _children, fontSize, font, letterSpacing, wrap, outlineSize, outlineColor,
+  const {children: _children, fontSize, font, letterSpacing, wrap, outlineSize: _outlineSize, outlineColor,
+    textShadow: _textShadow, textGradient: _textGradient, bold: _bold, italic: _italic,
     horizontalAlignment, verticalAlignment, ...rest} = props;
   return node("label", "Label", {...rest, ...(text === undefined ? {} : {text}),
     runtimeProperties: {...props.runtimeProperties,
@@ -917,7 +1002,7 @@ export function Text(props: TextProps): UiElement {
       ...(font === undefined ? {} : {fontPath: font}),
       ...(letterSpacing === undefined ? {} : {letterSpacing}),
       ...(wrap === undefined ? {} : {wrap}),
-      ...(outlineSize === undefined ? {} : {outlineSize}),
+      ...textEffectProperties("Text", props),
       ...(outlineColor === undefined ? {} : {outlineColor: {type: "color", value: outlineColor}}),
       ...(horizontalAlignment === undefined ? {} : {horizontalAlignment}),
       ...(verticalAlignment === undefined ? {} : {verticalAlignment})}});
@@ -1162,7 +1247,8 @@ export function WheelBindingButton(props: WheelBindingButtonProps): UiElement {
 export function RichTextLabel(props: RichTextLabelProps): UiElement {
   const text = props.markup ?? props.text ?? textualChildren(props.children);
   const {children: _children, markup: _markup, vertical, verticalRows,
-    fontSize, font, letterSpacing, wrap, outlineSize, outlineColor, horizontalAlignment, verticalAlignment,
+    fontSize, font, letterSpacing, wrap, outlineSize: _outlineSize, outlineColor, horizontalAlignment, verticalAlignment,
+    textShadow: _textShadow, textGradient: _textGradient, bold: _bold, italic: _italic,
     ...rest} = props;
   return node("label", "RichTextLabel", {
     ...rest,
@@ -1173,7 +1259,7 @@ export function RichTextLabel(props: RichTextLabelProps): UiElement {
       ...(font === undefined ? {} : {fontPath: font}),
       ...(letterSpacing === undefined ? {} : {letterSpacing}),
       ...(wrap === undefined ? {} : {wrap}),
-      ...(outlineSize === undefined ? {} : {outlineSize}),
+      ...textEffectProperties("RichTextLabel", props),
       ...(outlineColor === undefined ? {} : {outlineColor: {type: "color", value: outlineColor}}),
       ...(horizontalAlignment === undefined ? {} : {horizontalAlignment}),
       ...(verticalAlignment === undefined ? {} : {verticalAlignment}),

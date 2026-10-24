@@ -721,8 +721,69 @@ Status RegisterBuiltinUITypes() {
     label.properties.push_back(NumberProperty("fontSize","Theme",[](const Object& o){return As<Label>(o)->FontSize();},[](Object& o,double v){As<Label>(o)->SetFontSize(static_cast<int>(v));return Status::Ok();}));
     label.properties.push_back(NumberProperty("letterSpacing","Theme",[](const Object& o){return static_cast<double>(As<Label>(o)->LetterSpacing());},[](Object& o,double v){As<Label>(o)->SetLetterSpacing(static_cast<float>(v));return Status::Ok();}));
     label.properties.push_back(StringProperty("fontPath","Theme",[](const Object& o){return As<Label>(o)->FontPath();},[](Object& o,std::string v){As<Label>(o)->SetFontPath(std::move(v));return Status::Ok();}));
-    auto labelOutlineSize=NumberProperty("outlineSize","Theme",[](const Object& o){return static_cast<double>(As<Label>(o)->OutlineSize());},[](Object& o,double v){As<Label>(o)->SetOutlineSize(static_cast<int>(v));return Status::Ok();});labelOutlineSize.editor.hasRange=true;labelOutlineSize.editor.minimum=0;labelOutlineSize.editor.maximum=8;labelOutlineSize.editor.step=1;label.properties.push_back(std::move(labelOutlineSize));
+    auto labelOutlineSize=NumberProperty("outlineSize","Theme",[](const Object& o){return static_cast<double>(As<Label>(o)->OutlineSize());},[](Object& o,double v){As<Label>(o)->SetOutlineSize(static_cast<int>(v));return Status::Ok();});labelOutlineSize.editor.hasRange=true;labelOutlineSize.editor.minimum=0;labelOutlineSize.editor.maximum=12;labelOutlineSize.editor.step=1;label.properties.push_back(std::move(labelOutlineSize));
     label.properties.push_back(ColorProperty("outlineColor","Theme",[](const Object& o){return As<Label>(o)->OutlineColor();},[](Object& o,Color v){As<Label>(o)->SetOutlineColor(v);return Status::Ok();}));
+    // Text effects. Colours default to transparent (off); numbers carry
+    // their editor ranges, and the Label clamps whatever is written.
+    const auto textEffectNumber = [](std::string name, std::function<double(const Label&)> get,
+                                     std::function<void(Label&, float)> set, const double minimum,
+                                     const double maximum, const double step, const double fallback) {
+        auto property = NumberProperty(name, "Theme",
+            [get](const Object& o) { return get(*As<Label>(o)); },
+            [set, name](Object& o, const double v) {
+                if (!std::isfinite(v)) return TypeError(name + " expects a finite Number");
+                set(*As<Label>(o), static_cast<float>(v));
+                return Status::Ok();
+            });
+        property.defaultValue = Variant(fallback);
+        property.editor.hasRange = true;
+        property.editor.minimum = minimum;
+        property.editor.maximum = maximum;
+        property.editor.step = step;
+        return property;
+    };
+    const auto textEffectColor = [](std::string name, std::function<Color(const Label&)> get,
+                                    std::function<void(Label&, Color)> set) {
+        auto property = ColorProperty(std::move(name), "Theme",
+            [get](const Object& o) { return get(*As<Label>(o)); },
+            [set](Object& o, const Color v) { set(*As<Label>(o), v); return Status::Ok(); });
+        property.defaultValue = Variant(Color{0, 0, 0, 0});
+        return property;
+    };
+    label.properties.push_back(textEffectColor("textShadowColor",
+        [](const Label& l) { return l.TextShadowColor(); }, [](Label& l, const Color v) { l.SetTextShadowColor(v); }));
+    label.properties.push_back(textEffectNumber("textShadowOffsetX",
+        [](const Label& l) { return static_cast<double>(l.TextShadowOffset().x); },
+        [](Label& l, const float v) { l.SetTextShadowOffset({v, l.TextShadowOffset().y}); }, -64, 64, 1, 2));
+    label.properties.push_back(textEffectNumber("textShadowOffsetY",
+        [](const Label& l) { return static_cast<double>(l.TextShadowOffset().y); },
+        [](Label& l, const float v) { l.SetTextShadowOffset({l.TextShadowOffset().x, v}); }, -64, 64, 1, 2));
+    label.properties.push_back(textEffectNumber("textShadowBlur",
+        [](const Label& l) { return static_cast<double>(l.TextShadowBlur()); },
+        [](Label& l, const float v) { l.SetTextShadowBlur(v); }, 0, 8, 0.5, 0));
+    label.properties.push_back(textEffectColor("textGradientFrom",
+        [](const Label& l) { return l.TextGradientFrom(); }, [](Label& l, const Color v) { l.SetTextGradientFrom(v); }));
+    label.properties.push_back(textEffectColor("textGradientTo",
+        [](const Label& l) { return l.TextGradientTo(); }, [](Label& l, const Color v) { l.SetTextGradientTo(v); }));
+    auto gradientDirection = StringProperty("textGradientDirection", "Theme",
+        [](const Object& o) { return std::string(As<Label>(o)->TextGradientHorizontal() ? "horizontal" : "vertical"); },
+        [](Object& o, std::string v) {
+            if (v == "vertical") As<Label>(o)->SetTextGradientHorizontal(false);
+            else if (v == "horizontal") As<Label>(o)->SetTextGradientHorizontal(true);
+            else return TypeError("textGradientDirection expects vertical or horizontal");
+            return Status::Ok();
+        });
+    gradientDirection.defaultValue = Variant(std::string("vertical"));
+    gradientDirection.editor.enumChoices = {"vertical", "horizontal"};
+    label.properties.push_back(std::move(gradientDirection));
+    auto fauxBold = textEffectNumber("fauxBold",
+        [](const Label& l) { return static_cast<double>(l.FauxBold()); },
+        [](Label& l, const float v) { l.SetFauxBold(v); }, 0, 4, 0.25, 0);
+    fauxBold.editor.description = "Pixels added on each side of the glyphs; -1 picks about 4% of the font size";
+    label.properties.push_back(std::move(fauxBold));
+    label.properties.push_back(textEffectNumber("fauxItalic",
+        [](const Label& l) { return static_cast<double>(l.FauxItalic()); },
+        [](Label& l, const float v) { l.SetFauxItalic(v); }, -20, 20, 1, 0));
     auto labelH=StringProperty("horizontalAlignment","Content",[](const Object& o){switch(As<Label>(o)->HorizontalAlignment()){case HorizontalTextAlignment::Center:return std::string("Center");case HorizontalTextAlignment::Right:return std::string("Right");default:return std::string("Left");}},[](Object& o,std::string v){if(v=="Left")As<Label>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Left);else if(v=="Center")As<Label>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Center);else if(v=="Right")As<Label>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Right);else return TypeError("horizontalAlignment expects Left, Center, or Right");return Status::Ok();});labelH.editor.displayName="Horizontal alignment";labelH.editor.enumChoices={"Left","Center","Right"};label.properties.push_back(std::move(labelH));
     auto labelV=StringProperty("verticalAlignment","Content",[](const Object& o){switch(As<Label>(o)->VerticalAlignment()){case VerticalTextAlignment::Center:return std::string("Center");case VerticalTextAlignment::Bottom:return std::string("Bottom");default:return std::string("Top");}},[](Object& o,std::string v){if(v=="Top")As<Label>(o)->SetVerticalAlignment(VerticalTextAlignment::Top);else if(v=="Center")As<Label>(o)->SetVerticalAlignment(VerticalTextAlignment::Center);else if(v=="Bottom")As<Label>(o)->SetVerticalAlignment(VerticalTextAlignment::Bottom);else return TypeError("verticalAlignment expects Top, Center, or Bottom");return Status::Ok();});labelV.editor.displayName="Vertical alignment";labelV.editor.enumChoices={"Top","Center","Bottom"};label.properties.push_back(std::move(labelV));
     add(std::move(label));

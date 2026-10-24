@@ -198,11 +198,27 @@ std::string Label::ReflowedText(graphics::Renderer2D& renderer, const std::strin
     return shown;
 }
 
+graphics::TextEffects Label::TextEffects(const int fontSize) const {
+    graphics::TextEffects effects;
+    effects.shadowColor = m_shadowColor;
+    effects.shadowOffsetX = m_shadowOffset.x;
+    effects.shadowOffsetY = m_shadowOffset.y;
+    effects.shadowBlur = m_shadowBlur;
+    effects.gradient = m_gradientFrom.a > 0 || m_gradientTo.a > 0;
+    effects.gradientFrom = m_gradientFrom;
+    effects.gradientTo = m_gradientTo;
+    effects.gradientHorizontal = m_gradientHorizontal;
+    effects.bold = m_fauxBold < 0.0f ? std::max(1.0f, static_cast<float>(fontSize) * 0.04f) : m_fauxBold;
+    effects.italic = m_fauxItalic;
+    return effects;
+}
+
 void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     const auto& style = theme.Resolve(*this);
     const int size = m_fontSize > 0 ? m_fontSize : style.fontSize;
     const std::string& font = m_fontPath.empty() ? style.font : m_fontPath;
     const Color color = m_hasColor ? m_color : (Enabled() ? style.text : style.textDisabled);
+    auto effects = TextEffects(size);
     if (m_letterSpacing == 0.0f || m_wrap || m_text.find_first_of("\r\n") != std::string::npos) {
         // Reflowed text carries its own line breaks; SDL_ttf must not wrap it
         // again with its slightly different measurements.
@@ -212,7 +228,7 @@ void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
             : m_text;
         renderer.DrawTextInRect(shown,LayoutRect(),font,size,color,
                                 Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),m_wrap,
-                                255,m_outlineSize,m_outlineColor,reflow);
+                                255,m_outlineSize,m_outlineColor,reflow,{},effects);
         return;
     }
     // Tracked text: lay each UTF-8 character out on its own so the gap between
@@ -234,12 +250,15 @@ void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     float x = area.x;
     if (m_horizontalAlignment == HorizontalTextAlignment::Center) x += (area.w - width) / 2.0f;
     else if (m_horizontalAlignment == HorizontalTextAlignment::Right) x += area.w - width;
+    // A horizontal gradient runs across the whole caption, not each letter.
+    effects.gradientLeft = x;
+    effects.gradientRight = x + width;
     // Every character centres on the whole caption's reference letter, so a
     // mixed caption ("第1章") keeps one baseline.
     for (const auto& [character, advance] : characters) {
         renderer.DrawTextInRect(character, {x, area.y, advance + 1.0f, area.h}, font, size, color,
                                 graphics::HorizontalAlignment::Left, Vertical(m_verticalAlignment),
-                                false, 255, m_outlineSize, m_outlineColor, false, m_text);
+                                false, 255, m_outlineSize, m_outlineColor, false, m_text, effects);
         x += advance + m_letterSpacing;
     }
 }
@@ -1429,6 +1448,16 @@ void RichTextLabel::DrawStyled(graphics::Renderer2D& renderer, const Theme& them
     };
     const float rubyExtent = static_cast<float>(std::max(8, baseSize / 2));
     const float edge = static_cast<float>(OutlineSize());
+    // Effects apply to every run; a run with its own [color] keeps it
+    // instead of the gradient, which spans the label's box.
+    auto effects = TextEffects(baseSize);
+    effects.gradientLeft = area.x;
+    effects.gradientRight = area.x + area.w;
+    auto runEffects = [&](const std::size_t run) {
+        auto value = effects;
+        if (styleRuns[run].style.color) value.gradient = false;
+        return value;
+    };
     renderer.PushClip({area.x - edge, area.y - rubyExtent - edge,
                        area.w + edge * 2.0f, area.h + rubyExtent + edge * 2.0f});
     const auto& clusters = layout.Clusters();
@@ -1454,7 +1483,7 @@ void RichTextLabel::DrawStyled(graphics::Renderer2D& renderer, const Theme& them
                  width + static_cast<float>(runs[run].size), head.bounds.h},
                 runs[run].fontPath, runs[run].size, styleRuns[run].style.color.value_or(baseColor),
                 graphics::HorizontalAlignment::Left, graphics::VerticalAlignment::Top, false,
-                255, OutlineSize(), OutlineColor());
+                255, OutlineSize(), OutlineColor(), false, {}, runEffects(run));
         }
         first = last + 1;
     }
@@ -1477,7 +1506,7 @@ void RichTextLabel::DrawStyled(graphics::Renderer2D& renderer, const Theme& them
              static_cast<float>(rubySize) * 1.5f},
             runs[run].fontPath, rubySize, styleRuns[run].style.color.value_or(baseColor),
             graphics::HorizontalAlignment::Left, graphics::VerticalAlignment::Top, false,
-            255, OutlineSize(), OutlineColor());
+            255, OutlineSize(), OutlineColor(), false, {}, runEffects(run));
     }
     renderer.PopClip();
 }

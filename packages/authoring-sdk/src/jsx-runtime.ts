@@ -123,13 +123,24 @@ const typedRuntimeProperties: Readonly<Record<string, string>> = {
   letterSpacing: "letterSpacing=",
   outlineSize: "outlineSize=",
   outlineColor: "outlineColor=",
+  textShadowColor: "textShadow={{color}}",
+  textShadowOffsetX: "textShadow={{x}}",
+  textShadowOffsetY: "textShadow={{y}}",
+  textShadowBlur: "textShadow={{blur}}",
+  textGradientFrom: "textGradient={[from, to]}",
+  textGradientTo: "textGradient={[from, to]}",
+  textGradientDirection: "textGradient={[from, to, direction]}",
+  fauxBold: "bold=",
+  fauxItalic: "italic=",
 };
 
 const statePaths = ["normalPath", "hoverPath", "pressedPath", "disabledPath"] as const;
 
 // Text styling props exist only on these components.
 const textComponents = new Set(["Text", "RichTextLabel", "Button", "TextureButton"]);
-const textProperties = new Set(["fontSize", "wrap", "font", "letterSpacing", "outlineSize", "outlineColor"]);
+const textProperties = new Set(["fontSize", "wrap", "font", "letterSpacing", "outlineSize", "outlineColor",
+  "textShadowColor", "textShadowOffsetX", "textShadowOffsetY", "textShadowBlur", "textGradientFrom",
+  "textGradientTo", "textGradientDirection", "fauxBold", "fauxItalic"]);
 
 function runtimePropertyLints(props: Readonly<Record<string, unknown>>, component: string): UiLint[] {
   const lints: UiLint[] = [];

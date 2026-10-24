@@ -1168,6 +1168,14 @@ int main() {
             caption.runtimeProperties.emplace("outlineSize", std::int64_t{2});
             caption.runtimeProperties.emplace(
                 "outlineColor", px::sdk::UiColorValue{"#2D171DFF"});
+            caption.runtimeProperties.emplace("textShadowColor", px::sdk::UiColorValue{"#00000080"});
+            caption.runtimeProperties.emplace("textShadowOffsetX", -3.0);
+            caption.runtimeProperties.emplace("textShadowBlur", 2.5);
+            caption.runtimeProperties.emplace("textGradientFrom", px::sdk::UiColorValue{"#FFFFFF"});
+            caption.runtimeProperties.emplace("textGradientTo", px::sdk::UiColorValue{"#FFC6D6"});
+            caption.runtimeProperties.emplace("textGradientDirection", std::string("horizontal"));
+            caption.runtimeProperties.emplace("fauxBold", 1.5);
+            caption.runtimeProperties.emplace("fauxItalic", std::int64_t{12});
         }
         captions.nodes = {root, caption};
         const auto checkCaption = [&](const std::string& expected) {
@@ -1190,6 +1198,13 @@ int main() {
                 Check(label->OutlineSize() == 2 && edge.r == 0x2D &&
                           edge.g == 0x17 && edge.b == 0x1D && edge.a == 0xFF,
                       "typed label outline must survive UI runtime adaptation");
+                const auto effects = label->TextEffects();
+                Check(effects.shadowColor.a == 0x80 && effects.shadowOffsetX == -3.0f &&
+                          effects.shadowOffsetY == 2.0f && effects.shadowBlur == 2.5f &&
+                          effects.gradient && effects.gradientTo.g == 0xC6 &&
+                          effects.gradientHorizontal && effects.bold == 1.5f &&
+                          effects.italic == 12.0f,
+                      "typed label text effects must survive UI runtime adaptation");
             }
             if (button) {
                 const auto color = button->GetTextColor();
