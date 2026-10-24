@@ -12,6 +12,7 @@
 #include "Engine/Core/Types.h"
 #include "Engine/Graphics/AssetCache.h"
 #include "Engine/Graphics/Compositor2D.h"
+#include "Engine/Graphics/TextEffects.h"
 #include "Engine/Text/TextLayout.h"
 
 struct SDL_Renderer;
@@ -264,7 +265,8 @@ public:
                         int size, Color color, HorizontalAlignment horizontal,
                         VerticalAlignment vertical, bool wrap, std::uint8_t alpha = 255,
                         int outlineSize = 0, Color outlineColor = {0, 0, 0, 255},
-                        bool newlinesOnly = false, std::string_view opticalReference = {});
+                        bool newlinesOnly = false, std::string_view opticalReference = {},
+                        const TextEffects& effects = {});
     // How far a vertically centred line of `text` moves (logical pixels,
     // negative is up) so that the ink of a reference letter, rather than the
     // font's ascent-plus-descent line box, sits on the middle: the ideograph
@@ -416,6 +418,29 @@ private:
         SDL_Texture* texture = nullptr;
         int w = 0;
         int h = 0;
+        // Transparent margin on every side (logical pixels) that thickened
+        // or blurred text grows into; the glyphs start this far in.
+        int pad = 0;
+    };
+    // Baked into a cached text texture: thickening by `grow` and a soft
+    // edge `blur` wide, both in logical pixels.
+    struct TextRaster {
+        float grow = 0.0f;
+        float blur = 0.0f;
+    };
+    // How a cached text texture is mapped: slanted about each line's
+    // baseline and/or filled with a gradient through its vertex colours.
+    struct TextQuadStyle {
+        float slant = 0.0f;  // tan of the italic angle
+        float ascent = 0.0f;
+        float lineHeight = 0.0f;
+        float lineSkip = 0.0f;
+        bool gradient = false;
+        Color from{255, 255, 255, 255};
+        Color to{255, 255, 255, 255};
+        bool horizontal = false;
+        float left = 0.0f;  // horizontal gradient span, screen x
+        float right = 0.0f;
     };
 
     const CachedText* AcquireText(const std::string& text, const std::string& fontPath, int size,
@@ -423,6 +448,19 @@ private:
                                   HorizontalAlignment alignment = HorizontalAlignment::Left,
                                   text::TextOrientation orientation =
                                       text::TextOrientation::Horizontal);
+    // With effects baked in (a default argument of a nested type with member
+    // initialisers is not portable C++).
+    const CachedText* AcquireText(const std::string& text, const std::string& fontPath, int size,
+                                  Color color, int outline, int wrap,
+                                  HorizontalAlignment alignment,
+                                  text::TextOrientation orientation, TextRaster raster);
+    void DrawTextQuad(const CachedText& text, float x, float y, std::uint8_t alpha,
+                      const TextQuadStyle& style);
+    // DrawTextInRect with effects; `glyphs` is where the plain text goes.
+    void DrawTextEffects(const std::string& text, const Rect& glyphs, const Rect& bounds,
+                         const std::string& fontPath, int size, Color color, int wrapWidth,
+                         HorizontalAlignment horizontal, std::uint8_t alpha, int edge,
+                         Color outlineColor, float optical, const TextEffects& effects);
     void Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha);
     void BlitRegion(SDL_Texture* texture, const Rect& sourcePixels, const Rect& dst,
                     std::uint8_t alpha);

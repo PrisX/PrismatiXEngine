@@ -1386,14 +1386,124 @@ void WarnTextOnce(const char* what, const std::string& detail) {
     warned = true;
     PX_LOG_WARN("Renderer2D: text {}: {}", what, detail);
 }
+
+// Box blur of radius `radius` along rows (step 1) or columns (step width),
+// treating everything outside the buffer as transparent.
+void BoxBlur(std::vector<float>& values, const int width, const int height, const int radius,
+             const bool rows) {
+    const int lines = rows ? height : width;
+    const int length = rows ? width : height;
+    const std::size_t step = rows ? 1u : static_cast<std::size_t>(width);
+    std::vector<float> line(static_cast<std::size_t>(length));
+    const float scale = 1.0f / static_cast<float>(radius * 2 + 1);
+    for (int index = 0; index < lines; ++index) {
+        const std::size_t start = rows ? static_cast<std::size_t>(index) * width
+                                       : static_cast<std::size_t>(index);
+        for (int at = 0; at < length; ++at) line[at] = values[start + at * step];
+        float sum = 0.0f;
+        for (int at = 0; at <= radius && at < length; ++at) sum += line[at];
+        for (int at = 0; at < length; ++at) {
+            values[start + at * step] = sum * scale;
+            if (at + radius + 1 < length) sum += line[at + radius + 1];
+            if (at - radius >= 0) sum -= line[at - radius];
+        }
+    }
+}
+
+// Thickens rendered text by `grow` and softens it by `blur` (surface pixels)
+// into a new ARGB8888 surface `pad` pixels larger on every side, every pixel
+// `color` with the processed coverage as its alpha. Growth reads a chamfer
+// distance (5-7-11, nearly round) from the half-covered pixels, two passes
+// whatever the width, so a shadow under a 12 px outline costs what a 1 px
+// bold does.
+SDL_Surface* BakeTextSurface(SDL_Surface* source, const float grow, const float blur,
+                             const int pad, const Color color) {
+    SDL_Surface* converted = source->format == SDL_PIXELFORMAT_ARGB8888
+        ? source : SDL_ConvertSurface(source, SDL_PIXELFORMAT_ARGB8888);
+    if (!converted) return nullptr;
+    const int width = converted->w + pad * 2, height = converted->h + pad * 2;
+    const auto at = [width](const int x, const int y) {
+        return static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+               static_cast<std::size_t>(x);
+    };
+    std::vector<float> coverage(static_cast<std::size_t>(width) * height, 0.0f);
+    for (int y = 0; y < converted->h; ++y) {
+        const auto* row = reinterpret_cast<const std::uint32_t*>(
+            static_cast<const std::uint8_t*>(converted->pixels) + y * converted->pitch);
+        for (int x = 0; x < converted->w; ++x)
+            coverage[at(x + pad, y + pad)] = static_cast<float>(row[x] >> 24) / 255.0f;
+    }
+    if (converted != source) SDL_DestroySurface(converted);
+    if (grow > 0.0f) {
+        constexpr float kFar = 1.0e9f;
+        std::vector<float> distance(coverage.size(), kFar);
+        for (std::size_t index = 0; index < coverage.size(); ++index)
+            if (coverage[index] >= 0.5f) distance[index] = 0.0f;
+        struct Step { int dx, dy; float cost; };
+        static constexpr Step kBefore[] = {{-1, 0, 1.0f}, {-1, -1, 1.4f}, {0, -1, 1.0f},
+                                           {1, -1, 1.4f}, {-2, -1, 2.2f}, {-1, -2, 2.2f},
+                                           {1, -2, 2.2f}, {2, -1, 2.2f}};
+        const auto relax = [&](const int x, const int y, const int sign) {
+            float best = distance[at(x, y)];
+            for (const Step& step : kBefore) {
+                const int nx = x + step.dx * sign, ny = y + step.dy * sign;
+                if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+                best = std::min(best, distance[at(nx, ny)] + step.cost);
+            }
+            distance[at(x, y)] = best;
+        };
+        for (int y = 0; y < height; ++y)
+            for (int x = 0; x < width; ++x) relax(x, y, 1);
+        for (int y = height - 1; y >= 0; --y)
+            for (int x = width - 1; x >= 0; --x) relax(x, y, -1);
+        // A pixel `d` from a covered centre lies about d - 0.5 beyond the
+        // glyph's edge; the grown edge covers it by what remains of `grow`.
+        for (std::size_t index = 0; index < coverage.size(); ++index)
+            coverage[index] = std::max(coverage[index],
+                                       std::clamp(grow + 1.0f - distance[index], 0.0f, 1.0f));
+    }
+    if (blur > 0.0f) {
+        // Two box passes each way approximate a Gaussian `blur` wide.
+        const int radius = std::max(1, static_cast<int>(std::lround(blur * 0.5f)));
+        for (int pass = 0; pass < 2; ++pass) {
+            BoxBlur(coverage, width, height, radius, true);
+            BoxBlur(coverage, width, height, radius, false);
+        }
+    }
+    SDL_Surface* baked = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_ARGB8888);
+    if (!baked) return nullptr;
+    const std::uint32_t rgb = (static_cast<std::uint32_t>(color.r) << 16) |
+                              (static_cast<std::uint32_t>(color.g) << 8) | color.b;
+    for (int y = 0; y < height; ++y) {
+        auto* row = reinterpret_cast<std::uint32_t*>(static_cast<std::uint8_t*>(baked->pixels) +
+                                                     y * baked->pitch);
+        for (int x = 0; x < width; ++x) {
+            const auto alpha = static_cast<std::uint32_t>(
+                std::lround(std::clamp(coverage[at(x, y)], 0.0f, 1.0f) * color.a));
+            row[x] = (alpha << 24) | rgb;
+        }
+    }
+    return baked;
+}
 }  // namespace
 
 const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, const std::string& fontPath, int size, Color color, int outline, int wrap, HorizontalAlignment alignment, const text::TextOrientation orientation) {
+    return AcquireText(text, fontPath, size, color, outline, wrap, alignment, orientation, TextRaster{});
+}
+
+const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, const std::string& fontPath, int size, Color color, int outline, int wrap, HorizontalAlignment alignment, const text::TextOrientation orientation, const TextRaster raster) {
     const int ss = m_effectiveTextSupersample;
-    const std::string key = MakeKey(text, fontPath, size, color, outline, wrap, ss,static_cast<int>(alignment),m_textLayout.Locale()) +
-                            (orientation == text::TextOrientation::Vertical
-                                 ? "|vertical"
-                                 : "|horizontal");
+    const bool baked = raster.grow > 0.0f || raster.blur > 0.0f;
+    std::string key = MakeKey(text, fontPath, size, color, outline, wrap, ss,static_cast<int>(alignment),m_textLayout.Locale()) +
+                      (orientation == text::TextOrientation::Vertical
+                           ? "|vertical"
+                           : "|horizontal");
+    if (baked) {
+        key += "|fx";
+        key += std::to_string(std::lround(raster.grow * 100.0f));
+        key += ',';
+        key += std::to_string(std::lround(raster.blur * 100.0f));
+    }
     if (auto it = m_textCache.find(key); it != m_textCache.end()) {
         return &it->second;
     }
@@ -1420,7 +1530,8 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
     if (orientation == text::TextOrientation::Vertical)
         (void)TTF_SetFontDirection(font, TTF_DIRECTION_TTB);
 
-    const SDL_Color col{color.r,color.g,color.b,color.a};
+    // Baked text is drawn white and recoloured with its processed coverage.
+    const SDL_Color col=baked?SDL_Color{255,255,255,255}:SDL_Color{color.r,color.g,color.b,color.a};
     const auto wrapAlignment=alignment==HorizontalAlignment::Center?TTF_HORIZONTAL_ALIGN_CENTER:alignment==HorizontalAlignment::Right?TTF_HORIZONTAL_ALIGN_RIGHT:TTF_HORIZONTAL_ALIGN_LEFT;
     TTF_SetFontWrapAlignment(font,wrapAlignment);
     // wrap < 0: the text is already broken into lines; break only at newlines.
@@ -1431,6 +1542,18 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
     TTF_SetFontWrapAlignment(font,TTF_HORIZONTAL_ALIGN_LEFT);
     if(!surface){WarnTextOnce("rasterizing failed",SDL_GetError());return nullptr;}
     CachedText entry;
+    if (baked) {
+        // The margin is whole logical pixels so the glyphs keep their grid.
+        const float grow = raster.grow * static_cast<float>(ss);
+        const float blur = raster.blur * static_cast<float>(ss);
+        const int reach = static_cast<int>(std::ceil(grow)) +
+                          (blur > 0.0f ? 2 * std::max(1, static_cast<int>(std::lround(blur * 0.5f))) : 0) + 1;
+        entry.pad = (reach + ss - 1) / ss;
+        SDL_Surface* processed = BakeTextSurface(surface, grow, blur, entry.pad * ss, color);
+        SDL_DestroySurface(surface);
+        if (!processed) { WarnTextOnce("effect baking failed", SDL_GetError()); return nullptr; }
+        surface = processed;
+    }
 #if defined(PRISMATIX_WEB_GL_EFFECTS)
     entry.texture=CreateWebTextureFromSurface(m_renderer,surface);
 #else
@@ -1447,6 +1570,80 @@ void Renderer2D::DrawText(const std::string& text, float x, float y, const std::
     if (t) {
         Blit(t->texture,{x,y,static_cast<float>(t->w),static_cast<float>(t->h)},alpha);
     }
+}
+
+// (x, y) is where the glyphs' own box starts; the texture's margin lies
+// around it. Without slant or gradient this is one Blit. Otherwise each line
+// is a strip of quads: slanted about its baseline, with the gradient's stops
+// as extra rows (vertical) or columns (horizontal) of vertex colours.
+void Renderer2D::DrawTextQuad(const CachedText& text, const float x, const float y,
+                              const std::uint8_t alpha, const TextQuadStyle& style) {
+    const float pad = static_cast<float>(text.pad);
+    const float width = static_cast<float>(text.w), height = static_cast<float>(text.h);
+    if (style.slant == 0.0f && !style.gradient) {
+        Blit(text.texture, {x - pad, y - pad, width, height}, alpha);
+        return;
+    }
+    // Local coordinates: 0 is the glyph box's top-left, the texture spans
+    // -pad .. size - pad.
+    const float innerHeight = height - pad * 2.0f;
+    const float skip = style.lineSkip > 0.0f ? style.lineSkip : std::max(1.0f, innerHeight);
+    const float lineHeight = style.lineHeight > 0.0f ? style.lineHeight : skip;
+    const int lines = std::max(1, static_cast<int>(std::lround((innerHeight - lineHeight) / skip)) + 1);
+    const auto colorAt = [&](const float localX, const float localY, const int line) {
+        if (!style.gradient) return Color{255, 255, 255, alpha};
+        float t = 0.0f;
+        if (style.horizontal) {
+            const float left = style.right > style.left ? style.left - x : 0.0f;
+            const float right = style.right > style.left ? style.right - x : width - pad * 2.0f;
+            t = right > left ? (localX - left) / (right - left) : 0.0f;
+        } else {
+            t = (localY - static_cast<float>(line) * skip) / std::max(1.0f, lineHeight);
+        }
+        t = std::clamp(t, 0.0f, 1.0f);
+        const auto mix = [t](const std::uint8_t a, const std::uint8_t b) {
+            return static_cast<std::uint8_t>(std::lround(a + (static_cast<float>(b) - a) * t));
+        };
+        Color color{mix(style.from.r, style.to.r), mix(style.from.g, style.to.g),
+                     mix(style.from.b, style.to.b), mix(style.from.a, style.to.a)};
+        color.a = static_cast<std::uint8_t>((static_cast<int>(color.a) * alpha + 127) / 255);
+        return color;
+    };
+    std::vector<float> columns{-pad, width - pad};
+    if (style.gradient && style.horizontal && style.right > style.left)
+        for (const float stop : {style.left - x, style.right - x})
+            if (stop > -pad && stop < width - pad) columns.push_back(stop);
+    std::sort(columns.begin(), columns.end());
+    std::vector<SDL_Vertex> vertices;
+    std::vector<int> indices;
+    for (int line = 0; line < lines; ++line) {
+        const float top = static_cast<float>(line) * skip;
+        const float stripTop = line == 0 ? -pad : top;
+        const float stripBottom = line == lines - 1 ? height - pad : top + skip;
+        std::vector<float> rows{stripTop, stripBottom};
+        if (style.gradient && !style.horizontal)
+            for (const float stop : {top, top + lineHeight})
+                if (stop > stripTop && stop < stripBottom) rows.push_back(stop);
+        std::sort(rows.begin(), rows.end());
+        const float baseline = top + style.ascent;
+        const int first = static_cast<int>(vertices.size());
+        for (const float row : rows)
+            for (const float column : columns) {
+                const Vec2 point = TransformPoint({x + column + (baseline - row) * style.slant, y + row});
+                vertices.push_back({{point.x, point.y},
+                                    ToFColor(TransformColor(colorAt(column, row, line))),
+                                    {(column + pad) / width, (row + pad) / height}});
+            }
+        const int across = static_cast<int>(columns.size());
+        for (std::size_t row = 0; row + 1 < rows.size(); ++row)
+            for (int column = 0; column + 1 < across; ++column) {
+                const int a = first + static_cast<int>(row) * across + column;
+                const int b = a + 1, c = a + across + 1, d = a + across;
+                indices.insert(indices.end(), {a, b, c, a, c, d});
+            }
+    }
+    RenderGeometry(text.texture, vertices.data(), static_cast<int>(vertices.size()),
+                   indices.data(), static_cast<int>(indices.size()));
 }
 
 void Renderer2D::DrawTextOutline(const std::string& text, float x, float y, const std::string& fontPath, int size, Color textColor, Color outlineColor, int outlineSize, std::uint8_t alpha, bool shadow, int wrap) {
@@ -1618,7 +1815,8 @@ void Renderer2D::DrawTextInRect(const std::string& text, const Rect& bounds,
                                 HorizontalAlignment horizontal, VerticalAlignment vertical,
                                 bool wrap, std::uint8_t alpha,
                                 int outlineSize, Color outlineColor, bool newlinesOnly,
-                                const std::string_view opticalReference) {
+                                const std::string_view opticalReference,
+                                const TextEffects& effects) {
     const int wrapWidth=newlinesOnly?-1:wrap?std::max(1,static_cast<int>(std::floor(bounds.w))):0;
     // Centred text is centred on its letters (see OpticalCenterOffset); Top
     // and Bottom keep the line box flush with the edge.
@@ -1628,7 +1826,12 @@ void Renderer2D::DrawTextInRect(const std::string& text, const Rect& bounds,
     float x=bounds.x,y=bounds.y;
     if(horizontal==HorizontalAlignment::Center)x+=(bounds.w-t->w)*.5f;else if(horizontal==HorizontalAlignment::Right)x+=bounds.w-t->w;
     if(vertical==VerticalAlignment::Center)y+=(bounds.h-t->h)*.5f+optical;else if(vertical==VerticalAlignment::Bottom)y+=bounds.h-t->h;
-    const int edge=std::clamp(outlineSize,0,8);
+    const int edge=std::clamp(outlineSize,0,12);
+    if(effects.Any()){
+        DrawTextEffects(text,{x,y,static_cast<float>(t->w),static_cast<float>(t->h)},bounds,fontPath,size,color,
+                        wrapWidth,horizontal,alpha,edge,outlineColor,optical,effects);
+        return;
+    }
     const float bleed=static_cast<float>(edge);
     // The optical shift may move the line box past a tight rectangle's edge;
     // the clip follows it so nothing that showed before is cut.
@@ -1653,6 +1856,78 @@ void Renderer2D::DrawTextInRect(const std::string& text, const Rect& bounds,
     // drawing the edge rather than retaining a potentially invalid pointer.
     if(const CachedText* fill=AcquireText(text,fontPath,size,color,0,wrapWidth,horizontal))
         Blit(fill->texture,{x,y,static_cast<float>(fill->w),static_cast<float>(fill->h)},alpha);
+    PopClip();
+}
+
+// Shadow, outline and fill each come from one cached texture: the shadow
+// grown by the outline and bold and blurred, the outline grown by its width
+// and the bold, the fill by the bold (in white under a gradient, which the
+// vertex colours paint). The slant and gradient are in the geometry, so a
+// styled label is at most three draws a frame.
+void Renderer2D::DrawTextEffects(const std::string& text, const Rect& glyphs, const Rect& bounds,
+                                 const std::string& fontPath, const int size, const Color color,
+                                 const int wrapWidth, const HorizontalAlignment horizontal,
+                                 const std::uint8_t alpha, const int edge, const Color outlineColor,
+                                 const float optical, const TextEffects& effects) {
+    constexpr float kRadiansPerDegree = 3.14159265358979323846f / 180.0f;
+    const auto finite = [](const float value, const float low, const float high) {
+        return std::isfinite(value) ? std::clamp(value, low, high) : 0.0f;
+    };
+    const float grow = finite(effects.bold, 0.0f, 4.0f);
+    const float blur = finite(effects.shadowBlur, 0.0f, 8.0f);
+    const float shadowX = finite(effects.shadowOffsetX, -64.0f, 64.0f);
+    const float shadowY = finite(effects.shadowOffsetY, -64.0f, 64.0f);
+    const bool shadow = effects.shadowColor.a > 0;
+    TextQuadStyle slanted;
+    slanted.slant = std::tan(finite(effects.italic, -20.0f, 20.0f) * kRadiansPerDegree);
+    // Line metrics place each line's baseline (slant) and box (gradient).
+    if (slanted.slant != 0.0f || (effects.gradient && !effects.gradientHorizontal)) {
+        const int ss = m_effectiveTextSupersample;
+        if (TTF_Font* font = m_assets.Font(fontPath, size * ss, 0)) {
+            slanted.ascent = static_cast<float>(TTF_GetFontAscent(font)) / static_cast<float>(ss);
+            slanted.lineHeight = static_cast<float>(TTF_GetFontHeight(font)) / static_cast<float>(ss);
+            slanted.lineSkip = static_cast<float>(TTF_GetFontLineSkip(font)) / static_cast<float>(ss);
+        }
+    }
+    TextQuadStyle filled = slanted;
+    if (effects.gradient) {
+        filled.gradient = true;
+        filled.from = effects.gradientFrom;
+        filled.to = effects.gradientTo;
+        filled.horizontal = effects.gradientHorizontal;
+        // A wrapped label spans its box, so the colours stay put while a
+        // typewriter reveals it.
+        if (effects.gradientRight > effects.gradientLeft) {
+            filled.left = effects.gradientLeft;
+            filled.right = effects.gradientRight;
+        } else if (wrapWidth != 0) {
+            filled.left = bounds.x;
+            filled.right = bounds.x + bounds.w;
+        }
+    }
+    // The clip grows by whatever the effects draw past the text's box.
+    const float overhang = std::abs(slanted.slant) * static_cast<float>(size);
+    const float reach = static_cast<float>(edge) + grow +
+                        (shadow ? blur + std::max(std::abs(shadowX), std::abs(shadowY)) : 0.0f);
+    const float above = reach + std::max(0.0f, -optical), below = reach + std::max(0.0f, optical);
+    PushClip({bounds.x - reach - overhang, bounds.y - above,
+              bounds.w + (reach + overhang) * 2.0f, bounds.h + above + below});
+    // Each texture is used before the next is acquired: acquiring can evict.
+    if (shadow)
+        if (const CachedText* cast = AcquireText(text, fontPath, size, effects.shadowColor, 0, wrapWidth,
+                                                 horizontal, text::TextOrientation::Horizontal,
+                                                 TextRaster{static_cast<float>(edge) + grow, blur}))
+            DrawTextQuad(*cast, glyphs.x + shadowX, glyphs.y + shadowY, alpha, slanted);
+    if (edge > 0)
+        if (const CachedText* outline = AcquireText(text, fontPath, size, outlineColor, 0, wrapWidth,
+                                                    horizontal, text::TextOrientation::Horizontal,
+                                                    TextRaster{static_cast<float>(edge) + grow, 0.0f}))
+            DrawTextQuad(*outline, glyphs.x, glyphs.y, alpha, slanted);
+    if (const CachedText* fill = AcquireText(text, fontPath, size,
+                                             effects.gradient ? Color{255, 255, 255, 255} : color,
+                                             0, wrapWidth, horizontal,
+                                             text::TextOrientation::Horizontal, TextRaster{grow, 0.0f}))
+        DrawTextQuad(*fill, glyphs.x, glyphs.y, alpha, filled);
     PopClip();
 }
 

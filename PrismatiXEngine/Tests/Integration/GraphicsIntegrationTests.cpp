@@ -955,6 +955,116 @@ int main() {
                 }
             }
         }
+        // Text effects: shadow (and its blur), gradient fill, faux bold and
+        // faux italic, measured against the same text drawn plainly.
+        {
+            const std::string fontPath = "Fonts/NotoSansTC-Bold.ttf";
+            struct Ink {
+                int lit = 0, red = 0, softRed = 0;
+                double redY = 0, blueY = 0, redX = 0, blueX = 0;
+                int redCount = 0, blueCount = 0;
+                double topX = 0, bottomX = 0;
+                int topCount = 0, bottomCount = 0;
+            };
+            // Draws `text` in the box (40, 40, 560, 280) and reads its pixels;
+            // "top" and "bottom" are the upper and lower thirds of the glyphs.
+            const auto draw = [&](const std::string& text, const int size, const px::Color color,
+                                  const px::graphics::TextEffects& effects) {
+                ClearFrame(device.Renderer());
+                renderer.DrawTextInRect(text, {40, 40, 560, 280}, fontPath, size, color,
+                                        px::graphics::HorizontalAlignment::Center,
+                                        px::graphics::VerticalAlignment::Center, false, 255, 0,
+                                        {0, 0, 0, 255}, false, {}, effects);
+                Ink ink;
+                SDL_Surface* pixels = SDL_RenderReadPixels(device.Renderer(), nullptr);
+                if (!pixels) return ink;
+                const int scale = std::max(1, pixels->w / 640);
+                int minY = 360, maxY = 0;
+                const auto read = [&](const int x, const int y) {
+                    Pixel pixel;
+                    (void)SDL_ReadSurfacePixel(pixels, x * scale, y * scale, &pixel.r, &pixel.g,
+                                               &pixel.b, &pixel.a);
+                    return pixel;
+                };
+                for (int pass = 0; pass < 2; ++pass)
+                    for (int y = 0; y < 360; ++y)
+                        for (int x = 0; x < 640; ++x) {
+                            const Pixel p = read(x, y);
+                            const bool lit = p.r + p.g + p.b > 300;
+                            if (pass == 0) {
+                                if (lit) { minY = std::min(minY, y); maxY = std::max(maxY, y); }
+                                continue;
+                            }
+                            ink.lit += lit;
+                            if (p.r > 200 && p.g < 60 && p.b < 60) ++ink.red;
+                            if (p.r > 30 && p.r < 180 && p.g < 40 && p.b < 40) ++ink.softRed;
+                            if (p.r > 120 && p.r > p.b + 60) { ink.redY += y; ink.redX += x; ++ink.redCount; }
+                            if (p.b > 120 && p.b > p.r + 60) { ink.blueY += y; ink.blueX += x; ++ink.blueCount; }
+                            if (lit && y < minY + (maxY - minY) / 3) { ink.topX += x; ++ink.topCount; }
+                            if (lit && y > maxY - (maxY - minY) / 3) { ink.bottomX += x; ++ink.bottomCount; }
+                        }
+                SDL_DestroySurface(pixels);
+                const auto mean = [](double& sum, const int count) { if (count > 0) sum /= count; };
+                mean(ink.redY, ink.redCount); mean(ink.redX, ink.redCount);
+                mean(ink.blueY, ink.blueCount); mean(ink.blueX, ink.blueCount);
+                mean(ink.topX, ink.topCount); mean(ink.bottomX, ink.bottomCount);
+                return ink;
+            };
+            const px::Color white{255, 255, 255, 255};
+            const Ink plain = draw("國字", 96, white, {});
+            px::graphics::TextEffects shadow;
+            shadow.shadowColor = {255, 0, 0, 255};
+            shadow.shadowOffsetX = 8.0f;
+            shadow.shadowOffsetY = 8.0f;
+            const Ink hard = draw("國字", 96, white, shadow);
+            SaveVisualArtifact(device.Renderer(), "text-shadow");
+            shadow.shadowBlur = 8.0f;
+            const Ink soft = draw("國字", 96, white, shadow);
+            SaveVisualArtifact(device.Renderer(), "text-shadow-blur");
+            if (plain.lit == 0 || plain.red != 0 || hard.red < 200 || hard.lit < plain.lit * 9 / 10 ||
+                soft.softRed <= hard.softRed * 2) {
+                std::cerr << "FAIL: text shadow (plain lit " << plain.lit << ", shadow red " << hard.red
+                          << ", soft edge " << hard.softRed << " -> " << soft.softRed << ")\n";
+                result = 1;
+            }
+            px::graphics::TextEffects gradient;
+            gradient.gradient = true;
+            gradient.gradientFrom = {255, 0, 0, 255};
+            gradient.gradientTo = {0, 0, 255, 255};
+            const Ink vertical = draw("國字", 96, white, gradient);
+            SaveVisualArtifact(device.Renderer(), "text-gradient");
+            gradient.gradientHorizontal = true;
+            const Ink horizontal = draw("國字", 96, white, gradient);
+            if (vertical.redCount < 100 || vertical.blueCount < 100 || vertical.redY + 10 > vertical.blueY ||
+                horizontal.redCount < 100 || horizontal.blueCount < 100 ||
+                horizontal.redX + 40 > horizontal.blueX) {
+                std::cerr << "FAIL: text gradient (vertical red y " << vertical.redY << " blue y "
+                          << vertical.blueY << ", horizontal red x " << horizontal.redX << " blue x "
+                          << horizontal.blueX << ")\n";
+                result = 1;
+            }
+            px::graphics::TextEffects bold;
+            bold.bold = 4.0f;
+            const Ink thin = draw("Illl", 64, white, {});
+            const Ink thick = draw("Illl", 64, white, bold);
+            SaveVisualArtifact(device.Renderer(), "text-faux-bold");
+            if (thin.lit == 0 || thick.lit < thin.lit * 6 / 5) {
+                std::cerr << "FAIL: faux bold (lit " << thin.lit << " -> " << thick.lit << ")\n";
+                result = 1;
+            }
+            px::graphics::TextEffects italic;
+            italic.italic = 20.0f;
+            const Ink upright = draw("I", 160, white, {});
+            const Ink slanted = draw("I", 160, white, italic);
+            SaveVisualArtifact(device.Renderer(), "text-faux-italic");
+            if (upright.topCount == 0 || slanted.topCount == 0 ||
+                std::abs(upright.topX - upright.bottomX) > 3.0 || slanted.topX - slanted.bottomX < 20.0 ||
+                std::abs(slanted.lit - upright.lit) > upright.lit / 5) {
+                std::cerr << "FAIL: faux italic (upright " << upright.topX - upright.bottomX
+                          << ", slanted " << slanted.topX - slanted.bottomX << ")\n";
+                result = 1;
+            }
+        }
         // A packaged starter has only its own font path. Exercise typed static
         // captions through the adapter, not dynamic HUD SetText calls or a
         // checkout-only font fallback, and compare rendered pixels with blanks.
