@@ -127,3 +127,30 @@ test("project-aware character validation rejects global identities and lookup co
   assert.equal(result.diagnostics.find((item) => item.code === "PXSDKRES2009")?.span?.path,
     secondSource);
 });
+
+test("character nameStyle colours are checked and its font and plate must exist", () => {
+  const styled = {...character(), nameColor: "#8FD6DC", nameStyle: {
+    color: "#E0688AFF", gradient: ["#FFFFFF", "#FFC6D6", "horizontal"], outlineColor: "#4E3A52",
+    outlineSize: 3, shadow: {color: "#00000080", x: 2, y: 2, blur: 2},
+    font: "Content/Fonts/Name.ttf", bold: true, italic: 8, plate: "Content/UI/Plates/shirone.png"}};
+  const present = new Set(["Assets/yuki.png", "Content/Fonts/Name.ttf", "Content/UI/Plates/shirone.png"]);
+  const valid = validateProjectCharacterResources(project(), {[source]: styled},
+    {assetExists: (path) => present.has(path) || !path.startsWith("Content/")});
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+
+  const missing = validateProjectCharacterResources(project(), {[source]: styled}, {
+    assetExists: (path) => !path.startsWith("Content/"),
+    characterSources: {[source]: JSON.stringify(styled)},
+  });
+  assert.deepEqual(missing.diagnostics.map((item) => item.code), ["PXSDKRES2012", "PXSDKRES2013"]);
+  const plate = missing.diagnostics[1]!;
+  assert.equal(JSON.stringify(styled).slice(plate.span!.start.offset, plate.span!.end.offset),
+    '"Content/UI/Plates/shirone.png"');
+
+  for (const nameStyle of [{color: "pink"}, {gradient: ["#FFFFFF"]}, {gradient: ["#FFFFFF", "#000000", "diagonal"]},
+    {outlineSize: 13}, {shadow: {x: 2}}, {shadow: {color: "#000000", blur: 9}}, {bold: 5}, {italic: 30},
+    {plate: "../outside.png"}, {size: 3}]) {
+    const result = validateProjectCharacterResources(project(), {[source]: {...character(), nameStyle}});
+    assert.equal(result.valid, false, JSON.stringify(nameStyle));
+  }
+});

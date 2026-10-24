@@ -248,6 +248,7 @@ Status GameCatalog::LoadCharacterResources(
         character.name = source.displayName;
         character.displayNames = source.displayNames;
         character.nameColor = source.nameColor;
+        character.nameStyle = source.nameStyle;
         character.aliases = source.aliases;
         character.voiceDirectory = source.voiceDirectory;
         character.defaultExpression =

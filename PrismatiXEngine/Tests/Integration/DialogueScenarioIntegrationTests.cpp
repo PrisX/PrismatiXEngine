@@ -244,6 +244,82 @@ void TestDialogueEffects() {
 }
 
 
+// A speaker's nameStyle reaches the HUD's Speaker label and the plate data;
+// the next speaker without one gets the label's authored look back.
+void TestSpeakerNameStyle() {
+    px::ui::GalgameUI hud;
+    px::ui::DialoguePresentation plain;
+    plain.speaker = "Narrator";
+    plain.text = "Plain";
+    Check(hud.ShowHUD(plain), "HUD shows a plain speaker");
+    const auto findByName = [](auto&& self, px::ui::Control* root,
+                               const std::string_view name) -> px::ui::Control* {
+        if (!root) return nullptr;
+        if (root->Name() == name) return root;
+        for (const auto& child : root->Children())
+            if (auto* control = dynamic_cast<px::ui::Control*>(child.get()))
+                if (auto* found = self(self, control, name)) return found;
+        return nullptr;
+    };
+    auto* speaker = dynamic_cast<px::ui::Label*>(findByName(findByName, hud.Root(), "Speaker"));
+    Check(speaker != nullptr, "the built-in HUD has a Speaker label");
+    if (!speaker) return;
+    const auto authoredColor = speaker->GetColor();
+    const auto authoredHasColor = speaker->HasColor();
+    const auto authoredFont = speaker->FontPath();
+    const auto authoredOutline = speaker->OutlineSize();
+    const auto plateData = [&]() {
+        const auto path = hud.ReadUiData("dialogue.speakerPlate");
+        const auto has = hud.ReadUiData("dialogue.hasSpeakerPlate");
+        const auto* text = path.IsOk() ? path.Value().TryGet<std::string>() : nullptr;
+        const auto* flag = has.IsOk() ? has.Value().TryGet<bool>() : nullptr;
+        return std::pair{text ? *text : std::string("<missing>"), flag && *flag};
+    };
+    Check(plateData() == std::pair{std::string{}, false}, "no plate is published for a speaker without one");
+
+    px::sdk::CharacterNameStyle style;
+    style.color = "#E0688AFF";
+    style.gradientFrom = "#FFFFFF";
+    style.gradientTo = "#FFC6D6";
+    style.outlineColor = "#4E3A52";
+    style.outlineSize = 3;
+    style.shadowColor = "#00000080";
+    style.shadowBlur = 2.0f;
+    style.font = "Content/Fonts/Name.ttf";
+    style.bold = -1.0f;
+    style.italic = 8.0f;
+    style.plate = "Content/UI/Plates/shirone.png";
+    px::ui::DialoguePresentation styled = plain;
+    styled.speaker = "Shirone";
+    px::ui::ApplyCharacterNameStyle(styled, "#8FD6DC", style);
+    Check(hud.RefreshHUD(styled), "HUD refreshes for a styled speaker");
+    const auto color = speaker->GetColor();
+    Check(speaker->HasColor() && color.r == 0xE0 && color.g == 0x68 && color.b == 0x8A,
+          "nameStyle.color wins over nameColor");
+    Check(speaker->FontPath() == "Content/Fonts/Name.ttf" && speaker->OutlineSize() == 3 &&
+              speaker->OutlineColor().r == 0x4E && speaker->TextShadowColor().a == 0x80 &&
+              speaker->TextShadowBlur() == 2.0f && speaker->TextGradientTo().g == 0xC6 &&
+              speaker->FauxBold() == -1.0f && speaker->FauxItalic() == 8.0f,
+          "every nameStyle field reaches the Speaker label");
+    Check(plateData() == std::pair{std::string("Content/UI/Plates/shirone.png"), true},
+          "the speaker's plate is published as dialogue.speakerPlate");
+
+    px::ui::DialoguePresentation colourOnly = plain;
+    colourOnly.speaker = "Koharu";
+    px::ui::ApplyCharacterNameStyle(colourOnly, "#E09A7A", std::nullopt);
+    Check(hud.RefreshHUD(colourOnly), "HUD refreshes for a nameColor speaker");
+    Check(speaker->GetColor().r == 0xE0 && speaker->GetColor().g == 0x9A &&
+              speaker->FontPath() == authoredFont && speaker->OutlineSize() == authoredOutline &&
+              speaker->TextShadowColor().a == 0 && speaker->TextGradientFrom().a == 0 &&
+              speaker->FauxBold() == 0.0f && speaker->FauxItalic() == 0.0f &&
+              plateData() == std::pair{std::string{}, false},
+          "a speaker without nameStyle gets the authored look back, keeping nameColor");
+    Check(hud.RefreshHUD(plain), "HUD refreshes for the narrator again");
+    Check(speaker->HasColor() == authoredHasColor &&
+              (!authoredHasColor || speaker->GetColor() == authoredColor),
+          "a speaker without nameColor gets the authored colour back");
+}
+
 void TestCommandSchemaAndScenarioRoundTrip() {
     px::vn::scenario::ScenarioDocument scenario;
     scenario.id = px::Uuid::FromName("scenario-test");
@@ -561,6 +637,7 @@ void TestVisualGraphControlFlowContract() {
 int main() {
     Run("UITrigger_TypedBindingDispatch", TestTypedUITriggerBinding);
     Run("Dialogue_EffectsReachRuntimeState", TestDialogueEffects);
+    Run("Dialogue_SpeakerNameStyle", TestSpeakerNameStyle);
     Run("Scenario_CommandSchemaRoundTrip", TestCommandSchemaAndScenarioRoundTrip);
     Run("Catalog_CharacterExpressions", TestCharacterCatalogExpressions);
     Run("Expression_TypedEvaluation", TestTypedExpressions);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {Group, ItemsGrid, Scene, Slider, Text, TextureButton, compileJsxUi,
+import {Group, Image, ItemsGrid, Scene, Slider, Text, TextureButton, compileJsxUi, playerUiDataPaths,
   validatePlayerUiContract} from "../src/index.js";
 import {jsx, jsxs, type UiElement} from "../src/jsx-runtime.js";
 
@@ -198,4 +198,20 @@ test("the named-node table keeps each route's names and the types the Player cas
   ]);
   assert.deepEqual(validate({uiEntryPoints: {hud: "Content/UI/HUD.tsx"}},
     new Map([["Content/UI/HUD.pxui", hud as never]])).map(({code}) => code), ["PXBUILD1101"]);
+});
+
+test("a HUD can bind the speaking character's name plate", () => {
+  const paths = playerUiDataPaths({uiEntryPoints: {hud: "Content/UI/HUD.tsx"}});
+  assert.ok(paths.has("dialogue.speakerPlate") && paths.has("dialogue.hasSpeakerPlate"));
+  const hud = document([
+    jsx(Image, {name: "NamePlateArt", path: "Content/UI/plate.png", visibleWhen: "!dialogue.hasSpeakerPlate",
+      position: [0, 0], size: [360, 64]}),
+    jsx(Image, {name: "NamePlateCustom", bind: {path: "dialogue.speakerPlate"},
+      visibleWhen: "dialogue.hasSpeakerPlate", position: [0, 0], size: [360, 64]}),
+    jsx(Image, {name: "Typo", bind: {path: "dialogue.speakerPlat"}, position: [0, 0], size: [360, 64]}),
+  ]);
+  const diagnostics = validatePlayerUiContract({uiEntryPoints: {hud: "Content/UI/HUD.tsx"}},
+    new Map([["Content/UI/HUD.pxui", hud as never]]));
+  assert.deepEqual(diagnostics.filter((item) => item.code === "PXBUILD1100").map((item) => item.message),
+    ["The Player publishes no UI data at dialogue.speakerPlat; did you mean dialogue.speakerPlate?"]);
 });

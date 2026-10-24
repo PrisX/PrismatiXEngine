@@ -113,6 +113,40 @@ int main() {
             "stable expression and resource UUIDs resolve to runtime paths");
     });
 
+    suite.Run("LoadsNameStyle", [&] {
+        const auto styled = [](const std::string_view style) {
+            std::string text = Character();
+            text.insert(text.find("\"aliases\""), "\"nameStyle\":" + std::string(style) + ",\n  ");
+            return text;
+        };
+        const auto loaded = Load(Manifest(), {{std::string(kCharacterPath), styled(R"({
+            "color":"#E0688AFF","gradient":["#FFFFFF","#FFC6D6","horizontal"],
+            "outlineColor":"#4E3A52","outlineSize":3,
+            "shadow":{"color":"#00000080","x":-1,"blur":2},
+            "font":"Content/Fonts/Name.ttf","bold":true,"italic":8,
+            "plate":"Content/UI/Plates/rin.png"})")},
+            {std::string(kAssetPath), "png"}});
+        suite.Require(loaded.Valid() && loaded.document.characters.front().nameStyle,
+                      "a full nameStyle loads");
+        const auto& style = *loaded.document.characters.front().nameStyle;
+        suite.Expect(style.color == "#E0688AFF" && style.gradientFrom == "#FFFFFF" &&
+                         style.gradientTo == "#FFC6D6" && style.gradientHorizontal &&
+                         style.outlineColor == "#4E3A52" && style.outlineSize == 3 &&
+                         style.shadowColor == "#00000080" && style.shadowX == -1.0f &&
+                         style.shadowY == 2.0f && style.shadowBlur == 2.0f &&
+                         style.font == "Content/Fonts/Name.ttf" && style.bold == -1.0f &&
+                         style.italic == 8.0f && style.plate == "Content/UI/Plates/rin.png",
+                     "every nameStyle field survives, with shadow defaults and bold true as automatic");
+        for (const std::string_view bad : {R"({"color":"pink"})", R"({"gradient":["#FFFFFF"]})",
+                                           R"({"outlineSize":13})", R"({"shadow":{"x":1}})",
+                                           R"({"bold":5})", R"({"italic":true,"slant":3})",
+                                           R"({"plate":"../plate.png"})"}) {
+            const auto rejected = Load(Manifest(), {{std::string(kCharacterPath), styled(bad)},
+                                                    {std::string(kAssetPath), "png"}});
+            suite.Expect(HasCode(rejected, "PXCHAR1033"), "an invalid nameStyle is rejected");
+        }
+    });
+
     suite.Run("LoadsReadableCharacterSourcePaths", [&] {
         constexpr std::string_view readablePath =
             "Characters/Cast/Rin.pxcharacter";

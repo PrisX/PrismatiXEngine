@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <nlohmann/json.hpp>
@@ -67,6 +68,89 @@ bool IsSafeUri(const std::string_view uri) {
         start = end + 1;
     }
     return true;
+}
+
+bool IsHexColor(const Json& value) {
+    if (!value.is_string()) return false;
+    const auto& text = value.get_ref<const std::string&>();
+    return (text.size() == 7 || text.size() == 9) && text[0] == '#' &&
+           std::all_of(text.begin() + 1, text.end(), [](const char character) {
+               return std::isxdigit(static_cast<unsigned char>(character)) != 0;
+           });
+}
+
+// `nameStyle` as character.schema.json describes it; on failure `problem`
+// says which field is wrong.
+std::optional<CharacterNameStyle> ParseNameStyle(const Json& value, std::string& problem) {
+    if (!value.is_object()) {
+        problem = "must be an object";
+        return std::nullopt;
+    }
+    CharacterNameStyle style;
+    const auto number = [](const Json& field, const double low, const double high,
+                           float& out) {
+        if (!field.is_number()) return false;
+        const double read = field.get<double>();
+        if (!(read >= low && read <= high)) return false;
+        out = static_cast<float>(read);
+        return true;
+    };
+    for (auto entry = value.begin(); entry != value.end(); ++entry) {
+        const std::string& key = entry.key();
+        const Json& field = entry.value();
+        bool valid = true;
+        if (key == "color" || key == "outlineColor") {
+            valid = IsHexColor(field);
+            if (valid) (key == "color" ? style.color : style.outlineColor) = field.get<std::string>();
+        } else if (key == "gradient") {
+            valid = field.is_array() && (field.size() == 2 || field.size() == 3) &&
+                    IsHexColor(field[0]) && IsHexColor(field[1]) &&
+                    (field.size() == 2 ||
+                     (field[2].is_string() && (field[2] == "vertical" || field[2] == "horizontal")));
+            if (valid) {
+                style.gradientFrom = field[0].get<std::string>();
+                style.gradientTo = field[1].get<std::string>();
+                style.gradientHorizontal = field.size() == 3 && field[2] == "horizontal";
+            }
+        } else if (key == "outlineSize") {
+            float size = 0.0f;
+            valid = number(field, 0, 12, size);
+            if (valid) style.outlineSize = static_cast<int>(std::lround(size));
+        } else if (key == "shadow") {
+            valid = field.is_object() && field.contains("color");
+            for (auto part = valid ? field.begin() : field.end(); valid && part != field.end(); ++part) {
+                if (part.key() == "color") valid = IsHexColor(part.value());
+                else if (part.key() == "x") valid = number(part.value(), -64, 64, style.shadowX);
+                else if (part.key() == "y") valid = number(part.value(), -64, 64, style.shadowY);
+                else if (part.key() == "blur") valid = number(part.value(), 0, 8, style.shadowBlur);
+                else valid = false;
+            }
+            if (valid) style.shadowColor = field["color"].get<std::string>();
+        } else if (key == "font" || key == "plate") {
+            valid = field.is_string() && IsSafeUri(field.get_ref<const std::string&>());
+            if (valid) (key == "font" ? style.font : style.plate) = field.get<std::string>();
+        } else if (key == "bold" || key == "italic") {
+            const bool bold = key == "bold";
+            float amount = 0.0f;
+            if (field.is_boolean()) {
+                amount = field.get<bool>() ? (bold ? -1.0f : 12.0f) : 0.0f;
+            } else {
+                valid = bold ? number(field, 0, 4, amount) : number(field, -20, 20, amount);
+            }
+            if (valid) (bold ? style.bold : style.italic) = amount;
+        } else {
+            valid = false;
+        }
+        if (!valid) {
+            problem = key == "color" || key == "outlineColor" || key == "gradient" || key == "shadow" ||
+                              key == "outlineSize" || key == "font" || key == "plate" ||
+                              key == "bold" || key == "italic"
+                          ? "field '" + key + "' is invalid (see character.schema.json)"
+                          : "has an unknown field '" + key + "'";
+            return std::nullopt;
+        }
+    }
+    return style;
 }
 
 bool NonEmptyText(const Json& object, const char* key, std::string& value,
@@ -323,6 +407,15 @@ CharacterResourcesLoadResult LoadCharacterResources(
                 continue;
             }
             character.nameColor = nameColor->get<std::string>();
+        }
+        if (const auto nameStyle = document.find("nameStyle"); nameStyle != document.end()) {
+            std::string problem;
+            auto parsed = ParseNameStyle(*nameStyle, problem);
+            if (!parsed) {
+                Add(result, "PXCHAR1033", "nameStyle " + problem, source, id);
+                continue;
+            }
+            character.nameStyle = std::move(*parsed);
         }
         const auto aliases = document.find("aliases");
         if (aliases != document.end()) {

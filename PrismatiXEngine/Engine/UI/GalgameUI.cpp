@@ -214,6 +214,9 @@ GalgameUI::GalgameUI() {
     // Booleans for authored HUDs: a name plate that hides during narration,
     // a click-wait glyph, and auto/skip indicators.
     (void)m_viewModel.Define("dialogue.hasSpeaker", Variant(false), true);
+    // The speaking character's nameStyle.plate, for an Image bound to it.
+    (void)m_viewModel.Define("dialogue.speakerPlate", Variant(std::string{}), true);
+    (void)m_viewModel.Define("dialogue.hasSpeakerPlate", Variant(false), true);
     (void)m_viewModel.Define("dialogue.waiting", Variant(false), true);
     (void)m_viewModel.Define("hud.auto", Variant(false), true);
     (void)m_viewModel.Define("hud.skip", Variant(false), true);
@@ -794,7 +797,7 @@ Status GalgameUI::InstallRouteTemplate(const std::string_view route){
     }else{
         return GalgameFailure("PXUI2805","Registered UI template has no document");
     }
-    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_presentedChoices.clear();m_mode=FindNamed<Label>(m_context.Root(),"ModeState");m_noticePanel=FindNamed<EdgeRevealContainer>(m_context.Root(),"NoticePanel");m_chapterNotice=FindNamed<Label>(m_context.Root(),"ChapterNotice");m_musicNotice=FindNamed<Label>(m_context.Root(),"MusicNotice");m_messageWindow=FindNamed<Control>(m_context.Root(),"MessageWindow");m_choiceList=FindNamed<Control>(m_context.Root(),"ChoiceList");m_lastChapterTitle.clear();m_lastMusicTitle.clear();m_activeDialogueEffect.clear();m_dialogueEffectFinished=false;m_dialogueDimmed=false;if(m_dialogue){m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;m_dialogueBaseColor=m_dialogue->GetColor();}if(m_speaker){m_speakerHasBaseColor=m_speaker->HasColor();m_speakerBaseColor=m_speaker->GetColor();}}
+    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_presentedChoices.clear();m_mode=FindNamed<Label>(m_context.Root(),"ModeState");m_noticePanel=FindNamed<EdgeRevealContainer>(m_context.Root(),"NoticePanel");m_chapterNotice=FindNamed<Label>(m_context.Root(),"ChapterNotice");m_musicNotice=FindNamed<Label>(m_context.Root(),"MusicNotice");m_messageWindow=FindNamed<Control>(m_context.Root(),"MessageWindow");m_choiceList=FindNamed<Control>(m_context.Root(),"ChoiceList");m_lastChapterTitle.clear();m_lastMusicTitle.clear();m_activeDialogueEffect.clear();m_dialogueEffectFinished=false;m_dialogueDimmed=false;if(m_dialogue){m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;m_dialogueBaseColor=m_dialogue->GetColor();}if(m_speaker){m_speakerHasBaseColor=m_speaker->HasColor();m_speakerBaseColor=m_speaker->GetColor();m_speakerBaseLook={m_speaker->FontPath(),m_speaker->OutlineSize(),m_speaker->OutlineColor(),m_speaker->TextShadowColor(),m_speaker->TextShadowOffset(),m_speaker->TextShadowBlur(),m_speaker->TextGradientFrom(),m_speaker->TextGradientTo(),m_speaker->TextGradientHorizontal(),m_speaker->FauxBold(),m_speaker->FauxItalic()};}m_speakerStyle.reset();}
     return Status::Ok();
 }
 
@@ -1001,6 +1004,73 @@ Status GalgameUI::ActivateChoice(const std::size_t index) {
     return Status::Ok();
 }
 
+namespace {
+std::optional<Color> HexColor(const std::string& text) {
+    if ((text.size() != 7 && text.size() != 9) || text[0] != '#') return std::nullopt;
+    std::uint8_t channels[4]{0, 0, 0, 255};
+    for (std::size_t at = 1, channel = 0; at < text.size(); at += 2, ++channel) {
+        unsigned value = 0;
+        const auto parsed = std::from_chars(text.data() + at, text.data() + at + 2, value, 16);
+        if (parsed.ec != std::errc{} || parsed.ptr != text.data() + at + 2) return std::nullopt;
+        channels[channel] = static_cast<std::uint8_t>(value);
+    }
+    return Color{channels[0], channels[1], channels[2], channels[3]};
+}
+}  // namespace
+
+void ApplyCharacterNameStyle(DialoguePresentation& view, const std::string& nameColor,
+                             const std::optional<sdk::CharacterNameStyle>& nameStyle) {
+    view.speakerColor = HexColor(nameColor);
+    if (!nameStyle) return;
+    const sdk::CharacterNameStyle& source = *nameStyle;
+    if (const auto color = HexColor(source.color)) view.speakerColor = color;
+    SpeakerStyle style;
+    style.outlineColor = HexColor(source.outlineColor);
+    style.outlineSize = source.outlineSize;
+    const auto from = HexColor(source.gradientFrom), to = HexColor(source.gradientTo);
+    if (from && to) style.gradient = std::pair{*from, *to};
+    style.gradientHorizontal = source.gradientHorizontal;
+    style.shadowColor = HexColor(source.shadowColor);
+    style.shadowOffset = {source.shadowX, source.shadowY};
+    style.shadowBlur = source.shadowBlur;
+    style.font = source.font;
+    style.bold = source.bold;
+    style.italic = source.italic;
+    style.plate = source.plate;
+    view.speakerStyle = std::move(style);
+}
+
+void GalgameUI::ApplySpeakerStyle(const std::optional<SpeakerStyle>& style) {
+    if (!m_speaker || style == m_speakerStyle) return;
+    m_speakerStyle = style;
+    const SpeakerLook& base = m_speakerBaseLook;
+    Label& label = *m_speaker;
+    label.SetFontPath(style && !style->font.empty() ? style->font : base.font);
+    label.SetOutlineSize(style && style->outlineSize ? *style->outlineSize : base.outlineSize);
+    label.SetOutlineColor(style && style->outlineColor ? *style->outlineColor : base.outlineColor);
+    if (style && style->shadowColor) {
+        label.SetTextShadowColor(*style->shadowColor);
+        label.SetTextShadowOffset(style->shadowOffset);
+        label.SetTextShadowBlur(style->shadowBlur);
+    } else {
+        label.SetTextShadowColor(base.shadowColor);
+        label.SetTextShadowOffset(base.shadowOffset);
+        label.SetTextShadowBlur(base.shadowBlur);
+    }
+    if (style && style->gradient) {
+        label.SetTextGradientFrom(style->gradient->first);
+        label.SetTextGradientTo(style->gradient->second);
+        label.SetTextGradientHorizontal(style->gradientHorizontal);
+    } else {
+        label.SetTextGradientFrom(base.gradientFrom);
+        label.SetTextGradientTo(base.gradientTo);
+        label.SetTextGradientHorizontal(base.gradientHorizontal);
+    }
+    // A negative bold (`bold: true`) is resolved from the name's size.
+    label.SetFauxBold(style && style->bold ? *style->bold : base.bold);
+    label.SetFauxItalic(style && style->italic ? *style->italic : base.italic);
+}
+
 Status GalgameUI::ShowHUD(const DialoguePresentation& p) {
     const Status status=InstallTemplate(Screen::HUD);if(!status)return status;
     return RefreshHUD(p);
@@ -1067,7 +1137,12 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     if (m_speaker) {
         if (p.speakerColor) m_speaker->SetColor(*p.speakerColor);
         else if (m_speakerHasBaseColor) m_speaker->SetColor(m_speakerBaseColor);
+        else m_speaker->ClearColor();
+        ApplySpeakerStyle(p.speakerStyle);
     }
+    const std::string plate = p.speakerStyle ? p.speakerStyle->plate : std::string{};
+    (void)m_viewModel.Write("dialogue.speakerPlate", Variant(plate));
+    (void)m_viewModel.Write("dialogue.hasSpeakerPlate", Variant(!plate.empty()));
     (void)m_viewModel.Write("dialogue.speaker",Variant(p.speaker));(void)m_viewModel.Write("dialogue.text",Variant(p.text));
     (void)m_viewModel.Write("chapter.title",Variant(p.chapterTitle));(void)m_viewModel.Write("music.title",Variant(p.musicTitle));
     const bool chapterChanged=p.chapterTitle!=m_lastChapterTitle;

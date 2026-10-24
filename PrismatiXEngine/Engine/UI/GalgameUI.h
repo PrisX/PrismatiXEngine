@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Core/Result.h"
+#include "Engine/SDK/CharacterResources.h"
 #include "Engine/SDK/Ui.h"
 #include "Engine/UI/UIContext.h"
 #include "Engine/UI/UiAdapter.h"
@@ -48,6 +49,24 @@ struct BacklogEntryPresentation {
     bool voice = false;
     bool choice = false;
 };
+// The speaking character's nameStyle, resolved. Each set field overrides the
+// Speaker label's authored look for the line; the rest keep it.
+struct SpeakerStyle {
+    std::optional<Color> outlineColor;
+    std::optional<int> outlineSize;
+    std::optional<std::pair<Color, Color>> gradient;
+    bool gradientHorizontal = false;
+    std::optional<Color> shadowColor;
+    Vec2 shadowOffset{2.0f, 2.0f};
+    float shadowBlur = 0.0f;
+    std::string font;
+    // Faux bold in pixels per side; negative: from the label's font size.
+    std::optional<float> bold;
+    std::optional<float> italic;
+    // The name plate picture, published as dialogue.speakerPlate.
+    std::string plate;
+    bool operator==(const SpeakerStyle&) const = default;
+};
 struct DialoguePresentation {
     std::string speaker;
     std::string text;
@@ -61,8 +80,12 @@ struct DialoguePresentation {
     bool nvlMode = false;
     // Message-window face image; empty hides the Face control.
     std::string face;
-    // The speaking character's nameColor; unset keeps the Speaker label's own.
+    // The speaking character's name colour (nameStyle.color, else
+    // nameColor); unset keeps the Speaker label's own.
     std::optional<Color> speakerColor;
+    // The rest of the speaking character's nameStyle; unset keeps the
+    // Speaker label's authored look and an empty dialogue.speakerPlate.
+    std::optional<SpeakerStyle> speakerStyle;
     bool autoMode = false;
     bool skipMode = false;
     // The line is fully shown and the Player waits for a click: the HUD's
@@ -75,6 +98,10 @@ struct DialoguePresentation {
     // Draw the line in the read-text colour (already-read prose).
     bool dimReadText = false;
 };
+// Fills `view.speakerColor` and `view.speakerStyle` from the speaking
+// character's nameColor and nameStyle (nameStyle.color wins).
+void ApplyCharacterNameStyle(DialoguePresentation& view, const std::string& nameColor,
+                             const std::optional<sdk::CharacterNameStyle>& nameStyle);
 struct SettingsPresentation {
     int master = 128;
     int bgm = 128;
@@ -302,6 +329,24 @@ private:
     Color m_dialogueBaseColor{0, 0, 0, 255};
     Color m_speakerBaseColor{255, 255, 255, 255};
     bool m_speakerHasBaseColor = false;
+    // The Speaker label's authored look, restored for a speaker without a
+    // nameStyle, and the style it currently wears.
+    struct SpeakerLook {
+        std::string font;
+        int outlineSize = 0;
+        Color outlineColor{};
+        Color shadowColor{};
+        Vec2 shadowOffset{};
+        float shadowBlur = 0.0f;
+        Color gradientFrom{};
+        Color gradientTo{};
+        bool gradientHorizontal = false;
+        float bold = 0.0f;
+        float italic = 0.0f;
+    };
+    SpeakerLook m_speakerBaseLook;
+    std::optional<SpeakerStyle> m_speakerStyle;
+    void ApplySpeakerStyle(const std::optional<SpeakerStyle>& style);
     bool m_dialogueDimmed = false;
     OptionSource m_optionSource;
     Status Install(std::unique_ptr<Control> root, Screen screen,

@@ -388,7 +388,8 @@ std::optional<px::Variant> JsonVariant(const Json& value, const int depth = 0) {
     return std::nullopt;
 }
 
-px::ui::DialoguePresentation DialogueView(const px::RuntimeSession& session, const std::vector<std::string>& choices) {
+px::ui::DialoguePresentation DialogueView(const px::RuntimeSession& session, const std::vector<std::string>& choices,
+                                          const px::vn::GameCatalog* catalog = nullptr) {
     const auto& dialogue = session.Dialogue().State();
     px::ui::DialoguePresentation view;
     view.speaker = dialogue.speaker;
@@ -399,6 +400,10 @@ px::ui::DialoguePresentation DialogueView(const px::RuntimeSession& session, con
     view.effect = dialogue.effect;
     view.effectProgress = dialogue.effectProgress;
     view.waiting = dialogue.finished && !dialogue.fullText.empty() && choices.empty();
+    // The speaker's nameColor and nameStyle, as the Player shows them.
+    if (catalog && !view.speaker.empty() && !dialogue.faceCharacter.empty())
+        if (const auto* character = catalog->FindCharacter(dialogue.faceCharacter))
+            px::ui::ApplyCharacterNameStyle(view, character->nameColor, character->nameStyle);
     return view;
 }
 
@@ -1452,7 +1457,7 @@ private:
         m_lastUiDebugState.clear();
         m_activePerformanceSceneId.clear();
         m_choices.clear();
-        (void)m_hud.ShowHUD(DialogueView(*m_session, m_choices));
+        (void)m_hud.ShowHUD(DialogueView(*m_session, m_choices, &m_gameCatalog));
         m_appliedRevisions[*documentId] = committedRevision;
         Json response = Response(request, "runtimeIrApplied");
         response["documentId"] = *documentId;
@@ -1865,7 +1870,7 @@ private:
                 return;
             }
         } else {
-            (void)m_hud.ShowHUD(DialogueView(*m_session, m_choices));
+            (void)m_hud.ShowHUD(DialogueView(*m_session, m_choices, &m_gameCatalog));
         }
 
         m_showUiPreview = false;
@@ -2546,7 +2551,7 @@ private:
             if (action.command == "choice.select")
                 (void)m_previewSession->SelectChoice(std::atoi(action.argument.c_str()));
             else if (action.command == "game.start" || action.command == "overlay.close") {
-                (void)m_hud.ShowHUD(DialogueView(*m_session, m_choices));
+                (void)m_hud.ShowHUD(DialogueView(*m_session, m_choices, &m_gameCatalog));
                 (void)m_previewSession->Continue();
             } else if (action.command == "save.open" || action.command == "load.open") {
                 const bool save = action.command == "save.open";
@@ -2583,7 +2588,7 @@ private:
                         continue;
                     }
                 }
-                (void)m_hud.ShowHUD(DialogueView(*m_session, m_choices));
+                (void)m_hud.ShowHUD(DialogueView(*m_session, m_choices, &m_gameCatalog));
                 (void)m_previewSession->Continue();
             } else {
                 m_events->Push("diagnostics", Json{{"code", "PXPREVIEW1701"},
@@ -2630,7 +2635,7 @@ private:
             for (const auto& choice : m_session->VM().Choices()) m_choices.push_back(choice.text);
         }
         if (m_hud.CurrentScreen() == px::ui::GalgameUI::Screen::HUD)
-            (void)m_hud.RefreshHUD(DialogueView(*m_session, m_choices));
+            (void)m_hud.RefreshHUD(DialogueView(*m_session, m_choices, &m_gameCatalog));
         auto& input = m_runtime->GetInput();
         int width = 0;
         int height = 0;

@@ -346,11 +346,40 @@ export interface CharacterDocument {
   readonly displayNames?: Readonly<Record<string, string>>;
   /** Colour of the speaker name in the message window, `#RRGGBB(AA)`. */
   readonly nameColor?: string;
+  /** The speaker name's look in the message window; `color` wins over `nameColor`. */
+  readonly nameStyle?: CharacterNameStyle;
   readonly aliases: readonly string[];
   /** On-stage size used when a Story line gives none (see `CharacterStage`). */
   readonly stage?: CharacterStage;
   readonly defaultExpressionId?: string | null;
   readonly expressions: readonly CharacterExpression[];
+}
+
+/**
+ * How a character's name looks on the HUD's speaker label while they speak.
+ * Every field is optional and overrides only that part of the label's
+ * authored look; the next speaker without a style gets it back. Colours are
+ * `#RRGGBB` or `#RRGGBBAA`.
+ */
+export interface CharacterNameStyle {
+  /** Name fill; wins over `nameColor`. */
+  readonly color?: string;
+  /** Fill gradient, top to bottom unless the third entry is "horizontal". */
+  readonly gradient?: readonly [from: string, to: string] |
+    readonly [from: string, to: string, direction: "vertical" | "horizontal"];
+  readonly outlineColor?: string;
+  /** Outline width in pixels, 0..12. */
+  readonly outlineSize?: number;
+  /** Drop shadow; x and y default to 2, blur (0..8) to 0. */
+  readonly shadow?: {readonly color: string; readonly x?: number; readonly y?: number; readonly blur?: number};
+  /** Project font file for the name only. */
+  readonly font?: string;
+  /** Faux bold: `true` (about 4% of the font size) or pixels added on each side of the glyphs, 0..4. */
+  readonly bold?: boolean | number;
+  /** Faux italic: `true` (12 degrees) or a slant in degrees, -20..20. */
+  readonly italic?: boolean | number;
+  /** Name plate picture, published to the HUD as `dialogue.speakerPlate`. */
+  readonly plate?: string;
 }
 
 /**

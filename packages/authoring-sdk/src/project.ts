@@ -705,12 +705,16 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         `${action.id}: ${action.route}`));
   }
   const characters: CharacterDocument[] = [];
+  const characterSourcePaths = new Map<CharacterDocument, string>();
   const characterDocuments: Record<string, unknown> = {};
   for (const descriptor of project.characters ?? []) {
     const authored = documents[descriptor.source];
     if (authored !== undefined) characterDocuments[descriptor.source] = authored;
     const character = documentAt<CharacterDocument>("character", descriptor.source, documents, diagnostics);
-    if (character !== undefined) characters.push(character);
+    if (character !== undefined) {
+      characters.push(character);
+      characterSourcePaths.set(character, descriptor.source);
+    }
   }
   const characterGraph = validateProjectCharacterResources(project, characterDocuments, {
     projectPath,
@@ -1216,6 +1220,13 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         ...(sourcePointer === undefined ? {} : {sourcePointer: `${sourcePointer}/id`}),
         ...(sourcePath === undefined ? {} : {sourcePath})});
   };
+  // A character's name font and plate picture ship with the game.
+  for (const character of characters) {
+    const source = characterSourcePaths.get(character);
+    for (const field of ["font", "plate"] as const)
+      addResourceRef(character.nameStyle?.[field], `${source ?? character.id}:nameStyle.${field}`,
+        source, `/nameStyle/${field}`);
+  }
   for (const [manifestPath, extension] of extensionDocuments) {
     for (const [kind, declarations] of [
       ["commands", extension.commands], ["actions", extension.actions],

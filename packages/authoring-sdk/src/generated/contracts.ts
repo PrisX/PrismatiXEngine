@@ -400,6 +400,117 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$",
         "type": "string"
       },
+      "nameStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "bold": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "maximum": 4,
+                "minimum": 0,
+                "type": "number"
+              }
+            ]
+          },
+          "color": {
+            "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$",
+            "type": "string"
+          },
+          "font": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+          },
+          "gradient": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$",
+                  "type": "string"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              {
+                "items": false,
+                "minItems": 3,
+                "prefixItems": [
+                  {
+                    "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$",
+                    "type": "string"
+                  },
+                  {
+                    "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$",
+                    "type": "string"
+                  },
+                  {
+                    "enum": [
+                      "vertical",
+                      "horizontal"
+                    ]
+                  }
+                ],
+                "type": "array"
+              }
+            ]
+          },
+          "italic": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "maximum": 20,
+                "minimum": -20,
+                "type": "number"
+              }
+            ]
+          },
+          "outlineColor": {
+            "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$",
+            "type": "string"
+          },
+          "outlineSize": {
+            "maximum": 12,
+            "minimum": 0,
+            "type": "number"
+          },
+          "plate": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+          },
+          "shadow": {
+            "additionalProperties": false,
+            "properties": {
+              "blur": {
+                "maximum": 8,
+                "minimum": 0,
+                "type": "number"
+              },
+              "color": {
+                "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$",
+                "type": "string"
+              },
+              "x": {
+                "maximum": 64,
+                "minimum": -64,
+                "type": "number"
+              },
+              "y": {
+                "maximum": 64,
+                "minimum": -64,
+                "type": "number"
+              }
+            },
+            "required": [
+              "color"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
       "revision": {
         "minimum": 0,
         "type": "integer"
@@ -6224,7 +6335,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
 
 export const contractHashes: Readonly<Record<string, string>> = {
   "animation.schema.json": "ef9ccdba9dbc8a08a00848e487cb2a6938c23f88b891ff0c85bf9d16783254a7",
-  "character.schema.json": "2b93da553f2247c29d20e3365b313f29185a30d7ada1375be92004e6eb8f771b",
+  "character.schema.json": "88d0c50c9d654f5106f87fdeee0cb258f4d5dab2d4440d135358b1af4853eddc",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
   "effect.schema.json": "8707b1b1d75154000786f797b06561643a5f9881df968708a0994546e3f782bd",
   "extension-lock.schema.json": "842ae4c71560b8913c76ae1e03def3c416760edf93d3c522ebad7a570b18415f",

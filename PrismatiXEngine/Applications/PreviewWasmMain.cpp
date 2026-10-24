@@ -131,7 +131,8 @@ Json PreviewDiagnosticJson(
 
 px::ui::DialoguePresentation DialogueView(
     const px::RuntimeSession& session,
-    const std::vector<std::string>& choices) {
+    const std::vector<std::string>& choices,
+    const px::vn::GameCatalog* catalog = nullptr) {
     const auto& dialogue = session.Dialogue().State();
     px::ui::DialoguePresentation view;
     view.speaker = dialogue.speaker;
@@ -141,6 +142,10 @@ px::ui::DialoguePresentation DialogueView(
     view.choices = choices;
     view.effect = dialogue.effect;
     view.effectProgress = dialogue.effectProgress;
+    // The speaker's nameColor and nameStyle, as the Player shows them.
+    if (catalog && !view.speaker.empty() && !dialogue.faceCharacter.empty())
+        if (const auto* character = catalog->FindCharacter(dialogue.faceCharacter))
+            px::ui::ApplyCharacterNameStyle(view, character->nameColor, character->nameStyle);
     return view;
 }
 
@@ -2025,7 +2030,7 @@ private:
     }
 
     px::ui::DialoguePresentation CurrentDialogueView() const {
-        auto view = DialogueView(*m_session, m_choices);
+        auto view = DialogueView(*m_session, m_choices, &m_catalog);
         view.autoMode = m_autoMode;
         view.skipMode = m_skipMode;
         view.textScale = m_previewSettings.textScale;

@@ -206,6 +206,19 @@ export function validateProjectCharacterResources(
       ), source, "/aliases", aliases));
     }
 
+    // The schema checks nameStyle's shape and colours; its files must exist.
+    const nameStyle = object(character.nameStyle);
+    if (nameStyle !== undefined && options.assetExists !== undefined) {
+      for (const [field, code, what] of [
+        ["font", "PXSDKRES2012", "font"], ["plate", "PXSDKRES2013", "name plate picture"],
+      ] as const) {
+        const path = nameStyle[field];
+        if (typeof path === "string" && !options.assetExists(path))
+          diagnostics.push(at(diagnostic(code, `Character nameStyle.${field} ${what} is missing`,
+            source, path), source, `/nameStyle/${field}`, path));
+      }
+    }
+
     ownLookup(character.id, characterId, source, "/id");
     ownLookup(character.displayName, characterId, source, "/displayName");
     for (const [aliasIndex, alias] of aliases.entries())
