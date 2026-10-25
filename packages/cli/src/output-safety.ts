@@ -58,21 +58,47 @@ async function canonical(path: string): Promise<string> {
     return join(await canonical(dirname(absolute)), basename(absolute));
   }
 }
+/**
+ * canonical() for many paths at once. A large game protects tens of thousands
+ * of files in a few hundred directories: each directory is resolved and listed
+ * once, and a plain file in it resolves to its directory's real path plus its
+ * name. Anything else (a directory, a link, a missing path) is resolved on its
+ * own, so the result is the same as calling canonical() on every path.
+ */
+async function canonicalAll(paths: readonly string[]): Promise<string[]> {
+  const byDirectory = new Map<string, {real: string; files: ReadonlySet<string>} | null>();
+  const directories = [...new Set(paths.map((path) => dirname(resolve(path))))];
+  for (let start = 0; start < directories.length; start += 64) {
+    await Promise.all(directories.slice(start, start + 64).map(async (directory) => {
+      try {
+        const [real, entries] = await Promise.all([realpath(directory), readdir(directory, {withFileTypes: true})]);
+        byDirectory.set(directory, {real, files: new Set(entries.filter((entry) => entry.isFile()).map((entry) => entry.name))});
+      } catch { byDirectory.set(directory, null); }
+    }));
+  }
+  const result: string[] = new Array<string>(paths.length);
+  const others: number[] = [];
+  for (const [index, path] of paths.entries()) {
+    const absolute = resolve(path);
+    const directory = byDirectory.get(dirname(absolute));
+    if (directory?.files.has(basename(absolute))) result[index] = join(directory.real, basename(absolute));
+    else others.push(index);
+  }
+  for (let start = 0; start < others.length; start += 256) {
+    const batch = others.slice(start, start + 256);
+    const resolved = await Promise.all(batch.map((index) => canonical(paths[index]!)));
+    for (const [offset, index] of batch.entries()) result[index] = resolved[offset]!;
+  }
+  return result;
+}
 async function validatePaths(options: PublicationOptions): Promise<string> {
   const output = await canonical(options.output);
   const root = await canonical(options.projectRoot);
   if (contains(output, root)) throw new Error(`Unsafe output overlaps project root: ${options.output}`);
-  // A large game protects tens of thousands of inputs: resolve them a batch
-  // at a time rather than one after another.
   const inputs = [...new Set(options.protectedPaths)];
-  for (let start = 0; start < inputs.length; start += 256) {
-    const batch = inputs.slice(start, start + 256);
-    const sources = await Promise.all(batch.map((input) => canonical(input)));
-    for (const [index, source] of sources.entries()) {
-      if (contains(output, source) || contains(source, output)) {
-        throw new Error(`Unsafe output overlaps author input: ${batch[index]}`);
-      }
-    }
+  for (const [index, source] of (await canonicalAll(inputs)).entries()) {
+    if (contains(output, source) || contains(source, output))
+      throw new Error(`Unsafe output overlaps author input: ${inputs[index]}`);
   }
   try {
     const info = await lstat(options.output);

@@ -1439,6 +1439,60 @@ test("TSX UI authoring lowers to canonical JSON and never enters the Runtime art
     await readFile(canonicalPath, "utf8"));
 });
 
+test("a TSX screen compiles again only when a module it read or an import it resolved changes", async () => {
+  const value = await fixture();
+  const project = JSON.parse(await readFile(value.project, "utf8")) as {uiEntryPoints: Record<string, string>};
+  project.uiEntryPoints.title = "Content/UI/Title.tsx";
+  await write(value.project, JSON.stringify(project));
+  const button = (name: string) => `
+    import {Button} from "@prismatix/authoring-sdk";
+    export function MenuButton({action}: {action: string}) {
+      return <Button name="${name}" action={action}>Start</Button>;
+    }
+  `;
+  await write(join(value.root, "Content/UI/components/MenuButton.tsx"), button("FromTsx"));
+  await write(join(value.root, "Content/UI/Title.tsx"), `
+    import {Scene, VBox} from "@prismatix/authoring-sdk";
+    import {MenuButton} from "./components/MenuButton";
+    export default (
+      <Scene name="Cached Title" width={1280} height={720}>
+        <VBox name="Root" fill><MenuButton action="game.start" /></VBox>
+      </Scene>
+    );
+  `);
+  let builds = 0;
+  const buttonName = async (): Promise<string | undefined> => {
+    const output = join(value.root, `cache-artifact-${builds += 1}`);
+    const built = run(["build", value.project, "--artifact-only", "--output", output]);
+    assert.equal(built.status, 0, built.stderr);
+    const scene = JSON.parse(await readFile(join(output, "Content/UI/Title.pxui"), "utf8")) as
+      {nodes: Array<{name: string; onClick?: unknown}>};
+    return scene.nodes.find((node) => node.onClick !== undefined)?.name;
+  };
+  assert.equal(await buttonName(), "FromTsx");
+
+  // The next build reuses the cached document: change it to see that it does.
+  const cachePath = join(value.root, ".prismatix", "cache", "jsx-ui-v1.json");
+  const cache = JSON.parse(await readFile(cachePath, "utf8")) as
+    {entries: Record<string, {files: Array<{path: string}>; value: {nodes: Array<{name: string}>}}>};
+  const entry = cache.entries["scene:Content/UI/Title.tsx"]!;
+  assert.deepEqual(entry.files.map((file) => file.path).sort(),
+    ["Content/UI/Title.tsx", "Content/UI/components/MenuButton.tsx"].sort());
+  for (const node of entry.value.nodes) if (node.name === "FromTsx") node.name = "FromCache";
+  await writeFile(cachePath, JSON.stringify(cache));
+  assert.equal(await buttonName(), "FromCache");
+
+  // An imported module changed.
+  await write(join(value.root, "Content/UI/components/MenuButton.tsx"), button("Edited"));
+  assert.equal(await buttonName(), "Edited");
+
+  // The same import now resolves to a new file that TypeScript tries first.
+  await write(join(value.root, "Content/UI/components/OtherButton.tsx"), button("FromTs"));
+  await write(join(value.root, "Content/UI/components/MenuButton.ts"),
+    `export {MenuButton} from "./OtherButton.tsx";\n`);
+  assert.equal(await buttonName(), "FromTs");
+});
+
 test("ui compile prints the canonical document, element spans, identity seeds and diagnostics", async () => {
   const value = await fixture();
   try {

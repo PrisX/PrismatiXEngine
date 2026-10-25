@@ -2,7 +2,7 @@
 
 import {createHash, randomUUID} from "node:crypto";
 import {spawn, type ChildProcessWithoutNullStreams} from "node:child_process";
-import {constants, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, watch} from "node:fs";
+import {constants, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, watch} from "node:fs";
 import {
   copyFile, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile,
 } from "node:fs/promises";
@@ -10,7 +10,7 @@ import {tmpdir} from "node:os";
 import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 import type * as TS from "typescript-compiler";
-import {ts} from "./typescript.js";
+import {ts, typescriptIdentity} from "./typescript.js";
 
 import {
   checkoutRuntimeFile, discoverQaPlayer, discoverRuntimeTool, discoverRuntimeBundle, nativePackageFile, RuntimeDiscoveryFailure,
@@ -54,6 +54,7 @@ import {AndroidExportError, androidSettings, checkAndroidInputs, checkKeystoreEn
 import {exportWeb, locateWebPlayer, resolveWebPlayer, WebPlayerMissing, webPlayerInstall, webPlayerPackageName,
   webRenderers, type WebRenderer} from "./web-export.js";
 import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
+import {loadJsxUiCache, saveJsxUiCache, type JsxUiCache, type JsxUiCacheEntry, type ResolutionProbe} from "./jsx-ui-cache.js";
 import {transcodeMedia, type TranscodedFile} from "./media-transcode.js";
 import {testCommand, testHelp, waitForPort} from "./test-command.js";
 import {PlayerTestClient} from "./qa-client.js";
@@ -895,15 +896,131 @@ async function emitJsxProgram(root: string, sourcePath: string, value: JsxProgra
   return entry;
 }
 
+function sha256Text(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+/** One filesystem question module resolution asks, answered through node:fs so it can be asked again. */
+function answerProbe(kind: ResolutionProbe["kind"], path: string): boolean | string {
+  try {
+    switch (kind) {
+      case "file": return statSync(path).isFile();
+      case "directory": return statSync(path).isDirectory();
+      case "read": return sha256Text(readFileSync(path, "utf8"));
+      case "realpath": return realpathSync.native(path);
+    }
+  } catch { return kind === "file" || kind === "directory" ? false : ""; }
+}
+
+/** Resolves an import as the JSX program does, recording every question it asked. */
+function recordedResolution(specifier: string, from: string, probes: ResolutionProbe[]): string | undefined {
+  const ask = (kind: ResolutionProbe["kind"], path: string): boolean | string => {
+    const result = answerProbe(kind, path);
+    probes.push({kind, path, result});
+    return result;
+  };
+  const host: TS.ModuleResolutionHost = {
+    fileExists: (path) => ask("file", path) === true,
+    directoryExists: (path) => ask("directory", path) === true,
+    readFile: (path) => {
+      let text: string | undefined;
+      try { text = readFileSync(path, "utf8"); } catch { text = undefined; }
+      probes.push({kind: "read", path, result: text === undefined ? "" : sha256Text(text)});
+      return text;
+    },
+    realpath: (path) => {
+      const real = ask("realpath", path);
+      return typeof real === "string" && real !== "" ? real : path;
+    },
+  };
+  return ts.resolveModuleName(specifier, from, jsxCompilerOptions(), host).resolvedModule?.resolvedFileName;
+}
+
+/** What to keep of a screen that compiled cleanly, or undefined when it cannot be reused safely. */
+function jsxUiCacheEntry(root: string, program: JsxProgram, value: unknown,
+  nodeSources: ReadonlyMap<number, JsxNodeSource>,
+  warnings: readonly AuthoringDiagnostic[]): JsxUiCacheEntry | undefined {
+  const modules = new Set(program.sourceFiles.map((source) => pathKey(source.fileName)));
+  const files: {path: string; sha256: string}[] = [];
+  const probes: ResolutionProbe[] = [];
+  for (const source of program.sourceFiles) {
+    const path = projectSourcePath(root, source.fileName);
+    if (path === undefined) return undefined;
+    files.push({path, sha256: sha256Text(source.text)});
+    const references = ts.preProcessFile(source.text, true, true);
+    if (references.referencedFiles.length > 0 || references.typeReferenceDirectives.length > 0 ||
+        references.libReferenceDirectives.length > 0) return undefined;
+    for (const {fileName: specifier} of references.importedFiles) {
+      if (isSdkModuleSpecifier(specifier)) continue;
+      // A package or a Node module could read files no entry records.
+      if (!specifier.startsWith(".")) return undefined;
+      const resolved = recordedResolution(specifier, source.fileName, probes);
+      if (resolved === undefined || !modules.has(pathKey(resolved))) return undefined;
+    }
+  }
+  const sources: (readonly [number, {fileName: string; lineNumber: number; columnNumber: number}])[] = [];
+  for (const [index, location] of nodeSources) {
+    const fileName = projectSourcePath(root, location.fileName);
+    if (fileName === undefined) return undefined;
+    sources.push([index, {fileName, lineNumber: location.lineNumber, columnNumber: location.columnNumber}]);
+  }
+  return {files, probes, value: structuredClone(value), nodeSources: sources,
+    warnings: structuredClone(warnings)};
+}
+
+/** A cached screen, when every module it read and every import it resolved are unchanged. */
+async function cachedJsxUiDocument(root: string, entry: JsxUiCacheEntry,
+  dependencies?: Set<string>, rememberText?: (path: string, text: string) => void,
+  sourceTexts?: ReadonlyMap<string, string>): Promise<{
+    readonly value: unknown;
+    readonly nodeSpans: ReadonlyMap<number, SourceSpan>;
+    readonly warnings: readonly AuthoringDiagnostic[];
+  } | undefined> {
+  const texts: (readonly [string, string, string])[] = [];
+  try {
+    for (const file of entry.files) {
+      const absolute = projectFile(root, file.path);
+      const text = await readBoundedText(absolute);
+      if (sha256Text(text) !== file.sha256) return undefined;
+      texts.push([absolute, file.path, text]);
+    }
+  } catch { return undefined; }
+  if (entry.probes.some((probe) => answerProbe(probe.kind, probe.path) !== probe.result)) return undefined;
+  for (const [absolute, path, text] of texts) {
+    dependencies?.add(absolute);
+    if (!["node_modules", ".prismatix"].includes(path.split("/")[0]!)) rememberText?.(absolute, text);
+  }
+  const nodeSpans = new Map<number, SourceSpan>();
+  for (const [index, location] of entry.nodeSources) {
+    const span = sourceTexts === undefined ? undefined :
+      jsxNodeSpan(root, sourceTexts, {...location, fileName: resolve(root, ...location.fileName.split("/"))});
+    if (span !== undefined) nodeSpans.set(index, span);
+  }
+  return {value: structuredClone(entry.value), nodeSpans,
+    warnings: structuredClone(entry.warnings) as AuthoringDiagnostic[]};
+}
+
 async function loadJsxUiDocument(root: string, virtualPath: string,
   kind: "scene" | "component", dependencies?: Set<string>,
   rememberText?: (path: string, text: string) => void,
   sourceTexts?: ReadonlyMap<string, string>,
-  onNodeIdentity?: (index: number, identity: UiNodeIdentity) => void): Promise<{
+  onNodeIdentity?: (index: number, identity: UiNodeIdentity) => void,
+  cache?: JsxUiCache): Promise<{
     readonly value: unknown;
     readonly nodeSpans: ReadonlyMap<number, SourceSpan>;
     readonly warnings: readonly AuthoringDiagnostic[];
   }> {
+  // Node identities come from evaluating the module, which a cached result skips.
+  const usable = onNodeIdentity === undefined ? cache : undefined;
+  const cacheKey = `${kind}:${virtualPath}`;
+  const entry = usable?.get(cacheKey);
+  if (entry !== undefined) {
+    const cached = await cachedJsxUiDocument(root, entry, dependencies, rememberText, sourceTexts);
+    if (cached !== undefined) {
+      usable!.use(cacheKey);
+      return cached;
+    }
+  }
   const sourcePath = projectFile(root, virtualPath);
   const source = await readBoundedText(sourcePath);
   rememberText?.(sourcePath, source);
@@ -945,8 +1062,11 @@ async function loadJsxUiDocument(root: string, virtualPath: string,
     if (!compiled.valid || compiled.value === undefined)
       throw new JsxAuthoringFailure(withJsxNodeSpans(compiled.diagnostics,
         new Map([[virtualPath, nodeSpans]]), root, sourceTexts));
-    return {value: compiled.value, nodeSpans,
-      warnings: compiled.diagnostics.filter((item) => item.severity !== "error")};
+    const warnings = compiled.diagnostics.filter((item) => item.severity !== "error");
+    const cacheEntry = usable === undefined ? undefined
+      : jsxUiCacheEntry(root, program, compiled.value, nodeSources, warnings);
+    if (cacheEntry !== undefined) usable!.set(cacheKey, cacheEntry);
+    return {value: compiled.value, nodeSpans, warnings};
   } catch (error) {
     if (error instanceof JsxAuthoringFailure) throw error;
     throw new JsxAuthoringFailure([{
@@ -1089,6 +1209,8 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
   const sourceFiles: Record<string, string> = {};
   const locales: Record<string, unknown> = {};
   const dependencies = new Set<string>([projectPath]);
+  const jsxToolIdentity = `${root}\n${typescriptIdentity()}`;
+  const jsxCache = await loadJsxUiCache(root, jsxToolIdentity);
   const loadDocument = async (virtualPath: unknown): Promise<void> => {
     if (typeof virtualPath !== "string") return;
     const owner = documentSources.get(virtualPath);
@@ -1106,7 +1228,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     if (owner === virtualPath) return outputPath;
     if (owner !== undefined) throw new Error(`${outputPath} is already produced by ${owner}`);
     const compiled = await loadJsxUiDocument(root, virtualPath, kind,
-      dependencies, rememberText, textSnapshots);
+      dependencies, rememberText, textSnapshots, undefined, jsxCache);
     documents[outputPath] = compiled.value;
     uiNodeSpans.set(outputPath, compiled.nodeSpans);
     // Canonical path so withJsxNodeSpans can point at the authored prop.
@@ -1162,6 +1284,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
       if (runtimeDescriptor !== undefined) runtimeDescriptor.source = outputPath;
     } else await loadDocument(source);
   }
+  await saveJsxUiCache(root, jsxToolIdentity, jsxCache);
   for (const value of Array.isArray(raw.saveMigrations) ? raw.saveMigrations : []) await loadDocument(object(value)?.asset);
   for (const value of Array.isArray(raw.effects) ? raw.effects : []) await loadDocument(object(value)?.source);
 

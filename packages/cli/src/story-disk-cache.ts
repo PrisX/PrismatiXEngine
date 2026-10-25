@@ -32,7 +32,8 @@ function hashCompiledTree(hash: ReturnType<typeof createHash>, root: string): vo
 }
 
 let compilerIdentity: string | undefined;
-function currentCompilerIdentity(): string {
+/** The CLI and Authoring SDK code that produced a cached result. */
+export function currentCompilerIdentity(): string {
   if (compilerIdentity !== undefined) return compilerIdentity;
   const hash = createHash("sha256").update(format).update("\0")
     .update(process.versions.node).update("\0");
@@ -42,7 +43,7 @@ function currentCompilerIdentity(): string {
   return compilerIdentity;
 }
 
-async function regularDirectory(path: string, create: boolean): Promise<boolean> {
+export async function regularDirectory(path: string, create: boolean): Promise<boolean> {
   try {
     const info = await lstat(path);
     return info.isDirectory() && !info.isSymbolicLink();

@@ -1767,17 +1767,25 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   // The game's project lists only the extensions with a game side.
   const gameProject = gameExtensionPaths.length === project.extensions.length ? project
     : {...project, extensions: gameExtensionPaths};
+  // The default locale ships the default program itself; a large game's IR and
+  // source map are tens of MB each, so serialize each document only once.
+  const serializedPrograms = new Map<object, string>();
+  const programText = (value: object): string => {
+    let text = serializedPrograms.get(value);
+    if (text === undefined) serializedPrograms.set(value, text = canonicalJson(value));
+    return text;
+  };
   const files: Record<string, string> = {
     [projectPath]: canonicalJson(gameProject),
     [project.storyIndex]: serialized(documents[project.storyIndex]),
     [project.gameCatalog]: gameDeclaredInStory ? canonicalJson(game)
       : serialized(documents[project.gameCatalog]),
-    [runtimeIrPath]: canonicalJson(compiled.runtimeIr),
-    [sourceMapPath]: canonicalJson(compiled.sourceMap),
+    [runtimeIrPath]: programText(compiled.runtimeIr),
+    [sourceMapPath]: programText(compiled.sourceMap),
   };
   for (const localized of Object.values(localeArtifacts)) {
-    files[localized.runtimeIrPath] = canonicalJson(localized.runtimeIr);
-    files[localized.sourceMapPath] = canonicalJson(localized.sourceMap);
+    files[localized.runtimeIrPath] = programText(localized.runtimeIr);
+    files[localized.sourceMapPath] = programText(localized.sourceMap);
   }
   for (const [path, text] of Object.entries(files)) {
     if ((path.endsWith(".pxir") || path.endsWith(".pxmap")) &&

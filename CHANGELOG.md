@@ -211,6 +211,14 @@ The packages always carry the same version and pin each other exactly.
 
 ### Changed
 
+- Builds keep compiled TSX screens in `.prismatix/cache/jsx-ui-v1.json` and
+  reuse one while every module it read has the same text and every import
+  resolves to the same file (with the same CLI, SDK, Node, TypeScript and
+  project folder); a screen importing a package or a Node module is always
+  compiled. A port's 13 screens took 5.5 s of every Play to type-check and
+  evaluate.
+- The default locale's Runtime IR and source map are serialized once for
+  both of their artifact paths instead of twice.
 - The Windows executable's icon, version information and manifest are written
   by the Packager itself instead of Windows' resource API, so Linux and macOS
   pack the same Windows build as Windows does. It rebuilds the resource
@@ -250,7 +258,10 @@ The packages always carry the same version and pin each other exactly.
 - Large projects: publication checks resolve their protected inputs in
   batches instead of one at a time (a 46,000-file project spent about 40 s
   per Play there), and a development run's artifact trusts an unchanged
-  size and modification time instead of re-hashing every copy.
+  size and modification time instead of re-hashing every copy. They now
+  resolve each directory once and list it instead of every file: the 7.7 s
+  an unchanged Play of that project spent there is under 2 s. With the TSX
+  cache, its unchanged Play builds in about 12 s instead of 28 s.
 - The Player refused a Story whose extension command passed a `resource`
   parameter as a plain path the project's asset catalog does not list
   (`PXRUNTIME7317`, "unknown asset UUID"): such a value is a path, not a
