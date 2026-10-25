@@ -158,6 +158,11 @@ export interface CompileProjectInput {
   /** IO-injected expansion of author-only `resourceIncludes` roots into files. */
   readonly resolveResourceInclude?: (path: string) => readonly string[] | undefined;
   /**
+   * Lists every file under one project folder (subfolders included), for the
+   * folders of resources an extension parameter bundles (`resourceBundle`).
+   */
+  readonly resolveResourceDirectory?: (path: string) => readonly string[] | undefined;
+  /**
    * Lists the files under one `storyAssets` root, so short Story names
    * (`[bg forest]`) resolve without a matching resourceIncludes entry. Only
    * the files Story actually names are packaged.
@@ -484,6 +489,72 @@ function comparableCustomValue(value: string | undefined,
   const normalized = {...decoded as Record<string, JsonValue>};
   for (const parameter of parameters) delete normalized[parameter];
   return canonicalJson(normalized, false).trim();
+}
+
+/**
+ * The files that ship with Story's values for `resourceBundle: "directory"`
+ * parameters: every file in the folder of each chosen resource, which the
+ * extension reads by relative path at run time (a Live2D model's .moc3,
+ * textures and motions beside its .model3.json). Source and canonical
+ * documents in such a folder are left out, as they never ship as media.
+ */
+function bundledResources(
+  extensions: readonly GameExtensionManifest[],
+  programs: readonly RuntimeIrDocument[],
+  assets: readonly ProjectAssetDescriptor[],
+  listDirectory: ((path: string) => readonly string[] | undefined) | undefined,
+  diagnostics: AuthoringDiagnostic[],
+): LocatedResourceReference[] {
+  const bundled = new Map<string, readonly string[]>();
+  for (const extension of extensions) for (const command of extension.commands) {
+    const names = command.parameters.filter((parameter) =>
+      parameter.type === "resource" && parameter.resourceBundle === "directory").map((parameter) => parameter.name);
+    if (names.length > 0) bundled.set(command.id, names);
+  }
+  if (bundled.size === 0) return [];
+  const folders = new Map<string, string>();
+  for (const program of programs) for (const operation of program.operations) {
+    if (operation.kind !== "customNode") continue;
+    const names = bundled.get(operation.arguments?.type ?? "");
+    if (names === undefined) continue;
+    let value: unknown;
+    try { value = JSON.parse(operation.arguments?.value ?? ""); } catch { continue; }
+    if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+    for (const name of names) {
+      const argument = (value as Record<string, unknown>)[name];
+      const reference = typeof argument === "string" ? argument
+        : argument !== null && typeof argument === "object" && !Array.isArray(argument)
+          ? (argument as Record<string, unknown>).path ?? (argument as Record<string, unknown>).id : undefined;
+      if (typeof reference !== "string" || reference === "") continue;
+      const source = canonicalResourceReference(reference, assets)?.source;
+      if (source === undefined) continue;
+      const folder = source.includes("/") ? source.slice(0, source.lastIndexOf("/")) : "";
+      if (folder === "") {
+        diagnostics.push({...issue("PXBUILD1056",
+          `${operation.arguments!.type}.${name} bundles the folder of ${source}, which is the project root; put the file in its own folder`,
+          undefined, source), severity: "warning"});
+        continue;
+      }
+      if (!folders.has(folder)) folders.set(folder, `${operation.arguments!.type}.${name}`);
+    }
+  }
+  const references: LocatedResourceReference[] = [];
+  for (const [folder, origin] of folders) {
+    let paths: readonly string[] | undefined;
+    try { paths = listDirectory?.(folder); }
+    catch (error) {
+      diagnostics.push(issue("PXBUILD1057", `Could not list the files ${origin} bundles`, undefined, `${folder}: ${String(error)}`));
+      continue;
+    }
+    for (const path of paths ?? []) {
+      if (typeof path !== "string" || !path.startsWith(`${folder}/`) || !isSafeResourcePath(path) ||
+          path.split("/").some((part) => part.length === 0 || part === ".") ||
+          /\.(?:[jt]sx?|mjs|cjs|pxstory|pxui|pxuicomponent|pxproject|pxgame|pxindex)$/iu.test(path) ||
+          path.endsWith(".pxstory.pxids.json")) continue;
+      references.push({value: path, origin: `${origin}:${folder}`});
+    }
+  }
+  return references;
 }
 
 function sameLocalizedArguments(
@@ -1175,6 +1246,8 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   const dependencyReferences: LocatedResourceReference[] = [
     ...[...storyResourcePaths].map((value) => ({value, origin: "Story"})),
     ...includedResources,
+    ...bundledResources(extensions, Object.values(localeArtifacts).map((artifact) => artifact.runtimeIr),
+      resourceAssets, input.resolveResourceDirectory, diagnostics),
   ];
   for (const [index, value] of (project.assets ?? []).entries()) {
     if (value === null || typeof value !== "object" || Array.isArray(value) ||

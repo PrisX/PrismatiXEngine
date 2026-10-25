@@ -15,6 +15,16 @@ The packages always carry the same version and pin each other exactly.
 
 ### Added
 
+- `resourceBundle: "directory"` on an extension command's `resource`
+  parameter: the build ships every file in the folder of the file Story
+  names (a Live2D `.model3.json` with its `.moc3`, textures and motions),
+  with no `resourceIncludes` entry. `PXSDKSEM1140` reports it on another
+  type; `PXBUILD1056` warns about a file at the project root.
+- Studio extension importers (`studio.contributes.importers`): items in
+  Studio's Assets import menu that plan how a picked folder or files land in
+  the project. `extension inspect` lists them; `PXSDKSEM1130` and
+  `PXSDKSEM1141` check them.
+
 - Text effects on `Text` and `RichTextLabel`: `textShadow` (`{color, x, y,
   blur}`), `textGradient` (`[top, bottom]` or `[from, to, "horizontal"]`),
   faux `bold` and faux `italic`, on every renderer the Player ships. They
@@ -230,6 +240,10 @@ The packages always carry the same version and pin each other exactly.
 
 ### Fixed
 
+- The Player refused a Story whose extension command passed a `resource`
+  parameter as a plain path the project's asset catalog does not list
+  (`PXRUNTIME7317`, "unknown asset UUID"): such a value is a path, not a
+  catalog identity, and now reaches the handler as one.
 - After a speaker with a `nameColor`, a speaker without one gets the HUD
   `Speaker` label's theme colour back when the label sets no colour of its
   own, instead of keeping the last name colour. The Preview hosts now colour

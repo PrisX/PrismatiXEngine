@@ -447,6 +447,7 @@ export interface StudioSummary {
     readonly assetTypes: readonly {readonly id: string; readonly displayName: string}[];
     readonly inspectors: readonly {readonly assetType: string}[];
     readonly parameterOptions: readonly {readonly id: string; readonly displayName?: string}[];
+    readonly importers: readonly {readonly id: string; readonly displayName: string}[];
   };
 }
 
@@ -461,6 +462,7 @@ export function studioSummary(manifest: Pick<ExtensionManifest, "studio">): Stud
       inspectors: (contributes.inspectors ?? []).map((item) => ({assetType: item.assetType})),
       parameterOptions: (contributes.parameterOptions ?? []).map((item) =>
         ({id: item.id, ...(item.displayName === undefined ? {} : {displayName: item.displayName})})),
+      importers: (contributes.importers ?? []).map((item) => ({id: item.id, displayName: item.displayName})),
     }};
 }
 
@@ -593,7 +595,7 @@ export function describeSummary(summary: PackageSummary): string {
 }
 
 function describeStudio(studio: StudioSummary): string[] {
-  const {assetTypes, inspectors, parameterOptions} = studio.contributes;
+  const {assetTypes, inspectors, parameterOptions, importers} = studio.contributes;
   return [
     `  In PrismatiX Studio (${studio.requiredStudioVersion}), in a sandboxed frame, it may:`,
     ...(studio.permissions.length === 0 ? ["    - nothing beyond what Studio hands it (no permissions)"]
@@ -602,6 +604,7 @@ function describeStudio(studio: StudioSummary): string[] {
     ...(inspectors.length === 0 ? [] : [`  Inspectors for: ${inspectors.map((item) => item.assetType).join(", ")}`]),
     ...(parameterOptions.length === 0 ? [] : [`  Parameter options: ${parameterOptions.map((item) => item.displayName === undefined
       ? item.id : `${item.displayName} (${item.id})`).join(", ")}`]),
+    ...(importers.length === 0 ? [] : [`  Import items in Assets: ${importers.map((item) => `${item.displayName} (${item.id})`).join(", ")}`]),
     "  Studio asks each user before it loads the Studio side.",
   ];
 }

@@ -102,6 +102,12 @@ test("the studio object: entry, permissions, range and contributions", () => {
   assert.deepEqual(contributes({inspectors: [{assetType: "image"}, {assetType: "audio"}, {assetType: "text"}]}), [],
     "built-in kinds need no declaration");
   assert.deepEqual(contributes({inspectors: [{assetType: "live2d.model"}, {assetType: "live2d.model"}]}), ["PXSDKSEM1132"]);
+  const importer = {id: "model", displayName: "Live2D model", pick: "directory"};
+  assert.deepEqual(contributes({importers: [importer, {id: "motion", displayName: "Motion", pick: "files", accept: ["*.motion3.json"]}]}), []);
+  assert.deepEqual(contributes({importers: [importer, importer]}), ["PXSDKSEM1130"]);
+  assert.deepEqual(contributes({importers: [{...importer, accept: ["*.model3.json"]}]}), ["PXSDKSEM1141"],
+    "a folder is picked whole");
+  assert.ok(contributes({importers: [{...importer, pick: "folder"}]}).includes("PXSDKJSON1004"));
 });
 
 test("optionsFrom and resourceFilter lists on parameters", () => {
@@ -113,6 +119,8 @@ test("optionsFrom and resourceFilter lists on parameters", () => {
   assert.deepEqual(parameters([{...model, resourceFilter: "models/*.json"}]), ["PXSDKSEM1138"]);
   assert.deepEqual(parameters([{name: "model", type: "string", resourceFilter: "*.model3.json"}]), ["PXSDKSEM1139"],
     "the Player refuses a resourceFilter on a command's string parameter");
+  assert.deepEqual(parameters([{...model, resourceBundle: "directory"}]), []);
+  assert.deepEqual(parameters([{name: "model", type: "string", resourceBundle: "directory"}]), ["PXSDKSEM1140"]);
   assert.deepEqual(parameters([model, {name: "motion", type: "integer", optionsFrom: {parameter: "model", pointer: ""}}]),
     ["PXSDKSEM1133"]);
   assert.deepEqual(parameters([model, {name: "motion", type: "string", enum: ["a"], optionsFrom: {parameter: "model", pointer: ""}}]),

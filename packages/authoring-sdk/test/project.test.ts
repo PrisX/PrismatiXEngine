@@ -1220,6 +1220,51 @@ test("compileProject rejects UI component interfaces that the native Runtime can
     diagnostic.code === "PXSDKUICOMP1105"));
 });
 
+test("a resourceBundle parameter ships every file in the folder of the file Story names", () => {
+  const extensionPath = "Content/Extensions/viewer.pxextension";
+  const viewer = {
+    format: "PrismatiXExtension", schemaRevision: 1, language: "javascript",
+    id: "model-viewer", version: "1.0.0",
+    requiredEngineVersion: ">=0.1.0 <0.2.0", entry: "viewer.js",
+    capabilities: ["runtime"],
+    safety: {previewSafe: true, deterministic: true, seekSafe: true, rollbackSafe: true},
+    commands: [{id: "model.show", rollback: "reversible", capabilities: ["runtime"], parameters: [
+      {name: "model", type: "resource", resourceFilter: "*.model3.json", resourceBundle: "directory", required: true},
+      {name: "poster", type: "resource"},
+    ]}],
+    actions: [],
+  };
+  const listed: string[] = [];
+  const compile = (story: string) => compileProject({
+    project: {...project, extensions: [extensionPath]},
+    documents: {
+      "Story/story.pxindex": storyIndex, "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": ui, [extensionPath]: viewer,
+    },
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": story, "Content/Extensions/viewer.js": "export {};"},
+    resourceExists: () => true,
+    resolveResourceDirectory: (folder) => {
+      listed.push(folder);
+      return [`${folder}/Haru.model3.json`, `${folder}/Haru.moc3`, `${folder}/Haru.2048/texture_00.png`,
+        `${folder}/notes.ts`, "Assets/Elsewhere/stray.png"];
+    },
+  });
+  const valid = compile("*start\n[model.show model=Assets/Live2D/Haru/Haru.model3.json poster=Assets/Posters/haru.png]\n" +
+    "[model.show model=Assets/Live2D/Haru/Haru.model3.json]\n[end]\n");
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  assert.deepEqual(listed, ["Assets/Live2D/Haru"], "each folder is listed once; a plain resource bundles nothing");
+  const packaged = new Set(valid.artifact!.dependencies.map((dependency) => dependency.source));
+  for (const path of ["Assets/Live2D/Haru/Haru.model3.json", "Assets/Live2D/Haru/Haru.moc3",
+    "Assets/Live2D/Haru/Haru.2048/texture_00.png", "Assets/Posters/haru.png"])
+    assert.ok(packaged.has(path), path);
+  assert.ok(!packaged.has("Assets/Live2D/Haru/notes.ts"), "source files never ship as media");
+  assert.ok(!packaged.has("Assets/Elsewhere/stray.png"), "only files inside the folder");
+
+  const atRoot = compile("*start\n[model.show model=Haru.model3.json]\n[end]\n");
+  assert.ok(atRoot.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1056" && diagnostic.severity === "warning"),
+    "a file at the project root does not bundle the whole project");
+});
+
 test("compileProject publishes aligned RuntimeIR and source maps for every Story locale", () => {
   const extensionPath = "Content/Extensions/localized.pxextension";
   const heroId = "33333333-3333-4333-8333-333333333333";

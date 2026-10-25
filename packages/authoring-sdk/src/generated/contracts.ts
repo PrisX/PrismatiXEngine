@@ -1879,6 +1879,12 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           "required": {
             "type": "boolean"
           },
+          "resourceBundle": {
+            "description": "Type resource only: the files the chosen file needs at run time ship with it. directory packages every file in the folder that holds it, subfolders included (a Live2D .model3.json and its .moc3, textures and motions).",
+            "enum": [
+              "directory"
+            ]
+          },
           "resourceFilter": {
             "description": "A media kind (image/*, or an exact type/subtype) or a file-name glob (*.model3.json), or a comma-separated list of them.",
             "maxLength": 128,
@@ -1958,6 +1964,13 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                   "$ref": "#/$defs/studioAssetType"
                 },
                 "maxItems": 64,
+                "type": "array"
+              },
+              "importers": {
+                "items": {
+                  "$ref": "#/$defs/studioImporter"
+                },
+                "maxItems": 16,
                 "type": "array"
               },
               "inspectors": {
@@ -2045,6 +2058,46 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "minLength": 1,
         "pattern": "^[^/\\\\\\[\\]{}]+$",
         "type": "string"
+      },
+      "studioImporter": {
+        "additionalProperties": false,
+        "description": "An Add item in Studio's Assets: the user picks a folder or files, the Studio side says which files to copy where, and Studio copies them after the user confirms.",
+        "properties": {
+          "accept": {
+            "description": "pick files only: the file names the picker offers.",
+            "items": {
+              "$ref": "#/$defs/studioGlob"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "description": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "displayName": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+          },
+          "pick": {
+            "enum": [
+              "directory",
+              "files"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "displayName",
+          "pick"
+        ],
+        "type": "object"
       },
       "studioInspector": {
         "additionalProperties": false,
@@ -6341,7 +6394,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "extension-lock.schema.json": "842ae4c71560b8913c76ae1e03def3c416760edf93d3c522ebad7a570b18415f",
   "extension-package.schema.json": "bd7baa339d7a1b89d9cbd7d1db82aaabd104776712a6f270948220e6ec806ff5",
   "extension-registry.schema.json": "8e046a9e49d28b7867df3dee4024f8b53780ae06b24a5f0420cafa705c4abe98",
-  "extension.schema.json": "0cca62755d92118df3b60b5499287eea6aae43d1ef9c80e4ef67dd173b7ef6b7",
+  "extension.schema.json": "685fda8cb75bd2f89659718d9faeb8e96a64fda2503ed9daf4c51662efaa0234",
   "game.schema.json": "a2614c48076fc5e7554934e446f37319c556adb9f13a28f24c8592813f0dfd23",
   "locale.schema.json": "391e4abe7616d74554af376e2ae3563961215b1631cdd04faf5034016aaff774",
   "motion.schema.json": "6cc663c16bc82c6d966609bb2410bb2873ae43a16d5da3611234bec041d54268",

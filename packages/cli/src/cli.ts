@@ -2,7 +2,7 @@
 
 import {createHash, randomUUID} from "node:crypto";
 import {spawn, type ChildProcessWithoutNullStreams} from "node:child_process";
-import {constants, existsSync, readFileSync, readdirSync, watch} from "node:fs";
+import {constants, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, watch} from "node:fs";
 import {
   copyFile, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile,
 } from "node:fs/promises";
@@ -555,6 +555,39 @@ function safeVirtualPath(value: string): boolean {
   return value.length > 0 && !value.startsWith("/") && !value.includes("\\") &&
     !value.includes(":") && !value.includes("\0") &&
     value.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
+}
+
+/**
+ * Every file under one project folder, as project paths, for the folders an
+ * extension parameter bundles (`resourceBundle`). Like resourceIncludes it
+ * never follows a symbolic link, never leaves the project and lists no
+ * tool folders; a missing folder lists nothing.
+ */
+function listResourceDirectory(root: string, folder: string): string[] {
+  if (!safeVirtualPath(folder) ||
+      [".prismatix", ".git", "node_modules"].includes(folder.split("/")[0]!.toLowerCase())) return [];
+  const absolute = projectFile(root, folder);
+  try {
+    if (!lstatSync(absolute).isDirectory()) return [];
+  } catch { return []; }
+  const canonicalRoot = realpathSync(root);
+  const relativeReal = relative(canonicalRoot, realpathSync(absolute));
+  if (relativeReal === ".." || relativeReal.startsWith(`..${sep}`) || isAbsolute(relativeReal))
+    throw new Error(`${folder} is outside the project`);
+  const files: string[] = [];
+  const visit = (directory: string): void => {
+    for (const entry of readdirSync(directory, {withFileTypes: true})) {
+      if (entry.isSymbolicLink()) continue;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if (entry.isFile()) {
+        files.push(relative(root, path).split(sep).join("/"));
+        if (files.length > 100_000) throw new Error(`${folder} holds more than 100000 files`);
+      }
+    }
+  };
+  visit(absolute);
+  return files.sort((left, right) => left.localeCompare(right, "en"));
 }
 
 function projectFile(root: string, virtualPath: string): string {
@@ -1464,6 +1497,7 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
       catch { return undefined; }
     },
     resolveResourceInclude: (path) => loaded.includedResources[path],
+    resolveResourceDirectory: (path) => listResourceDirectory(loaded.root, path),
     resolveStoryAssetRoot: (path) => loaded.storyAssetFiles[path],
     ...(onStoryProgress === undefined ? {} : {onStoryProgress}),
     ...(storyCompilationCache === undefined ? {} : {storyCompilationCache}),

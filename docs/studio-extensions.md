@@ -70,6 +70,9 @@ revision-2 manifest with its ordinary schema error.
       ],
       "parameterOptions": [
         {"id": "motions", "displayName": "Motions"}
+      ],
+      "importers": [
+        {"id": "model", "displayName": "Live2D model", "pick": "directory"}
       ]
     }
   }
@@ -90,7 +93,7 @@ as before.
 | `entry` | Required. Built ES module JavaScript (`.js`), relative to the manifest. |
 | `requiredStudioVersion` | Required. A SemVer range of Studio versions, in the same grammar as `requiredEngineVersion`. Studio skips a Studio side that does not match its version. |
 | `permissions` | What the Studio side may do; default none. `project.read` reads files inside the project, `project.write` creates and overwrites files inside the project. |
-| `contributes` | What it adds to Studio (below); each list holds at most 64 items. |
+| `contributes` | What it adds to Studio (below); each list holds at most 64 items (`importers` 16). |
 
 There is nothing else to ask for: a Studio side has no network, no
 processes, no native code and no files outside the project.
@@ -110,6 +113,11 @@ processes, no native code and no files outside the project.
   asset type.
 - `parameterOptions`: `{id, displayName?, description?}`. A provider of
   choices for a command or Action parameter (see `optionsFrom` below).
+- `importers`: `{id, displayName, description?, pick, accept?}`. An item in
+  the Assets import menu ("Add Live2D model…"). `pick` is `directory` (the
+  user picks a folder) or `files` (`accept` lists the file-name globs the
+  picker offers). The Studio side reads what was picked and answers with a
+  plan; Studio copies the files (see "Importers" below).
 
 A contribution's full id is `<extension id>:<contribution id>`, for example
 `owen/live2d:motions` for an installed package or `live2d:motions` for a
@@ -146,6 +154,52 @@ Only Studio uses `optionsFrom`. The game treats the value as an ordinary
 string or token and never checks it against the choices, so a value typed
 by hand still works. The command schema the SDK hands editors
 (`storyCommandSchema`) carries each parameter's `optionsFrom`.
+
+## Files a resource brings along
+
+A command's `resource` parameter can name a file the extension reads others
+beside at run time: a Live2D `.model3.json` names its `.moc3`, textures and
+motions by relative path, and nothing in Story names those. With
+`"resourceBundle": "directory"` the build ships every file in the folder that
+holds the chosen file, subfolders included, as if that folder were in
+`resourceIncludes`:
+
+```json
+{"name": "model", "type": "resource", "resourceFilter": "*.model3.json", "resourceBundle": "directory"}
+```
+
+`[live2d.show model=Assets/Live2D/Haru/haru.model3.json]` then ships all of
+`Assets/Live2D/Haru/`. Keep one model per folder, with no editor sources in
+it. Script, Story and UI sources in the folder never ship. A file at the
+project root bundles nothing (`PXBUILD1056`, a warning), and a value the
+build cannot know (a variable) still needs `resourceIncludes`. The Player
+passes the parameter to the handler as `{id, path}`.
+
+## Importers
+
+An importer turns "here is a model I exported" into project files without
+the user arranging folders by hand:
+
+1. The user chooses the importer from the Assets import menu and picks a
+   folder or files with the system dialog.
+2. Studio lists what was picked and calls the Studio side's importer
+   (`studio.importers.register(id, importer)`) with `{source, locale}`.
+   `source` has the folder's `name`, its `files` (`{path, size}`, relative
+   to the picked folder) and `readText`/`readFile`, which read those files
+   only, and only while the importer runs.
+3. The importer returns a plan: `folder` (project-relative, such as
+   `Assets/Live2D/Haru`), `files` (`{from, to}`: a picked file and its path
+   inside `folder`), and optionally `open` (a copied file to select),
+   `snippet` (how to use it, with `{folder}` for the final folder) and
+   `notes` (`{level: "error" | "warning" | "info", message}`). Throwing
+   refuses the import with the error's message.
+4. Studio checks the plan (every `from` was picked, every target stays in
+   the project and follows `writeFile`'s rules), shows the folder, the files
+   and the notes, and lets the user rename the folder's last part. An
+   `error` note, or a folder that already exists, blocks the import.
+5. Once the user confirms, Studio copies the files. An importer needs no
+   `project.write`; with `project.read` it can look at the project too (the
+   Live2D importer warns when Cubism Core is not in `NativeUserFiles/`).
 
 ## Building and packing
 
@@ -197,7 +251,7 @@ has a Studio side and a matching `requiredStudioVersion`:
   network access. Studio reads the file and hands its text to the frame; the
   frame never sees Studio's own connections.
 - The module exports `activate(studio)`. `studio.inspectors.register`,
-  `studio.parameterOptions.register` and `studio.project` (`readFile`,
+  `studio.parameterOptions.register`, `studio.importers.register` and `studio.project` (`readFile`,
   `readText`, `list` with `project.read`; `writeFile` with `project.write`)
   are the whole API; the types are in `@prismatix/studio-sdk`. Paths are
   project-relative; `..` and absolute paths are refused, and a call without
@@ -217,9 +271,9 @@ has a Studio side and a matching `requiredStudioVersion`:
   state (loaded, not allowed, incompatible Studio version, error) and never
   stop Studio.
 
-Version 1 has inspectors, asset types and parameter choices only: no panels,
-importers, validators or menu commands, no channel to the preview Player, no
-user-level installs, no native code and no network.
+Studio extensions have inspectors, asset types, parameter choices and
+importers: no panels, validators or menu commands, no channel to the preview
+Player, no user-level installs, no native code and no network.
 
 ## Games
 
@@ -238,7 +292,7 @@ manifest must still match its contract, so a broken one fails `validate`.
 | PXSDKSEM1127 | A revision-2 manifest with neither `entry` nor `studio` |
 | PXSDKSEM1128 | A Studio-only manifest with a game field (`modules`, `native`, `platforms`, `safety`, or non-empty `capabilities`, `commands`, `actions`) |
 | PXSDKSEM1129 | `studio.requiredStudioVersion` is not a SemVer range |
-| PXSDKSEM1130 | Two `assetTypes` or two `parameterOptions` share an id |
+| PXSDKSEM1130 | Two `assetTypes`, `parameterOptions` or `importers` share an id |
 | PXSDKSEM1131 | An inspector names an asset type the extension does not declare and that is not built in |
 | PXSDKSEM1132 | Two inspectors for one asset type |
 | PXSDKSEM1133 | `optionsFrom` on a parameter that is not `string` or `token`, or together with `enum` |
@@ -248,6 +302,10 @@ manifest must still match its contract, so a broken one fails `validate`.
 | PXSDKSEM1137 | `optionsFrom.provider` names this extension but a `parameterOptions` id its Studio side does not contribute |
 | PXSDKSEM1138 | A `resourceFilter` item is neither a media kind nor a file-name glob |
 | PXSDKSEM1139 | A command parameter has a `resourceFilter` but is not a `resource` (the Player refuses the extension) |
+| PXSDKSEM1140 | A command parameter has a `resourceBundle` but is not a `resource` |
+| PXSDKSEM1141 | An importer with `"pick": "directory"` lists `accept` (a folder is picked whole) |
+| PXBUILD1056 | A `resourceBundle` value is a file at the project root, so it bundles nothing (warning) |
+| PXBUILD1057 | The folder a `resourceBundle` value names could not be listed |
 
 Packages report a Studio entry outside `dist/`, not `.js`, or missing as
 `PXEXTPKG1010`.

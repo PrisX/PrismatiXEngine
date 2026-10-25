@@ -124,6 +124,11 @@ export interface ExtensionParameter {
    * a file-name glob (`*.model3.json`), or a comma-separated list of them.
    */
   readonly resourceFilter?: string;
+  /**
+   * Type `resource` only: `directory` ships every file in the folder that holds
+   * the chosen file, for media an extension reads by relative path at run time.
+   */
+  readonly resourceBundle?: "directory";
   readonly editorHint?: string;
   /** Types `string` and `token` only, never with `enum`: where Studio gets the choices. */
   readonly optionsFrom?: ExtensionOptionsFrom;
@@ -245,6 +250,22 @@ export interface ExtensionStudioContributions {
   readonly assetTypes?: readonly ExtensionStudioAssetType[];
   readonly inspectors?: readonly ExtensionStudioInspector[];
   readonly parameterOptions?: readonly ExtensionStudioParameterOptions[];
+  readonly importers?: readonly ExtensionStudioImporter[];
+}
+
+/**
+ * An item in Studio's Assets import menu. The user picks a folder (`directory`)
+ * or files; the Studio side answers which picked files to copy into which
+ * project folder, and Studio copies them once the user confirms.
+ */
+export interface ExtensionStudioImporter {
+  /** Unique within the extension; the Studio side registers it with `studio.importers.register(id, ...)`. */
+  readonly id: string;
+  readonly displayName: string;
+  readonly description?: string;
+  readonly pick: "directory" | "files";
+  /** pick `files` only: file-name globs the picker offers. */
+  readonly accept?: readonly string[];
 }
 
 /** Files Studio's asset browser classifies as one type, by file name, without running code. */

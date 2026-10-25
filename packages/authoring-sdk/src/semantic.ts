@@ -180,6 +180,11 @@ function studioSideDiagnostics(root: ObjectValue, path?: string): AuthoringDiagn
     diagnostics.push(issue("PXSDKSEM1130", "Studio assetTypes ids must be unique", path, id));
   for (const id of duplicates(parameterOptions.map((item) => item.id)))
     diagnostics.push(issue("PXSDKSEM1130", "Studio parameterOptions ids must be unique", path, id));
+  const importers = objects(contributes?.importers);
+  for (const id of duplicates(importers.map((item) => item.id)))
+    diagnostics.push(issue("PXSDKSEM1130", "Studio importers ids must be unique", path, id));
+  for (const importer of importers) if (importer.accept !== undefined && importer.pick !== "files")
+    diagnostics.push(issue("PXSDKSEM1141", "A Studio importer's accept list is for pick \"files\"; a folder is picked whole", path, String(importer.id)));
   const known = new Set<unknown>([...studioBuiltinAssetKinds, ...assetTypes.map((item) => item.id)]);
   const inspectors = objects(contributes?.inspectors);
   for (const inspector of inspectors) if (!known.has(inspector.assetType))
@@ -847,6 +852,9 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
           if (parameter.resourceFilter !== undefined && parameter.type !== "resource")
             diagnostics.push(issue("PXSDKSEM1139", "Extension command resourceFilter needs a resource parameter",
               path, `${String(command.id)}.${String(parameter.name)}`));
+          else if (parameter.resourceBundle !== undefined && parameter.type !== "resource")
+            diagnostics.push(issue("PXSDKSEM1140", "Extension command resourceBundle needs a resource parameter",
+              path, `${String(command.id)}.${String(parameter.name)}`));
       diagnostics.push(...studioSideDiagnostics(root, path));
       const capabilities = new Set(Array.isArray(root.capabilities) ? root.capabilities : []);
       for (const action of actions) {
@@ -870,7 +878,7 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
             diagnostics.push(issue("PXSDKSEM1117", "Extension Action enum requires string parameters and string choices",
               path, location));
           if (!validActionEditorHint(parameter.editorHint, parameter.type, choices.length > 0) ||
-              (parameter.resourceFilter !== undefined && parameter.type !== "resource"))
+              ((parameter.resourceFilter !== undefined || parameter.resourceBundle !== undefined) && parameter.type !== "resource"))
             diagnostics.push(issue("PXSDKSEM1118", "Extension Action editor hint or resource filter does not match its type",
               path, location));
         }

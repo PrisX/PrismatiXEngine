@@ -13,6 +13,7 @@
         "range":{"type":"object","additionalProperties":false,"properties":{"minimum":{"type":"number"},"maximum":{"type":"number"},"step":{"type":"number","exclusiveMinimum":0}}},
         "resourceFilter":{"type":"string","maxLength":128,"description":"A media kind (image/*, or an exact type/subtype) or a file-name glob (*.model3.json), or a comma-separated list of them."},
         "optionsFrom":{"$ref":"#/$defs/optionsFrom"},
+        "resourceBundle":{"enum":["directory"],"description":"Type resource only: the files the chosen file needs at run time ship with it. directory packages every file in the folder that holds it, subfolders included (a Live2D .model3.json and its .moc3, textures and motions)."},
         "editorHint":{"enum":["default","multiline","enum","color","resource","character","expression","target","preset","hidden","route","node","animation","token"]}
       }
     },
@@ -56,6 +57,17 @@
         "description":{"type":"string","maxLength":4096}
       }
     },
+    "studioImporter":{
+      "description":"An Add item in Studio's Assets: the user picks a folder or files, the Studio side says which files to copy where, and Studio copies them after the user confirms.",
+      "type":"object","additionalProperties":false,"required":["id","displayName","pick"],
+      "properties":{
+        "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+        "displayName":{"type":"string","minLength":1,"maxLength":512},
+        "description":{"type":"string","maxLength":4096},
+        "pick":{"enum":["directory","files"]},
+        "accept":{"type":"array","uniqueItems":true,"minItems":1,"maxItems":16,"items":{"$ref":"#/$defs/studioGlob"},"description":"pick files only: the file names the picker offers."}
+      }
+    },
     "studio":{
       "description":"The Studio side (schemaRevision 2): a module PrismatiX Studio loads in a sandboxed frame. It never reaches a game.",
       "type":"object","additionalProperties":false,"required":["entry","requiredStudioVersion"],
@@ -68,7 +80,8 @@
           "properties":{
             "assetTypes":{"type":"array","maxItems":64,"items":{"$ref":"#/$defs/studioAssetType"}},
             "inspectors":{"type":"array","maxItems":64,"items":{"$ref":"#/$defs/studioInspector"}},
-            "parameterOptions":{"type":"array","maxItems":64,"items":{"$ref":"#/$defs/studioParameterOptions"}}
+            "parameterOptions":{"type":"array","maxItems":64,"items":{"$ref":"#/$defs/studioParameterOptions"}},
+            "importers":{"type":"array","maxItems":16,"items":{"$ref":"#/$defs/studioImporter"}}
           }
         }
       }

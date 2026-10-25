@@ -76,6 +76,10 @@ reference, add `"resourceIncludes": ["Assets/MyFamily", "Assets/Audio/confirm.og
 to `prismatix.json`. Directories are expanded during validate/build; the files
 are packaged as owned dependencies, while this author-only field is omitted
 from the runtime project document. Missing or empty roots fail validation.
+An extension command whose `resource` parameter has `"resourceBundle":
+"directory"` (Live2D's `live2d.show model=...`) ships the folder of the file
+Story names by itself, with no `resourceIncludes` entry
+([studio-extensions.md](studio-extensions.md#files-a-resource-brings-along)).
 
 ### Executable name, icon and version information
 

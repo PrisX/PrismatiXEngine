@@ -112,7 +112,8 @@ test("pack, inspect and add a Studio-only and a two-sided package; the game leav
     await writeFile(toolsPath, `${JSON.stringify({...tools, studio: {entry: "studio.js", requiredStudioVersion: ">=0.1.0",
       permissions: ["project.read", "project.write"], contributes: {
         assetTypes: [{id: "live2d.model", displayName: "Live2D model", patterns: ["*.model3.json"]}],
-        inspectors: [{assetType: "live2d.model"}], parameterOptions: [{id: "motions", displayName: "Motions"}]}}}, null, 2)}\n`);
+        inspectors: [{assetType: "live2d.model"}], parameterOptions: [{id: "motions", displayName: "Motions"}],
+        importers: [{id: "model", displayName: "Live2D model", pick: "directory"}]}}}, null, 2)}\n`);
     await write(join(author, "Content/Extensions/tools/studio.ts"), "export function activate(studio: any): void { studio.ready = 1; }\n");
     const output = join(author, "out");
     const packedTools = json(["extension", "pack", "tools", "--owner", "owen", "--output", output, "--project", author]) as
@@ -137,7 +138,7 @@ test("pack, inspect and add a Studio-only and a two-sided package; the game leav
     assert.deepEqual(outside.capabilities, []);
     const studioSummary = {requiredStudioVersion: ">=0.1.0", permissions: ["project.read", "project.write"],
       contributes: {assetTypes: [{id: "live2d.model", displayName: "Live2D model"}], inspectors: [{assetType: "live2d.model"}],
-        parameterOptions: [{id: "motions", displayName: "Motions"}]}};
+        parameterOptions: [{id: "motions", displayName: "Motions"}], importers: [{id: "model", displayName: "Live2D model"}]}};
     assert.deepEqual(outside.studio, studioSummary);
     const inside = json(["extension", "inspect", packedTools.file, "--project", consumer]);
     assert.deepEqual(inside.sides, ["studio"]);
@@ -148,6 +149,7 @@ test("pack, inspect and add a Studio-only and a two-sided package; the game leav
     assert.equal(described.status, 0, described.stderr);
     assert.match(described.stdout, /adds nothing to the game/u);
     assert.match(described.stdout, /project\.write: create and overwrite files inside the project/u);
+    assert.match(described.stdout, /Import items in Assets: Live2D model \(model\)/u);
     assert.match(described.stdout, /Asset types: Live2D model \(live2d\.model\)/u);
     assert.match(described.stdout, /Parameter options: Motions \(motions\)/u);
 
