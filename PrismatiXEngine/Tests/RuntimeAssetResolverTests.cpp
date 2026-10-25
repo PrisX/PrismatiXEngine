@@ -109,6 +109,21 @@ int main() {
                      "resolved BGM intro retains its catalog identity");
     }
 
+    {
+        // An extension command's resource argument written as a path the
+        // catalog does not list (a Live2D model3.json) stays that path.
+        px::vn::Program pathOnly;
+        px::vn::Command show;
+        show.type = "live2d.show";
+        show.line = 9;
+        show.typedArgs["model"] = px::Variant(px::ResourceRefValue{ px::Uuid::FromName("Assets/Live2D/haru/haru.model3.json"), "Assets/Live2D/haru/haru.model3.json" });
+        pathOnly.code.push_back(std::move(show));
+        suite.Expect(!px::UsesRuntimeAssetReferences(pathOnly), "a path-only resource needs no project catalog");
+        const auto result = px::ResolveRuntimeAssetReferences(std::move(pathOnly), Manifest(), exists, "Content/Runtime/story.pxir");
+        const auto* model = result ? Resource(result.Value().code.front(), "model") : nullptr;
+        suite.Expect(model && model->lastKnownPath == "Assets/Live2D/haru/haru.model3.json", "an uncataloged path-only resource is kept, not refused as an unknown UUID");
+    }
+
     px::vn::Program unknown;
     px::vn::Command missing;
     missing.type = "bg";

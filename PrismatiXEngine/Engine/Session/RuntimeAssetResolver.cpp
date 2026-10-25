@@ -107,10 +107,19 @@ Result<ProjectAssets> ParseProjectAssets(const std::string_view manifestText) {
 
 bool IsAssetToken(const std::string_view value) { return value.starts_with(kAssetPrefix); }
 
+// A resource argument written as a plain path (an extension command's
+// `model=Assets/Live2D/haru/haru.model3.json`) carries the id its path names
+// (Uuid::FromName), not a catalog identity: it stays a path, whether or not
+// the project catalogs that file. The build already checked it exists.
+bool IsPathOnly(const ResourceRefValue& reference) {
+    return !reference.lastKnownPath.empty() && !IsAssetToken(reference.lastKnownPath) &&
+           reference.id == Uuid::FromName(reference.lastKnownPath);
+}
+
 bool UsesAssetReference(const Variant& value) {
     if (const auto* text = value.TryGet<std::string>()) return IsAssetToken(*text);
     if (const auto* reference = value.TryGet<ResourceRefValue>()) {
-        return !reference->id.Empty() || IsAssetToken(reference->lastKnownPath);
+        return (!reference->id.Empty() && !IsPathOnly(*reference)) || IsAssetToken(reference->lastKnownPath);
     }
     if (const auto* array = value.AsArray()) {
         return std::any_of(array->begin(), array->end(), UsesAssetReference);
@@ -155,6 +164,7 @@ void ResolveVariant(Variant& value, const ProjectAssets& assets, const RuntimeAs
         return;
     }
     if (const auto* reference = value.TryGet<ResourceRefValue>()) {
+        if (IsPathOnly(*reference)) return;
         std::optional<ResourceRefValue> resolved;
         if (!reference->id.Empty()) {
             resolved = ResolveId(reference->id, assets, exists, sourcePath, line, property, diagnostics);
