@@ -13,7 +13,7 @@ import type * as TS from "typescript-compiler";
 import {ts, typescriptIdentity} from "./typescript.js";
 
 import {
-  checkoutRuntimeFile, discoverQaPlayer, discoverRuntimeTool, discoverRuntimeBundle, nativePackageFile, RuntimeDiscoveryFailure,
+  checkoutRuntimeFile, discoverRuntimeTool, discoverRuntimeBundle, nativePackageFile, RuntimeDiscoveryFailure,
   runtimeDiscoveryHint, type RuntimeDiscoveryOptions,
 } from "./runtime-discovery.js";
 import {fingerprintFile, outputOwnershipMarker, publishDirectory, publishedInputs, retainPublishedDirectoryIfMatching,
@@ -58,9 +58,8 @@ import {currentCompilerIdentity, loadStoryCompilationCache, saveStoryCompilation
 import {recordDevelopmentInputs, unchangedDevelopmentInputs} from "./dev-inputs.js";
 import {loadJsxUiCache, saveJsxUiCache, type JsxUiCache, type JsxUiCacheEntry, type ResolutionProbe} from "./jsx-ui-cache.js";
 import {transcodeMedia, type TranscodedFile} from "./media-transcode.js";
-import {testCommand, testHelp, waitForPort} from "./test-command.js";
-import {PlayerTestClient} from "./qa-client.js";
-import {reachStoryPosition} from "./run-at.js";
+import {testCommand, testHelp} from "./test-command.js";
+import {readStoryArtifact, storyStartPlan, type StoryStartOutcome, type StoryStartPlan} from "./run-at.js";
 import {buildTypeScriptExtensions, projectExtensionRemapper, type ExtensionBundle} from "./extension-build.js";
 import {PlayerOutput, type ExtensionLogRecord} from "./player-output.js";
 import {extensionCommand, extensionHelp} from "./extension-scaffold.js";
@@ -132,7 +131,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   validate: {values: "runtime ui-registry target platform", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space no-transcode"},
   pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target platform android-player gradle android-sdk web-player web-renderer web-package ffmpeg", flags: "encrypt ignore-disk-space check verify-media debug no-transcode archive"},
-  run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev pack-media prepare"},
+  run: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev pack-media prepare"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: "check"},
   extension: {values: "project lang side command action dir owner output registry sha256 to capability page reason platform signing-key",
@@ -3426,9 +3425,9 @@ function pathWithin(root: string, path: string): boolean {
  * --dev (an editor's Play button; also implied by --at or an --output under
  * <project>/.prismatix) compiles into <project>/.prismatix/run-artifact,
  * packs without transcoding or compression into <project>/.prismatix/run,
- * and keeps the previous pack when nothing changed. --at packs the QA Player
- * into <project>/.prismatix/run-qa instead and drives it to a Story position
- * over its local QA IPC. The game closes when this process goes away.
+ * and keeps the previous pack when nothing changed. --at opens the game at a
+ * Story position: the Player skips its splashes and title and replays the
+ * story there at once (run-at.ts). The game closes when this process goes away.
  */
 async function runCommand(options: Options): Promise<number> {
   taggedRecords = machineOutput;
@@ -3453,39 +3452,23 @@ async function runCommand(options: Options): Promise<number> {
       throw new Error("--prepare brings run --dev up to date; it does not take --at or a distribution");
     let result: Awaited<ReturnType<typeof packProject>>;
     let artifact: BuildArtifact | undefined;
-    let qaPlayer: string | undefined;
     // The compiled artifact a loose run's Player reads in place.
     let looseArtifact: string | undefined;
     const buildStarted = Date.now();
-    lifecycle({event: "run.build", phase: "start", code: "PXCLI1311", development, qa: at !== undefined,
+    lifecycle({event: "run.build", phase: "start", code: "PXCLI1311", development, at: at !== undefined,
       message: "Building the game"});
     if (!development) {
       result = await packProject(options);
     } else {
-      const output = resolve(requestedOutput ?? join(devRoot, at === undefined ? "run" : "run-qa"));
-      if (at !== undefined && !pathWithin(devRoot, output))
-        throw new Error(`--at packs the QA Player, which is for local development only; ` +
-          `its --output must stay inside ${devRoot}`);
-      if (at !== undefined) {
-        const qaOptions = {...runtimeOptions(options),
-          ...(options.values.has("player-qa") ? {playerQA: options.values.get("player-qa")!} : {})};
-        try { qaPlayer = (await discoverQaPlayer(qaOptions)).path; }
-        catch (error) {
-          if (!(error instanceof RuntimeDiscoveryFailure)) throw error;
-          throw new PackagerFailure([discoveryDiagnostic("PXCLI1314",
-            "The QA Player (PrismatiXPlayerQA) that run --at drives could not be discovered",
-            error, options.positional[0])]);
-        }
-      }
+      const output = resolve(requestedOutput ?? join(devRoot, "run"));
       let artifactRoot = options.values.get("artifact");
       // The media the Player reads in place when the build is skipped.
       let keptExternalInputs: readonly string[] | undefined;
       if (artifactRoot === undefined) {
         const artifactOutput = join(devRoot, "run-artifact");
         // Nothing the last Play's build read has changed: start from its
-        // artifact without loading or compiling the project again. --at
-        // compiles to find its Story position.
-        keptExternalInputs = at === undefined && existsSync(join(artifactOutput, outputOwnershipMarker))
+        // artifact without loading or compiling the project again.
+        keptExternalInputs = existsSync(join(artifactOutput, outputOwnershipMarker))
           ? await unchangedDevelopmentInputs(developmentInputsPath(artifactOutput),
             developmentBuildIdentity(options.values.get("ui-registry"), options.values.get("runtime"),
               undefined, looseMedia))
@@ -3505,15 +3488,12 @@ async function runCommand(options: Options): Promise<number> {
           artifactRoot = built.output;
           if (looseMedia) looseArtifact = built.output;
         }
-      } else if (at !== undefined) {
-        throw new Error("--at compiles the project itself to find the Story position; omit --artifact");
       }
       const values = new Map(options.values);
-      for (const name of ["at", "player-qa"]) values.delete(name);
+      values.delete("at");
       values.set("artifact", artifactRoot);
       values.set("output", output);
       if (!values.has("compression")) values.set("compression", "none");
-      if (qaPlayer !== undefined) values.set("player", qaPlayer);
       result = await packProject({values, flags: new Set(options.flags), positional: [...options.positional]},
         {development: true, ...(looseMedia && (artifact !== undefined || keptExternalInputs !== undefined)
           ? {externalInputs: artifact !== undefined ? [...looseMediaPaths(artifact)] : [...keptExternalInputs!],
@@ -3522,14 +3502,6 @@ async function runCommand(options: Options): Promise<number> {
     lifecycle({event: "run.build", phase: "done", code: "PXCLI1312", output: result.output,
       retained: result.retained === true, durationMs: Date.now() - buildStarted,
       message: `Game built in ${Date.now() - buildStarted} ms: ${result.output}`});
-    // A position that does not exist starts no game.
-    if (at !== undefined && artifact !== undefined) {
-      try { resolvePreviewTarget(artifact, at); }
-      catch (error) {
-        throw new PackagerFailure([diagnostic("PXCLI1315", `--at ${at} names no Story position`,
-          options.positional[0], error instanceof Error ? error.message : String(error))]);
-      }
-    }
     // --prepare: an editor brings Play up to date after a save; the next
     // run starts at once.
     if (options.flags.has("prepare")) return 0;
@@ -3541,11 +3513,13 @@ async function runCommand(options: Options): Promise<number> {
       // artifact, then the media left in the project folder.
       ...(looseArtifact !== undefined
         ? {PRISMATIX_CONTENT_FALLBACK: [looseArtifact, location.root].join(delimiter)} : {})};
-    let portFile: string | undefined;
+    // --at: the Player boots while the position is worked out; it waits for
+    // the request file before leaving its boot.
+    let startRequestPath: string | undefined;
     if (at !== undefined) {
       scratch = await mkdtemp(join(tmpdir(), "prismatix-run-"));
-      portFile = join(scratch, "qa-ipc.port");
-      Object.assign(environment, {PRISMATIX_QA_IPC: "127.0.0.1:0", PRISMATIX_QA_IPC_PORT_FILE: portFile});
+      startRequestPath = join(scratch, "start-at.json");
+      environment.PRISMATIX_START_AT = startRequestPath;
     }
     const started = Date.now();
     // The Player's output goes through the CLI so extension positions name
@@ -3590,34 +3564,43 @@ async function runCommand(options: Options): Promise<number> {
       });
     });
     lifecycle({event: "run.player", phase: "start", code: "PXCLI1313", pid: player.pid,
-      qa: qaPlayer !== undefined, executable: result.player,
+      at: at !== undefined, executable: result.player,
       message: `Game started (pid ${player.pid ?? "unknown"})`});
-    if (at !== undefined && portFile !== undefined && artifact !== undefined) {
-      let client: PlayerTestClient | undefined;
+    if (at !== undefined && startRequestPath !== undefined) {
+      // A build that was skipped resolves the position from the artifact it
+      // left. A position that does not exist closes the game.
+      let startPlan: StoryStartPlan;
       try {
-        const port = await waitForPort(portFile, player, () => exitCode !== undefined, 60_000);
-        client = await PlayerTestClient.connect(port, scratch!);
-        const outcome = await reachStoryPosition(client, artifact, at);
-        const position = `${outcome.sourceUri}:${outcome.line}`;
-        if (outcome.reached) {
-          const choices = outcome.branchPath !== undefined && outcome.branchPath.length > 0
-            ? ` (choices ${outcome.branchPath.map((choice) => choice + 1).join(" > ")})` : "";
-          progress({event: "run.at", severity: "information", code: "PXCLI1310",
-            message: `Game is at ${position}${choices} after ${Date.now() - started} ms`,
-            reached: true, sourceUri: outcome.sourceUri, line: outcome.line,
-            operationIndex: outcome.operationIndex, branchPath: outcome.branchPath,
-            durationMs: Date.now() - started});
-        } else {
-          const where = outcome.state?.story.source ?? undefined;
-          printDiagnostics([{severity: "warning", code: "PXCLI1315",
-            message: `The game could not reach ${position}: ${outcome.reason ?? "unknown reason"}; ` +
-              `it stays ${where ? `at ${where.uri}:${where.line}` : "where it stopped"}`,
-            path: outcome.sourceUri, hint: `Played ${outcome.attempts} choice path(s) from the start of the story`}]);
-        }
+        startPlan = storyStartPlan(artifact ?? readStoryArtifact(looseArtifact ?? options.values.get("artifact") ??
+          join(devRoot, "run-artifact")), at);
       } catch (error) {
-        printDiagnostics([diagnostic("PXCLI1315", `The game could not be brought to ${at}`,
-          options.positional[0], String(error))]);
-      } finally { client?.close(); }
+        player.kill();
+        printDiagnostics([diagnostic("PXCLI1315", `--at ${at} names no Story position`,
+          options.positional[0], error instanceof Error ? error.message : String(error))]);
+        await exited;
+        return 1;
+      }
+      const startOutcomePath = join(scratch!, "start-at.outcome.json");
+      await writeFile(`${startRequestPath}.partial`, JSON.stringify({operation: startPlan.operation,
+        attempts: startPlan.attempts, result: startOutcomePath}));
+      await rename(`${startRequestPath}.partial`, startRequestPath);
+      const outcome = await waitForStoryStart(startOutcomePath, () => exitCode !== undefined);
+      const position = `${startPlan.sourceUri}:${startPlan.line}`;
+      if (outcome?.reached) {
+        const choices = outcome.choices !== undefined && outcome.choices.length > 0
+          ? ` (choices ${outcome.choices.map((choice) => choice + 1).join(" > ")})` : "";
+        const fromScene = outcome.from === startPlan.attempts[startPlan.attempts.length - 1]!.from &&
+          outcome.from !== startPlan.attempts[0]!.from ? " from the start of its scene" : "";
+        progress({event: "run.at", severity: "information", code: "PXCLI1310",
+          message: `Game is at ${position}${fromScene}${choices} after ${Date.now() - started} ms`,
+          reached: true, sourceUri: startPlan.sourceUri, line: startPlan.line, fromScene: fromScene !== "",
+          branchPath: outcome.choices ?? [], durationMs: Date.now() - started});
+      } else if (outcome !== undefined) {
+        printDiagnostics([{severity: "warning", code: "PXCLI1315",
+          message: `The game could not reach ${position}${outcome.reason ? `: ${outcome.reason}` : ""}; ` +
+            "it plays from the first line of its scene",
+          path: startPlan.sourceUri, hint: "Variables set before the scene keep their defaults"}]);
+      }
     }
     const code = await exited;
     // Lines the Player wrote just before it exited.
@@ -3631,6 +3614,16 @@ async function runCommand(options: Options): Promise<number> {
   } finally {
     process.removeListener("SIGINT", stopPlayer); process.removeListener("SIGTERM", stopPlayer);
     if (scratch !== undefined) await rm(scratch, {recursive: true, force: true}).catch(() => {});
+  }
+}
+
+/** The Player's report of its start at a Story position; undefined when it exited first. */
+async function waitForStoryStart(path: string, exited: () => boolean): Promise<StoryStartOutcome | undefined> {
+  const deadline = Date.now() + 180_000;
+  for (;;) {
+    try { return JSON.parse(await readFile(path, "utf8")) as StoryStartOutcome; } catch { /* not yet */ }
+    if (exited() || Date.now() > deadline) return undefined;
+    await new Promise((accept) => setTimeout(accept, 50));
   }
 }
 
@@ -4552,12 +4545,11 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "When no file the last --dev build read has changed (sizes and times, and the folders it looked into),",
     "the build is skipped and the game starts from the existing artifact. --prepare builds without starting",
     "the game, so an editor can bring Play up to date after a save and the next run starts at once.",
-    "--at starts the real game at a Story position: it packs PrismatiXPlayerQA (the Player with its QA IPC",
-    "test interface, found beside the Player or given with --player-qa) into <project>/.prismatix/run-qa,",
-    "starts the story and clicks through it, choosing the options that lead there, until that line is",
-    "current, so background, characters and music are what playing there shows. That QA pack is for local",
-    "development only and must never be released or shared. If the line cannot be reached, PXCLI1315 says",
-    "why and the game stays where it stopped.",
+    "--at opens the real game at a Story position (implies --dev): the Player skips its splashes and title",
+    "and replays the story there at once, choosing the options that lead there, so background, characters,",
+    "music and variables are what playing there shows. A scene reached only from a screen (a chapter menu)",
+    "is replayed from its own first line; when nothing reaches the line, PXCLI1315 says why and the scene",
+    "plays from its first line.",
     "The game closes when this command exits or is killed (PRISMATIX_EXIT_WITH_PROCESS), so an editor's",
     "Stop needs only to end this process.",
     "--json: stderr is NDJSON: event diagnostic, progress, run.build start/done (output, retained,",

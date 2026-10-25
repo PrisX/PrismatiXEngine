@@ -41,6 +41,18 @@ The packages always carry the same version and pin each other exactly.
   directory once instead of asking the file system about every resource
   reference. A large game read from folders loaded its Runtime IR in 8.4 s
   and its characters in 1.4 s; now 3.7 s and 0.3 s.
+- `run --at` opens the game right at a Story position. The Player skips its
+  splashes and title and replays the story there at once with nothing drawn
+  (`PRISMATIX_START_AT`, `VM::SetPassWaits`, `VM::RestartAt`): first from the
+  story's start along the options that lead there, then from the first line
+  of the target's scene, which reaches a scene the story opens only from a
+  screen such as a chapter menu. When nothing reaches the line, the scene
+  plays from its first line (`PXCLI1315`). It uses the same development pack
+  as `run --dev`, so an unchanged project starts without building and the
+  Studio's background build covers it; the Player boots while the CLI works
+  out the position, and the story starts loading during boot. A mid-game line
+  of a 352-scene port went from 22 s (clicking through from the title, and
+  unreachable behind a chapter menu) to about 6 s.
 
 - `resourceBundle: "directory"` on an extension command's `resource`
   parameter: the build ships every file in the folder of the file Story
@@ -230,6 +242,12 @@ The packages always carry the same version and pin each other exactly.
   `--json` each is a `run.extension` record with a `span`.
 
 ### Changed
+
+- `run --at` no longer packs or drives `PrismatiXPlayerQA`: it starts the
+  shipped Player from the `run --dev` pack (`.prismatix/run-qa`, and `run`'s
+  `--player-qa` and `PXCLI1314`, are gone).
+- The Runtime IR parser moves strings out of the parsed JSON instead of
+  copying them: a 125,000-operation story parses in 1.2 s instead of 1.5 s.
 
 - Builds keep compiled TSX screens in `.prismatix/cache/jsx-ui-v1.json` and
   reuse one while every module it read has the same text and every import

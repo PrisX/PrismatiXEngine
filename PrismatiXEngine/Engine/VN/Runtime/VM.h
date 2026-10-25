@@ -179,6 +179,14 @@ public:
         m_videoHook = std::move(hook);
     }
     void NotifyVideoDone();
+    // While the host brings the story to a position at once (the Player
+    // starting at a Story line): a [video] is passed without being played,
+    // and a replay that meets an awaitable command asks `settleExternal` to
+    // finish it (true when it did) instead of stopping there.
+    void SetPassWaits(bool enabled, std::function<bool()> settleExternal = {}) {
+        m_passWaits = enabled;
+        m_settleExternal = std::move(settleExternal);
+    }
     void WaitExternal() { m_state = VMState::WaitingExternal; }
     // Session commands (for example a screen transition) hold the script
     // for a time. Click and skip advance past it like an authored [wait].
@@ -203,6 +211,9 @@ public:
     // is the bounded runtime primitive used by scene replay and flowchart
     // jump UIs; presentation cleanup remains the host's responsibility.
     bool RestartAtLabel(std::string_view label);
+    // Starts the loaded program at a code index; with `run` false it stays
+    // Idle there, for a replay to run it (ReplayCompiledProgramAt).
+    bool RestartAt(int codeIndex, bool run = true);
     ProgramSeekStatus LoadCompiledProgramAt(Program program,
                                             const std::string& scriptPath,
                                             int operationIndex);
@@ -352,6 +363,8 @@ private:
     std::optional<int> m_seekTargetPc;
     bool m_seeking = false;
     bool m_fastForward = false;
+    bool m_passWaits = false;
+    std::function<bool()> m_settleExternal;
     // Set by WaitFor from a command hook; the run loop yields once for it.
     bool m_waitRequested = false;
     std::function<bool()> m_timerHold;

@@ -125,6 +125,21 @@ private:
 
     void StartGame();
     [[nodiscard]] bool CommitStartGame();
+    void ResetStoryVariables();
+    // PRISMATIX_START_AT (`prismatix run --at`): the game skips its splashes
+    // and title and opens at a Story position, replayed there at once. The
+    // request file may be written while the game boots.
+    struct StoryStart {
+        struct Attempt {
+            std::string from;  // operation id the replay starts at
+            std::vector<int> choices;
+        };
+        std::string operation;
+        std::vector<Attempt> attempts;
+        std::string result;  // where the outcome is written
+    };
+    [[nodiscard]] std::optional<StoryStart> ReadStoryStart();
+    void StartAtStoryPosition(const StoryStart& request);
     void GameStartTransitionFrame(float dt, std::uint64_t now);
     bool LoadSlot(int slot);
     bool SaveSlot(int slot, std::vector<std::uint8_t> thumbnail);
@@ -432,6 +447,9 @@ private:
     std::future<std::shared_ptr<const vn::Program>> m_runtimePreload;
     std::string m_pendingStoryEntry;
     std::string m_selectedFlowEntry;
+    std::string m_storyStartRequest;  // the request file, while it is awaited
+    std::uint64_t m_storyStartAwaitedSince = 0;
+    bool m_storyStartBoot = false;  // booted to start at a Story position: no splash
     std::vector<std::string> m_musicTracks;
     std::size_t m_musicTrackIndex = 0;
     bool m_musicTrackSelected = false;

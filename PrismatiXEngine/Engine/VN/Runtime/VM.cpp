@@ -197,7 +197,11 @@ bool VM::LoadCompiledProgram(Program program, const std::string& scriptPath) {
 
 bool VM::RestartAtLabel(const std::string_view label) {
     const int target = m_program.LabelIndex(std::string(label));
-    if (target < 0) return false;
+    return target >= 0 && RestartAt(target);
+}
+
+bool VM::RestartAt(const int target, const bool run) {
+    if (target < 0 || target >= static_cast<int>(m_program.code.size())) return false;
     m_callStack.clear();
     m_debugResumeState.reset();
     m_seekTargetPc.reset();
@@ -212,7 +216,7 @@ bool VM::RestartAtLabel(const std::string_view label) {
     m_stepping = false;
     m_stepBudget = 0;
     m_textSpeed = m_config.defaultTextSpeed;
-    Run();
+    if (run) Run();
     return true;
 }
 
@@ -309,6 +313,12 @@ ProgramSeekStatus VM::ReplayCompiledProgramAt(
             SelectChoice(choice);
             ++consumedChoices;
             if (choicesConsumed) *choicesConsumed = consumedChoices;
+            continue;
+        }
+        if (m_state == VMState::WaitingExternal && m_passWaits && !m_safetyRejected &&
+            m_settleExternal && m_settleExternal()) {
+            m_state = VMState::Idle;
+            Run();
             continue;
         }
         if (m_state == VMState::WaitingVideo ||
@@ -652,6 +662,7 @@ VMRunResult VM::RunSlice(const std::size_t maxInstructions) {
         if (t == "video" || t == "movie") {
             const std::string file = cmd.Get("file", cmd.Get("value"));
             ++m_pc;
+            if (m_passWaits) continue;
             if (m_videoHook && !file.empty()) {
                 const std::string s = cmd.Get("skippable", "true");
                 m_state = VMState::WaitingVideo;

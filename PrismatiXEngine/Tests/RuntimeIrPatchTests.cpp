@@ -55,6 +55,20 @@ px::vn::Program InfiniteJumpProgram() {
     return program;
 }
 
+// A line, a [video], a line: a replay that passes waits reaches the second.
+px::vn::Program VideoProgram() {
+    px::vn::Program program;
+    program.code.push_back(Say("before-video", "影片前"));
+    px::vn::Command video;
+    video.type = "video";
+    video.sourceId = "video";
+    video.args.push_back({"file", "op.webm"});
+    program.code.push_back(std::move(video));
+    program.code.push_back(Say("after-video", "影片後"));
+    program.branch.assign(program.code.size(), -1);
+    return program;
+}
+
 px::vn::Program ChoiceProgram(const std::string& documentId) {
     px::vn::Command choice;
     choice.type = "choice";
@@ -129,6 +143,29 @@ int main() {
     assert(dialogue.State().fullText == "新增段落");
     assert(!vm.RestartAtLabel("missing-scene"));
     assert(vm.CurrentSourceId() == "block-02");
+
+    // Restarting without running leaves the program Idle at the index, for
+    // a replay to run it.
+    assert(vm.RestartAt(0, /*run=*/false));
+    assert(vm.State() == px::vn::VMState::Idle && vm.ProgramCounter() == 0);
+    assert(!vm.RestartAt(9, false));
+
+    // A replay stops at a [video]; one that passes waits does not play it.
+    int videosStarted = 0;
+    vm.SetVideoHook([&videosStarted](const std::string&, bool) { ++videosStarted; });
+    assert(vm.LoadCompiledProgram(VideoProgram(), path));
+    assert(vm.RestartAt(0, false));
+    assert(vm.ReplayCompiledProgramAt(2) == px::vn::ProgramSeekStatus::UnsupportedBlockingState);
+    assert(videosStarted == 1);
+    vm.SetPassWaits(true);
+    assert(vm.RestartAt(0, false));
+    assert(vm.ReplayCompiledProgramAt(2) == px::vn::ProgramSeekStatus::Applied);
+    vm.DebugContinue();
+    assert(vm.State() == px::vn::VMState::WaitingClick);
+    assert(vm.CurrentSourceId() == "after-video");
+    assert(videosStarted == 1);
+    vm.SetPassWaits(false);
+    vm.SetVideoHook({});
 
     std::vector<std::string> choiceSeen;
     vm.SetChoiceSeenHook(

@@ -2770,13 +2770,63 @@ test("run --dev skips a build nothing changed, rebuilds after an edit, and --pre
   } finally { await rm(tools, {recursive: true, force: true}); }
 });
 
-test("run --at names a Story position and refuses a QA pack outside .prismatix", async () => {
+test("run --at opens the dev pack at a Story position without building it again", async () => {
   const value = await fixture();
-  const outside = run(["run", value.root, "--at", "main:1", "--output", join(value.root, "dist", "qa"),
-    "--player-qa", process.execPath]);
-  assert.equal(outside.status, 1);
-  assert.match(outside.stderr, /QA Player, which is for local development only/u);
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-run-at-"));
+  try {
+    const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+    await link(process.execPath, player);
+    const mock = join(tools, "mock-packager.mjs");
+    await write(mock, `
+      import {link, readFile} from "node:fs/promises";
+      import {basename, join} from "node:path";
+      const request = JSON.parse(await readFile(process.argv.at(-1), "utf8"));
+      await link(request.playerExecutable, join(request.outputDir, basename(request.playerExecutable)));
+      process.stdout.write(JSON.stringify({protocolVersion: 1, event: "completed",
+        requestId: request.requestId}) + "\\n");
+    `);
+    // The "Player" (Node) answers PRISMATIX_START_AT the way the real one
+    // does, once the request is written while it boots.
+    const fake = join(tools, "start-at.cjs");
+    const seen = join(tools, "start-at.request.json");
+    await write(fake, `
+      const fs = require("node:fs");
+      const path = process.env.PRISMATIX_START_AT;
+      const deadline = Date.now() + 20000;
+      while (path && !fs.existsSync(path) && Date.now() < deadline)
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      if (path && fs.existsSync(path)) {
+        const request = JSON.parse(fs.readFileSync(path, "utf8"));
+        fs.writeFileSync(${JSON.stringify(seen)}, JSON.stringify(request));
+        fs.writeFileSync(request.result, JSON.stringify({reached: true, from: request.attempts[0].from,
+          choices: [], durationMs: 3}));
+      }
+    `);
+    const play = (...extra: string[]) => {
+      const result = spawnSync(process.execPath, [resolve("dist/src/cli.js"), "run", value.root, "--packager", mock,
+        "--player", player, ...extra, "--json"], {encoding: "utf8", env: {...process.env, NODE_OPTIONS: `--require=${fake}`}});
+      return {status: result.status, records: result.stderr.split(/\r?\n/u).filter((line) => line.startsWith("{"))
+        .map((line) => JSON.parse(line) as Record<string, unknown>), stderr: result.stderr};
+    };
+    assert.equal(play("--dev").status, 0);
+    const opened = play("--at", "main:1");
+    assert.equal(opened.status, 0, opened.stderr);
+    // The same dev pack, with nothing to build.
+    assert.ok(opened.records.some((record) => record.code === "PXCLI1317"));
+    assert.ok(!opened.records.some((record) => record.phase === "compile"));
+    assert.equal(opened.records.find((record) => record.event === "run.build" && record.phase === "done")?.output,
+      join(value.root, ".prismatix", "run"));
+    const at = opened.records.find((record) => record.code === "PXCLI1310");
+    assert.equal(at?.reached, true);
+    const request = JSON.parse(await readFile(seen, "utf8")) as {operation: string; attempts: {from: string}[]};
+    assert.equal(typeof request.operation, "string");
+    assert.ok(request.attempts.length > 0);
+    // A position that does not exist closes the game.
+    const missing = play("--at", "nowhere:1");
+    assert.equal(missing.status, 1);
+    assert.ok(missing.records.some((record) => record.code === "PXCLI1315"));
+    assert.ok(!missing.records.some((record) => record.code === "PXCLI1310"));
+  } finally { await rm(tools, {recursive: true, force: true}); }
   const help = runHuman(["run", "--help"]);
-  assert.match(help.stdout + help.stderr, /\.prismatix\/run-qa/u);
-  assert.match(help.stdout + help.stderr, /never be released/u);
+  assert.match(help.stdout + help.stderr, /skips its splashes and title/u);
 });

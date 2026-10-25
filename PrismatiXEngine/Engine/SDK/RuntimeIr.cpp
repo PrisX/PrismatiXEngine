@@ -63,6 +63,14 @@ bool ReadRequiredString(const Json& object, const char* key, std::string& value)
     return true;
 }
 
+// As ReadRequiredString, moving the string out of the parsed document.
+bool TakeRequiredString(Json& object, const char* key, std::string& value) {
+    const auto found = object.find(key);
+    if (found == object.end() || !found->is_string() || found->empty()) return false;
+    value = std::move(found->get_ref<std::string&>());
+    return true;
+}
+
 }  // namespace
 
 RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
@@ -71,7 +79,8 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
         AddDiagnostic(result, "PXSDKIR1007", "Runtime IR exceeds the size limit");
         return result;
     }
-    const Json root = Json::parse(text, nullptr, false);
+    // Not const: each operation's strings are moved out rather than copied.
+    Json root = Json::parse(text, nullptr, false);
     if (root.is_discarded() || !root.is_object()) {
         AddDiagnostic(result, "PXSDKIR1001", "Runtime IR must be a JSON object");
         return result;
@@ -99,7 +108,7 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
         result.document.committedRevision = committedRevision->get<std::uint64_t>();
     }
 
-    const auto operations = root.find("operations");
+    auto operations = root.find("operations");
     if (operations == root.end() || !operations->is_array()) {
         AddDiagnostic(result, "PXSDKIR1006", "Runtime IR operations must be an array");
         return result;
@@ -110,11 +119,15 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
         return result;
     }
 
-    std::unordered_set<std::string> operationIds;
-    std::unordered_set<std::string> sourceIds;
+    // Views of the stored operations' ids: the vector is reserved, so they
+    // stay where they are.
+    std::unordered_set<std::string_view> operationIds;
+    std::unordered_set<std::string_view> sourceIds;
+    operationIds.reserve(operations->size());
+    sourceIds.reserve(operations->size());
     result.document.operations.reserve(operations->size());
     for (std::size_t index = 0; index < operations->size(); ++index) {
-        const Json& item = (*operations)[index];
+        Json& item = (*operations)[index];
         if (!item.is_object()) {
             AddDiagnostic(result, "PXSDKIR1010", "Runtime operation must be an object", index);
             continue;
@@ -128,11 +141,11 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
         }
         RuntimeIrOperation operation;
         bool valid = true;
-        if (!ReadRequiredString(item, "operationId", operation.operationId)) {
+        if (!TakeRequiredString(item, "operationId", operation.operationId)) {
             AddDiagnostic(result, "PXSDKIR1011", "Runtime operationId is required", index);
             valid = false;
         }
-        if (!ReadRequiredString(item, "sourceId", operation.sourceId)) {
+        if (!TakeRequiredString(item, "sourceId", operation.sourceId)) {
             AddDiagnostic(result, "PXSDKIR1012", "Runtime sourceId is required", index);
             valid = false;
         }
@@ -149,7 +162,7 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
         } else {
             operation.sourceLine = sourceLine->get<std::uint32_t>();
         }
-        if (!ReadRequiredString(item, "kind", operation.kind)) {
+        if (!TakeRequiredString(item, "kind", operation.kind)) {
             AddDiagnostic(result, "PXSDKIR1013", "Runtime operation kind is required", index);
             valid = false;
         } else if (!ExecutableOperationKind(operation.kind)) {
@@ -164,14 +177,14 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
             AddDiagnostic(result, "PXSDKIR1014", "Runtime operation text must be a string", index);
             valid = false;
         } else {
-            operation.text = operationText->get<std::string>();
+            operation.text = std::move(operationText->get_ref<std::string&>());
             if (operation.text.size() > kMaxRuntimeStringBytes) {
                 AddDiagnostic(result, "PXSDKIR1022",
                               "Runtime operation text exceeds the size limit", index);
                 valid = false;
             }
         }
-        const auto arguments = item.find("arguments");
+        auto arguments = item.find("arguments");
         if (arguments == item.end() || !arguments->is_object()) {
             AddDiagnostic(result, "PXSDKIR1017", "Runtime operation arguments must be an object", index);
             valid = false;
@@ -182,6 +195,7 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
                               index);
                 valid = false;
             }
+            operation.arguments.reserve(arguments->size());
             for (auto argument = arguments->begin(); argument != arguments->end(); ++argument) {
                 if (!argument.value().is_string()) {
                     AddDiagnostic(result, "PXSDKIR1018",
@@ -189,7 +203,7 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
                     valid = false;
                     continue;
                 }
-                const auto value = argument.value().get<std::string>();
+                std::string& value = argument.value().get_ref<std::string&>();
                 if (argument.key().size() > kMaxRuntimeStringBytes ||
                     value.size() > kMaxRuntimeStringBytes) {
                     AddDiagnostic(result, "PXSDKIR1024",
@@ -198,18 +212,23 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
                     valid = false;
                     continue;
                 }
-                operation.arguments.emplace(argument.key(), value);
+                operation.arguments.emplace(argument.key(), std::move(value));
             }
         }
-        if (!operation.operationId.empty() && !operationIds.insert(operation.operationId).second) {
+        if (!valid) continue;
+        const RuntimeIrOperation& stored = result.document.operations.emplace_back(std::move(operation));
+        const bool newOperation = !operationIds.contains(stored.operationId);
+        const bool newSource = !sourceIds.contains(stored.sourceId);
+        if (!newOperation)
             AddDiagnostic(result, "PXSDKIR1015", "Runtime operationId must be unique", index);
-            valid = false;
-        }
-        if (!operation.sourceId.empty() && !sourceIds.insert(operation.sourceId).second) {
+        if (!newSource)
             AddDiagnostic(result, "PXSDKIR1016", "Runtime sourceId must be unique", index);
-            valid = false;
+        if (newOperation && newSource) {
+            operationIds.insert(stored.operationId);
+            sourceIds.insert(stored.sourceId);
+        } else {
+            result.document.operations.pop_back();
         }
-        if (valid) result.document.operations.push_back(std::move(operation));
     }
     return result;
 }

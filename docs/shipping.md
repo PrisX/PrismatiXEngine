@@ -312,6 +312,21 @@ the project has been played, so pressing Play usually has nothing to build.
 On a 46,000-file port (352 scenes), a Play after a Story edit went from 40 s
 (a 222 MB package validated and archived each time) to about 12 s when built
 on demand, and about 1.3 s of building once the Studio has prepared it.
+
+`run --at <position>` plays the same pack and opens the game right at a
+Story line. The CLI starts the Player with `PRISMATIX_START_AT=<request>`
+and, while it boots, writes the request: the target operation and the
+starts to try, each an operation and the options to choose on the way. The
+Player skips its splashes and title and replays the story to the target at
+once, with nothing drawn: backgrounds, characters and tweens land in their
+final state, voices and one-shot sounds are not played, a `[video]` is passed
+and an awaitable extension command is cancelled as Skip does. The first
+start tried is the story's own, so variables and the stage are what playing
+there produces; the last is the first line of the target's scene, for a
+scene the story reaches only from a screen (a chapter menu). When none
+reaches the line, the scene plays from its first line and the CLI warns
+(`PXCLI1315`). The Player writes the outcome to the file the request names,
+and the CLI reports it (`PXCLI1310`).
 `--pack-media` packs everything into archives instead. A loose package is
 not a distribution and does not run on its own: `pack` and distribution
 `build` always pack and validate every resource.

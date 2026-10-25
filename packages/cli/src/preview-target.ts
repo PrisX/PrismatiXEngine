@@ -5,13 +5,16 @@ import type {BuildArtifact} from "@prismatix/authoring-sdk";
  * Accepted forms: `<scene>`, `<scene>:<line>`, `<scene>:<label>` and
  * `<Story/.../file.pxstory>:<line>`, all in the default locale.
  */
+/** The parts of a build a Story position is resolved from. */
+export type StoryArtifact = Pick<BuildArtifact, "project" | "runtimeIr" | "sourceMap" | "files">;
+
 export interface PreviewTarget {
   readonly operationIndex: number;
   readonly sourceUri: string;
   readonly line: number;
 }
 
-function sceneSource(artifact: BuildArtifact, scene: string): string {
+function sceneSource(artifact: StoryArtifact, scene: string): string {
   const text = artifact.files[artifact.project.storyIndex];
   if (text === undefined) {
     // A single-story project has no index; its only scene is the entry.
@@ -27,7 +30,7 @@ function sceneSource(artifact: BuildArtifact, scene: string): string {
   return source;
 }
 
-export function resolvePreviewTarget(artifact: BuildArtifact, target: string): PreviewTarget {
+export function resolvePreviewTarget(artifact: StoryArtifact, target: string): PreviewTarget {
   const separator = target.lastIndexOf(":");
   const head = separator < 0 ? target : target.slice(0, separator);
   const tail = separator < 0 ? undefined : target.slice(separator + 1);
@@ -58,15 +61,15 @@ export function resolvePreviewTarget(artifact: BuildArtifact, target: string): P
 }
 
 /**
- * Choice paths (option indices from the story start) that can reach
+ * Choice paths (option indices from the story start, or from `from`) that can reach
  * `operationIndex`, shortest first. Preview's story seek needs the path
  * explicitly when the target lies behind a [choice]. This walks the Runtime
  * IR's control flow — choice blocks, jumps, conditions (both ways) and
  * fragment calls — so it may also list paths a condition rules out at run
  * time; Preview verifies each one.
  */
-export function previewChoicePaths(artifact: BuildArtifact, operationIndex: number,
-  options: {readonly maxDepth?: number; readonly maxPaths?: number} = {}): number[][] {
+export function previewChoicePaths(artifact: StoryArtifact, operationIndex: number,
+  options: {readonly maxDepth?: number; readonly maxPaths?: number; readonly from?: number} = {}): number[][] {
   const operations = artifact.runtimeIr.operations;
   const maxDepth = options.maxDepth ?? 8;
   const maxPaths = options.maxPaths ?? 16;
@@ -90,7 +93,7 @@ export function previewChoicePaths(artifact: BuildArtifact, operationIndex: numb
     }
   });
   interface State { readonly index: number; readonly path: readonly number[]; readonly calls: readonly number[] }
-  const queue: State[] = [{index: 0, path: [], calls: []}];
+  const queue: State[] = [{index: options.from ?? 0, path: [], calls: []}];
   const seen = new Set<string>();
   const found: number[][] = [];
   const foundKeys = new Set<string>();
@@ -139,45 +142,6 @@ export function previewChoicePaths(artifact: BuildArtifact, operationIndex: numb
   // Fewest choices first, then the earlier options.
   return found.sort((left, right) => left.length - right.length ||
     left.join(",").localeCompare(right.join(","), "en", {numeric: true}));
-}
-
-// Operations the story stops at: the player sees them as "the current line".
-const waitingKinds = new Set(["dialogue", "narration", "choiceOption", "wait", "video", "ui", "endStory"]);
-
-/**
- * Where a played game rests once it reaches `operationIndex`: the operation
- * ids from the target up to the first one the story waits at (a line of
- * text, a choice, a wait), following jumps. A target such as `[bg ...]` or a
- * character change never waits itself, so the game "is at" that line when it
- * shows the next text. `choice` tells whether that rest is a [choice].
- */
-export function storyLandingOperations(artifact: BuildArtifact, operationIndex: number):
-  {readonly operationIds: readonly string[]; readonly choice: boolean} {
-  const operations = artifact.runtimeIr.operations;
-  const labels = new Map<string, number>();
-  operations.forEach((operation, index) => {
-    if (operation.kind === "label" && operation.arguments.target !== undefined &&
-        !labels.has(operation.arguments.target)) labels.set(operation.arguments.target, index);
-  });
-  const ids: string[] = [];
-  const visited = new Set<number>();
-  let index = operationIndex;
-  while (index >= 0 && index < operations.length && !visited.has(index) && visited.size < 256) {
-    visited.add(index);
-    const operation = operations[index]!;
-    ids.push(operation.operationId);
-    if (operation.kind === "choiceOption") {
-      // The whole option block is presented at once.
-      let option = index + 1;
-      for (; option < operations.length && operations[option]!.kind === "choiceOption"; option += 1)
-        ids.push(operations[option]!.operationId);
-      if (option < operations.length) ids.push(operations[option]!.operationId);
-      return {operationIds: ids, choice: true};
-    }
-    if (waitingKinds.has(operation.kind)) break;
-    index = operation.kind === "jump" ? labels.get(operation.arguments.target ?? "") ?? -1 : index + 1;
-  }
-  return {operationIds: ids, choice: false};
 }
 
 export interface StorySeekOutcome {

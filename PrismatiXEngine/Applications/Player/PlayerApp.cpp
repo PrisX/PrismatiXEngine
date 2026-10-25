@@ -701,7 +701,9 @@ bool PlayerApp::LoadLocale(std::string locale, const bool refreshPresentation) {
     m_settings.language = std::move(locale);
     m_session->VM().SetCharacterLocale(m_settings.language);
     m_script = runtimePath;
-    if (!replacingRunningProgram && m_appState == AppState::Title &&
+    // At boot too: the story loads while the rest of the game boots.
+    if (!replacingRunningProgram &&
+        (m_appState == AppState::Title || m_appState == AppState::BootSplash) &&
         m_runtimePreloadPath != m_script)
         BeginRuntimeIrPreload();
     if (!localizedNvl.empty() || m_nvlLines.empty())
@@ -817,6 +819,11 @@ bool PlayerApp::Init(int argc, char* argv[]) {
 #endif
     m_boot = LoadBootConfig();
     if (!m_boot.valid) return false;
+    if (const char* request = SDL_getenv("PRISMATIX_START_AT"); request && *request) {
+        m_storyStartRequest = request;
+        m_storyStartAwaitedSince = SDL_GetTicks();
+        m_storyStartBoot = true;
+    }
     if (m_boot.packaged) {
         const auto userData = progress::ResolvePackagedUserDataDirectory(
             m_boot.gameId);
@@ -1876,8 +1883,11 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_splash->Context().SetDiagnosticOverlayEnabled(false);
     m_splash->SetCompletionCallback([this]{FinishBootPresentation();});
     m_appState=AppState::BootSplash;
-    const Status splashStarted=m_splash->Start(m_boot.splashes,m_settings.reducedMotion);
-    if(!splashStarted)return false;
+    // A start at a Story position shows no splash.
+    if(!m_storyStartBoot){
+        const Status splashStarted=m_splash->Start(m_boot.splashes,m_settings.reducedMotion);
+        if(!splashStarted)return false;
+    }
     StartQaIpc();
     return true;
 }
@@ -2071,8 +2081,15 @@ bool PlayerApp::TitleVisualsReady() {
 
 void PlayerApp::FinishBootPresentation() {
     if(m_appState!=AppState::BootSplash)return;
-    if(!TitleVisualsReady())return;
-    BeginPresentationTransition(m_titleTransition);
+    std::optional<StoryStart> storyStart;
+    if(!m_storyStartRequest.empty()){
+        storyStart=ReadStoryStart();
+        if(!storyStart&&!m_storyStartRequest.empty())return;  // not written yet
+    }
+    if(!storyStart){
+        if(!TitleVisualsReady())return;
+        BeginPresentationTransition(m_titleTransition);
+    }
     if(!m_session->Routes().Replace(m_boot.startRoute)){m_quitRequested=true;return;}
     const auto routeStatus = m_session->Routes().SetFallbackTransition(
         {m_routeTransition.preset, m_routeTransition.duration});
@@ -2095,6 +2112,10 @@ void PlayerApp::FinishBootPresentation() {
         }
     }
     m_appState=AppState::Title;
+    if (storyStart) {
+        StartAtStoryPosition(*storyStart);
+        return;
+    }
     if (!TitleBgmPath().empty()) {
         const auto handle=m_runtime.Audio().PlayBGM(TitleBgmPath(),true,500);
         if(m_runtime.Audio().Status(handle)==audio::PlaybackStatus::Failed)
@@ -2204,18 +2225,7 @@ bool PlayerApp::CommitStartGame() {
     // Ignore a duplicate click/action delivered during that transition rather
     // than resetting an already-started runtime program.
     if (m_appState != AppState::Title) return false;
-    m_session->Variables().Reset(false);
-    for (const auto& v : m_catalog.Variables()) {
-        if (v.scope == vn::CatalogVariable::Scope::Profile) {
-            const Variant* stored = m_profile.Variable(v.name);
-            m_session->Variables().SetValue(
-                v.name, stored ? stored->Clone() : v.typedDefault.Clone(),
-                vn::VariableScope::Profile);
-        } else {
-            m_session->Variables().SetValue(
-                v.name, v.typedDefault.Clone(), vn::VariableScope::Session);
-        }
-    }
+    ResetStoryVariables();
     m_session->Backlog().Clear();
     m_autoMode = m_skipMode = m_hudHidden = false;
     m_storyEndHandled = false;
@@ -2302,6 +2312,153 @@ bool PlayerApp::CommitStartGame() {
     }
     PX_LOG_INFO("Player game started script={}", m_script);
     return true;
+}
+
+void PlayerApp::ResetStoryVariables() {
+    m_session->Variables().Reset(false);
+    for (const auto& v : m_catalog.Variables()) {
+        if (v.scope == vn::CatalogVariable::Scope::Profile) {
+            const Variant* stored = m_profile.Variable(v.name);
+            m_session->Variables().SetValue(
+                v.name, stored ? stored->Clone() : v.typedDefault.Clone(),
+                vn::VariableScope::Profile);
+        } else {
+            m_session->Variables().SetValue(
+                v.name, v.typedDefault.Clone(), vn::VariableScope::Session);
+        }
+    }
+}
+
+// The awaited request, once written. A request that never comes, or is not
+// one, is given up (m_storyStartRequest cleared) and the game opens its title.
+std::optional<PlayerApp::StoryStart> PlayerApp::ReadStoryStart() {
+    const std::string path = m_storyStartRequest;
+    std::error_code error;
+    if (!std::filesystem::exists(px::PathFromUtf8(path), error)) {
+        if (SDL_GetTicks() - m_storyStartAwaitedSince < 60'000) return std::nullopt;
+        PX_LOG_WARN("PRISMATIX_START_AT was not written; the game starts at its title: {}", path);
+        m_storyStartRequest.clear();
+        return std::nullopt;
+    }
+    m_storyStartRequest.clear();
+    std::ifstream file(px::PathFromUtf8(path), std::ios::binary);
+    const auto request = nlohmann::json::parse(file, nullptr, false);
+    StoryStart start;
+    if (request.is_object() && request.value("operation", nlohmann::json()).is_string() &&
+        request.value("attempts", nlohmann::json()).is_array()) {
+        start.operation = request["operation"].get<std::string>();
+        start.result = request.value("result", std::string{});
+        for (const auto& attempt : request["attempts"]) {
+            if (!attempt.is_object() || !attempt.value("from", nlohmann::json()).is_string()) continue;
+            StoryStart::Attempt parsed{.from = attempt["from"].get<std::string>()};
+            for (const auto& choice : attempt.value("choices", nlohmann::json::array()))
+                if (choice.is_number_integer()) parsed.choices.push_back(choice.get<int>());
+            start.attempts.push_back(std::move(parsed));
+        }
+    }
+    if (start.operation.empty() || start.attempts.empty()) {
+        PX_LOG_WARN("PRISMATIX_START_AT is not a Story start request; the game starts at its title: {}", path);
+        return std::nullopt;
+    }
+    return start;
+}
+
+// Replays the story to the requested operation in one go, with nothing drawn:
+// fast-forward lands every background, character and tween in its final
+// state, voices and one-shot sounds are not played, a [video] is passed, and
+// the Story's own variables and choices are what playing there produces. The
+// first attempt that reaches the operation wins; when none does, the story
+// plays from the last attempt's start (its scene's first line).
+void PlayerApp::StartAtStoryPosition(const StoryStart& request) {
+    const auto started = std::chrono::steady_clock::now();
+    auto& vm = m_session->VM();
+    vm.SetFastForward(true);
+    vm.SetPassWaits(true, [this] {
+        if (!m_scriptHost) return false;
+        (void)m_scriptHost->CancelPendingCommands(script::CancellationReason::Skip);
+        return !m_scriptHost->HasPendingCommand() && !m_scriptHost->HasPendingAction();
+    });
+    nlohmann::json result{{"operation", request.operation}, {"reached", false}};
+    const bool committed = CommitStartGame();
+    const auto& code = vm.CurrentProgram().code;
+    const auto codeIndex = [&code](const std::string& operation) {
+        const auto found = std::ranges::find(code, operation, &vn::Command::operationId);
+        return found == code.end() ? -1 : static_cast<int>(found - code.begin());
+    };
+    const auto resetStory = [this] {
+        if (m_scriptHost) (void)m_scriptHost->CancelPendingCommands(script::CancellationReason::Skip);
+        m_session->Stage().ClearAll();
+        m_session->Dialogue().Clear();
+        m_session->Backlog().Clear();
+        m_runtime.Audio().StopVoice();
+        m_runtime.Audio().StopAmbience(0);
+        m_runtime.Audio().StopBGM(0);
+        ResetStoryVariables();
+        SetStoryAuto(std::nullopt);
+        m_nvlMode = false;
+        m_nvlLines.clear();
+        m_storyHudVisible = false;
+    };
+    const int target = committed ? codeIndex(request.operation) : -1;
+    std::string reason = !committed ? "the game did not start"
+        : target < 0 ? "the compiled story has no operation " + request.operation : "";
+    int reached = -1;
+    for (std::size_t index = 0; target >= 0 && index < request.attempts.size(); ++index) {
+        const auto& attempt = request.attempts[index];
+        const int from = codeIndex(attempt.from);
+        if (from < 0 || from > target) continue;
+        resetStory();
+        (void)vm.RestartAt(from, /*run=*/false);
+        std::size_t consumed = 0;
+        const auto status = vm.ReplayCompiledProgramAt(target, attempt.choices, &consumed);
+        if (status == vn::ProgramSeekStatus::Applied) {
+            // A target that does not wait itself ([bg], a character) is
+            // passed on to the line the story shows next.
+            if (vm.State() == vn::VMState::Paused) vm.DebugContinue();
+            reached = static_cast<int>(index);
+            result["choices"] = std::vector<int>(attempt.choices.begin(),
+                attempt.choices.begin() + static_cast<std::ptrdiff_t>(consumed));
+            break;
+        }
+        reason = status == vn::ProgramSeekStatus::ChoicePathRequired ? "a choice on the way needs another option"
+            : status == vn::ProgramSeekStatus::UnsupportedBlockingState ? "an extension command on the way did not finish"
+            : status == vn::ProgramSeekStatus::UnsafeOperation ? "an operation on the way cannot be replayed"
+            : "the story does not reach it from there";
+    }
+    vm.SetPassWaits(false);
+    vm.SetFastForward(false);
+    if (committed && reached < 0) {
+        // The last start is the scene's own first line: play from there.
+        const int from = codeIndex(request.attempts.back().from);
+        resetStory();
+        if (from >= 0) (void)vm.RestartAt(from);
+        result["from"] = request.attempts.back().from;
+    } else if (reached >= 0) {
+        result["reached"] = true;
+        result["from"] = request.attempts[static_cast<std::size_t>(reached)].from;
+    }
+    if (!reason.empty() && reached < 0) result["reason"] = reason;
+    m_session->Stage().SettleTransitions();
+    m_rollback.clear();
+    m_lastBacklogSequence = m_session->Backlog().LastSequence();
+    m_hudFadeSnap = true;
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started).count();
+    result["durationMs"] = elapsed;
+    PX_LOG_INFO("Player started at a Story position operation={} reached={} durationMs={}",
+                request.operation, reached >= 0, elapsed);
+    if (!request.result.empty()) {
+        const auto path = px::PathFromUtf8(request.result);
+        auto partial = path;
+        partial += ".partial";
+        {
+            std::ofstream out(partial, std::ios::binary | std::ios::trunc);
+            out << result.dump();
+        }
+        std::error_code error;
+        std::filesystem::rename(partial, path, error);
+        if (error) PX_LOG_WARN("Story start outcome was not written: {}", error.message());
+    }
 }
 
 void PlayerApp::GameStartTransitionFrame(const float dt,
@@ -4094,7 +4251,8 @@ void PlayerApp::MainLoop() {
 #endif
 
         if(m_appState==AppState::BootSplash){
-            SplashFrame(dt);
+            if(m_storyStartBoot)FinishBootPresentation();
+            else SplashFrame(dt);
             m_runtime.EndFrame();
             continue;
         }

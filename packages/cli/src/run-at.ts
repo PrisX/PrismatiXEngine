@@ -1,76 +1,79 @@
-// `prismatix run --at`: brings a running QA Player to a Story position the
-// way a player gets there. Jumping to a label would restart the story with an
-// empty stage, so the game starts at the story entry and clicks through
-// (several lines per frame, text shown at once), choosing the options that
-// lead to the target, until the line is current. Background, characters,
-// expressions and music are then what playing there produces.
+// `prismatix run --at`: the Player opens at a Story position. It skips its
+// splashes and title and replays the story there at once, with nothing drawn
+// (PRISMATIX_START_AT), so background, characters, music and variables are
+// what playing there produces. The replay starts at the story's start and
+// takes the choice paths that lead there; a scene the story reaches only from
+// a screen (a chapter menu) is replayed from its own first line instead, and
+// when nothing reaches the line the scene plays from its first line.
 
-import type {BuildArtifact} from "@prismatix/authoring-sdk";
+import {readFileSync} from "node:fs";
+import {join} from "node:path";
 
-import {PlayerRequestError, type PlayerState, type PrismatixTestClient, type WaitCondition} from "./qa-client.js";
-import {previewChoicePaths, resolvePreviewTarget, storyLandingOperations} from "./preview-target.js";
+import {previewChoicePaths, resolvePreviewTarget, type StoryArtifact} from "./preview-target.js";
 
-export type StoryDriver = Pick<PrismatixTestClient, "state" | "jump" | "advanceUntil" | "choose" | "waitUntil">;
+export interface StoryStartAttempt {
+  /** The operation the replay starts at. */
+  readonly from: string;
+  /** The options to choose on the way (indices from 0). */
+  readonly choices: readonly number[];
+}
 
-export interface StoryPositionOutcome {
-  readonly reached: boolean;
+export interface StoryStartPlan {
   readonly sourceUri: string;
   readonly line: number;
-  readonly operationIndex: number;
-  /** The options chosen on the way (indices from 0), when reached. */
-  readonly branchPath?: readonly number[];
-  /** How many choice paths were played. */
-  readonly attempts: number;
-  /** The Player's state where the search ended. */
-  readonly state?: PlayerState;
-  /** Why the position was not reached. */
+  /** The operation the game opens at. */
+  readonly operation: string;
+  /** Tried in order; the last starts at the target's scene. */
+  readonly attempts: readonly StoryStartAttempt[];
+}
+
+/** What the Player reports once it has opened (written to the plan's result file). */
+export interface StoryStartOutcome {
+  readonly reached: boolean;
+  readonly from?: string;
+  readonly choices?: readonly number[];
   readonly reason?: string;
+  readonly durationMs?: number;
 }
 
-export interface StoryPositionOptions {
-  /** Most choice paths to play before giving up (default 8). */
-  readonly maxPaths?: number;
-  /** Per-path time limit for clicking through (default 120 s). */
-  readonly timeoutMs?: number;
-}
+const sceneEntryPrefix = "pxscene.entry.";
 
-export async function reachStoryPosition(player: StoryDriver, artifact: BuildArtifact, at: string,
-  options: StoryPositionOptions = {}): Promise<StoryPositionOutcome> {
+export function storyStartPlan(artifact: StoryArtifact, at: string,
+  options: {readonly maxPaths?: number} = {}): StoryStartPlan {
   const target = resolvePreviewTarget(artifact, at);
-  const base = {sourceUri: target.sourceUri, line: target.line, operationIndex: target.operationIndex};
-  const paths = previewChoicePaths(artifact, target.operationIndex);
-  if (paths.length === 0)
-    return {...base, reached: false, attempts: 0,
-      reason: "no path from the start of the story reaches this line"};
-  const landing = storyLandingOperations(artifact, target.operationIndex);
-  const condition: WaitCondition = {operation: landing.operationIds, ...(landing.choice ? {choices: true} : {})};
-  await player.waitUntil((state) => state.appState === "title" || state.appState === "game",
-    {timeoutMs: 60_000, message: "the game did not reach its title screen"});
-  let attempts = 0;
-  let reason = "";
-  let last: PlayerState | undefined;
-  for (const path of paths.slice(0, options.maxPaths ?? 8)) {
-    attempts += 1;
-    await player.jump(artifact.project.entry.story);
-    let consumed = 0;
-    for (;;) {
-      try {
-        const state = await player.advanceUntil(condition, {timeoutMs: options.timeoutMs ?? 120_000,
-          maxLines: 1_000_000});
-        return {...base, reached: true, branchPath: path.slice(0, consumed), attempts, state};
-      } catch (error) {
-        if (!(error instanceof PlayerRequestError)) throw error;
-        last = await player.state();
-        const choice = path[consumed];
-        if (last.choices.length > 0 && choice !== undefined && choice < last.choices.length) {
-          await player.choose(choice);
-          consumed += 1;
-          continue;
-        }
-        reason = error.message;
-        break;
-      }
-    }
-  }
-  return {...base, reached: false, attempts, reason, ...(last === undefined ? {} : {state: last})};
+  const operations = artifact.runtimeIr.operations;
+  const maxPaths = options.maxPaths ?? 8;
+  const attempts: StoryStartAttempt[] = [];
+  const add = (from: number, choices: readonly number[]): void => {
+    const id = operations[from]!.operationId;
+    if (!attempts.some((attempt) => attempt.from === id && attempt.choices.join(",") === choices.join(",")))
+      attempts.push({from: id, choices});
+  };
+  for (const path of previewChoicePaths(artifact, target.operationIndex, {maxPaths})) add(0, path);
+  // The target's scene starts at the nearest scene entry label before it.
+  let scene = target.operationIndex;
+  while (scene > 0 && !(operations[scene]!.kind === "label" &&
+    operations[scene]!.arguments.target?.startsWith(sceneEntryPrefix))) scene -= 1;
+  const scenePaths = previewChoicePaths(artifact, target.operationIndex, {from: scene, maxPaths: 4});
+  // Even when nothing reaches the line, the game opens at the scene's first line.
+  for (const path of scenePaths.length > 0 ? scenePaths : [[]]) add(scene, path);
+  return {sourceUri: target.sourceUri, line: target.line, operation: operations[target.operationIndex]!.operationId,
+    attempts};
+}
+
+/**
+ * The parts of a compiled artifact folder a Story position is resolved from,
+ * for a run that starts the game without compiling it again. Story sources
+ * and the story index are read when asked for.
+ */
+export function readStoryArtifact(root: string): StoryArtifact {
+  const json = (path: string): unknown => JSON.parse(readFileSync(join(root, path), "utf8"));
+  const read = (path: string): string | undefined => {
+    try { return readFileSync(join(root, path), "utf8"); } catch { return undefined; }
+  };
+  const files = new Proxy({} as Record<string, string>, {
+    get: (_, key) => typeof key === "string" ? read(key) : undefined,
+  });
+  return {project: json("project.pxproject"), runtimeIr: json("Runtime/main.pxir"),
+    sourceMap: json("Runtime/main.pxmap"), files} as StoryArtifact;
 }
