@@ -219,6 +219,9 @@ The packages always carry the same version and pin each other exactly.
   evaluate.
 - The default locale's Runtime IR and source map are serialized once for
   both of their artifact paths instead of twice.
+- Video decoding uses every core instead of FFmpeg's single-thread default.
+  The Player logs each video's presentation pacing when it ends (frames
+  shown, frames decoded too late, the longest pause).
 - The Windows executable's icon, version information and manifest are written
   by the Packager itself instead of Windows' resource API, so Linux and macOS
   pack the same Windows build as Windows does. It rebuilds the resource
@@ -262,6 +265,13 @@ The packages always carry the same version and pin each other exactly.
   resolve each directory once and list it instead of every file: the 7.7 s
   an unchanged Play of that project spent there is under 2 s. With the TSX
   cache, its unchanged Play builds in about 12 s instead of 28 s.
+- Videos whose audio decoder stamps its first frames late (WMA Lossless:
+  1.3 s in one game's opening movie) started that far into the movie,
+  threw the first second of pictures away, and stuttered whenever the
+  audio clock stepped back. Decoded audio is now timed by its sample count
+  from the first audio packet. Picture decoding also no longer stops while
+  one audio packet's sound waits for room: audio packets are held like
+  video ones, and nothing is read ahead while both queues are full.
 - The Player refused a Story whose extension command passed a `resource`
   parameter as a plain path the project's asset catalog does not list
   (`PXRUNTIME7317`, "unknown asset UUID"): such a value is a path, not a

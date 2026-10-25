@@ -41,10 +41,13 @@ constexpr std::size_t kStartupVideoFrames = 3;
 constexpr double kStartupAudioSeconds = 0.1;
 constexpr std::uint64_t kMaximumStartupWaitNs = 1'000'000'000;
 constexpr int kCorruptPacketLimit = 32;
-// Compressed video held back while the decoded-frame queue is full, so the
-// demuxer can reach audio a file stores well behind its video.
+// Compressed packets held back while their stream's decoded queue is full,
+// so the demuxer can reach the other stream when a file stores it well
+// behind (video waiting for audio, or audio waiting for video).
 constexpr std::size_t kPendingVideoPacketCapacity = 1024;
 constexpr std::size_t kPendingVideoByteCapacity = 64u * 1024u * 1024u;
+constexpr std::size_t kPendingAudioPacketCapacity = 1024;
+constexpr std::size_t kPendingAudioByteCapacity = 16u * 1024u * 1024u;
 
 struct DecodedVideoFrame {
     double pts = 0.0;
@@ -56,6 +59,8 @@ struct DecodedAudioFrame {
     double duration = 0.0;
     std::vector<float> samples;
 };
+
+constexpr std::uint64_t kNsPerSecond = 1'000'000'000;
 
 std::string AvError(const int value) {
     std::array<char, AV_ERROR_MAX_STRING_SIZE> buffer{};
@@ -89,13 +94,31 @@ struct FfmpegState {
     int height = 0;
     double timeOrigin = 0.0;
     double nextVideoPts = 0.0;
-    double nextAudioPts = 0.0;
+    // Audio time runs from the first audio packet's time by sample count.
+    double audioStartPts = -1.0;
+    std::uint64_t audioSamplesDecoded = 0;
     double videoFrameDuration = 1.0 / 30.0;
     double audioSubmittedEndPts = 0.0;
     bool audioStarted = false;
     bool outputCreated = false;
     bool presentationStarted = false;
     std::uint64_t startupAtNs = 0;
+
+    // Presentation pacing, logged once when playback ends: how many pictures
+    // were shown, how many were decoded too late to be shown, the longest
+    // pause between two pictures, and how often the decoder had nothing ready.
+    struct Pacing {
+        std::uint64_t firstNs = 0;
+        std::uint64_t lastNs = 0;
+        std::uint64_t longestGapNs = 0;
+        std::uint64_t longestFirstSecondDtNs = 0;
+        std::size_t presented = 0;
+        std::size_t presentedFirstSecond = 0;
+        std::size_t superseded = 0;
+        std::size_t starved = 0;
+        std::size_t starvedFirstSecond = 0;
+        bool logged = false;
+    } pacing;
 
     mutable std::mutex mutex;
     std::condition_variable queueChanged;
@@ -112,6 +135,24 @@ struct FfmpegState {
 };
 
 namespace {
+void LogPacing(FfmpegState& state) {
+    auto& pacing = state.pacing;
+    if (pacing.logged || pacing.presented == 0) return;
+    pacing.logged = true;
+    const double seconds =
+        static_cast<double>(pacing.lastNs - pacing.firstNs) / kNsPerSecond;
+    PX_LOG_INFO(
+        "VideoPlayer: presented {} frames in {:.2f}s ({:.1f} fps, {} in the first second), "
+        "{} decoded too late, longest gap {:.1f} ms, decoder behind on {} updates "
+        "({} in the first second), longest first-second update {:.1f} ms",
+        pacing.presented, seconds,
+        seconds > 0.0 ? static_cast<double>(pacing.presented - 1) / seconds : 0.0,
+        pacing.presentedFirstSecond, pacing.superseded,
+        static_cast<double>(pacing.longestGapNs) / 1'000'000.0, pacing.starved,
+        pacing.starvedFirstSecond,
+        static_cast<double>(pacing.longestFirstSecondDtNs) / 1'000'000.0);
+}
+
 // Live players, for app lifecycle suspend. Players are created, destroyed
 // and suspended on the thread that owns the renderer.
 std::mutex g_playersMutex;
@@ -305,6 +346,9 @@ bool VideoPlayer::PrepareFfmpeg(const std::string& vfsPath, std::string& error) 
     state.videoCodec = avcodec_alloc_context3(videoDecoder);
     const AVCodecParameters* videoParameters =
         state.format->streams[state.videoStream]->codecpar;
+    // FFmpeg decodes on one thread unless asked; let it use the machine's
+    // cores so heavier codecs and resolutions keep up with playback.
+    if (state.videoCodec) state.videoCodec->thread_count = 0;
     if (!state.videoCodec ||
         avcodec_parameters_to_context(state.videoCodec, videoParameters) < 0 ||
         avcodec_open2(state.videoCodec, videoDecoder, nullptr) < 0) {
@@ -462,11 +506,15 @@ void VideoPlayer::DecodeFfmpegLoop() {
             fail("decoded audio frame exceeds queue memory budget");
             return false;
         }
+        // Every frame of a packet already sent is kept, whatever the frame
+        // count: one packet can hold more than a second of audio, and waiting
+        // here for room would stop video decoding until playback consumed it.
+        // The packet loop sends audio only while the queue has room, and the
+        // byte budget still bounds memory.
         std::unique_lock lock(state.mutex);
         state.queueChanged.wait(lock, [&] {
             return state.stopRequested.load() ||
-                   (state.audioQueue.size() < kAudioQueueCapacity &&
-                    bytes <= kAudioQueueByteCapacity - state.audioQueueBytes);
+                   bytes <= kAudioQueueByteCapacity - state.audioQueueBytes;
         });
         if (state.stopRequested.load()) return false;
         state.audioQueueBytes += bytes;
@@ -544,8 +592,16 @@ void VideoPlayer::DecodeFfmpegLoop() {
                                         ? static_cast<double>(converted) /
                                               kOutputSampleRate
                                         : 0.0;
-            decoded.pts = framePts(state.audioFrame, state.audioStream,
-                                   state.nextAudioPts, duration);
+            // Decoded audio is timed by the samples before it, not by the
+            // frame's own timestamp: decoders such as WMA Lossless stamp
+            // their first frames with a later packet's time (1.3 s late in
+            // one game's opening movie), which made playback start that far
+            // in and throw the first second of pictures away.
+            decoded.pts = state.audioStartPts +
+                          static_cast<double>(state.audioSamplesDecoded) /
+                              kOutputSampleRate;
+            if (converted > 0)
+                state.audioSamplesDecoded += static_cast<std::uint64_t>(converted);
             decoded.duration = duration;
             av_frame_unref(state.audioFrame);
             if (converted <= 0) continue;
@@ -572,74 +628,113 @@ void VideoPlayer::DecodeFfmpegLoop() {
         }
         return ok && drainVideo();
     };
+    const auto decodeAudio = [&](AVPacket* source) {
+        if (state.audioStartPts < 0.0) {
+            const auto timestamp =
+                source->pts != AV_NOPTS_VALUE ? source->pts : source->dts;
+            const double start =
+                timestamp == AV_NOPTS_VALUE
+                    ? 0.0
+                    : static_cast<double>(timestamp) *
+                              av_q2d(state.format->streams[state.audioStream]->time_base) -
+                          state.timeOrigin;
+            state.audioStartPts = std::isfinite(start) ? std::max(0.0, start) : 0.0;
+        }
+        bool ok = true;
+        int sent = avcodec_send_packet(state.audioCodec, source);
+        if (sent == AVERROR(EAGAIN)) {
+            ok = drainAudio();
+            if (ok) sent = avcodec_send_packet(state.audioCodec, source);
+        }
+        if (sent == AVERROR_INVALIDDATA) return true;
+        if (sent < 0) {
+            fail("audio packet submission failed: " + AvError(sent));
+            return false;
+        }
+        return ok && drainAudio();
+    };
     const auto videoHasRoom = [&] {
         std::scoped_lock lock(state.mutex);
         return state.videoQueue.size() < kVideoQueueCapacity;
     };
-    // Packets wait here instead of blocking the demuxer on a full frame queue;
-    // `force` decodes them anyway, waiting for room as before.
-    std::deque<AVPacket*> pendingVideo;
-    std::size_t pendingVideoBytes = 0;
-    const auto decodePending = [&](const bool force) {
-        while (!pendingVideo.empty() && !state.stopRequested.load() &&
-               (force || videoHasRoom())) {
-            AVPacket* next = pendingVideo.front();
-            pendingVideo.pop_front();
-            pendingVideoBytes -= static_cast<std::size_t>(next->size);
-            const bool ok = decodeVideo(next);
-            av_packet_free(&next);
-            if (!ok) return false;
+    const auto audioHasRoom = [&] {
+        std::scoped_lock lock(state.mutex);
+        return state.audioQueue.size() < kAudioQueueCapacity;
+    };
+    // Packets wait here instead of blocking the demuxer on a full frame queue.
+    struct Pending {
+        std::deque<AVPacket*> packets;
+        std::size_t bytes = 0;
+        std::size_t packetCapacity = 0;
+        std::size_t byteCapacity = 0;
+    };
+    Pending pendingVideo{.packetCapacity = kPendingVideoPacketCapacity,
+                         .byteCapacity = kPendingVideoByteCapacity};
+    Pending pendingAudio{.packetCapacity = kPendingAudioPacketCapacity,
+                         .byteCapacity = kPendingAudioByteCapacity};
+    const auto decodeFront = [&](Pending& pending, const auto& decode) {
+        AVPacket* next = pending.packets.front();
+        pending.packets.pop_front();
+        pending.bytes -= static_cast<std::size_t>(next->size);
+        const bool ok = decode(next);
+        av_packet_free(&next);
+        return ok;
+    };
+    const auto decodePending = [&](Pending& pending, const auto& hasRoom,
+                                   const auto& decode) {
+        while (!pending.packets.empty() && !state.stopRequested.load() && hasRoom())
+            if (!decodeFront(pending, decode)) return false;
+        return true;
+    };
+    // Decodes the packet now when its queue has room and nothing waits before
+    // it; otherwise holds it, decoding the oldest held packets first (waiting
+    // for room as before) when the hold is full.
+    const auto submit = [&](Pending& pending, const auto& hasRoom,
+                            const auto& decode, AVPacket* source) {
+        if (pending.packets.empty() && hasRoom()) return decode(source);
+        bool ok = true;
+        while (ok && !pending.packets.empty() &&
+               (pending.packets.size() >= pending.packetCapacity ||
+                pending.bytes + static_cast<std::size_t>(source->size) >
+                    pending.byteCapacity))
+            ok = decodeFront(pending, decode);
+        if (!ok) return false;
+        AVPacket* held = av_packet_alloc();
+        if (!held) {
+            fail("FFmpeg packet allocation failed");
+            return false;
         }
+        av_packet_move_ref(held, source);
+        pending.bytes += static_cast<std::size_t>(held->size);
+        pending.packets.push_back(held);
         return true;
     };
 
+    const bool hasAudio = state.audioCodec != nullptr;
     int corruptPackets = 0;
     while (!state.stopRequested.load()) {
-        if (!decodePending(false)) break;
+        if (!decodePending(pendingVideo, videoHasRoom, decodeVideo)) break;
+        if (!decodePending(pendingAudio, audioHasRoom, decodeAudio)) break;
+        {
+            // Read on only while a queue has room: the stream with room then
+            // gets its packets even when the file stores them far behind,
+            // and nothing is read ahead while both are full.
+            std::unique_lock lock(state.mutex);
+            state.queueChanged.wait(lock, [&] {
+                return state.stopRequested.load() ||
+                       state.videoQueue.size() < kVideoQueueCapacity ||
+                       (hasAudio && state.audioQueue.size() < kAudioQueueCapacity);
+            });
+        }
+        if (state.stopRequested.load()) break;
         const int read = av_read_frame(state.format, packet);
         if (read >= 0) {
             corruptPackets = 0;
             bool ok = true;
-            if (packet->stream_index == state.videoStream) {
-                if (pendingVideo.empty() && videoHasRoom()) {
-                    ok = decodeVideo(packet);
-                } else {
-                    while (ok && !pendingVideo.empty() &&
-                           (pendingVideo.size() >= kPendingVideoPacketCapacity ||
-                            pendingVideoBytes + static_cast<std::size_t>(packet->size) >
-                                kPendingVideoByteCapacity)) {
-                        AVPacket* next = pendingVideo.front();
-                        pendingVideo.pop_front();
-                        pendingVideoBytes -= static_cast<std::size_t>(next->size);
-                        ok = decodeVideo(next);
-                        av_packet_free(&next);
-                    }
-                    AVPacket* held = ok ? av_packet_alloc() : nullptr;
-                    if (held) {
-                        av_packet_move_ref(held, packet);
-                        pendingVideoBytes += static_cast<std::size_t>(held->size);
-                        pendingVideo.push_back(held);
-                    } else if (ok) {
-                        fail("FFmpeg packet allocation failed");
-                        ok = false;
-                    }
-                }
-            } else if (packet->stream_index == state.audioStream &&
-                       state.audioCodec) {
-                int sent = avcodec_send_packet(state.audioCodec, packet);
-                if (sent == AVERROR(EAGAIN)) {
-                    ok = drainAudio();
-                    if (ok) sent = avcodec_send_packet(state.audioCodec, packet);
-                }
-                if (sent == AVERROR_INVALIDDATA) {
-                    ok = true;
-                } else if (sent < 0) {
-                    fail("audio packet submission failed: " + AvError(sent));
-                    ok = false;
-                } else if (ok) {
-                    ok = drainAudio();
-                }
-            }
+            if (packet->stream_index == state.videoStream)
+                ok = submit(pendingVideo, videoHasRoom, decodeVideo, packet);
+            else if (packet->stream_index == state.audioStream && hasAudio)
+                ok = submit(pendingAudio, audioHasRoom, decodeAudio, packet);
             av_packet_unref(packet);
             if (!ok) break;
             continue;
@@ -652,16 +747,37 @@ void VideoPlayer::DecodeFfmpegLoop() {
             break;
         }
         if (read == AVERROR_EXIT || state.stopRequested.load()) break;
-        if (!decodePending(true)) break;
+        // At the end, decode what is held as each stream's queue makes room,
+        // so neither waits for all of the other's to be played.
+        bool ok = true;
+        while (ok && !state.stopRequested.load() &&
+               (!pendingVideo.packets.empty() || !pendingAudio.packets.empty())) {
+            if (!pendingVideo.packets.empty() && videoHasRoom()) {
+                ok = decodeFront(pendingVideo, decodeVideo);
+            } else if (!pendingAudio.packets.empty() && audioHasRoom()) {
+                ok = decodeFront(pendingAudio, decodeAudio);
+            } else {
+                std::unique_lock lock(state.mutex);
+                state.queueChanged.wait(lock, [&] {
+                    return state.stopRequested.load() ||
+                           (!pendingVideo.packets.empty() &&
+                            state.videoQueue.size() < kVideoQueueCapacity) ||
+                           (!pendingAudio.packets.empty() &&
+                            state.audioQueue.size() < kAudioQueueCapacity);
+                });
+            }
+        }
+        if (!ok || state.stopRequested.load()) break;
         (void)avcodec_send_packet(state.videoCodec, nullptr);
         if (!drainVideo()) break;
-        if (state.audioCodec) {
+        if (hasAudio) {
             (void)avcodec_send_packet(state.audioCodec, nullptr);
             if (!drainAudio()) break;
         }
         break;
     }
-    for (AVPacket* held : pendingVideo) av_packet_free(&held);
+    for (AVPacket* held : pendingVideo.packets) av_packet_free(&held);
+    for (AVPacket* held : pendingAudio.packets) av_packet_free(&held);
     av_packet_free(&packet);
     state.decoderFinished.store(true);
     state.queueChanged.notify_all();
@@ -758,20 +874,40 @@ void VideoPlayer::UpdateFfmpeg(const float dt) {
     }
 
     std::vector<std::uint8_t> latestFrame;
+    auto& pacing = state.pacing;
+    const std::uint64_t nowNs = SDL_GetTicksNS();
+    const bool firstSecond =
+        pacing.presented == 0 || nowNs - pacing.firstNs < kNsPerSecond;
+    if (firstSecond && !starting)
+        pacing.longestFirstSecondDtNs =
+            std::max(pacing.longestFirstSecondDtNs,
+                     static_cast<std::uint64_t>(std::max(0.0f, dt) * 1e9f));
     {
         std::scoped_lock lock(state.mutex);
+        std::size_t popped = 0;
         while (!state.videoQueue.empty() &&
                state.videoQueue.front().pts <=
                    masterClock + kVideoEarlyToleranceSeconds) {
             latestFrame = std::move(state.videoQueue.front().rgb);
             state.videoQueueBytes -= latestFrame.size();
             state.videoQueue.pop_front();
+            ++popped;
+        }
+        if (popped > 1) pacing.superseded += popped - 1;
+        if (state.videoQueue.empty() && !state.decoderFinished.load()) {
+            ++pacing.starved;
+            if (firstSecond) ++pacing.starvedFirstSecond;
         }
     }
     if (!latestFrame.empty()) {
         (void)m_texture.Update(latestFrame.data(),
                                static_cast<std::size_t>(m_width) * 3u);
         state.queueChanged.notify_all();
+        if (pacing.presented == 0) pacing.firstNs = nowNs;
+        else pacing.longestGapNs = std::max(pacing.longestGapNs, nowNs - pacing.lastNs);
+        pacing.lastNs = nowNs;
+        ++pacing.presented;
+        if (nowNs - pacing.firstNs < kNsPerSecond) ++pacing.presentedFirstSecond;
     }
     if (starting && m_audio) (void)SDL_ResumeAudioStreamDevice(m_audio);
 
@@ -790,8 +926,10 @@ void VideoPlayer::UpdateFfmpeg(const float dt) {
     }
     queuedAudioBytes =
         m_audio ? std::max(0, SDL_GetAudioStreamQueued(m_audio)) : 0;
-    if (state.decoderFinished.load() && queuesEmpty && queuedAudioBytes == 0)
+    if (state.decoderFinished.load() && queuesEmpty && queuedAudioBytes == 0) {
+        LogPacing(state);
         m_state.store(PlaybackState::Finished);
+    }
 }
 
 void VideoPlayer::Update(const float dt) { UpdateFfmpeg(dt); }
@@ -829,6 +967,7 @@ void VideoPlayer::Skip() { Stop(); }
 void VideoPlayer::CloseFfmpeg() {
     if (!m_ffmpeg) return;
     auto& state = *m_ffmpeg;
+    LogPacing(state);
     state.stopRequested.store(true);
     state.queueChanged.notify_all();
     if (state.worker.joinable()) state.worker.join();
