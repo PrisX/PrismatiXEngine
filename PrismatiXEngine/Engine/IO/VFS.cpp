@@ -89,6 +89,20 @@ void VFS::MountDirectory(const std::string& root,
     m_dirs.push_back({std::move(*canonical), std::move(source)});
 }
 
+void VFS::MountFallbackDirectory(const std::string& root,
+                                 std::shared_ptr<const FileSource> source) {
+    if (!source) source = PackageFileSource();
+    auto canonical = source->CanonicalRoot(root);
+    if (!canonical) {
+        PX_LOG_ERROR("VFS rejected invalid fallback directory '{}'", root);
+        return;
+    }
+    PX_LOG_INFO("VFS mounted fallback directory '{}' (source={})", *canonical,
+                source->Name());
+    std::unique_lock lock(m_mountsMutex);
+    m_fallbackDirs.push_back({std::move(*canonical), std::move(source)});
+}
+
 bool VFS::MountArchive(const std::string& archivePath, const crypto::Key* key,
                        const ArchiveMountPriority priority,
                        const std::vector<std::string>& tombstones,
@@ -136,6 +150,7 @@ void VFS::Clear() {
     std::unique_lock lock(m_mountsMutex);
     m_dirs.clear();
     m_archives.clear();
+    m_fallbackDirs.clear();
 }
 
 bool VFS::Exists(std::string_view path) const {
@@ -152,6 +167,10 @@ bool VFS::Exists(std::string_view path) const {
         if (mount.archive->Contains(*normalized)) return true;
     }
 #endif
+    for (const auto& dir : m_fallbackDirs) {
+        const auto full = dir.source->ResolveUnder(dir.root, *normalized);
+        if (full && dir.source->IsFile(*full)) return true;
+    }
     return false;
 }
 
@@ -171,6 +190,11 @@ std::unique_ptr<SeekableReadStream> VFS::Open(const std::string_view path) const
             return mount.archive->OpenStream(*normalized);
     }
 #endif
+    for (const auto& dir : m_fallbackDirs) {
+        const auto full = dir.source->ResolveUnder(dir.root, *normalized);
+        if (!full || !dir.source->IsFile(*full)) continue;
+        if (auto stream = dir.source->Open(*full)) return stream;
+    }
     return {};
 }
 
@@ -192,6 +216,13 @@ std::optional<Bytes> VFS::Read(std::string_view path) const {
             return mount.archive->Read(*normalized);
     }
 #endif
+    for (const auto& dir : m_fallbackDirs) {
+        const auto full = dir.source->ResolveUnder(dir.root, *normalized);
+        if (!full) continue;
+        if (auto data = ReadFile(*dir.source, *full,
+                                 (std::numeric_limits<std::size_t>::max)()))
+            return data;
+    }
     return std::nullopt;
 }
 

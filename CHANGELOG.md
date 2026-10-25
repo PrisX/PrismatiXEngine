@@ -15,6 +15,13 @@ The packages always carry the same version and pin each other exactly.
 
 ### Added
 
+- Play without packing media: `run --dev` and `run --at` leave pictures,
+  sound, video and other non-document resources in the project folder and
+  the Player reads them from there (`PRISMATIX_CONTENT_FALLBACK`, searched
+  after every archive so it can only add files). The Packager accepts
+  `externalInputs` for such a development package (`PXPKG1290`,
+  `PXPKG1291`). `--pack-media` packs everything as before.
+
 - `resourceBundle: "directory"` on an extension command's `resource`
   parameter: the build ships every file in the folder of the file Story
   names (a Live2D `.model3.json` with its `.moc3`, textures and motions),
@@ -240,6 +247,10 @@ The packages always carry the same version and pin each other exactly.
 
 ### Fixed
 
+- Large projects: publication checks resolve their protected inputs in
+  batches instead of one at a time (a 46,000-file project spent about 40 s
+  per Play there), and a development run's artifact trusts an unchanged
+  size and modification time instead of re-hashing every copy.
 - The Player refused a Story whose extension command passed a `resource`
   parameter as a plain path the project's asset catalog does not list
   (`PXRUNTIME7317`, "unknown asset UUID"): such a value is a path, not a

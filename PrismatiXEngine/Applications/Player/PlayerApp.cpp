@@ -444,6 +444,27 @@ PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay,
                         boot.legacyPersistenceSecrets.end()),
             boot.legacyPersistenceSecrets.end());
     }
+#if !defined(PRISMATIX_WEB_PLAYER)
+    // `prismatix run --dev` packs only what it compiled and lists the project
+    // folder here: media the package lacks is read from it in place. The
+    // folder comes after every archive, so it cannot replace packaged content.
+    if (const char* fallback = SDL_getenv("PRISMATIX_CONTENT_FALLBACK"); fallback && *fallback) {
+#if defined(_WIN32)
+        constexpr char separator = ';';
+#else
+        constexpr char separator = ':';
+#endif
+        std::string_view list = fallback;
+        while (!list.empty()) {
+            const auto end = list.find(separator);
+            const auto item = list.substr(0, end);
+            if (!item.empty()) boot.config.fallbackDirs.emplace_back(item);
+            if (end == std::string_view::npos) break;
+            list.remove_prefix(end + 1);
+        }
+        PX_LOG_INFO("Development run: {} fallback content folder(s)", boot.config.fallbackDirs.size());
+    }
+#endif
     boot.valid = true;
     PX_LOG_INFO("Packaged build: mounting {} content group(s), signed overlay={} count={}",
                 boot.config.mountArchives.size(), boot.overlayApplied,

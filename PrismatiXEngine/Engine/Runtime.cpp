@@ -119,6 +119,9 @@ bool Runtime::Init(const RuntimeConfig& config) {
         return false;
     }
 #endif
+    for (const std::string& dir : m_config.fallbackDirs) {
+        m_vfs.MountFallbackDirectory(dir);
+    }
     m_assets = std::make_unique<graphics::AssetCache>(m_window.Renderer(), m_vfs);
     m_assets->SetAsyncPreloadEnabled(config.asyncAssetPreload);
     m_renderer = std::make_unique<graphics::Renderer2D>(

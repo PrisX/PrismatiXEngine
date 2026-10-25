@@ -129,7 +129,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   validate: {values: "runtime ui-registry target platform", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space no-transcode"},
   pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target platform android-player gradle android-sdk web-player web-renderer web-package ffmpeg", flags: "encrypt ignore-disk-space check verify-media debug no-transcode archive"},
-  run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev"},
+  run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev pack-media"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: "check"},
   extension: {values: "project lang side command action dir owner output registry sha256 to capability page reason platform signing-key",
@@ -1584,10 +1584,14 @@ interface ReusableArtifactInputs {
 }
 
 /** Content comparison is only a no-op probe; a mismatch falls through to the
- * normal safe publisher. Timestamps and file sizes alone never establish it. */
+ * normal safe publisher. Timestamps and file sizes alone never establish it,
+ * except for a development run's artifact (`quickRoot`): there a source no
+ * newer than its copy, with the same size, is taken as unchanged without
+ * reading it, so Play on a large game does not re-hash thousands of files. */
 async function matchingArtifactFiles(loaded: LoadedProject, artifact: BuildArtifact,
   previousInputs: readonly PublishedInput[],
-  transcoded?: ReadonlyMap<string, TranscodedFile>): Promise<ReadonlyMap<string, string> | undefined> {
+  transcoded?: ReadonlyMap<string, TranscodedFile>,
+  quickRoot?: string): Promise<ReadonlyMap<string, string> | undefined> {
   const generated = Object.entries(artifact.files);
   const total = generated.length + artifact.dependencies.length;
   if (previousInputs.length !== total) return undefined;
@@ -1628,6 +1632,10 @@ async function matchingArtifactFiles(loaded: LoadedProject, artifact: BuildArtif
       const source = projectFile(loaded.root, dependency.source);
       const info = await stat(source);
       if (!info.isFile() || info.size !== old.size) return undefined;
+      if (quickRoot !== undefined) {
+        const copy = await stat(projectFile(quickRoot, dependency.logicalPath)).catch(() => undefined);
+        if (copy?.isFile() && copy.size === info.size && info.mtimeMs <= copy.mtimeMs) return old;
+      }
       if (await fingerprintFile(source) !== old.fingerprint) return undefined;
       return old;
     }));
@@ -1737,6 +1745,21 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
   return {files: reusedFiles, bytes: reusedBytes};
 }
 
+/**
+ * What a development run still packs: documents the Packager reads to check
+ * the game (Story, characters, UI, extensions and their scripts, fonts,
+ * effects). Every other resource (pictures, sound, video, a port's own data
+ * files) stays in the project folder for the Player to read in place.
+ */
+const packedDocumentExtension = /\.(?:px[a-z-]+|js|mjs|cjs|json|ttf|otf|ttc|woff2?|hlsl|spv|dxil|msl|wgsl|metallib)$/iu;
+
+/** The resources a development run serves from the project folder (same path, not a document). */
+function looseMediaPaths(artifact: BuildArtifact): Set<string> {
+  return new Set(artifact.dependencies.filter((dependency) =>
+    dependency.logicalPath === dependency.source && !packedDocumentExtension.test(dependency.logicalPath))
+    .map((dependency) => dependency.logicalPath));
+}
+
 function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string[] {
   // Catalog assets and resourceIncludes appear in both dependency sets. A
   // large VN can otherwise realpath the same tens of thousands of sources
@@ -1750,7 +1773,13 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   committedRevision?: number, registryOverride?: string, runtimeHint?: string,
   packagerPath?: string, storyCompilationCache?: StoryProjectCompilationCache,
   previousBuild?: BuildResult, transcodeTool?: () => Promise<string>,
-  development = false): Promise<BuildResult> {
+  development = false,
+  /**
+   * `run --dev`: the artifact holds only what the build produced and the
+   * resources whose package path differs from their project path; the Player
+   * reads the rest from the project folder (PRISMATIX_CONTENT_FALLBACK).
+   */
+  looseMedia = false): Promise<BuildResult> {
   buildProgress("load", 0, 1);
   const loaded = await loadProject(projectArgument);
   buildProgress("load", 1, 1, 0, true);
@@ -1790,9 +1819,19 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   }
   const transcoded = transcodeTool === undefined ? undefined
     : await transcodeArtifactMedia(loaded, compiled.artifact, transcodeTool);
+  // What goes into the artifact folder: everything, or for a loose run only
+  // the resources the project folder cannot serve under their package path.
+  const loose = looseMedia ? looseMediaPaths(compiled.artifact) : new Set<string>();
+  const published: BuildArtifact = !looseMedia ? compiled.artifact : {...compiled.artifact,
+    dependencies: compiled.artifact.dependencies.filter((dependency) =>
+      !loose.has(dependency.logicalPath) || transcoded?.has(dependency.logicalPath) === true)};
+  if (looseMedia)
+    progress({severity: "information", code: "PXCLI1313", phase: "loose-media",
+      files: compiled.artifact.dependencies.length - published.dependencies.length,
+      message: `Leaving ${compiled.artifact.dependencies.length - published.dependencies.length} resources in the project folder`});
   if (preflightInputs !== undefined) {
-    const matching = await matchingArtifactFiles(loaded, compiled.artifact, preflightInputs,
-      transcoded);
+    const matching = await matchingArtifactFiles(loaded, published, preflightInputs,
+      transcoded, development ? output : undefined);
     if (matching !== undefined && await retainPublishedDirectoryIfMatching({
       output, projectRoot: loaded.root, protectedPaths,
       onProgress: value => buildProgress(value.phase, value.files, undefined,
@@ -1853,7 +1892,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
     protectedPaths,
     onProgress: (value) => buildProgress(value.phase, value.files, undefined,
       value.bytes, value.done)}, async (staging) => {
-    reused = await copyRuntimeInputs(loaded, compiled.artifact!, staging, reuse,
+    reused = await copyRuntimeInputs(loaded, published, staging, reuse,
       reuse !== undefined && resolve(reuse.root) === output ? linkedOutputFiles : undefined,
       transcoded);
   });
@@ -2159,6 +2198,8 @@ async function packProject(options: Options, settings: {
   readonly nativePlatform?: NativeExtensionPlatform;
   /** Content already compiled for this pack; nothing is built. */
   readonly prebuilt?: PrebuiltArtifact;
+  /** `run --dev`: media the Player reads from the project folder, not packed (Packager externalInputs). */
+  readonly externalInputs?: readonly string[];
 } = {}): Promise<{output: string; player: string;
   validatedOnly?: boolean; deferredMediaCount?: number; retained?: boolean;
   /** The distribution's name: its executable name, else the game id. */
@@ -2351,6 +2392,8 @@ async function packProject(options: Options, settings: {
       compression,
       archiveShards: Number(options.values.get("archive-shards") ?? "1"),
       inputs,
+      ...(settings.externalInputs === undefined || settings.externalInputs.length === 0 ? {}
+        : {externalInputs: ((packed) => settings.externalInputs!.filter((uri) => !packed.has(uri)))(new Set(inputs.map((input) => input.uri)))}),
     };
     if (options.flags.has("check")) {
       const requestPath = join(temp, "validate-request.json");
@@ -3097,6 +3140,9 @@ async function runCommand(options: Options): Promise<number> {
     const requestedOutput = options.values.get("output");
     const development = options.flags.has("dev") || at !== undefined ||
       (requestedOutput !== undefined && pathWithin(devRoot, resolve(requestedOutput)));
+    // A development run packs what it compiled and leaves media in the project
+    // folder for the Player to read in place; --pack-media packs it all.
+    const looseMedia = development && !options.flags.has("pack-media") && options.values.get("artifact") === undefined;
     let result: Awaited<ReturnType<typeof packProject>>;
     let artifact: BuildArtifact | undefined;
     let qaPlayer: string | undefined;
@@ -3127,7 +3173,7 @@ async function runCommand(options: Options): Promise<number> {
         // whatever did not change since the last Play.
         const built = await buildProject(options.positional[0], join(devRoot, "run-artifact"),
           undefined, options.values.get("ui-registry"), options.values.get("runtime"),
-          undefined, undefined, undefined, undefined, true);
+          undefined, undefined, undefined, undefined, true, looseMedia);
         artifact = built.artifact;
         artifactRoot = built.output;
       } else if (at !== undefined) {
@@ -3140,7 +3186,7 @@ async function runCommand(options: Options): Promise<number> {
       if (!values.has("compression")) values.set("compression", "none");
       if (qaPlayer !== undefined) values.set("player", qaPlayer);
       result = await packProject({values, flags: new Set(options.flags), positional: [...options.positional]},
-        {development: true});
+        {development: true, ...(looseMedia && artifact !== undefined ? {externalInputs: [...looseMediaPaths(artifact)]} : {})});
     }
     lifecycle({event: "run.build", phase: "done", code: "PXCLI1312", output: result.output,
       retained: result.retained === true, durationMs: Date.now() - buildStarted,
@@ -3156,7 +3202,9 @@ async function runCommand(options: Options): Promise<number> {
 
     const environment: NodeJS.ProcessEnv = {...process.env,
       // The game closes when this CLI goes away (an editor's Stop, a crash).
-      PRISMATIX_EXIT_WITH_PROCESS: String(process.pid)};
+      PRISMATIX_EXIT_WITH_PROCESS: String(process.pid),
+      // Media the loose run left out of the package comes from the project.
+      ...(looseMedia ? {PRISMATIX_CONTENT_FALLBACK: location.root} : {})};
     let portFile: string | undefined;
     if (at !== undefined) {
       scratch = await mkdtemp(join(tmpdir(), "prismatix-run-"));
@@ -4161,6 +4209,10 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "transcoding or compression (--compression to override); when nothing changed since the last run the",
     "previous pack is kept and the game starts at once. An --output inside <project>/.prismatix implies --dev.",
     "Dev packs are for this machine only: they never record release lineage. They share the game's saves.",
+    "A dev pack holds only what the build produced (Story, UI, the project document) and resources whose",
+    "package path differs from their project path; the Player reads every other image, sound and font",
+    "from the project folder (PRISMATIX_CONTENT_FALLBACK, searched after the package, so it can only add).",
+    "A large game starts without copying or packing its media. --pack-media packs everything instead.",
     "--at starts the real game at a Story position: it packs PrismatiXPlayerQA (the Player with its QA IPC",
     "test interface, found beside the Player or given with --player-qa) into <project>/.prismatix/run-qa,",
     "starts the story and clicks through it, choosing the options that lead there, until that line is",

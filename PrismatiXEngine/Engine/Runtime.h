@@ -41,6 +41,8 @@ struct RuntimeConfig {
 
     std::vector<std::string> mountDirs = { "." };
     std::vector<std::string> mountArchives;
+    // Searched after the archives (VFS::MountFallbackDirectory).
+    std::vector<std::string> fallbackDirs;
     std::string archiveKey;
     std::vector<RuntimeOverlayMount> overlays;
 };

@@ -62,10 +62,16 @@ async function validatePaths(options: PublicationOptions): Promise<string> {
   const output = await canonical(options.output);
   const root = await canonical(options.projectRoot);
   if (contains(output, root)) throw new Error(`Unsafe output overlaps project root: ${options.output}`);
-  for (const input of options.protectedPaths) {
-    const source = await canonical(input);
-    if (contains(output, source) || contains(source, output)) {
-      throw new Error(`Unsafe output overlaps author input: ${input}`);
+  // A large game protects tens of thousands of inputs: resolve them a batch
+  // at a time rather than one after another.
+  const inputs = [...new Set(options.protectedPaths)];
+  for (let start = 0; start < inputs.length; start += 256) {
+    const batch = inputs.slice(start, start + 256);
+    const sources = await Promise.all(batch.map((input) => canonical(input)));
+    for (const [index, source] of sources.entries()) {
+      if (contains(output, source) || contains(source, output)) {
+        throw new Error(`Unsafe output overlaps author input: ${batch[index]}`);
+      }
     }
   }
   try {

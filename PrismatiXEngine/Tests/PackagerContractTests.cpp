@@ -836,6 +836,19 @@ int main() {
                          !vfs.Exists("Story/story.pxindex"),
                      "verified overlay changes runtime lookup and hides deleted resources");
 
+        // A development run's fallback folder only supplies what the archives lack.
+        const auto fallback = fixture.path / "fallback";
+        Write(fallback / "Story/Entry.pxstory", "fallback story");
+        Write(fallback / "Story/story.pxindex", "fallback index");
+        Write(fallback / "Assets/loose.png", "loose image");
+        vfs.MountFallbackDirectory(fallback.string());
+        suite.Expect(vfs.ReadText("Story/Entry.pxstory") == changedStory &&
+                         vfs.ReadText("Assets/loose.png") == "loose image" &&
+                         vfs.Open("Assets/loose.png") != nullptr &&
+                         !vfs.Exists("Story/story.pxindex") &&
+                         !vfs.Read("Story/story.pxindex").has_value(),
+                     "a fallback folder never replaces or revives packaged content");
+
         Json wrongBase = metadata;
         wrongBase["basePackageFingerprint"] = std::string(64, 'b');
         const auto wrongBasePath = fixture.path / "wrong-base-overlay.pdx";

@@ -116,6 +116,11 @@ struct PackageRequest {
     // Stable URI-hash partitions. One preserves the legacy Content.pdx layout.
     std::uint32_t archiveShards = 1;
     std::vector<PackageInput> inputs;
+    // Development runs only (`prismatix run --dev`): media the Player reads
+    // from the project folder instead (PRISMATIX_CONTENT_FALLBACK). They count
+    // as present for the package's reference checks but are neither read nor
+    // archived, so a package made with them is incomplete by design.
+    std::vector<std::string> externalInputs;
     std::filesystem::path cancelFile;
     // Combined with the persistence of the distribution being replaced.
     std::optional<PackageSaveLineage> saveLineage;

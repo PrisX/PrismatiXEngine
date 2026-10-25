@@ -2079,6 +2079,20 @@ ValidationResult Validate(const PackageRequest& request,
         }
         result.inputs.push_back({ input, source });
     }
+    // Present for the reference checks below; never read or archived.
+    for (const auto& uri : request.externalInputs) {
+        const std::string uriKey =
+#ifdef _WIN32
+            Lower(uri);
+#else
+            uri;
+#endif
+        if (!IsSafeUri(uri) || !uriKeys.insert(uriKey).second) {
+            AddDiagnostic(diagnostics, "PXPKG1291", "external input is unsafe or duplicates an input: " + uri);
+            continue;
+        }
+        uris.insert(uri);
+    }
     if (!pendingFingerprints.empty()) {
         unsigned workers = std::min<unsigned>(4, std::thread::hardware_concurrency());
         if (workers == 0) workers = 1;
@@ -2290,9 +2304,10 @@ ValidationResult Validate(const PackageRequest& request,
             if (found == packagedInputs.end()) return std::nullopt;
             return ReadVerifiedTextFile(*found->second, diagnostics);
         };
+        // Media a development run serves from the project folder exists too.
         const auto packagedExists =
-            [&packagedInputs](const std::string_view uri) {
-                return packagedInputs.contains(std::string(uri));
+            [&packagedInputs, &uris](const std::string_view uri) {
+                return packagedInputs.contains(std::string(uri)) || uris.contains(std::string(uri));
             };
         if (!projectText) {
             AddDiagnostic(diagnostics, "PXPKG1227",
@@ -3266,6 +3281,21 @@ PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
                 continue;
             }
             result.request.inputs.push_back({ item["uri"].get<std::string>(), item["fingerprint"].get<std::string>(), item["size"].get<std::uint64_t>() });
+        }
+    }
+    const auto externalInputs = root.find("externalInputs");
+    if (externalInputs != root.end()) {
+        if (!externalInputs->is_array() || externalInputs->size() > kMaxInputs) {
+            AddDiagnostic(result.diagnostics, "PXPKG1290", "externalInputs must be a bounded array of URIs");
+        } else {
+            result.request.externalInputs.reserve(externalInputs->size());
+            for (const auto& item : *externalInputs) {
+                if (!item.is_string()) {
+                    AddDiagnostic(result.diagnostics, "PXPKG1290", "externalInputs must be a bounded array of URIs");
+                    break;
+                }
+                result.request.externalInputs.push_back(item.get<std::string>());
+            }
         }
     }
 

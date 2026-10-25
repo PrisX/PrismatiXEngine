@@ -37,6 +37,12 @@ public:
     // internal storage on Android).
     void MountDirectory(const std::string& root,
                         std::shared_ptr<const FileSource> source = nullptr);
+    // A directory searched after every archive: it can only supply files the
+    // archives lack (and never one an overlay deleted), so it cannot change
+    // packaged content. `prismatix run --dev` serves the project's media this
+    // way instead of packing it.
+    void MountFallbackDirectory(const std::string& root,
+                                std::shared_ptr<const FileSource> source = nullptr);
     // Tombstones are valid only for explicit overlays. They hide a virtual
     // path from every lower-priority archive; the caller must first verify
     // the patch identity and content. An overlay cannot both contain and
@@ -73,6 +79,7 @@ private:
     mutable std::shared_mutex m_mountsMutex;
     std::vector<DirectoryMount> m_dirs;
     std::vector<ArchiveMount> m_archives;
+    std::vector<DirectoryMount> m_fallbackDirs;
 };
 
 }
