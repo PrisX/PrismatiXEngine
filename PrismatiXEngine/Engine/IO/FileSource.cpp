@@ -6,8 +6,10 @@
 #include <SDL3/SDL_iostream.h>
 
 #include <algorithm>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
+#include <unordered_map>
 #include <vector>
 #include <mutex>
 #include <unordered_set>
@@ -362,6 +364,127 @@ public:
 
 }  // namespace
 
+class ListedFileSourceImpl final : public FileSource {
+public:
+    [[nodiscard]] std::unique_ptr<SeekableReadStream> Open(
+        const std::string_view path) const override {
+        return NativeFileSource()->Open(path);
+    }
+
+    [[nodiscard]] std::optional<std::uint64_t> FileSize(
+        const std::string_view path) const override {
+        const auto native = px::PathFromUtf8(path);
+        const auto entry = Find(native.parent_path(), native.filename());
+        if (!entry || entry->type != std::filesystem::file_type::regular)
+            return std::nullopt;
+        return entry->size;
+    }
+
+    [[nodiscard]] std::optional<std::vector<std::string>> ListFiles(
+        const std::string_view directory) const override {
+        const auto listing = List(px::PathFromUtf8(directory));
+        if (!listing) return std::nullopt;
+        std::vector<std::string> names;
+        for (const auto& [key, entry] : *listing)
+            if (entry.type == std::filesystem::file_type::regular)
+                names.push_back(entry.name);
+        std::ranges::sort(names);
+        return names;
+    }
+
+    [[nodiscard]] std::optional<std::string> CanonicalRoot(
+        const std::string_view root) const override {
+        return NativeFileSource()->CanonicalRoot(root);
+    }
+
+    // Walks the listings from the canonical root: plain directories down to a
+    // plain file (or the first missing part) cannot leave the root. Anything
+    // else (a link, a junction) gets the native, canonicalizing check.
+    [[nodiscard]] std::optional<std::string> ResolveUnder(
+        const std::string_view root, const std::string_view relative) const override {
+        const auto joined = px::PathFromUtf8(relative);
+        const std::vector<std::filesystem::path> parts(joined.begin(), joined.end());
+        if (parts.empty()) return std::nullopt;
+        auto path = px::PathFromUtf8(root);
+        for (std::size_t index = 0; index < parts.size(); ++index) {
+            const auto entry = Find(path, parts[index]);
+            if (!entry) return px::PathToUtf8((px::PathFromUtf8(root) / joined).make_preferred());
+            const bool last = index + 1 == parts.size();
+            const auto wanted = last ? std::filesystem::file_type::regular
+                                     : std::filesystem::file_type::directory;
+            if (entry->type != wanted)
+                return NativeFileSource()->ResolveUnder(root, relative);
+            path /= parts[index];
+        }
+        return px::PathToUtf8(path.make_preferred());
+    }
+
+    [[nodiscard]] std::string_view Name() const override { return "listed"; }
+
+private:
+    struct Entry {
+        std::string name;
+        std::filesystem::file_type type = std::filesystem::file_type::unknown;
+        std::uint64_t size = 0;
+    };
+    using Listing = std::unordered_map<std::string, Entry>;
+
+    // Windows names match without regard to case, as the file system does.
+    static std::string Key(const std::filesystem::path& name) {
+#if defined(_WIN32)
+        std::wstring folded = name.native();
+        for (auto& character : folded)
+            character = static_cast<wchar_t>(std::towlower(character));
+        return px::PathToUtf8(std::filesystem::path(folded));
+#else
+        return px::PathToUtf8(name);
+#endif
+    }
+
+    [[nodiscard]] std::shared_ptr<const Listing> List(const std::filesystem::path& directory) const {
+        const auto key = Key(directory.lexically_normal());
+        {
+            std::scoped_lock lock(m_mutex);
+            if (const auto found = m_listings.find(key); found != m_listings.end())
+                return found->second;
+        }
+        std::shared_ptr<Listing> listing;
+        std::error_code error;
+        std::filesystem::directory_iterator iterator(directory, error);
+        if (!error) {
+            listing = std::make_shared<Listing>();
+            for (const std::filesystem::directory_iterator end; iterator != end;
+                 iterator.increment(error)) {
+                if (error) break;
+                std::error_code entryError;
+                Entry entry{px::PathToUtf8(iterator->path().filename()),
+                            iterator->symlink_status(entryError).type(), 0};
+                if (entryError) entry.type = std::filesystem::file_type::unknown;
+                if (entry.type == std::filesystem::file_type::regular) {
+                    entry.size = iterator->file_size(entryError);
+                    if (entryError) entry.type = std::filesystem::file_type::unknown;
+                }
+                listing->emplace(Key(iterator->path().filename()), std::move(entry));
+            }
+            if (error) listing.reset();
+        }
+        std::scoped_lock lock(m_mutex);
+        return m_listings.emplace(key, std::move(listing)).first->second;
+    }
+
+    [[nodiscard]] std::optional<Entry> Find(const std::filesystem::path& directory,
+                                            const std::filesystem::path& name) const {
+        const auto listing = List(directory);
+        if (!listing) return std::nullopt;
+        const auto found = listing->find(Key(name));
+        if (found == listing->end()) return std::nullopt;
+        return found->second;
+    }
+
+    mutable std::mutex m_mutex;
+    mutable std::unordered_map<std::string, std::shared_ptr<const Listing>> m_listings;
+};
+
 std::shared_ptr<const FileSource> NativeFileSource() {
     static const auto source = std::make_shared<const NativeFileSourceImpl>();
     return source;
@@ -370,6 +493,10 @@ std::shared_ptr<const FileSource> NativeFileSource() {
 std::shared_ptr<const FileSource> SdlFileSource() {
     static const auto source = std::make_shared<const SdlFileSourceImpl>();
     return source;
+}
+
+std::shared_ptr<const FileSource> ListedFileSource() {
+    return std::make_shared<const ListedFileSourceImpl>();
 }
 
 std::shared_ptr<const FileSource> PackageFileSource() {

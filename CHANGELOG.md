@@ -29,6 +29,18 @@ The packages always carry the same version and pin each other exactly.
   (`PRISMATIX_CONTENT_FALLBACK=<artifact>;<project>`); started any other way
   it stops with `PXPLAYER5032`. A Story edit on a 352-scene port went from a
   40 s Play to about 21 s.
+- `run --dev` skips the build when nothing it read last time has changed
+  (files by size and modification time, the directories it looked into,
+  the paths it found absent) and starts the existing artifact in about a
+  second. `run --dev --prepare` builds without starting the game; the
+  Studio uses it after each save. A development build updates its artifact
+  in place, writing only what changed, and keeps the loose package while
+  its manifest inputs are unchanged, so a Story edit no longer runs the
+  Packager: about 12 s instead of 21 s on the same port.
+- `io::ListedFileSource`: the Player's development content folders list each
+  directory once instead of asking the file system about every resource
+  reference. A large game read from folders loaded its Runtime IR in 8.4 s
+  and its characters in 1.4 s; now 3.7 s and 0.3 s.
 
 - `resourceBundle: "directory"` on an extension command's `resource`
   parameter: the build ships every file in the folder of the file Story

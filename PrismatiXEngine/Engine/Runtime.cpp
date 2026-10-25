@@ -119,8 +119,11 @@ bool Runtime::Init(const RuntimeConfig& config) {
         return false;
     }
 #endif
+    // Development folders stay put while the game runs: list each directory
+    // once instead of asking the file system for every resource reference.
+    const auto fallbackSource = io::ListedFileSource();
     for (const std::string& dir : m_config.fallbackDirs) {
-        m_vfs.MountFallbackDirectory(dir);
+        m_vfs.MountFallbackDirectory(dir, fallbackSource);
     }
     m_assets = std::make_unique<graphics::AssetCache>(m_window.Renderer(), m_vfs);
     m_assets->SetAsyncPreloadEnabled(config.asyncAssetPreload);

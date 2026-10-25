@@ -287,11 +287,31 @@ with `PXPLAYER5032`. Directory lookups resolve a plain file below plain
 directories without canonicalizing the whole path; a link or junction still
 gets the full check, so nothing inside a mount can reach outside it.
 
-The artifact is the CLI's own: on a development run its unchanged files are
-reused by size and modification time instead of being hashed again, and
-before it is replaced only its ownership marker is checked. A Story edit on a
-46,000-file port (352 scenes) went from a 40 s Play (a 222 MB package
-validated and archived each time) to about 21 s, most of it compiling.
+The Player lists each of those folders' directories once
+(`io::ListedFileSource`) instead of asking the file system about every
+resource reference, so a large game boots and loads its Runtime IR about as
+fast as from archives. A file added while the game runs is seen on the next
+run.
+
+The artifact is the CLI's own: a development run updates it in place
+(`updateOwnedDirectoryInPlace`), writing only the files whose content changed
+(a resource whose source is no newer than its copy, with the same size,
+counts as unchanged) and rewriting the ownership marker last. The loose
+package is kept while the request, the tools and the few inputs its manifest
+reads (the project document, route scenes and effects) are the same, so a
+Story edit does not run the Packager at all.
+
+Each development build also records what it read: every file (size and
+modification time), the directories it listed or looked into, and the paths it
+found absent (`.prismatix/.run-artifact.inputs.json`). When none of them has
+changed, the next `run --dev` skips the build and starts the game from the
+existing artifact. `run --dev --prepare` builds without starting the game;
+the Studio runs it in the background a moment after an edit is saved, once
+the project has been played, so pressing Play usually has nothing to build.
+
+On a 46,000-file port (352 scenes), a Play after a Story edit went from 40 s
+(a 222 MB package validated and archived each time) to about 12 s when built
+on demand, and about 1.3 s of building once the Studio has prepared it.
 `--pack-media` packs everything into archives instead. A loose package is
 not a distribution and does not run on its own: `pack` and distribution
 `build` always pack and validate every resource.

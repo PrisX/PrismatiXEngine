@@ -856,6 +856,20 @@ int main() {
                 suite.Expect(!directoryVfs.Exists("Assets/Link/secret.txt") &&
                                  !directoryVfs.Read("Assets/Link/secret.txt").has_value(),
                              "a symlink inside a directory mount cannot reach outside it");
+
+            // A development run's listed folders answer from one listing per directory.
+            px::io::VFS listedVfs;
+            listedVfs.MountFallbackDirectory(mounted.string(), px::io::ListedFileSource());
+            suite.Expect(listedVfs.ReadText("Assets/Deep/plain.txt") == "plain" &&
+                             !listedVfs.Exists("Assets/Missing/none.txt") &&
+                             !listedVfs.Exists("Assets/Deep/none.txt") &&
+                             !listedVfs.Exists("Assets/Deep") &&
+                             (linkError || !listedVfs.Exists("Assets/Link/secret.txt")),
+                         "a listed folder reads nested files and keeps links inside the mount");
+#if defined(_WIN32)
+            suite.Expect(listedVfs.ReadText("assets/deep/PLAIN.txt") == "plain",
+                         "a listed folder matches names without regard to case, like Windows");
+#endif
         }
 
         // A development run's fallback folder only supplies what the archives lack.

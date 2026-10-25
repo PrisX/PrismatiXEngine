@@ -65,6 +65,13 @@ public:
 // The source shipped package files are read from: SdlFileSource() on
 // Android, NativeFileSource() everywhere else.
 [[nodiscard]] std::shared_ptr<const FileSource> PackageFileSource();
+// Native files in folders that do not change while the game runs (a
+// development run's artifact and project folder): each directory is listed
+// once, and later lookups, sizes and link checks come from that listing.
+// Asking the file system for each of a large game's tens of thousands of
+// resource references took seconds. A file added after its directory was
+// listed is not seen until the next run. Each call returns a new cache.
+[[nodiscard]] std::shared_ptr<const FileSource> ListedFileSource();
 
 // Reads until `bytes` have been copied or the stream stops producing data.
 // Returns the number of bytes copied.

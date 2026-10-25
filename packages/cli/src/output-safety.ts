@@ -373,7 +373,12 @@ export async function publishedInputs(output: string,
   onProgress?.({files: 0, bytes: 0, done: false});
   const visit = async (directory: string): Promise<number> => {
     let ownedFiles = 0;
-    for (const entry of await readdir(directory, {withFileTypes: true})) {
+    const listed = await readdir(directory, {withFileTypes: true});
+    // A large artifact has thousands of files in one directory: ask for
+    // their sizes together rather than one after another.
+    const sizes = new Map(await Promise.all(listed.filter((entry) => entry.isFile() && !entry.isSymbolicLink())
+      .map(async (entry) => [entry.name, (await lstat(join(directory, entry.name))).size] as const)));
+    for (const entry of listed) {
       const path = join(directory, entry.name);
       const uri = relative(root, path).split("\\").join("/");
       if (uri === outputOwnershipMarker) continue;
@@ -402,7 +407,7 @@ export async function publishedInputs(output: string,
         if (typeof expectedValue !== "string" || !/^[0-9a-f]{64}$/iu.test(expectedValue))
           throw new Error(`Artifact file has no valid fingerprint: ${uri}`);
         found.add(uri);
-        const size = (await lstat(path)).size;
+        const size = sizes.get(entry.name) ?? (await lstat(path)).size;
         inputs.push({uri, fingerprint: expectedValue, size});
         bytes += size;
         ++ownedFiles;
@@ -487,6 +492,96 @@ async function acquireOutputLock(output: string): Promise<string> {
     throw error;
   }
   return lock;
+}
+
+/** One file of an output brought up to date in place. */
+export interface InPlaceEntry {
+  readonly uri: string;
+  readonly fingerprint: string;
+  readonly size: number;
+  /** Writes the new content to `path` (a temporary file beside its place); absent when unchanged. */
+  readonly write?: (path: string) => Promise<void>;
+}
+
+function safeOutputUri(uri: string): boolean {
+  const parts = uri.split("/");
+  return Boolean(uri) && uri !== outputOwnershipMarker && !uri.startsWith("/") &&
+    !uri.includes("\\") && !uri.includes(":") && !uri.includes("\0") &&
+    parts.every((part) => part !== "" && part !== "." && part !== "..");
+}
+
+/**
+ * Brings an owned output up to date file by file, for an output only its
+ * builder uses (a development run's artifact): each changed file is written
+ * beside its place and renamed over it, files no longer listed are removed,
+ * and the ownership marker is rewritten last. Unlike publishDirectory there
+ * is no staged copy, so editing one Story line writes a few files instead of
+ * a whole large game. False, with nothing changed, when the output has no
+ * valid marker or a listed file would replace a directory (or the reverse).
+ */
+export async function updateOwnedDirectoryInPlace(options: PublicationOptions,
+  entries: readonly InPlaceEntry[]): Promise<boolean> {
+  const output = await canonical(options.output);
+  const files: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const entry of entries) {
+    if (!safeOutputUri(entry.uri) || !/^[0-9a-f]{64}$/u.test(entry.fingerprint) ||
+        files[entry.uri] !== undefined)
+      throw new Error(`Invalid in-place artifact entry: ${entry.uri}`);
+    const parts = entry.uri.split("/");
+    for (let count = 1; count < parts.length; count += 1) {
+      const parent = parts.slice(0, count).join("/");
+      if (files[parent] !== undefined && files[parent] !== "directory")
+        throw new Error(`In-place artifact path collision: ${parent}`);
+      files[parent] = "directory";
+    }
+    if (files[entry.uri] === "directory") throw new Error(`In-place artifact path collision: ${entry.uri}`);
+    files[entry.uri] = entry.fingerprint;
+  }
+  const lock = await acquireOutputLock(output);
+  try {
+    // Checked once, under the lock: no file is written before it.
+    if (key(await validatePaths(options)) !== key(output))
+      throw new Error("Output path changed during in-place update");
+    let current: Record<string, unknown>;
+    try {
+      const markerPath = join(output, outputOwnershipMarker);
+      const info = await lstat(markerPath);
+      if (!info.isFile() || info.isSymbolicLink() || info.size > maxOutputMarkerBytes) return false;
+      const marker = JSON.parse(await readFile(markerPath, "utf8")) as {format?: unknown; files?: unknown};
+      if (marker?.format !== "PrismatiXOutput/1" || marker.files === null ||
+          typeof marker.files !== "object" || Array.isArray(marker.files)) return false;
+      current = marker.files as Record<string, unknown>;
+    } catch { return false; }
+    for (const [uri, value] of Object.entries(files))
+      if (Object.hasOwn(current, uri) && (current[uri] === "directory") !== (value === "directory")) return false;
+    const changed = entries.filter((entry) => entry.write !== undefined);
+    for (let start = 0; start < changed.length; start += 16) {
+      await Promise.all(changed.slice(start, start + 16).map(async (entry) => {
+        const path = join(output, ...entry.uri.split("/"));
+        await mkdir(dirname(path), {recursive: true});
+        const temporary = `${path}.prismatix-${randomUUID()}.tmp`;
+        try {
+          await entry.write!(temporary);
+          await filesystem.rename(temporary, path);
+        } finally { await rm(temporary, {force: true}); }
+      }));
+    }
+    const stale = Object.keys(current).filter((uri) => !Object.hasOwn(files, uri))
+      .sort((left, right) => right.split("/").length - left.split("/").length);
+    for (const uri of stale) {
+      const path = join(output, ...uri.split("/"));
+      if (current[uri] === "directory") await filesystem.rmdir(path).catch(() => {});
+      else await rm(path, {force: true});
+    }
+    await options.beforePromotion?.();
+    const markerPath = join(output, outputOwnershipMarker);
+    const temporary = `${markerPath}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, JSON.stringify({format: "PrismatiXOutput/1", files}), {flag: "wx"});
+      await filesystem.rename(temporary, markerPath);
+    } finally { await rm(temporary, {force: true}); }
+    return true;
+  } finally { await rm(lock, {recursive: true}); }
 }
 
 /** Exclusive cooperative publication. Unknown backups and modified outputs are never removed. */

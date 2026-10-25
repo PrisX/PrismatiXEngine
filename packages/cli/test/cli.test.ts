@@ -2734,6 +2734,42 @@ test("run --dev packs into .prismatix/run and reports the game's lifecycle as ND
   } finally { await rm(tools, {recursive: true, force: true}); }
 });
 
+test("run --dev skips a build nothing changed, rebuilds after an edit, and --prepare starts no game", async () => {
+  const value = await fixture();
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-run-unchanged-"));
+  try {
+    const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+    await link(process.execPath, player);
+    const mock = join(tools, "mock-packager.mjs");
+    await write(mock, `
+      import {link, readFile} from "node:fs/promises";
+      import {basename, join} from "node:path";
+      const request = JSON.parse(await readFile(process.argv.at(-1), "utf8"));
+      if (request.looseContent !== true) process.exit(44);
+      await link(request.playerExecutable, join(request.outputDir, basename(request.playerExecutable)));
+      process.stdout.write(JSON.stringify({protocolVersion: 1, event: "completed",
+        requestId: request.requestId}) + "\\n");
+    `);
+    const play = (...extra: string[]) => {
+      const result = run(["run", value.root, "--dev", "--packager", mock, "--player", player, ...extra]);
+      assert.equal(result.status, 0, result.stderr);
+      const records = result.stderr.split(/\r?\n/u).filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      return {
+        unchanged: records.some((record) => record.code === "PXCLI1317"),
+        compiled: records.some((record) => record.phase === "compile"),
+        started: records.some((record) => record.event === "run.player" && record.phase === "start"),
+      };
+    };
+    assert.deepEqual(play(), {unchanged: false, compiled: true, started: true});
+    assert.deepEqual(play(), {unchanged: true, compiled: false, started: true});
+    // An edited project document is read again.
+    await writeFile(value.project, `${await readFile(value.project, "utf8")}\n`);
+    assert.deepEqual(play("--prepare"), {unchanged: false, compiled: true, started: false});
+    assert.deepEqual(play(), {unchanged: true, compiled: false, started: true});
+  } finally { await rm(tools, {recursive: true, force: true}); }
+});
+
 test("run --at names a Story position and refuses a QA pack outside .prismatix", async () => {
   const value = await fixture();
   const outside = run(["run", value.root, "--at", "main:1", "--output", join(value.root, "dist", "qa"),

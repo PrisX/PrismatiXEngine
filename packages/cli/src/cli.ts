@@ -17,6 +17,7 @@ import {
   runtimeDiscoveryHint, type RuntimeDiscoveryOptions,
 } from "./runtime-discovery.js";
 import {fingerprintFile, outputOwnershipMarker, publishDirectory, publishedInputs, retainPublishedDirectoryIfMatching,
+  updateOwnedDirectoryInPlace, type InPlaceEntry,
   retirePublishedDirectory,
   verifiedPublishedInputs, type PublishedInput} from "./output-safety.js";
 import {glyphWarnings} from "./glyph-coverage.js";
@@ -53,7 +54,8 @@ import {AndroidExportError, androidSettings, checkAndroidInputs, checkKeystoreEn
   runGradle, stageGradleProject, templateSdlVersion} from "./android-export.js";
 import {exportWeb, locateWebPlayer, resolveWebPlayer, WebPlayerMissing, webPlayerInstall, webPlayerPackageName,
   webRenderers, type WebRenderer} from "./web-export.js";
-import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
+import {currentCompilerIdentity, loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
+import {recordDevelopmentInputs, unchangedDevelopmentInputs} from "./dev-inputs.js";
 import {loadJsxUiCache, saveJsxUiCache, type JsxUiCache, type JsxUiCacheEntry, type ResolutionProbe} from "./jsx-ui-cache.js";
 import {transcodeMedia, type TranscodedFile} from "./media-transcode.js";
 import {testCommand, testHelp, waitForPort} from "./test-command.js";
@@ -104,7 +106,7 @@ import {
 assertLocalBuildFresh(fileURLToPath(new URL("../..", import.meta.url)), "@prismatix/cli");
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
-interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly documentTexts: Readonly<Record<string, string>>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly storyAssetFiles: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly uiNodeSpans: ReadonlyMap<string, ReadonlyMap<number, SourceSpan>>; readonly uiWarnings: readonly AuthoringDiagnostic[]; readonly extensionBuilds: Readonly<Record<string, ExtensionBundle>>; readonly extensionWarnings: readonly AuthoringDiagnostic[]; readonly storyPath?: string; readonly storyIndexSource?: string}
+interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly documentTexts: Readonly<Record<string, string>>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly storyAssetFiles: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; /** Directories the build listed or looked into, and resource files it read (for `run --dev`'s unchanged check). */ readonly consultedDirectories: Set<string>; readonly readResources: Set<string>; readonly uiNodeSpans: ReadonlyMap<string, ReadonlyMap<number, SourceSpan>>; readonly uiWarnings: readonly AuthoringDiagnostic[]; readonly extensionBuilds: Readonly<Record<string, ExtensionBundle>>; readonly extensionWarnings: readonly AuthoringDiagnostic[]; readonly storyPath?: string; readonly storyIndexSource?: string}
 interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string; readonly dependencies: ReadonlySet<string>; readonly protectedPaths: readonly string[]}
 
 class PackagerFailure extends Error {
@@ -130,7 +132,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   validate: {values: "runtime ui-registry target platform", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space no-transcode"},
   pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package target platform android-player gradle android-sdk web-player web-renderer web-package ffmpeg", flags: "encrypt ignore-disk-space check verify-media debug no-transcode archive"},
-  run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev pack-media"},
+  run: {values: "output artifact runtime packager player player-qa compression archive-shards ui-registry publisher-key previous-package at", flags: "encrypt ignore-disk-space no-transcode dev pack-media prepare"},
   release: {values: "output runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space no-transcode"},
   add: {values: "project from name chapter title", flags: "check"},
   extension: {values: "project lang side command action dir owner output registry sha256 to capability page reason platform signing-key",
@@ -521,6 +523,7 @@ function buildProgress(phase: string, current: number, total: number | undefined
     "reuse-artifact": "Keeping unchanged artifact",
     "verify-before-publish": "Rechecking existing output",
     "verify-reuse-source": "Checking reused media revision", publish: "Publishing artifact",
+    "update-artifact": "Updating changed artifact files",
     "transcode-scan": "Hashing media for distribution.transcode", transcode: "Transcoding media",
   };
   const label = labels[phase] ?? phase;
@@ -564,7 +567,7 @@ function safeVirtualPath(value: string): boolean {
  * never follows a symbolic link, never leaves the project and lists no
  * tool folders; a missing folder lists nothing.
  */
-function listResourceDirectory(root: string, folder: string): string[] {
+function listResourceDirectory(root: string, folder: string, consulted?: Set<string>): string[] {
   if (!safeVirtualPath(folder) ||
       [".prismatix", ".git", "node_modules"].includes(folder.split("/")[0]!.toLowerCase())) return [];
   const absolute = projectFile(root, folder);
@@ -577,6 +580,7 @@ function listResourceDirectory(root: string, folder: string): string[] {
     throw new Error(`${folder} is outside the project`);
   const files: string[] = [];
   const visit = (directory: string): void => {
+    consulted?.add(directory);
     for (const entry of readdirSync(directory, {withFileTypes: true})) {
       if (entry.isSymbolicLink()) continue;
       const path = join(directory, entry.name);
@@ -1388,6 +1392,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
       if (typeof module === "string") dependencies.add(projectFile(root, `${prefix}${module}`));
     }
   }
+  const consultedDirectories = new Set<string>();
   const includedResources: Record<string, readonly string[]> = Object.create(null) as Record<string, readonly string[]>;
   const includeRoots = Array.isArray(authoredRaw.resourceIncludes) ? authoredRaw.resourceIncludes : [];
   const canonicalRoot = await realpath(root);
@@ -1413,6 +1418,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
       throw new Error(`resourceIncludes root escapes the project: ${includeRoot}`);
     const files: string[] = [];
     const visit = async (directory: string): Promise<void> => {
+      consultedDirectories.add(directory);
       for (const entry of await readdir(directory, {withFileTypes: true})) {
         const path = join(directory, entry.name);
         if (entry.isSymbolicLink()) throw new Error(`resourceIncludes contains a symbolic link: ${path}`);
@@ -1446,6 +1452,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
       dependencies.add(absolute);
       const files: string[] = [];
       const visit = async (directory: string): Promise<void> => {
+        consultedDirectories.add(directory);
         let entries;
         try { entries = await readdir(directory, {withFileTypes: true}); }
         catch { return; }
@@ -1475,7 +1482,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     storyAssetFiles,
     uiNodeSpans, uiWarnings,
     extensionBuilds: extensionBuild.builds, extensionWarnings: extensionBuild.diagnostics,
-    textSnapshots, absentTextInputs,
+    textSnapshots, absentTextInputs, consultedDirectories, readResources: new Set<string>(),
     ...(storyIndexSource === undefined ? {} : {storyIndexSource}),
     ...(storyPath === undefined ? {} : {storyPath})};
 }
@@ -1499,6 +1506,9 @@ async function assertLoadedTextSourcesUnchanged(loaded: LoadedProject): Promise<
   }
 }
 
+/** Runtime manifests a compile read (UI types, input keys). */
+const runtimeManifestInputs = new Set<string>();
+
 async function loadUiRegistry(override?: string, runtimeHint?: string,
   packagerPath?: string): Promise<UiTypeRegistryMetadata | undefined> {
   const bundled = nativePackageFile("PrismatiXUiTypeRegistry.json");
@@ -1517,6 +1527,7 @@ async function loadUiRegistry(override?: string, runtimeHint?: string,
   } else if (bundled !== undefined) path = bundled;
   else path = await checkoutRuntimeFile("PrismatiXUiTypeRegistry.json");
   if (path === undefined) return undefined;
+  runtimeManifestInputs.add(resolve(path));
   const emitter = join(dirname(path), process.platform === "win32"
     ? "PrismatiXUiTypeManifest.exe" : "PrismatiXUiTypeManifest");
   if (existsSync(emitter) && (await stat(emitter)).mtimeMs > (await stat(path)).mtimeMs + 1000)
@@ -1595,6 +1606,7 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
     const directory = dirname(absolute);
     let entries = directoryEntries.get(directory);
     if (entries === undefined) {
+      loaded.consultedDirectories.add(directory);
       try {
         entries = new Set(readdirSync(directory, {withFileTypes: true})
           .filter((entry) => !entry.isSymbolicLink())
@@ -1616,11 +1628,14 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
     ...(loaded.storyPath === undefined ? {} : {storyPath: loaded.storyPath}),
     resourceExists,
     resourceText: (path) => {
-      try { return readFileSync(projectFile(loaded.root, path), "utf8"); }
-      catch { return undefined; }
+      try {
+        const absolute = projectFile(loaded.root, path);
+        loaded.readResources.add(absolute);
+        return readFileSync(absolute, "utf8");
+      } catch { return undefined; }
     },
     resolveResourceInclude: (path) => loaded.includedResources[path],
-    resolveResourceDirectory: (path) => listResourceDirectory(loaded.root, path),
+    resolveResourceDirectory: (path) => listResourceDirectory(loaded.root, path, loaded.consultedDirectories),
     resolveStoryAssetRoot: (path) => loaded.storyAssetFiles[path],
     ...(onStoryProgress === undefined ? {} : {onStoryProgress}),
     ...(storyCompilationCache === undefined ? {} : {storyCompilationCache}),
@@ -1911,6 +1926,84 @@ function looseMediaPaths(artifact: BuildArtifact): Set<string> {
     .map((dependency) => dependency.logicalPath));
 }
 
+/** Where `run --dev` records what its artifact was built from (beside it, the CLI's own). */
+function developmentInputsPath(output: string): string {
+  return join(dirname(output), `.${basename(output)}.inputs.json`);
+}
+
+/** The tools and options a development build's record holds for. */
+function developmentBuildIdentity(registryOverride: string | undefined, runtimeHint: string | undefined,
+  packagerPath: string | undefined, looseMedia: boolean): string {
+  return JSON.stringify([currentCompilerIdentity(), typescriptIdentity(), process.version,
+    registryOverride ?? null, runtimeHint ?? null, packagerPath ?? null, looseMedia]);
+}
+
+/**
+ * `run --dev`: brings the CLI's own artifact up to date in place
+ * (updateOwnedDirectoryInPlace). A file is unchanged when its content hash
+ * matches, or for a resource, as in matchingArtifactFiles, when its source is
+ * no newer than its copy and has the same size. False when the output cannot
+ * be updated that way; the caller then publishes a new copy.
+ */
+async function updateDevelopmentArtifact(loaded: LoadedProject, artifact: BuildArtifact,
+  output: string, previousInputs: readonly PublishedInput[], protectedPaths: readonly string[],
+  transcoded?: ReadonlyMap<string, TranscodedFile>): Promise<boolean> {
+  const previous = new Map(previousInputs.map((input) => [input.uri, input]));
+  const total = Object.keys(artifact.files).length + artifact.dependencies.length;
+  buildProgress("update-artifact", 0, total);
+  const entries: InPlaceEntry[] = [];
+  for (const [uri, text] of Object.entries(artifact.files)) {
+    const size = Buffer.byteLength(text, "utf8");
+    const fingerprint = createHash("sha256").update(text, "utf8").digest("hex");
+    const old = previous.get(uri);
+    entries.push(old !== undefined && old.size === size && old.fingerprint === fingerprint
+      ? {uri, fingerprint, size}
+      : {uri, fingerprint, size, write: (path) => writeFile(path, text, {encoding: "utf8", flag: "wx"})});
+  }
+  const linkMedia = object(object(loaded.project)?.distribution)?.linkMedia === true;
+  for (let start = 0; start < artifact.dependencies.length; start += 64) {
+    const batch = await Promise.all(artifact.dependencies.slice(start, start + 64).map(
+      async (dependency): Promise<InPlaceEntry | undefined> => {
+        const uri = dependency.logicalPath;
+        const encoded = transcoded?.get(uri);
+        const source = encoded?.file ?? projectFile(loaded.root, dependency.source);
+        const info = await stat(source).catch(() => undefined);
+        if (info === undefined || !info.isFile()) return undefined;
+        const old = previous.get(uri);
+        if (old !== undefined && old.size === info.size) {
+          if (encoded !== undefined) {
+            if (encoded.fingerprint === old.fingerprint) return {uri, fingerprint: old.fingerprint, size: info.size};
+          } else {
+            const copy = await stat(projectFile(output, uri)).catch(() => undefined);
+            if (copy?.isFile() && copy.size === info.size && info.mtimeMs <= copy.mtimeMs)
+              return {uri, fingerprint: old.fingerprint, size: info.size};
+          }
+        }
+        return {uri, fingerprint: encoded?.fingerprint ?? await fingerprintFile(source), size: info.size,
+          write: async (path) => {
+            if (linkMedia || encoded !== undefined) {
+              try { await link(source, path); return; }
+              catch (error) {
+                if (!["EXDEV", "EPERM", "EOPNOTSUPP", "ENOSYS"].includes(
+                  (error as NodeJS.ErrnoException).code ?? "")) throw error;
+              }
+            }
+            await copyFile(source, path);
+          }};
+      }));
+    if (batch.some((entry) => entry === undefined)) return false;
+    entries.push(...batch as InPlaceEntry[]);
+  }
+  // Sources edited during this build only make the artifact older than the
+  // project; the next run compares them again. Unlike a publication, the
+  // marker is not held back for a recheck of every text source.
+  const updated = await updateOwnedDirectoryInPlace({output, projectRoot: loaded.root, protectedPaths},
+    entries);
+  if (updated) buildProgress("update-artifact", entries.filter((entry) => entry.write !== undefined).length,
+    total, 0, true);
+  return updated;
+}
+
 function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string[] {
   // Catalog assets and resourceIncludes appear in both dependency sets. A
   // large VN can otherwise realpath the same tens of thousands of sources
@@ -1931,6 +2024,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
    * reads the rest from the project folder (PRISMATIX_CONTENT_FALLBACK).
    */
   looseMedia = false): Promise<BuildResult> {
+  const startedAt = Date.now();
   buildProgress("load", 0, 1);
   const loaded = await loadProject(projectArgument);
   buildProgress("load", 1, 1, 0, true);
@@ -1980,6 +2074,33 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
     progress({severity: "information", code: "PXCLI1313", phase: "loose-media",
       files: compiled.artifact.dependencies.length - published.dependencies.length,
       message: `Leaving ${compiled.artifact.dependencies.length - published.dependencies.length} resources in the project folder`});
+  // A development run's own artifact is updated in place, whether or not
+  // anything changed: unchanged files stay, a Story edit writes a few, and
+  // nothing is staged, fingerprinted again or rechecked as a whole.
+  const inPlace = development && preflightInputs !== undefined && resolve(reuseRoot) === output &&
+    pathWithin(join(loaded.root, ".prismatix"), output);
+  const inputsRecord = development ? developmentInputsPath(output) : undefined;
+  if (inputsRecord !== undefined) await rm(inputsRecord, {force: true});
+  const recordInputs = async (): Promise<void> => {
+    if (inputsRecord === undefined) return;
+    await recordDevelopmentInputs(inputsRecord, {
+      identity: developmentBuildIdentity(registryOverride, runtimeHint, packagerPath, looseMedia),
+      files: [...loaded.textSnapshots.keys(), ...loaded.readResources, ...runtimeManifestInputs,
+        ...published.dependencies.map((dependency) => projectFile(loaded.root, dependency.source))],
+      directories: [...loaded.consultedDirectories],
+      absent: [...loaded.absentTextInputs],
+      externalInputs: looseMedia ? [...loose] : []}, startedAt);
+  };
+  if (inPlace && await updateDevelopmentArtifact(loaded, published, output, preflightInputs!,
+    // The output is inside the project's .prismatix, which the build never
+    // reads: checking it against the project's top folders keeps it apart
+    // from every authored input without resolving each of their files.
+    [loaded.projectPath, ...["Story", "Assets", "Content", "Scripts", "Extensions"]
+      .map((name) => join(loaded.root, name))], transcoded)) {
+    await saveStoryCompilationCache(loaded.root, effectiveStoryCompilationCache);
+    await recordInputs();
+    return {root: loaded.root, artifact: compiled.artifact, output, dependencies, protectedPaths};
+  }
   if (preflightInputs !== undefined) {
     const matching = await matchingArtifactFiles(loaded, published, preflightInputs,
       transcoded, development ? output : undefined);
@@ -1995,6 +2116,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
       buildProgress("reuse-artifact", preflightInputs.length, preflightInputs.length,
         retainedBytes, true, {files: preflightInputs.length, bytes: retainedBytes});
       await saveStoryCompilationCache(loaded.root, effectiveStoryCompilationCache);
+      await recordInputs();
       return {root: loaded.root, artifact: compiled.artifact, output, dependencies,
         protectedPaths};
     }
@@ -2050,6 +2172,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   });
   buildProgress("publish", 1, 1, 0, true);
   await saveStoryCompilationCache(loaded.root, effectiveStoryCompilationCache);
+  await recordInputs();
   return {root: loaded.root, artifact: compiled.artifact, output, dependencies,
     protectedPaths};
 }
@@ -2623,6 +2746,27 @@ async function packProject(options: Options, settings: {
         message: `Checking distribution ${value.phase}: ${value.files} files, ` +
           `${(value.bytes / 1024 ** 2).toFixed(1)} MiB${value.done ? " (done)" : ""}`}),
     };
+    // A loose package is the Player and its manifest. Story, UI and media
+    // edits do not change it: keep it while the request, the tools and the few
+    // inputs its manifest reads (the project document, the route scenes and
+    // effects) are the same.
+    const looseKeyPath = join(dirname(output), `.${basename(output)}.loose-key`);
+    const looseKey = settings.looseContent !== true || suppliedArtifact === undefined ? undefined
+      : await packageRetentionKey(packager, player, artifactRoot, {...keyedPlan, externalInputs: undefined,
+        inputs: inputs.filter((input) => input.uri === "project.pxproject" ||
+          requestPlan.routes.some((route) => route.scene === input.uri) ||
+          /\.(?:pxeffect|hlsl|wgsl|spv|dxil|msl|metallib)$/iu.test(input.uri))});
+    if (looseKey !== undefined) {
+      const kept = await readFile(looseKeyPath, "utf8").catch(() => undefined);
+      if (kept === looseKey && existsSync(join(output, "Package", "manifest.json")) &&
+          existsSync(join(output, outputOwnershipMarker))) {
+        progress({event: "progress", severity: "information", code: "PXCLI1215",
+          phase: "retain-package", current: inputs.length, total: inputs.length,
+          message: `Kept the development package: only its content changed: ${output}`});
+        return {output, player: join(output, packagedPlayer), retained: true, name: distributionName, ...platformField};
+      }
+      await rm(looseKeyPath, {force: true});
+    }
     if (previousPackage === undefined && lineageCovered && planKey !== undefined &&
         await retainPackageIfMatching(
       publication, artifactRoot, inputs, planKey,
@@ -2806,6 +2950,7 @@ async function packProject(options: Options, settings: {
       else await writePackageProvenance(staging, planKey);
     }
     });
+    if (looseKey !== undefined) await writeFile(looseKeyPath, looseKey, "utf8");
     await recordLineage();
     return {output, player: join(output, packagedPlayerPath), name: distributionName, ...platformField,
       ...(signature === undefined ? {} : {signature}), ...(notarized ? {notarized} : {})};
@@ -3304,6 +3449,8 @@ async function runCommand(options: Options): Promise<number> {
     // A development run packs what it compiled and leaves media in the project
     // folder for the Player to read in place; --pack-media packs it all.
     const looseMedia = development && !options.flags.has("pack-media") && options.values.get("artifact") === undefined;
+    if (options.flags.has("prepare") && (!development || at !== undefined))
+      throw new Error("--prepare brings run --dev up to date; it does not take --at or a distribution");
     let result: Awaited<ReturnType<typeof packProject>>;
     let artifact: BuildArtifact | undefined;
     let qaPlayer: string | undefined;
@@ -3331,15 +3478,33 @@ async function runCommand(options: Options): Promise<number> {
         }
       }
       let artifactRoot = options.values.get("artifact");
+      // The media the Player reads in place when the build is skipped.
+      let keptExternalInputs: readonly string[] | undefined;
       if (artifactRoot === undefined) {
-        // A stable artifact folder lets the compiler and the package keep
-        // whatever did not change since the last Play.
-        const built = await buildProject(options.positional[0], join(devRoot, "run-artifact"),
-          undefined, options.values.get("ui-registry"), options.values.get("runtime"),
-          undefined, undefined, undefined, undefined, true, looseMedia);
-        artifact = built.artifact;
-        artifactRoot = built.output;
-        if (looseMedia) looseArtifact = built.output;
+        const artifactOutput = join(devRoot, "run-artifact");
+        // Nothing the last Play's build read has changed: start from its
+        // artifact without loading or compiling the project again. --at
+        // compiles to find its Story position.
+        keptExternalInputs = at === undefined && existsSync(join(artifactOutput, outputOwnershipMarker))
+          ? await unchangedDevelopmentInputs(developmentInputsPath(artifactOutput),
+            developmentBuildIdentity(options.values.get("ui-registry"), options.values.get("runtime"),
+              undefined, looseMedia))
+          : undefined;
+        if (keptExternalInputs !== undefined) {
+          progress({event: "progress", severity: "information", code: "PXCLI1317", phase: "unchanged",
+            message: "Nothing changed since the last Play; starting the game as it was built"});
+          artifactRoot = artifactOutput;
+          if (looseMedia) looseArtifact = artifactOutput;
+        } else {
+          // A stable artifact folder lets the compiler and the package keep
+          // whatever did not change since the last Play.
+          const built = await buildProject(options.positional[0], artifactOutput,
+            undefined, options.values.get("ui-registry"), options.values.get("runtime"),
+            undefined, undefined, undefined, undefined, true, looseMedia);
+          artifact = built.artifact;
+          artifactRoot = built.output;
+          if (looseMedia) looseArtifact = built.output;
+        }
       } else if (at !== undefined) {
         throw new Error("--at compiles the project itself to find the Story position; omit --artifact");
       }
@@ -3350,8 +3515,9 @@ async function runCommand(options: Options): Promise<number> {
       if (!values.has("compression")) values.set("compression", "none");
       if (qaPlayer !== undefined) values.set("player", qaPlayer);
       result = await packProject({values, flags: new Set(options.flags), positional: [...options.positional]},
-        {development: true, ...(looseMedia && artifact !== undefined
-          ? {externalInputs: [...looseMediaPaths(artifact)], looseContent: true} : {})});
+        {development: true, ...(looseMedia && (artifact !== undefined || keptExternalInputs !== undefined)
+          ? {externalInputs: artifact !== undefined ? [...looseMediaPaths(artifact)] : [...keptExternalInputs!],
+            looseContent: true} : {})});
     }
     lifecycle({event: "run.build", phase: "done", code: "PXCLI1312", output: result.output,
       retained: result.retained === true, durationMs: Date.now() - buildStarted,
@@ -3364,6 +3530,9 @@ async function runCommand(options: Options): Promise<number> {
           options.positional[0], error instanceof Error ? error.message : String(error))]);
       }
     }
+    // --prepare: an editor brings Play up to date after a save; the next
+    // run starts at once.
+    if (options.flags.has("prepare")) return 0;
 
     const environment: NodeJS.ProcessEnv = {...process.env,
       // The game closes when this CLI goes away (an editor's Stop, a crash).
@@ -4380,6 +4549,9 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "inside <project>/.prismatix implies --dev. Dev packages are for this machine only: they never record",
     "release lineage and do not run on their own. They share the game's saves. --pack-media packs everything",
     "into archives instead, as a distribution does (without compression unless --compression says so).",
+    "When no file the last --dev build read has changed (sizes and times, and the folders it looked into),",
+    "the build is skipped and the game starts from the existing artifact. --prepare builds without starting",
+    "the game, so an editor can bring Play up to date after a save and the next run starts at once.",
     "--at starts the real game at a Story position: it packs PrismatiXPlayerQA (the Player with its QA IPC",
     "test interface, found beside the Player or given with --player-qa) into <project>/.prismatix/run-qa,",
     "starts the story and clicks through it, choosing the options that lead there, until that line is",
