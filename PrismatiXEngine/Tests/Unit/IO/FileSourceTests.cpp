@@ -330,6 +330,17 @@ int main() {
                      "child path resolves");
         suite.Expect(!native->ResolveUnder(*root, "../escape.txt"),
                      "parent traversal is rejected");
+        std::filesystem::create_directories(temp.path / "a");
+        const auto listed = px::io::ListedFileSource();
+        for (const auto& source : {native, listed}) {
+            const std::string name(source->Name());
+            suite.Expect(!source->ResolveUnder(*root, "../escape.txt"),
+                         name + ": parent traversal is rejected");
+            suite.Expect(!source->ResolveUnder(*root, "a/../../escape.txt"),
+                         name + ": parent traversal through a plain directory is rejected");
+            suite.Expect(source->ResolveUnder(*root, "a/./b.txt").has_value(),
+                         name + ": a dot part resolves inside the root");
+        }
     });
 
     suite.Run("ArchiveReadsIdenticallyThroughEverySource", [&] {

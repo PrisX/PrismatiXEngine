@@ -22,6 +22,15 @@ std::shared_ptr<const FileSource> WebFileSource();
 
 namespace {
 
+// A relative path made only of names: no root, no `.` or `..`. Anything else
+// is left to the canonicalizing check, which keeps it inside its root.
+bool PlainRelative(const std::filesystem::path& path) {
+    if (path.empty() || path.has_root_name() || path.has_root_directory()) return false;
+    for (const auto& part : path)
+        if (part.empty() || part == "." || part == "..") return false;
+    return true;
+}
+
 // Resolves a cursor move against [0, size]. Shared by both stream types so
 // they agree on every boundary the SeekableReadStream contract defines.
 std::optional<std::uint64_t> SeekTarget(const std::uint64_t position,
@@ -255,8 +264,8 @@ private:
     [[nodiscard]] std::optional<std::string> PlainUnder(
         const std::string_view root, const std::string_view relative) const {
         const auto joined = px::PathFromUtf8(relative);
+        if (!PlainRelative(joined)) return std::nullopt;
         const std::vector<std::filesystem::path> parts(joined.begin(), joined.end());
-        if (parts.empty()) return std::nullopt;
         auto path = px::PathFromUtf8(root);
         const auto whole = [&] { return px::PathToUtf8((px::PathFromUtf8(root) / joined).make_preferred()); };
         std::error_code error;
@@ -403,8 +412,8 @@ public:
     [[nodiscard]] std::optional<std::string> ResolveUnder(
         const std::string_view root, const std::string_view relative) const override {
         const auto joined = px::PathFromUtf8(relative);
+        if (!PlainRelative(joined)) return NativeFileSource()->ResolveUnder(root, relative);
         const std::vector<std::filesystem::path> parts(joined.begin(), joined.end());
-        if (parts.empty()) return std::nullopt;
         auto path = px::PathFromUtf8(root);
         for (std::size_t index = 0; index < parts.size(); ++index) {
             const auto entry = Find(path, parts[index]);
