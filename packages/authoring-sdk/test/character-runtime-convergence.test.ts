@@ -79,6 +79,13 @@ test("character semantics reject documents the Runtime loader would reject", () 
   assert.equal(duplicateNamesResult.valid, false);
   assert.ok(duplicateNamesResult.diagnostics.some((item) => item.code === "PXSDKSEM1114"));
 
+  const nameAsAlias = {
+    ...valid, displayName:"Neuro", aliases:["Neuro", "neuro"],
+    expressions:[{id:expressionId,name:"Smile",aliases:["Smile", "smile"],assetId}],
+  } satisfies JsonValue;
+  assert.deepEqual(validateDocument("character", nameAsAlias).diagnostics, [],
+    "a displayName or expression name repeated as an alias names the same thing twice");
+
   const ambiguousCharacterLookup = {...valid, aliases:[characterId]} satisfies JsonValue;
   const ambiguousCharacterLookupResult = validateDocument("character", ambiguousCharacterLookup);
   assert.equal(ambiguousCharacterLookupResult.valid, false);

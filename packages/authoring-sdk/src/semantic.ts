@@ -759,9 +759,13 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
           diagnostics.push(issue("PXSDKSEM1115", "Character expression name exceeds the Runtime 256-character limit", path, String(expression.id ?? "")));
         }
       }
-      const characterLookup = [root.id, root.displayName, ...(Array.isArray(root.aliases) ? root.aliases : [])];
+      // A name repeated as an alias (displayName "Neuro", alias "Neuro") names
+      // the same character twice, as the Player allows; only the id must not
+      // double as a name, and an expression's keys must not clash with another's.
+      const characterLookup = [root.id, ...new Set([root.displayName, ...(Array.isArray(root.aliases) ? root.aliases : [])])];
       for (const key of duplicates(characterLookup)) diagnostics.push(issue("PXSDKSEM1116", "Character runtime lookup keys must be unambiguous", path, key));
-      const expressionLookup = expressions.flatMap((expression) => [expression.id, expression.name, ...(Array.isArray(expression.aliases) ? expression.aliases : [])]);
+      const expressionLookup = expressions.flatMap((expression) =>
+        [expression.id, ...new Set([expression.name, ...(Array.isArray(expression.aliases) ? expression.aliases : [])])]);
       for (const key of duplicates(expressionLookup)) diagnostics.push(issue("PXSDKSEM1117", "Character expression runtime lookup keys must be unambiguous", path, key));
       const aliases = [...(Array.isArray(root.aliases) ? root.aliases : []), ...expressions.flatMap((expression) => Array.isArray(expression.aliases) ? expression.aliases : [])];
       for (const alias of duplicates(aliases)) diagnostics.push(issue("PXSDKSEM1102", "Character aliases must be unique", path, alias));
