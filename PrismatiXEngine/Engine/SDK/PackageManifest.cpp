@@ -136,7 +136,7 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
         "resolution", "entry", "routes", "archives", "contentVersion",
         "saveVersion", "packageFingerprint", "encryption", "graphicsTier",
         "saveMigrations", "extensions", "customEffects", "persistence",
-        "publisherPublicKey"};
+        "publisherPublicKey", "looseContent"};
     for (auto item = root.begin(); item != root.end(); ++item) {
         if (!allowed.contains(item.key()))
             AddDiagnostic(result.diagnostics, "PXPKG1402",
@@ -310,11 +310,21 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
                               "Package entry route does not exist");
         }
 
+        if (const auto loose = root.find("looseContent"); loose != root.end()) {
+            if (!loose->is_boolean())
+                AddDiagnostic(result.diagnostics, "PXPKG1411",
+                              "looseContent must be a boolean");
+            else
+                manifest.looseContent = loose->get<bool>();
+        }
         const auto archives = root.find("archives");
         if (archives == root.end() || !archives->is_array() ||
-            archives->empty() || archives->size() > 64) {
+            (archives->empty() != manifest.looseContent) ||
+            archives->size() > 64) {
             AddDiagnostic(result.diagnostics, "PXPKG1411",
-                          "archives must be a non-empty bounded array");
+                          manifest.looseContent
+                              ? "a looseContent package has no archives"
+                              : "archives must be a non-empty bounded array");
         } else {
             std::set<std::string> files;
             for (const auto& value : *archives) {

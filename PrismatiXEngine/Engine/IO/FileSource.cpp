@@ -8,6 +8,9 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <vector>
+#include <mutex>
+#include <unordered_set>
 
 namespace px::io {
 
@@ -216,10 +219,12 @@ public:
     }
 
     // Canonicalizes the joined path so a symlink inside a mounted directory
-    // cannot point the VFS outside the mount.
+    // cannot point the VFS outside the mount. Most lookups take a shorter
+    // route to the same answer (PlainUnder).
     [[nodiscard]] std::optional<std::string> ResolveUnder(
         const std::string_view root,
         const std::string_view relative) const override {
+        if (auto plain = PlainUnder(root, relative)) return plain;
         std::error_code error;
         const std::filesystem::path canonicalRoot =
             std::filesystem::weakly_canonical(px::PathFromUtf8(root), error);
@@ -236,6 +241,46 @@ public:
     }
 
     [[nodiscard]] std::string_view Name() const override { return "native"; }
+
+private:
+    // Below a canonical root, a path whose directories are plain directories
+    // (no symlink or junction) and whose last part is a plain file, or whose
+    // first missing part ends the walk, cannot leave the root and is already
+    // canonical. A game read from directory mounts (`prismatix run --dev`)
+    // resolves every file it opens, and two weakly_canonical calls each time
+    // added over 10 s to a large game's startup. Directories found plain are
+    // remembered for the process. nullopt: ask weakly_canonical instead.
+    [[nodiscard]] std::optional<std::string> PlainUnder(
+        const std::string_view root, const std::string_view relative) const {
+        const auto joined = px::PathFromUtf8(relative);
+        const std::vector<std::filesystem::path> parts(joined.begin(), joined.end());
+        if (parts.empty()) return std::nullopt;
+        auto path = px::PathFromUtf8(root);
+        const auto whole = [&] { return px::PathToUtf8((px::PathFromUtf8(root) / joined).make_preferred()); };
+        std::error_code error;
+        for (std::size_t index = 0; index + 1 < parts.size(); ++index) {
+            path /= parts[index];
+            auto key = px::PathToUtf8(path);
+            {
+                std::scoped_lock lock(m_plainMutex);
+                if (m_plainDirectories.contains(key)) continue;
+            }
+            const auto type = std::filesystem::symlink_status(path, error).type();
+            if (type == std::filesystem::file_type::not_found) return whole();
+            if (error || type != std::filesystem::file_type::directory) return std::nullopt;
+            std::scoped_lock lock(m_plainMutex);
+            m_plainDirectories.insert(std::move(key));
+        }
+        path /= parts.back();
+        const auto type = std::filesystem::symlink_status(path, error).type();
+        if (type == std::filesystem::file_type::regular ||
+            type == std::filesystem::file_type::not_found)
+            return px::PathToUtf8(path);
+        return std::nullopt;
+    }
+
+    mutable std::mutex m_plainMutex;
+    mutable std::unordered_set<std::string> m_plainDirectories;
 };
 
 class SdlFileSourceImpl final : public FileSource {

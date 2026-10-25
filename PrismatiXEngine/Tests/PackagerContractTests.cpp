@@ -836,6 +836,28 @@ int main() {
                          !vfs.Exists("Story/story.pxindex"),
                      "verified overlay changes runtime lookup and hides deleted resources");
 
+        // Directory mounts resolve plain nested files directly, and still keep
+        // a link inside the mount from reaching outside it.
+        {
+            const auto mounted = fixture.path / "mounted";
+            const auto outside = fixture.path / "outside";
+            Write(mounted / "Assets/Deep/plain.txt", "plain");
+            Write(outside / "secret.txt", "secret");
+            px::io::VFS directoryVfs;
+            directoryVfs.MountDirectory(mounted.string());
+            suite.Expect(directoryVfs.ReadText("Assets/Deep/plain.txt") == "plain" &&
+                             directoryVfs.ReadText("Assets/Deep/plain.txt") == "plain" &&
+                             !directoryVfs.Exists("Assets/Missing/none.txt") &&
+                             !directoryVfs.Exists("Assets/Deep/none.txt"),
+                         "a directory mount reads nested files and reports missing ones");
+            std::error_code linkError;
+            std::filesystem::create_directory_symlink(outside, mounted / "Assets/Link", linkError);
+            if (!linkError)
+                suite.Expect(!directoryVfs.Exists("Assets/Link/secret.txt") &&
+                                 !directoryVfs.Read("Assets/Link/secret.txt").has_value(),
+                             "a symlink inside a directory mount cannot reach outside it");
+        }
+
         // A development run's fallback folder only supplies what the archives lack.
         const auto fallback = fixture.path / "fallback";
         Write(fallback / "Story/Entry.pxstory", "fallback story");
@@ -1093,6 +1115,51 @@ int main() {
                          HasDiagnostic(offCurve, "PXPKG1243") &&
                          !std::filesystem::exists(pinned.outputDir),
                      "a correctly shaped off-curve point is rejected");
+    });
+
+    suite.Run("LooseContentPackage_HasNoArchivesAndIsNotValidatedAgain", [&] {
+        const auto looseOutput = fixture.path / "Build/Loose";
+        auto loose = FixtureRequest(root, looseOutput);
+        loose.requestId = "loose-content-contract";
+        loose.looseContent = true;
+        loose.encryption = false;
+        bool validatedStructure = false;
+        const auto built = px::sdk::RunPackager(loose, [&](const auto& event) {
+            if (event.kind == px::sdk::PackageEventKind::Progress &&
+                event.phase == "validate-structure")
+                validatedStructure = true;
+        });
+        suite.Require(built.Completed(), "Packager writes a loose development package" +
+                          (built.diagnostics.empty() ? std::string{}
+                                                     : ": " + built.diagnostics.front().code + " " +
+                                                           built.diagnostics.front().message));
+        const auto manifestText = Read(looseOutput / "Package/manifest.json");
+        const auto manifest = px::sdk::detail::ParsePackageManifest(manifestText);
+        suite.Require(manifest.Valid(), "the loose package manifest parses");
+        bool archives = false;
+        for (const auto& entry : std::filesystem::directory_iterator(looseOutput))
+            archives = archives || entry.path().extension() == ".pdx";
+        suite.Expect(manifest.manifest.looseContent && manifest.manifest.archives.empty() &&
+                         !archives && !validatedStructure,
+                     "a loose package has no archives and skips the content contracts the CLI already checked");
+
+        // The flag and an empty archive list only come together.
+        auto unflagged = nlohmann::json::parse(manifestText);
+        unflagged.erase("looseContent");
+        suite.Expect(!px::sdk::detail::ParsePackageManifest(unflagged.dump()).Valid(),
+                     "a manifest without archives must say it is loose");
+        auto withArchives = nlohmann::json::parse(manifestText);
+        withArchives["archives"] = nlohmann::json::array(
+            {{{"file", "Content.pdx"}, {"group", "base"}, {"optional", false}}});
+        suite.Expect(!px::sdk::detail::ParsePackageManifest(withArchives.dump()).Valid(),
+                     "a loose manifest lists no archives");
+
+        loose.encryption = true;
+        loose.outputDir = fixture.path / "Build/LooseEncrypted";
+        const auto encrypted = px::sdk::RunPackager(loose);
+        suite.Expect(!encrypted.Completed() && HasDiagnostic(encrypted, "PXPKG1292") &&
+                         !std::filesystem::exists(loose.outputDir),
+                     "a loose package cannot be encrypted");
     });
 
     suite.Run("SignedPackageOverlay_RequiresMatchingPublisherKeyAndExactBase", [&] {

@@ -38,6 +38,10 @@ export interface PublicationOptions {
    * existing marker hashes may be reused only while both paths retain the
    * same file identity; the old output is still content-verified at promotion. */
   readonly linkedOutputFiles?: ReadonlyMap<string, PublishedInput>;
+  /** A development output the CLI keeps for itself (in <project>/.prismatix):
+   * before replacing it, only its ownership marker is checked, not every
+   * file's content again. Never for an output an author may edit. */
+  readonly trustExistingOutput?: boolean;
   readonly onProgress?: (value: PublicationProgress) => void;
 }
 
@@ -319,6 +323,18 @@ async function assertOwned(output: string, allowEmpty = true,
   }
 }
 
+/** An existing output carries a valid ownership marker (or does not exist). */
+async function assertMarked(output: string): Promise<void> {
+  try { await lstat(output); } catch (error) { if (missing(error)) return; throw error; }
+  const markerPath = join(output, outputOwnershipMarker);
+  const info = await lstat(markerPath).catch(() => undefined);
+  const marker: unknown = info?.isFile() && !info.isSymbolicLink() && info.size <= maxOutputMarkerBytes
+    ? JSON.parse(await readFile(markerPath, "utf8")) : undefined;
+  if (marker === null || typeof marker !== "object" || Array.isArray(marker) ||
+      (marker as {format?: unknown}).format !== "PrismatiXOutput/1")
+    throw new Error(`Refusing to replace an unowned output directory: ${output}`);
+}
+
 /** Read an existing artifact without rehashing multi-GiB media. The native
  * Packager verifies each supplied SHA-256 and size before accepting it. */
 export async function publishedInputs(output: string,
@@ -520,7 +536,8 @@ export async function publishDirectory<T>(options: PublicationOptions, build: (s
     await writeFile(join(staging, outputOwnershipMarker), marker, {flag: "wx"});
     await options.beforePromotion?.();
     if (key(await validatePaths(options)) !== key(output)) throw new Error("Output path changed during publication");
-    await assertOwned(output, true, "verify-before-publish", options.onProgress);
+    if (options.trustExistingOutput === true) await assertMarked(output);
+    else await assertOwned(output, true, "verify-before-publish", options.onProgress);
     if (linkedOutput !== undefined)
       for (const uri of linkedOutput.verified)
         if (!await assertLinkedIdentity(output, staging, uri,

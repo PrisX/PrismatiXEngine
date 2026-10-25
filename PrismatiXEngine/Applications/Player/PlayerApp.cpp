@@ -421,6 +421,12 @@ PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay,
     }
     for (const auto& archive : parsed.manifest.archives)
         boot.config.mountArchives.push_back(archive.file);
+    // A development Play package's own generated files (compiled shaders).
+    if (package.looseContent) {
+        std::error_code contentError;
+        if (std::filesystem::is_directory("Content", contentError))
+            boot.config.mountDirs.emplace_back("Content");
+    }
     boot.config.archiveKey = parsed.manifest.archiveKey;
     boot.config.width = boot.config.logicalWidth = package.width;
     boot.config.height = boot.config.logicalHeight = package.height;
@@ -465,6 +471,17 @@ PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay,
         PX_LOG_INFO("Development run: {} fallback content folder(s)", boot.config.fallbackDirs.size());
     }
 #endif
+    // A loose package has no archives: without the folders `prismatix run`
+    // names, it has no game to show.
+    if (package.looseContent && boot.config.fallbackDirs.empty()) {
+        diag::Emit(diag::Diagnostic{
+            .severity = diag::Severity::Fatal,
+            .code = "PXPLAYER5032",
+            .category = "Player.Boot",
+            .message = "This is a development Play package without its content; start it with prismatix run --dev (or Play in the Studio)",
+            .details = "A looseContent package reads the compiled game and its media from the folders listed in PRISMATIX_CONTENT_FALLBACK. Use prismatix pack for a package that runs on its own."});
+        return boot;
+    }
     boot.valid = true;
     PX_LOG_INFO("Packaged build: mounting {} content group(s), signed overlay={} count={}",
                 boot.config.mountArchives.size(), boot.overlayApplied,

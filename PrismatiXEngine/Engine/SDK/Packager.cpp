@@ -1801,6 +1801,7 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
     manifest.archiveKey = request.encryption ? encryptionKey : std::string{};
     manifest.publisherPublicKey = request.publisherPublicKey;
     manifest.archives = std::move(archives);
+    manifest.looseContent = request.looseContent;
     for (const auto& route : routesInOrder) {
         const auto archived = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) { return entry.uri == route.scene; });
         const auto sceneBytes = archived == entries.end()
@@ -1967,6 +1968,9 @@ ValidationResult Validate(const PackageRequest& request,
         AddDiagnostic(diagnostics, "PXPKG1241",
                       "archiveShards must be an integer from 1 to 64");
     }
+    if (request.looseContent && request.encryption)
+        AddDiagnostic(diagnostics, "PXPKG1292",
+                      "a looseContent package cannot be encrypted: it has no archives");
     if (!request.publisherPublicKey.empty() &&
         !ValidPublisherPublicKey(request.publisherPublicKey))
         AddDiagnostic(diagnostics, "PXPKG1243",
@@ -2046,7 +2050,11 @@ ValidationResult Validate(const PackageRequest& request,
             continue;
         }
         error.clear();
-        const auto source = WeakCanonical(projectRoot / Utf8Path(input.uri), error);
+        // A loose package's inputs are the CLI's own fresh artifact, which
+        // holds no links: join them instead of resolving every one.
+        const auto source = request.looseContent
+                                ? (projectRoot / Utf8Path(input.uri)).lexically_normal()
+                                : WeakCanonical(projectRoot / Utf8Path(input.uri), error);
         if (error || !IsWithin(source, projectRoot) || !std::filesystem::is_regular_file(source, error)) {
             AddDiagnostic(diagnostics, "PXPKG1214", "input is missing or escapes projectRoot: " + input.uri, true);
             continue;
@@ -2187,6 +2195,9 @@ ValidationResult Validate(const PackageRequest& request,
         result.cancelled = true;
         return result;
     }
+    // The CLI compiled and checked this content moments before; a loose
+    // development package only needs its inputs to exist.
+    if (request.looseContent) return result;
     EmitProgress(request, eventSink, "validate-structure", 0, 1,
                  "Validating project, Story, UI, and resource contracts");
     std::set<std::string> migrationIds;
@@ -2974,6 +2985,7 @@ std::string detail::SerializePackageManifest(
         {"graphicsTier", manifest.graphicsTier}};
     if (!manifest.publisherPublicKey.empty())
         root["publisherPublicKey"] = manifest.publisherPublicKey;
+    if (manifest.looseContent) root["looseContent"] = true;
     return root.dump(2) + "\n";
 }
 
@@ -3283,6 +3295,12 @@ PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
             result.request.inputs.push_back({ item["uri"].get<std::string>(), item["fingerprint"].get<std::string>(), item["size"].get<std::uint64_t>() });
         }
     }
+    if (const auto loose = root.find("looseContent"); loose != root.end()) {
+        if (!loose->is_boolean())
+            AddDiagnostic(result.diagnostics, "PXPKG1292", "looseContent must be a boolean");
+        else
+            result.request.looseContent = loose->get<bool>();
+    }
     const auto externalInputs = root.find("externalInputs");
     if (externalInputs != root.end()) {
         if (!externalInputs->is_array() || externalInputs->size() > kMaxInputs) {
@@ -3560,13 +3578,15 @@ bool PreparePackageContent(const PackageRequest& request,
             return false;
         }
         const auto& input = inputs[index];
-        EmitProgress(request, eventSink, "archive", index, inputs.size(),
-                     "Preparing " + input.input.uri);
+        if (!request.looseContent || index % 512 == 0)
+            EmitProgress(request, eventSink, "archive", index, inputs.size(),
+                         "Preparing " + input.input.uri);
         // Publishing defers source hashing until a verified read, archive
         // writing, or whole-shard reuse. JSON bytes also influence package
         // identity, so this read must match the declared fingerprint.
         std::string contentFingerprint = Lower(input.input.fingerprint);
-        if (input.input.size <= 16ull * 1024ull * 1024ull &&
+        // A loose development package identifies documents by their bytes.
+        if (!request.looseContent && input.input.size <= 16ull * 1024ull * 1024ull &&
             CouldBeJson(input.source)) {
             const auto bytes = ReadFile(input.source, input.input.size);
             if (!bytes)
@@ -3853,7 +3873,24 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     std::size_t reusedEntries = 0;
     std::size_t cacheEntryCount = 0;
     std::size_t reusedShards = 0;
-    for (std::uint32_t index = 0; index < request.archiveShards; ++index) {
+    if (request.looseContent) {
+        // Files the Packager itself produced (compiled shaders) have no
+        // project file to read in place: the Player mounts Content/.
+        for (const auto& entry : entries) {
+            if (entry.FileBacked()) continue;
+            const auto path = staging / "Content" / Utf8Path(entry.uri);
+            std::filesystem::create_directories(path.parent_path(), error);
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            output.write(reinterpret_cast<const char*>(entry.data.data()),
+                         static_cast<std::streamsize>(entry.data.size()));
+            if (error || !output)
+                return Fail(request, eventSink, "PXPKG1307",
+                            "Generated content could not be written: " + entry.uri, true);
+        }
+        EmitProgress(request, eventSink, "archive", entries.size(), entries.size(),
+                     "Skipped archives: the Player reads this development content in place");
+    }
+    for (std::uint32_t index = 0; !request.looseContent && index < request.archiveShards; ++index) {
         const auto& shard = shards[index];
         if (shard.empty()) continue;
         const std::string archiveName = ShardArchiveName(index, request.archiveShards);

@@ -7,7 +7,7 @@ import {
   copyFile, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile,
 } from "node:fs/promises";
 import {tmpdir} from "node:os";
-import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from "node:path";
+import {basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep} from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 import type * as TS from "typescript-compiler";
 import {ts, typescriptIdentity} from "./typescript.js";
@@ -1777,7 +1777,13 @@ async function matchingArtifactFiles(loaded: LoadedProject, artifact: BuildArtif
 async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact, staging: string,
   reuse?: ReusableArtifactInputs,
   linkedOutputFiles?: Map<string, PublishedInput>,
-  transcoded?: ReadonlyMap<string, TranscodedFile>): Promise<{readonly files: number; readonly bytes: number}> {
+  transcoded?: ReadonlyMap<string, TranscodedFile>,
+  /**
+   * A development run's own artifact: as in matchingArtifactFiles, a source
+   * no newer than its previous copy, with the same size, is reused without
+   * re-hashing it, so editing one Story line does not re-read every file.
+   */
+  quick = false): Promise<{readonly files: number; readonly bytes: number}> {
   const total = Object.keys(artifact.files).length + artifact.dependencies.length;
   const readyDirectories = new Map<string, Promise<void>>();
   const ensureDirectory = (directory: string): Promise<void> => {
@@ -1803,10 +1809,23 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
     lastReport = now;
     lastCount = current;
   };
+  // The default locale's program is the default program: the same tens of MB
+  // under two paths. Write it once and link the second path to it.
+  const writtenTexts = new Map<string, string>();
   for (const [virtualPath, text] of Object.entries(artifact.files)) {
     const destination = projectFile(staging, virtualPath);
     await ensureDirectory(dirname(destination));
-    await writeFile(destination, text, "utf8");
+    const written = text.length >= 1024 * 1024 ? writtenTexts.get(text) : undefined;
+    let linked = false;
+    if (written !== undefined) {
+      try { await link(written, destination); linked = true; }
+      catch (error) {
+        if (!["EXDEV", "EPERM", "EOPNOTSUPP", "ENOSYS"].includes(
+          (error as NodeJS.ErrnoException).code ?? "")) throw error;
+      }
+    }
+    if (!linked) await writeFile(destination, text, "utf8");
+    if (text.length >= 1024 * 1024 && written === undefined) writtenTexts.set(text, destination);
     bytes += Buffer.byteLength(text, "utf8");
     current += 1;
     report();
@@ -1814,7 +1833,7 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
   // A small batch keeps media copies off the one-file-at-a-time path without
   // opening thousands of files at once. Await every task in a failed batch
   // before publication removes staging, so no copy can outlive its directory.
-  const copyBatchSize = 8;
+  const copyBatchSize = quick ? 32 : 8;
   // distribution.linkMedia: hard-link media from the project into the
   // artifact instead of copying it (same volume only), so a multi-GiB game
   // is not stored twice. The artifact then shares those files with the
@@ -1832,9 +1851,18 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
       let reused = false;
       if (previous !== undefined) {
         const sourceInfo = await stat(source);
-        if (sourceInfo.isFile() && sourceInfo.size === previous.size &&
-            (encoded?.fingerprint ?? await fingerprintFile(source)) === previous.fingerprint) {
-          const oldPath = projectFile(reuse!.root, dependency.logicalPath);
+        const oldPath = projectFile(reuse!.root, dependency.logicalPath);
+        const unchanged = async (): Promise<boolean> => {
+          if (!sourceInfo.isFile() || sourceInfo.size !== previous.size) return false;
+          if (encoded !== undefined) return encoded.fingerprint === previous.fingerprint;
+          if (quick) {
+            const copy = await stat(oldPath).catch(() => undefined);
+            if (copy?.isFile() && copy.size === sourceInfo.size && sourceInfo.mtimeMs <= copy.mtimeMs)
+              return true;
+          }
+          return await fingerprintFile(source) === previous.fingerprint;
+        };
+        if (await unchanged()) {
           try { await link(oldPath, destination); reused = true; }
           catch (error) {
             if (!["EXDEV", "EPERM", "EOPNOTSUPP", "ENOSYS", "ENOENT"].includes(
@@ -2002,6 +2030,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   await publishDirectory({output, projectRoot: loaded.root,
     verifyExistingBeforeBuild: false,
     linkedOutputFiles,
+    trustExistingOutput: development && pathWithin(join(loaded.root, ".prismatix"), output),
     beforePromotion: async () => {
       await assertLoadedTextSourcesUnchanged(loaded);
       // publishDirectory checks the destination immediately after this hook.
@@ -2017,7 +2046,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
       value.bytes, value.done)}, async (staging) => {
     reused = await copyRuntimeInputs(loaded, published, staging, reuse,
       reuse !== undefined && resolve(reuse.root) === output ? linkedOutputFiles : undefined,
-      transcoded);
+      transcoded, development && reuse !== undefined && resolve(reuse.root) === output);
   });
   buildProgress("publish", 1, 1, 0, true);
   await saveStoryCompilationCache(loaded.root, effectiveStoryCompilationCache);
@@ -2323,6 +2352,12 @@ async function packProject(options: Options, settings: {
   readonly prebuilt?: PrebuiltArtifact;
   /** `run --dev`: media the Player reads from the project folder, not packed (Packager externalInputs). */
   readonly externalInputs?: readonly string[];
+  /**
+   * `run --dev`: no archives and no second validation of what the build just
+   * compiled (Packager looseContent). The Player reads the artifact and the
+   * project folder in place.
+   */
+  readonly looseContent?: boolean;
 } = {}): Promise<{output: string; player: string;
   validatedOnly?: boolean; deferredMediaCount?: number; retained?: boolean;
   /** The distribution's name: its executable name, else the game id. */
@@ -2517,6 +2552,7 @@ async function packProject(options: Options, settings: {
       inputs,
       ...(settings.externalInputs === undefined || settings.externalInputs.length === 0 ? {}
         : {externalInputs: ((packed) => settings.externalInputs!.filter((uri) => !packed.has(uri)))(new Set(inputs.map((input) => input.uri)))}),
+      ...(settings.looseContent === true ? {looseContent: true} : {}),
     };
     if (options.flags.has("check")) {
       const requestPath = join(temp, "validate-request.json");
@@ -2569,6 +2605,8 @@ async function packProject(options: Options, settings: {
       await runtimeReplacementFiles(player);
     const publication = {output, projectRoot: root,
       protectedPaths: [...protectedPaths, packager, player],
+      ...(settings.development === true && pathWithin(join(root, ".prismatix"), output)
+        ? {trustExistingOutput: true} : {}),
       ...(planKey === undefined && previousManifestBytes === undefined ? {} : {beforePromotion: async () => {
         if (planKey !== undefined &&
             await packageRetentionKey(packager, player, artifactRoot, keyedPlan) !== planKey)
@@ -3269,6 +3307,8 @@ async function runCommand(options: Options): Promise<number> {
     let result: Awaited<ReturnType<typeof packProject>>;
     let artifact: BuildArtifact | undefined;
     let qaPlayer: string | undefined;
+    // The compiled artifact a loose run's Player reads in place.
+    let looseArtifact: string | undefined;
     const buildStarted = Date.now();
     lifecycle({event: "run.build", phase: "start", code: "PXCLI1311", development, qa: at !== undefined,
       message: "Building the game"});
@@ -3299,6 +3339,7 @@ async function runCommand(options: Options): Promise<number> {
           undefined, undefined, undefined, undefined, true, looseMedia);
         artifact = built.artifact;
         artifactRoot = built.output;
+        if (looseMedia) looseArtifact = built.output;
       } else if (at !== undefined) {
         throw new Error("--at compiles the project itself to find the Story position; omit --artifact");
       }
@@ -3309,7 +3350,8 @@ async function runCommand(options: Options): Promise<number> {
       if (!values.has("compression")) values.set("compression", "none");
       if (qaPlayer !== undefined) values.set("player", qaPlayer);
       result = await packProject({values, flags: new Set(options.flags), positional: [...options.positional]},
-        {development: true, ...(looseMedia && artifact !== undefined ? {externalInputs: [...looseMediaPaths(artifact)]} : {})});
+        {development: true, ...(looseMedia && artifact !== undefined
+          ? {externalInputs: [...looseMediaPaths(artifact)], looseContent: true} : {})});
     }
     lifecycle({event: "run.build", phase: "done", code: "PXCLI1312", output: result.output,
       retained: result.retained === true, durationMs: Date.now() - buildStarted,
@@ -3326,8 +3368,10 @@ async function runCommand(options: Options): Promise<number> {
     const environment: NodeJS.ProcessEnv = {...process.env,
       // The game closes when this CLI goes away (an editor's Stop, a crash).
       PRISMATIX_EXIT_WITH_PROCESS: String(process.pid),
-      // Media the loose run left out of the package comes from the project.
-      ...(looseMedia ? {PRISMATIX_CONTENT_FALLBACK: location.root} : {})};
+      // A loose run packs no archives: the Player reads the compiled
+      // artifact, then the media left in the project folder.
+      ...(looseArtifact !== undefined
+        ? {PRISMATIX_CONTENT_FALLBACK: [looseArtifact, location.root].join(delimiter)} : {})};
     let portFile: string | undefined;
     if (at !== undefined) {
       scratch = await mkdtemp(join(tmpdir(), "prismatix-run-"));
@@ -4328,14 +4372,14 @@ const commandHelp: Readonly<Record<string, readonly string[]>> = {
     "prismatix run [project] --dev [--json]                 an editor's Play button",
     "prismatix run [project] --at <scene|scene:line|scene:label|Story/file.pxstory:line> [--json]",
     "",
-    "--dev compiles into <project>/.prismatix/run-artifact and packs into <project>/.prismatix/run without",
-    "transcoding or compression (--compression to override); when nothing changed since the last run the",
-    "previous pack is kept and the game starts at once. An --output inside <project>/.prismatix implies --dev.",
-    "Dev packs are for this machine only: they never record release lineage. They share the game's saves.",
-    "A dev pack holds only what the build produced (Story, UI, the project document) and resources whose",
-    "package path differs from their project path; the Player reads every other image, sound and font",
-    "from the project folder (PRISMATIX_CONTENT_FALLBACK, searched after the package, so it can only add).",
-    "A large game starts without copying or packing its media. --pack-media packs everything instead.",
+    "--dev compiles into <project>/.prismatix/run-artifact and starts the Player from <project>/.prismatix/run",
+    "without packing: that folder holds only the Player and its manifest (Packager looseContent), and the",
+    "Player reads the compiled game from the artifact and every image, sound and font from the project",
+    "folder (PRISMATIX_CONTENT_FALLBACK). The Packager does not validate again what the build just compiled.",
+    "When nothing changed since the last run the previous one is kept and the game starts at once. An --output",
+    "inside <project>/.prismatix implies --dev. Dev packages are for this machine only: they never record",
+    "release lineage and do not run on their own. They share the game's saves. --pack-media packs everything",
+    "into archives instead, as a distribution does (without compression unless --compression says so).",
     "--at starts the real game at a Story position: it packs PrismatiXPlayerQA (the Player with its QA IPC",
     "test interface, found beside the Player or given with --player-qa) into <project>/.prismatix/run-qa,",
     "starts the story and clicks through it, choosing the options that lead there, until that line is",

@@ -84,6 +84,10 @@ struct PackageManifest {
     std::string archiveKey;
     std::string publisherPublicKey;
     std::string graphicsTier = "basic";
+    // A development Play package (PackageRequest::looseContent): it has no
+    // archives, and the Player reads content from the folders `prismatix run`
+    // lists in PRISMATIX_CONTENT_FALLBACK, plus its own Content folder.
+    bool looseContent = false;
 };
 
 struct PackageManifestParseResult {

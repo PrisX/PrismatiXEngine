@@ -121,6 +121,12 @@ struct PackageRequest {
     // as present for the package's reference checks but are neither read nor
     // archived, so a package made with them is incomplete by design.
     std::vector<std::string> externalInputs;
+    // Development runs only: no archives. The Player reads the CLI's
+    // compiled artifact and the project folder in place
+    // (PRISMATIX_CONTENT_FALLBACK). The request itself is still checked, but
+    // its Story, UI and locales are not validated again: the CLI compiled and
+    // checked them moments before. Such a package is never a distribution.
+    bool looseContent = false;
     std::filesystem::path cancelFile;
     // Combined with the persistence of the distribution being replaced.
     std::optional<PackageSaveLineage> saveLineage;

@@ -266,26 +266,35 @@ every current artifact input without producing PDX. The `validated` event
 reports `deferredMediaCount` (zero in this mode). Even full-input preflight
 does not replace `verify-package` for a completed distribution.
 
-### Playing without packing media
+### Playing without packing
 
-`run --dev` (an editor's Play button) and `run --at` pack only what the build
-produced and the documents the Packager checks: Story, characters and
-portraits, UI, extensions and their scripts, fonts and effects. Pictures,
-sound, video and a port's own data files stay in the project folder: the
-CLI lists them to the Packager as `externalInputs` (they count as present for
-its reference checks but are not read or archived) and starts the Player with
-`PRISMATIX_CONTENT_FALLBACK=<project folder>`. The Player searches that folder
-after every archive (`VFS::MountFallbackDirectory`), so it can only supply
-files the package lacks, never replace or revive packaged content. Editing a
-picture or a sound needs no rebuild. On unchanged runs the development
-artifact compares a source with its copy by size and modification time
-instead of re-reading it.
+`run --dev` (an editor's Play button) and `run --at` do not pack the game.
+The build compiles into `<project>/.prismatix/run-artifact` as usual; the
+Packager then writes a *loose* development package (request
+`looseContent: true`) into `.prismatix/run`: the Player, its libraries and
+`Package/manifest.json` with `"looseContent": true` and no archives. It
+checks the request and that every input exists, but does not validate the
+Story, UI, locales or characters again (the CLI compiled and checked them
+moments before) and writes no PDX. Shaders it compiles go to the package's
+own `Content/` folder.
 
-A 46,000-file port (352 scenes) went from packing 1.6 GB on every Play to a
-222 MB package of compiled Story and fonts, with an unchanged Play ready in
-about 25 s. `--pack-media` packs everything as before. Such a development
-package is incomplete by design: never ship it; `pack` and distribution
-`build` always pack every resource.
+The CLI starts the Player with
+`PRISMATIX_CONTENT_FALLBACK=<run-artifact>;<project folder>` (`:` between
+them outside Windows): the Player reads the compiled game from the artifact
+and every picture, sound, video and font from the project folder in place,
+so editing one needs no rebuild. A loose package started any other way stops
+with `PXPLAYER5032`. Directory lookups resolve a plain file below plain
+directories without canonicalizing the whole path; a link or junction still
+gets the full check, so nothing inside a mount can reach outside it.
+
+The artifact is the CLI's own: on a development run its unchanged files are
+reused by size and modification time instead of being hashed again, and
+before it is replaced only its ownership marker is checked. A Story edit on a
+46,000-file port (352 scenes) went from a 40 s Play (a 222 MB package
+validated and archived each time) to about 21 s, most of it compiling.
+`--pack-media` packs everything into archives instead. A loose package is
+not a distribution and does not run on its own: `pack` and distribution
+`build` always pack and validate every resource.
 
 ### Large games
 

@@ -21,6 +21,14 @@ The packages always carry the same version and pin each other exactly.
   after every archive so it can only add files). The Packager accepts
   `externalInputs` for such a development package (`PXPKG1290`,
   `PXPKG1291`). `--pack-media` packs everything as before.
+- Play without packing at all: `run --dev` and `run --at` ask the Packager
+  for a loose development package (request `looseContent`, `PXPKG1292`):
+  the Player and a manifest marked `looseContent` with no archives, without
+  validating again what the build just compiled. The Player reads the
+  compiled artifact and then the project folder in place
+  (`PRISMATIX_CONTENT_FALLBACK=<artifact>;<project>`); started any other way
+  it stops with `PXPLAYER5032`. A Story edit on a 352-scene port went from a
+  40 s Play to about 21 s.
 
 - `resourceBundle: "directory"` on an extension command's `resource`
   parameter: the build ships every file in the folder of the file Story
@@ -265,6 +273,15 @@ The packages always carry the same version and pin each other exactly.
   resolve each directory once and list it instead of every file: the 7.7 s
   an unchanged Play of that project spent there is under 2 s. With the TSX
   cache, its unchanged Play builds in about 12 s instead of 28 s.
+- Directory mounts no longer canonicalize every path they look up: a plain
+  file below plain directories resolves directly, and only a link or
+  junction takes the full check that keeps it inside the mount. A game read
+  from folders started over 10 s slower than from its archives.
+- A development run reuses its artifact's unchanged files by size and
+  modification time when copying, as it already did when comparing, instead
+  of hashing every source again (11.5 s of a Story edit's Play on a
+  46,000-file port), and writes a large document shared by two paths (the
+  default locale's IR and source map) once, linking the second.
 - Videos whose audio decoder stamps its first frames late (WMA Lossless:
   1.3 s in one game's opening movie) started that far into the movie,
   threw the first second of pictures away, and stuttered whenever the
