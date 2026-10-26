@@ -928,6 +928,27 @@ void Renderer2D::DrawBorder(const Rect& rect, float width, float, Color color) {
     DrawRect({std::max(left,right-stroke),top+stroke,stroke,std::max(0.0f,bottom-top-stroke*2)},color);
 }
 
+namespace {
+
+// The renderer's scissor, kept inside the viewport. Vulkan and Metal draw
+// nothing through a scissor that starts left of or above the target (italic
+// text or a shadow reaching past the screen's edge grows its clip there);
+// Direct3D clamps it.
+void SetClipRect(SDL_Renderer* renderer, const Rect& clip) {
+    int left = static_cast<int>(std::floor(clip.x)), top = static_cast<int>(std::floor(clip.y));
+    int right = static_cast<int>(std::ceil(clip.x + clip.w)), bottom = static_cast<int>(std::ceil(clip.y + clip.h));
+    if (SDL_Rect viewport{}; SDL_GetRenderViewport(renderer, &viewport)) {
+        left = std::max(left, 0);
+        top = std::max(top, 0);
+        right = std::min(right, viewport.w);
+        bottom = std::min(bottom, viewport.h);
+    }
+    const SDL_Rect value{left, top, std::max(0, right - left), std::max(0, bottom - top)};
+    SDL_SetRenderClipRect(renderer, &value);
+}
+
+}  // namespace
+
 void Renderer2D::PushClip(const Rect& requested) {
     const bool valid = std::isfinite(requested.x) &&
                        std::isfinite(requested.y) &&
@@ -944,10 +965,7 @@ void Renderer2D::PushClip(const Rect& requested) {
         clip = {left, top, std::max(0.0f, right - left), std::max(0.0f, bottom - top)};
     }
     m_clipStack.push_back(clip);
-    const int left=static_cast<int>(std::floor(clip.x)),top=static_cast<int>(std::floor(clip.y));
-    const int right=static_cast<int>(std::ceil(clip.x+clip.w)),bottom=static_cast<int>(std::ceil(clip.y+clip.h));
-    const SDL_Rect value{left,top,std::max(0,right-left),std::max(0,bottom-top)};
-    SDL_SetRenderClipRect(m_renderer, &value);
+    SetClipRect(m_renderer, clip);
 }
 
 void Renderer2D::PopClip() {
@@ -956,11 +974,7 @@ void Renderer2D::PopClip() {
     if (m_clipStack.empty()) {
         SDL_SetRenderClipRect(m_renderer, nullptr);
     } else {
-        const Rect clip = m_clipStack.back();
-        const int left=static_cast<int>(std::floor(clip.x)),top=static_cast<int>(std::floor(clip.y));
-        const int right=static_cast<int>(std::ceil(clip.x+clip.w)),bottom=static_cast<int>(std::ceil(clip.y+clip.h));
-        const SDL_Rect value{left,top,std::max(0,right-left),std::max(0,bottom-top)};
-        SDL_SetRenderClipRect(m_renderer, &value);
+        SetClipRect(m_renderer, m_clipStack.back());
     }
 }
 
