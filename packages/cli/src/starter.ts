@@ -4,6 +4,7 @@ import {copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm
 import {basename, dirname, extname, isAbsolute, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {externalizeStoryIds, serializeStoryIdentityMap} from "@prismatix/authoring-sdk";
+import {hostPlatform} from "./platform-runtime.js";
 import {splashStudio, splashSource, splashStudioDocument, splashTsx} from "./splash.js";
 
 export interface StarterOptions {
@@ -239,6 +240,25 @@ export async function repairLocalLinks(root: string): Promise<string[]> {
  * offline and the project follows the engine you build. A pnpm project also
  * records the pnpm version that created it.
  */
+/**
+ * The tools as `file:` tarballs from PRISMATIX_PACKAGES, a folder of this
+ * version's npm tarballs (`prismatix-cli-<version>.tgz`...) that an
+ * application such as the Studio ships, for a version the registry does not
+ * have; undefined without it. The CLI's optional native dependency is met by
+ * this platform's tarball, so the other platforms' are not needed.
+ */
+export async function shippedTools(version: string): Promise<Record<string, string> | undefined> {
+  const directory = process.env.PRISMATIX_PACKAGES;
+  if (!directory) return undefined;
+  const tarball = (name: string) => join(directory, `prismatix-${name}-${version}.tgz`);
+  if (!await isFile(tarball("cli"))) return undefined;
+  const file = (path: string) => `file:${resolve(path).split("\\").join("/")}`;
+  const tools: Record<string, string> = {};
+  for (const name of ["cli", "authoring-sdk", "runtime", `native-${hostPlatform}`])
+    if (await isFile(tarball(name))) tools[`@prismatix/${name}`] = file(tarball(name));
+  return tools;
+}
+
 async function pinTools(packagePath: string, id: string, source: "registry" | "checkout" | undefined,
   manager: PackageManager, managerVersion: string | undefined): Promise<void> {
   const cliRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -256,8 +276,8 @@ async function pinTools(packagePath: string, id: string, source: "registry" | "c
     ? {"@prismatix/cli": link(cliRoot), "@prismatix/authoring-sdk": link(sdkRoot),
       ...(await lstat(join(runtimeRoot, "package.json")).then(() => true, () => false)
         ? {"@prismatix/runtime": link(runtimeRoot)} : {})}
-    : {"@prismatix/cli": own.version, "@prismatix/authoring-sdk": own.version,
-      "@prismatix/runtime": own.version};
+    : source !== "registry" && await shippedTools(own.version) || {"@prismatix/cli": own.version,
+      "@prismatix/authoring-sdk": own.version, "@prismatix/runtime": own.version};
   if (manager === "pnpm" && managerVersion !== undefined && /^\d+\.\d+\.\d+$/u.test(managerVersion))
     project.packageManager = `pnpm@${managerVersion}`;
   await writeFile(packagePath, `${JSON.stringify(project, null, 2)}\n`, "utf8");

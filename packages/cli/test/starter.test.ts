@@ -6,7 +6,8 @@ import {tmpdir} from "node:os";
 import {join, resolve} from "node:path";
 import test from "node:test";
 import {fileURLToPath} from "node:url";
-import {createStarter, detectPackageManager, repairLocalLinks} from "../src/starter.js";
+import {createStarter, detectPackageManager, repairLocalLinks, shippedTools} from "../src/starter.js";
+import {hostPlatform} from "../src/platform-runtime.js";
 const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 const prepared = async (directory: string): Promise<void> => {
@@ -181,4 +182,25 @@ test("repairLocalLinks points link: dependencies back at their absolute paths", 
     assert.deepEqual(await repairLocalLinks(project), [], "a right link is left alone");
     assert.deepEqual(await readdir(kept), [], "a real folder is never replaced");
   } finally { await rm(root, {recursive: true, force: true, maxRetries: 5, retryDelay: 100}); }
+});
+
+test("shipped tool tarballs (PRISMATIX_PACKAGES) pin a version the registry does not have", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "prismatix-shipped-"));
+  const previous = process.env.PRISMATIX_PACKAGES;
+  try {
+    process.env.PRISMATIX_PACKAGES = directory;
+    assert.equal(await shippedTools("9.9.9"), undefined, "no CLI tarball, no shipped tools");
+    for (const name of ["cli", "authoring-sdk", "runtime", `native-${hostPlatform}`])
+      await writeFile(join(directory, `prismatix-${name}-9.9.9.tgz`), "");
+    const tools = await shippedTools("9.9.9");
+    const file = (name: string) => `file:${resolve(directory, `prismatix-${name}-9.9.9.tgz`).split("\\").join("/")}`;
+    assert.deepEqual(tools, {"@prismatix/cli": file("cli"), "@prismatix/authoring-sdk": file("authoring-sdk"),
+      "@prismatix/runtime": file("runtime"), [`@prismatix/native-${hostPlatform}`]: file(`native-${hostPlatform}`)});
+    delete process.env.PRISMATIX_PACKAGES;
+    assert.equal(await shippedTools("9.9.9"), undefined);
+  } finally {
+    if (previous === undefined) delete process.env.PRISMATIX_PACKAGES;
+    else process.env.PRISMATIX_PACKAGES = previous;
+    await rm(directory, {recursive: true, force: true});
+  }
 });
