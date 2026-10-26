@@ -247,6 +247,10 @@ export async function repairLocalLinks(root: string): Promise<string[]> {
  * have; undefined without it. The CLI's optional native dependency is met by
  * this platform's tarball, so the other platforms' are not needed.
  */
+async function ownVersion(): Promise<string> {
+  return (JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {version: string}).version;
+}
+
 export async function shippedTools(version: string): Promise<Record<string, string> | undefined> {
   const directory = process.env.PRISMATIX_PACKAGES;
   if (!directory) return undefined;
@@ -382,8 +386,12 @@ export async function createStarter(targetArgument: string, options: StarterOpti
     await writeFile(join(staging, splashStudio), `${JSON.stringify(splashStudioDocument(width, height), null, 2)}\n`, "utf8");
     await writeFile(join(staging, splashSource), splashTsx(width, height), "utf8");
     // The test seam installs nothing, so it does not probe PATH for pnpm.
+    // Shipped tarballs install with npm: it meets the CLI's own
+    // @prismatix dependencies with them, where pnpm asks the registry.
     const manager = options.packageManager ??
-      (options.install === undefined ? await defaultPackageManager() : detectPackageManager());
+      (options.install === undefined
+        ? await shippedTools(await ownVersion()) !== undefined ? "npm" : await defaultPackageManager()
+        : detectPackageManager());
     const command = options.install === undefined
       ? manager === "pnpm" ? await pnpmCommand() : await npmCommand() : [];
     const managerVersion = manager === "pnpm" && options.install === undefined
